@@ -124,6 +124,13 @@
             width: 100%;
             height: 100%;
         }
+        .fixed_width {
+            width: 28vw !important;
+            max-width: 28vw !important;
+        }
+        .constrain_width {
+            max-width: 500px;
+        }
     </style>
     <script>
         var valid_page_ids = ['home', 'demos', 'art'];
@@ -167,13 +174,25 @@
     <div id="home" class="">
         <table class="container align_top">
             <tr>
-                <td>
+                <td class="constrain_width">
                     <div>
                         <h1>Justin Brown</h1>
                         <p><strong>Email:</strong> justin@jweb.dev</p>
                         <p><strong>Phone:</strong> (630) 880-7886</p>
+                        <h2>About Me</h2>
+                        <p>Above all I'm passionate about learning how things work and making things myself. I’m always looking for the next thing to learn and the next problem to set my mind to. Since I learned how to use a screwdriver I’ve been taking things apart and putting them together in the attempt to discover how they function. It didn’t take long for me to apply that passion to software, and for the better part of my life I’ve been learning about programming, computers, and electronics both in and out of school. </p>
+                    </div>
+                </td>
+                <td>
+                    <img class="portrait" src="me_smiling.jpg" alt="photo of myself" />
+                </td>
+            </tr>
+            <tr>
+                <td colspan="2">
+                    <div>
                         <h2>Skills</h2>
                         <p>Python, Web Development, Leadership Skills, C / C++, Cybersecurity Target Analysis, Linux</p>
+                    
                         <h2>Education</h2>
                         <p><strong>Southern Illinois University – Carbondale, IL</strong> (Aug 2023 – Present)</p>
                         <p>Bachelor’s degree in Computer Science</p>
@@ -211,11 +230,6 @@
                         <h2>Other Skills & Hobbies</h2>
                         <p>Drawing & Painting, Electronics Repair, Forklift Operation</p>
                     </div>
-                </td>
-                <td class="container align_top">
-                    <img class="portrait" src="me_smiling.jpg" alt="photo of myself" />
-                    <h2>About Me</h2>
-                    <p>Write a short bio here.</p>
                 </td>
             </tr>
         </table>
@@ -279,8 +293,8 @@
                 <td class="td_art_image">
                     <img class="art_image" src="puppet_image.jpg" alt="puppet" />
                 </td>
-                <td class="td_art_image">
-                    <iframe class="embedded_portrait" src="https://www.youtube.com/embed/5cZfCPcCd7M?si=VCmU5q9r1TFcm2k-"
+                <td class="td_art_image fixed_width">
+                    <iframe class="embedded_portrait fixed_width" src="https://www.youtube.com/embed/5cZfCPcCd7M?si=VCmU5q9r1TFcm2k-"
                         title="YouTube video player" frameborder="0"
                         allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
                         allowfullscreen></iframe>
@@ -291,9 +305,22 @@
     </div>
     <div id="demos" class="invisible">
         <table class="container align_top">
-            <tr>
-                <td>
-                    Work In Progress
+            <tr class="art_item">
+                <td class="td_art_description ">
+                    <h2>Spinning Cube</h2>
+                    <p>C++ - a 3d spinning cube in the terminal</p>
+                </td>
+                <td class="td_art_image_full" colspan="2">
+                    <iframe class="embedded_landscape" src="https://www.youtube.com/embed/22J_g2LTdFI?si=16pp5EIvl6xfDuH6" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+                </td>
+            </tr>
+            <tr class="art_item">
+                <td class="td_art_description ">
+                    <h2>Traffic Blaster</h2>
+                    <p>Python - a library to create and manage several simulanteous OpenVPN instances</p>
+                </td>
+                <td class="td_art_image_full" colspan="2">
+                    <iframe class="embedded_landscape" src="https://www.youtube.com/embed/G5I3iAuYoNA?si=wAEQV7QPy0KdJHxg" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
                 </td>
             </tr>
         </table>

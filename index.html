@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>My Portfolio</title>
+    <style>
+        :root {
+            --dark_primary: #0c0e14;
+        }
+
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #fff;
+            color: var(--dark_primary);
+            margin: 0;
+            padding: 0;
+        }
+
+        nav {
+            background-color: var(--dark_primary);
+            color: #fff;
+            padding: 15px;
+            top: 0;
+            justify-content: space-between;
+            position: sticky;
+        }
+
+        nav a {
+            color: #fff;
+            text-decoration: none;
+            margin: 0 15px;
+        }
+
+        .dropdown {
+            position: relative;
+            display: inline-block;
+        }
+
+        .dropdown-content {
+            display: none;
+            position: absolute;
+            background-color: #fff;
+            min-width: 160px;
+            box-shadow: 0px 8px 16px var(--dark_primary);
+        }
+
+        .dropdown-content a {
+            color: var(--dark_primary);
+            padding: 10px;
+            display: block;
+        }
+
+        .dropdown:hover .dropdown-content {
+            display: block;
+        }
+
+        .container {
+            margin: 20px auto 0px auto;
+        }
+
+        .resume-section {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .portrait {
+            align-content: start;
+            max-width: 200px;
+            border-radius: 5%;
+            margin: 20px auto 0px auto;
+        }
+
+        .align_top {
+            vertical-align: top
+        }
+
+        .invisible {
+            display: none;
+        }
+
+        .faux_anchor {
+            cursor: pointer;
+        }
+
+        .td_art_description {
+            width: 30%;
+        }
+
+        .td_art_image {
+            width: 35%;
+            max-width: 300px;
+        }
+        .td_art_image_full{
+            width: 70%;
+            max-width: 600px;
+            min-height: 30vh;
+        }
+        .art_image {
+            max-width: 100%;
+            height: auto;
+            
+        }
+        
+        .art_image_halfsize {
+            max-width: 50%;
+            height: auto;
+        }
+
+        .table_art {
+            width: 80%;
+        }
+        .art_item{
+            display: flex;
+        }
+ 
+        .embedded_portrait{
+            height: 100%
+        }
+        .embedded_landscape{
+            
+            width: 100%;
+            height: 100%;
+        }
+    </style>
+    <script>
+        var valid_page_ids = ['home', 'demos', 'art'];
+        var current_page_id = 'home';
+        function check_for_specific_page_on_load() {
+            let page_id = window.location.href.split('#').pop();
+            page_id = page_id.substring(0, page_id.length - 1);
+
+            if (valid_page_ids.includes(page_id)) {
+                toggle_visibility(page_id);
+            }
+        }
+        function toggle_visibility(page_id) {
+            let page_leaving = document.getElementById(current_page_id);
+            let page_going = document.getElementById(page_id);
+            if (page_id == current_page_id) {
+                return;
+            }
+            page_leaving.classList.add("invisible");
+            page_going.classList.remove("invisible");
+            current_page_id = page_id;
+        }
+    </script>
+</head>
+
+<body>
+    <nav>
+        <div>
+            <a onclick="toggle_visibility('home')" role="button" tabindex="0" href="#home/">Home</a>
+            <a onclick="toggle_visibility('demos')" role="button" tabindex="0" href="#demos/">Project Demos</a>
+            <a onclick="toggle_visibility('art')" role="button" tabindex="0" href="#art/">Art</a>
+            <div class="dropdown">
+                <a href="#">Project Websites▼</a>
+                <div class="dropdown-content">
+                    <a href="https://example.com/project1">Target Analysis Helper</a>
+                    <a href="https://example.com/project2">Illinois Voting Resource</a>
+                </div>
+            </div>
+        </div>
+    </nav>
+    <div id="home" class="">
+        <table class="container align_top">
+            <tr>
+                <td>
+                    <div>
+                        <h1>Justin Brown</h1>
+                        <p><strong>Email:</strong> justin@jweb.dev</p>
+                        <p><strong>Phone:</strong> (630) 880-7886</p>
+                        <h2>Skills</h2>
+                        <p>Python, Web Development, Leadership Skills, C / C++, Cybersecurity Target Analysis, Linux</p>
+                        <h2>Education</h2>
+                        <p><strong>Southern Illinois University – Carbondale, IL</strong> (Aug 2023 – Present)</p>
+                        <p>Bachelor’s degree in Computer Science</p>
+                        <ul>
+                            <li>Vice-President of Association of Computing Machinery</li>
+                            <li>Completed courses in Machine Learning, Cybersecurity, and Software Development</li>
+                        </ul>
+                        <p><strong>College of DuPage – Glen Ellyn, IL</strong> (Aug 2019 – May 2023)</p>
+                        <h2>Programming Projects</h2>
+                        <ul>
+                            <li><strong>Web Development:</strong> Designed websites for vitalsage.com and
+                                brandyoupromotional.com.</li>
+                            <li><strong>Bibitinator:</strong> C# desktop app modifying game files for an evolution
+                                simulator.</li>
+                            <li><strong>Traffic Blaster:</strong> Python library managing multiple OpenVPN instances.
+                            </li>
+                            <li><strong>Spinning Cube:</strong> C++ console app simulating a 3D spinning cube with
+                                shadow rendering.</li>
+                        </ul>
+                        <h2>Employment</h2>
+                        <p><strong>DataAnnotation (2024 - Present)</strong> - AI Trainer</p>
+                        <ul>
+                            <li>Reviewing and correcting LLM chatbot responses for high-value training data.</li>
+                            <li>Testing and correcting AI-generated code snippets, API requests, and data structures.
+                            </li>
+                        </ul>
+                        <p><strong>Hortons Home Lighting (2021-2023)</strong> - Warehouse Team Member</p>
+                        <ul>
+                            <li>Managed freight deliveries, assembled/delivered products, handled daily tasks.</li>
+                        </ul>
+                        <p><strong>La Grange Theater (2018 – 2020)</strong> - Projectionist</p>
+                        <ul>
+                            <li>Operated projectors, scheduled movie playback, assisted with closing duties.</li>
+                        </ul>
+                        <h2>Other Skills & Hobbies</h2>
+                        <p>Drawing & Painting, Electronics Repair, Forklift Operation</p>
+                    </div>
+                </td>
+                <td class="container align_top">
+                    <img class="portrait" src="me_smiling.jpg" alt="photo of myself" />
+                    <h2>About Me</h2>
+                    <p>Write a short bio here.</p>
+                </td>
+            </tr>
+        </table>
+    </div>
+    <div id="art" class="invisible">
+        <table class="container align_top table_art">
+            
+            <tr class="art_item">
+                <td class="td_art_description">
+                    <h2>'Gary Fischer'</h2>
+                    <p>India ink on paper</p>
+                </td>
+                <td class="td_art_image_full" colspan=2>
+                    <img class="art_image" src="bike.jpg" alt="Bike, Ink on Paper" />
+                </td>
+            </tr>
+            <tr class="art_item">
+                <td class="td_art_description">
+                    <h2>'The Fish'</h2>
+                    <p>Carved linoleum print</p>
+                </td>
+                <td class="td_art_image">
+                    <img class="art_image" src="lino.jpg" alt="linoleum block" />
+                </td>
+                <td class="td_art_image">
+                    <img class="art_image" src="lino_print.jpg" alt="linoleum print" />
+                </td>
+            </tr>
+            <tr class="art_item">
+                <td class="td_art_description">
+                    <h2>Self Portrait</h2>
+                    <p>Acrylic Paint on Canvas</p>
+                </td>
+                <td class="td_art_image_full" colspan="2">
+                    <img class="art_image" src="self_portrait.jpg" alt="Self Portrait" />
+                </td>
+            </tr>
+            <tr class="art_item">
+                <td class="td_art_description ">
+                    <h2>Organic Television</h2>
+                    <p>Cast Iron - Lost wax technique</p>
+                </td>
+                <td class="td_art_image_full" colspan="2">
+                    <iframe class="embedded_landscape" src="https://www.youtube.com/embed/AH_kq5zhvO4?si=KVcyx2h_5WNzxAJC" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+                </td>
+            </tr>
+            <tr class="art_item">
+                <td class="td_art_description">
+                    <h2>'Teeth'</h2>
+                    <p>Acrylic Paint on Canvas</p>
+                </td>
+                <td class="td_art_image_full" colspan="2">
+                    <img class="art_image" src="teeth.jpg" alt="Teeth" />
+                </td>
+            </tr>
+            <tr class="art_item">
+                <td class="td_art_description">
+                    <h2>Puppet Head</h2>
+                    <p>wire, tissue paper, glue, fabric</p>
+                </td>
+                <td class="td_art_image">
+                    <img class="art_image" src="puppet_image.jpg" alt="puppet" />
+                </td>
+                <td class="td_art_image">
+                    <iframe class="embedded_portrait" src="https://www.youtube.com/embed/5cZfCPcCd7M?si=VCmU5q9r1TFcm2k-"
+                        title="YouTube video player" frameborder="0"
+                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                        allowfullscreen></iframe>
+
+                </td>
+            </tr>
+        </table>
+    </div>
+    <div id="demos" class="invisible">
+        <table class="container align_top">
+            <tr>
+                <td>
+                    Work In Progress
+                </td>
+            </tr>
+        </table>
+    </div>
+
+
+    <script>
+        check_for_specific_page_on_load();
+    </script>
+
+</body>
+
+</html>

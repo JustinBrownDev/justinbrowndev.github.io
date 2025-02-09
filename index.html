@@ -60,6 +60,14 @@
             margin: 20px auto 0px auto;
         }
 
+
+
+
+        .center {
+            margin-left: auto;
+            margin-right: auto;
+        }
+
         .resume-section {
             display: flex;
             align-items: center;
@@ -74,7 +82,12 @@
         }
 
         .align_top {
-            vertical-align: top
+            vertical-align: top;
+
+        }
+
+        .align_top h2 {
+            margin-top: 0px;
         }
 
         .invisible {
@@ -85,49 +98,115 @@
             cursor: pointer;
         }
 
-        .td_art_description {
+        .td_description {
             width: 30%;
-            text-align: right;
+            text-align: left;
+            margin-right: 5px;
+            min-width: 300px;
+        }
+
+        .td_description p,
+        a {
+            text-align: left;
         }
 
         .td_art_image {
             width: 35%;
             max-width: 300px;
         }
-        .td_art_image_full{
+
+        @media all and (min-width: 760px) {
+            .td_art_image_full {
+                min-height: 30vh;
+            }
+
+            .no_whitespace {
+                white-space: line;
+            }
+        }
+
+        @media all and (min-width: 760px) {
+            .center {
+                width: 80vw;
+            }
+        }
+
+        .td_art_image_full {
             width: 70%;
             max-width: 600px;
-            min-height: 30vh;
+
         }
+
         .art_image {
             max-width: 100%;
             height: auto;
-            
+
         }
-        
+
         .art_image_halfsize {
             max-width: 50%;
             height: auto;
         }
 
-        .art_item{
+        .art_item {
             display: flex;
         }
- 
-        .embedded_portrait{
+
+        .embedded_portrait {
             height: 100%
         }
-        .embedded_landscape{
-            
+
+        .embedded_landscape {
+
             width: 100%;
             height: 100%;
+            min-width: 300px;
         }
+
         .fixed_width {
             width: 28vw !important;
             max-width: 28vw !important;
         }
+
         .constrain_width {
             max-width: 500px;
+        }
+
+        .remove_vertical_margin {
+            margin: auto 0px;
+        }
+
+
+
+        @media all and (max-width: 759px) {
+
+            .wrap_on_mobile table {
+                width: 85%
+            }
+
+            .wrap_on_mobile table thead {
+                display: none;
+            }
+
+            .wrap_on_mobile table tr {
+                display: flex;
+                flex-direction: column;
+
+            }
+
+            .wrap_on_mobile table th {
+                content: attr(col);
+                font-weight: bold;
+                width: 40vw;
+                display: inline-block;
+                vertical-align: top
+            }
+
+            .wrap_on_mobile table td {
+                word-break: break-all;
+                width: 40vw;
+
+            }
         }
     </style>
     <script>
@@ -158,7 +237,7 @@
     <nav>
         <div>
             <a onclick="toggle_visibility('home')" role="button" tabindex="0" href="#home/">Home</a>
-            <a onclick="toggle_visibility('demos')" role="button" tabindex="0" href="#demos/">Project Demos</a>
+            <a onclick="toggle_visibility('demos')" role="button" tabindex="0" href="#demos/">Programming Projects</a>
             <a onclick="toggle_visibility('art')" role="button" tabindex="0" href="#art/">Art</a>
             <!--<div class="dropdown">
                 <a href="#">Project Websites▼</a>
@@ -178,7 +257,12 @@
                         <p><strong>Email:</strong> justin@jweb.dev</p>
                         <p><strong>Phone:</strong> (630) 880-7886</p>
                         <h2>About Me</h2>
-                        <p>Above all I'm passionate about creating things and learning how things work. I’m always looking for the next skill to learn and the next problem to set my mind to. For as long as I can remember I’ve been taking things apart in the attempt to discover how they function. It didn’t take long for me to apply that passion to software, and for the better part of my life I’ve been learning about programming, computers, and electronics both in and out of school. </p>
+                        <p>Above all I'm passionate about creating things and learning how things work. I’m always
+                            looking for the next skill to learn and the next problem to set my mind to. For as long as I
+                            can remember I’ve been taking things apart in the attempt to discover how they function. It
+                            didn’t take long for me to apply that passion to software, and for the better part of my
+                            life I’ve been learning about programming, computers, and electronics both in and out of
+                            school. </p>
                     </div>
                 </td>
                 <td>
@@ -190,7 +274,7 @@
                     <div>
                         <h2>Skills</h2>
                         <p>Python, Web Development, Leadership Skills, C / C++, Cybersecurity Target Analysis, Linux</p>
-                    
+
                         <h2>Education</h2>
                         <p><strong>Southern Illinois University – Carbondale, IL</strong> (Aug 2023 – Present)</p>
                         <p>Bachelor’s degree in Computer Science</p>
@@ -234,9 +318,9 @@
     </div>
     <div id="art" class="invisible">
         <table class="container align_top">
-            
+
             <tr class="art_item">
-                <td class="td_art_description">
+                <td class="td_description">
                     <h2>'Gary Fischer'</h2>
                     <p>India ink on paper</p>
                 </td>
@@ -245,7 +329,7 @@
                 </td>
             </tr>
             <tr class="art_item">
-                <td class="td_art_description">
+                <td class="td_description">
                     <h2>'The Fish'</h2>
                     <p>Carved linoleum print</p>
                 </td>
@@ -257,7 +341,7 @@
                 </td>
             </tr>
             <tr class="art_item">
-                <td class="td_art_description">
+                <td class="td_description">
                     <h2>Self Portrait</h2>
                     <p>Acrylic Paint on Canvas</p>
                 </td>
@@ -266,16 +350,20 @@
                 </td>
             </tr>
             <tr class="art_item">
-                <td class="td_art_description ">
+                <td class="td_description ">
                     <h2>Organic Television</h2>
                     <p>Cast Iron - Lost wax technique</p>
                 </td>
                 <td class="td_art_image_full" colspan="2">
-                    <iframe class="embedded_landscape" src="https://www.youtube.com/embed/AH_kq5zhvO4?si=KVcyx2h_5WNzxAJC" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+                    <iframe class="embedded_landscape"
+                        src="https://www.youtube.com/embed/AH_kq5zhvO4?si=KVcyx2h_5WNzxAJC" title="YouTube video player"
+                        frameborder="0"
+                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                        referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
                 </td>
             </tr>
             <tr class="art_item">
-                <td class="td_art_description">
+                <td class="td_description">
                     <h2>'Teeth'</h2>
                     <p>Acrylic Paint on Canvas</p>
                 </td>
@@ -284,7 +372,7 @@
                 </td>
             </tr>
             <tr class="art_item">
-                <td class="td_art_description">
+                <td class="td_description">
                     <h2>Puppet Head</h2>
                     <p>wire, tissue paper, glue, fabric</p>
                 </td>
@@ -292,8 +380,9 @@
                     <img class="art_image" src="puppet_image.jpg" alt="puppet" />
                 </td>
                 <td class="td_art_image fixed_width">
-                    <iframe class="embedded_portrait fixed_width" src="https://www.youtube.com/embed/5cZfCPcCd7M?si=VCmU5q9r1TFcm2k-"
-                        title="YouTube video player" frameborder="0"
+                    <iframe class="embedded_portrait fixed_width"
+                        src="https://www.youtube.com/embed/5cZfCPcCd7M?si=VCmU5q9r1TFcm2k-" title="YouTube video player"
+                        frameborder="0"
                         allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
                         allowfullscreen></iframe>
 
@@ -301,42 +390,130 @@
             </tr>
         </table>
     </div>
-    <div id="demos" class="invisible">
-        <table class="container align_top">
-            <tr class="art_item">
-                <td class="td_art_description ">
-                    <h2>Spinning Cube</h2>
-                    <p>C++ - a 3d spinning cube in the terminal</p>
-                </td>
-                <td class="td_art_image_full" colspan="2">
-                    <iframe class="embedded_landscape" src="https://www.youtube.com/embed/22J_g2LTdFI?si=16pp5EIvl6xfDuH6" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
-                </td>
-            </tr>
-            <tr class="art_item">
-                <td class="td_art_description ">
-                    <h2>Traffic Blaster</h2>
+    <div id="demos" class="invisible wrap_on_mobile center">
+        <table class="center no_whitespace">
+            <tr class="art_item center">
+                <td class="td_description align_top">
+                    <span>
+                        <h2 class="remove_vertical_margin">Traffic Blaster</h2>
+
+                        <p class="remove_vertical_margin">2024
+                            <a class="remove_vertical_margin"
+                                href="https://github.com/JustinBrownDev/Traffic_Blaster">github</a>
+                        </p>
+                    </span>
+
                     <p>Python - a library to create and manage several simulanteous OpenVPN instances</p>
+
                 </td>
                 <td class="td_art_image_full" colspan="2">
-                    <iframe class="embedded_landscape" src="https://www.youtube.com/embed/G5I3iAuYoNA?si=wAEQV7QPy0KdJHxg" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+                    <iframe class="embedded_landscape"
+                        src="https://www.youtube.com/embed/G5I3iAuYoNA?si=wAEQV7QPy0KdJHxg" title="YouTube video player"
+                        frameborder="0"
+                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                        referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
                 </td>
             </tr>
             <tr class="art_item">
-                <td class="td_art_description ">
-                    <h2>Cyberdeck</h2>
-                    <p>A Raspberry-pi computer & linear power supply I built for use with embedded projects</p>
+                <td class="td_description align_top">
+                    <span>
+                        <h2 class="remove_vertical_margin">Sliding Tiles</h2>
+                        <p class="remove_vertical_margin">2023
+                            <a href="https://github.com/JustinBrownDev/slidingTiles"
+                                class="remove_vertical_margin">github</a>
+                        </p>
+                    </span>
+
+                    <p>Python code based on the sliding tiles game where you have 8 tiles in a 3x3 grid with 1 missing,
+                        and you need to slide the tiles around to get the numbers in the right order or to complete a
+                        picture. This program finds all the possible game states and will provide a solution for any
+                        valid board state</p>
+                    <br />
+
                 </td>
                 <td class="td_art_image_full" colspan="2">
-                    <iframe class="embedded_landscape" src="https://www.youtube.com/embed/t5gVJymQnCY?si=i8-ev-ZdRH_ffaPG" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+                    <img class="embedded_landscape" src="sliding tiles.png" alt="Bibitinator image" />
                 </td>
             </tr>
             <tr class="art_item">
-                <td class="td_art_description ">
-                    <h2>EMP generator</h2>
+                <td class="td_description align_top">
+                    <span>
+                        <h2 class="remove_vertical_margin">Spinning Cube</h2>
+
+                        <p class="remove_vertical_margin">2022
+                            <a href="https://github.com/JustinBrownDev/Spinning-Cube-Cpp"
+                                class="remove_vertical_margin">github</a>
+                        </p>
+                    </span>
+
+                    <p>C++ - a 3d spinning cube in the terminal</p>
+
+                </td>
+                <td class="td_art_image_full" colspan="2">
+                    <iframe class="embedded_landscape"
+                        src="https://www.youtube.com/embed/22J_g2LTdFI?si=16pp5EIvl6xfDuH6" title="YouTube video player"
+                        frameborder="0"
+                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                        referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+                </td>
+            </tr>
+            <tr class="art_item">
+                <td class="td_description align_top">
+                    <span>
+                        <h2 class="remove_vertical_margin">Bibitinator</h2>
+
+                        <p class="remove_vertical_margin">2021
+                            <a href="https://github.com/JustinBrownDev/Bibitinator"
+                                class="remove_vertical_margin">github</a>
+                        </p>
+                    </span>
+
+                    <p> C# - file editor for the evolution simulator "The Bibites". Including editing the neural
+                        networks and genes of individual bibites and editing the simulation parameters of a saved game.
+                    </p>
+
+                    <br />
+                    <a href="https://the-bibites.fandom.com/wiki/Editing_Bibites_(Tutorial)">Tutorial on the Bibites
+                        Wiki</a>
+                </td>
+                <td class="td_art_image_full" colspan="2">
+                    <img class="embedded_landscape" src="bibitinator.png" alt="Bibitinator image" />
+                </td>
+            </tr>
+
+            <tr class="art_item">
+                <td class="td_description align_top">
+                    <span>
+                        <h2 class="remove_vertical_margin">Cyberdeck</h2>
+                        <p class="remove_vertical_margin">2024</p>
+                    </span>
+
+                    <p class="">A Raspberry-pi computer & linear power supply I built for use with embedded projects</p>
+
+                </td>
+                <td class="td_art_image_full" colspan="2">
+                    <iframe class="embedded_landscape"
+                        src="https://www.youtube.com/embed/t5gVJymQnCY?si=i8-ev-ZdRH_ffaPG" title="YouTube video player"
+                        frameborder="0"
+                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                        referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+                </td>
+            </tr>
+            <tr class="art_item">
+                <td class="td_description align_top">
+                    <span>
+                        <h2 class="remove_vertical_margin">EMP generator</h2>
+                        <p class="remove_vertical_margin">2024</p>
+                    </span>
+
                     <p>A simple low-powered emp generator made from an electric grill lighter</p>
                 </td>
                 <td class="td_art_image_full" colspan="2">
-                    <iframe class="embedded_landscape" src="https://www.youtube.com/embed/oh0h6ksnQ1Y?si=FjfqIkeDspeSYq09" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+                    <iframe class="embedded_landscape"
+                        src="https://www.youtube.com/embed/oh0h6ksnQ1Y?si=FjfqIkeDspeSYq09" title="YouTube video player"
+                        frameborder="0"
+                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                        referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
                 </td>
             </tr>
         </table>

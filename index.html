@@ -16,56 +16,42 @@
             color: var(--dark_primary);
             margin: 0;
             padding: 0;
+            min-height: 105vh;
+            display: grid;
+            grid-template-rows: auto 1fr auto;
         }
-
-        nav {
+        footer{
             background-color: var(--dark_primary);
             color: #fff;
-            padding: 15px;
+            text-align: center;
+            font-size: 12px;
+        }
+        nav {
+            text-align: center;
+            background-color: var(--dark_primary);
+            color: #fff;
+            padding: 10px;
             top: 0;
             justify-content: space-between;
             position: sticky;
+            z-index: 99;
+            
         }
+        .nav_wrapper {
+            display: inline-block;
+        }
+        .nav_wrapper a {
 
-        nav a {
             color: #fff;
             text-decoration: none;
             margin: 0 15px;
         }
-
-        .dropdown {
-            position: relative;
-            display: inline-block;
+        .nav_wrapper a:hover{
+            font-weight: 600;
+           letter-spacing: -0.042em;
         }
-
-        .dropdown-content {
-            display: none;
-            position: absolute;
-            background-color: #fff;
-            min-width: 160px;
-            box-shadow: 0px 8px 16px var(--dark_primary);
-        }
-
-        .dropdown-content a {
-            color: var(--dark_primary);
-            padding: 10px;
-            display: block;
-        }
-
-        .dropdown:hover .dropdown-content {
-            display: block;
-        }
-
         .container {
             margin: 20px auto 0px auto;
-        }
-
-
-
-
-        .center {
-            margin-left: auto;
-            margin-right: auto;
         }
 
         .resume-section {
@@ -75,11 +61,46 @@
         }
 
         .portrait {
-            align-content: start;
             max-width: 200px;
             border-radius: 5%;
             margin: 20px auto 0px auto;
         }
+
+        .invisible {
+            display: none;
+        }
+        
+        .td_description {
+            
+            text-align: left;
+            margin-right: 5px;
+            min-width: 300px;
+        }
+
+        .td_description p,.td_description
+        a {
+            text-align: left;
+        }
+
+       
+
+     
+
+        
+        .td_image iframe{
+            min-height: 100%;
+        }
+
+        
+        .td_image_doublewide iframe{
+           
+            height: 40vh;
+            max-height: 80vh;
+           
+        }
+        
+
+        
 
         .align_top {
             vertical-align: top;
@@ -90,100 +111,125 @@
             margin-top: 0px;
         }
 
-        .invisible {
-            display: none;
-        }
-
-        .faux_anchor {
-            cursor: pointer;
-        }
-
-        .td_description {
-            width: 30%;
-            text-align: left;
-            margin-right: 5px;
-            min-width: 300px;
-        }
-
-        .td_description p,
-        a {
-            text-align: left;
-        }
-
-        .td_art_image {
-            width: 35%;
-            max-width: 300px;
-        }
-
         @media all and (min-width: 760px) {
-            .td_art_image_full {
+        .slim_column{
+            width: 20vw;
+        }
+        .resume{
+            width: 40vw;
+        }
+        .td_description{
+            vertical-align: top;
+            padding-left: 7vw;
+
+        }
+            .portfolio_table{
+                white-space: preserve-spaces;
+            }
+            .td_description{
+            width: 30%;
+        }
+        .td_image img,.td_image
+        iframe {
+            max-width: 45%;
+            min-height:fit-content;
+            width: 49%;
+            padding-top: 15px;
+            position: relative;
+            float:left;
+
+        }
+        .td_image_doublewide img {
+            max-width: 90%;
+            height: 100%;
+            max-height: 80vh;
+            width: auto;
+            padding-top: 15px;
+            position: relative;
+            float:left;
+            
+            
+        }
+            .portfolio_table{
+                width: 80vw;
+                margin:auto;
+        }
+            .td_image_doublewide {
                 min-height: 30vh;
+                width: 50vw;
             }
 
             .no_whitespace {
                 white-space: line;
             }
+            .td_image_doublewide iframe{
+            width: 50vw;
+            padding-top: 15px;
+            position: relative;
+            float:left;
+            max-width: 90%;
         }
-
-        @media all and (min-width: 760px) {
-            .center {
-                width: 80vw;
-            }
+        .resume-section{
+            width: 80vw;
+            margin: auto;
         }
-
-        .td_art_image_full {
-            width: 70%;
-            max-width: 600px;
-
         }
-
-        .art_image {
-            max-width: 100%;
-            height: auto;
-
-        }
-
-        .art_image_halfsize {
-            max-width: 50%;
-            height: auto;
-        }
-
-        .art_item {
-            display: flex;
-        }
-
-        .embedded_portrait {
-            height: 100%
-        }
-
-        .embedded_landscape {
-
-            width: 100%;
-            height: 100%;
-            min-width: 300px;
-        }
-
-        .fixed_width {
-            width: 28vw !important;
-            max-width: 28vw !important;
-        }
-
-        .constrain_width {
-            max-width: 500px;
-        }
-
-        .remove_vertical_margin {
-            margin: auto 0px;
-        }
-
-
 
         @media all and (max-width: 759px) {
-
-            .wrap_on_mobile table {
-                width: 85%
+            .resume-section table {
+                display: block;
+                        }
+            .resume-section table td {
+                display: inline-block;
             }
+            .slim_column, .resume{
+                width: 90vw;
+                margin-left: auto;
+                margin-right: auto;
+            }
+            .portrait{
+                max-width: 160px;
+                float: left;
+                padding: 10px;
 
+            }
+            .portfolio_table{
+                width: 100vw;
+                margin:auto;
+
+            }
+            .td_image img,.td_image iframe{
+                max-width: 49%;
+                min-height:fit-content;
+                width: 50%;
+                   
+
+            }
+            .td_image_doublewide img {
+                height: 100%;
+                
+                
+                
+            }
+            .td_description{
+                width: 90%;
+                margin-left: auto;
+                margin-right: auto;
+            }
+            .td_image_doublewide,.td_image{
+                width: 90vw;
+                margin-left: auto;
+                margin-right: auto;
+            }
+            .td_image_doublewide img {
+                width: 90vw;
+            }
+            
+            .td_image_doublewide iframe{
+                width: 90vw;
+                height: 50vw;
+                
+            }
             .wrap_on_mobile table thead {
                 display: none;
             }
@@ -197,14 +243,13 @@
             .wrap_on_mobile table th {
                 content: attr(col);
                 font-weight: bold;
-                width: 40vw;
                 display: inline-block;
                 vertical-align: top
             }
 
             .wrap_on_mobile table td {
                 word-break: break-all;
-                width: 40vw;
+
 
             }
         }
@@ -229,16 +274,49 @@
             page_leaving.classList.add("invisible");
             page_going.classList.remove("invisible");
             current_page_id = page_id;
+            size_iframes();
+        }
+        function size_iframes(){
+            let td_image_elements = document.getElementsByClassName("td_image");
+            let elem_iframe;
+            let elem_reference;
+            console.log(td_image_elements)
+            for(let i =0; i < td_image_elements.length; i++){ 
+                elem_iframe = null;
+                elem_reference = null;
+                console.log(td_image_elements[i])
+                if (td_image_elements[i].children[0].nodeName == "IFRAME"){
+                    elem_iframe = td_image_elements[i].children[0];
+                    elem_reference = td_image_elements[i].children[1];
+                }
+                else if (td_image_elements[i].children[1].nodeName == "IFRAME"){
+                    elem_iframe = td_image_elements[i].children[1];
+                    elem_reference = td_image_elements[i].children[0];
+                }
+                console.log(elem_iframe);
+                console.log(elem_reference);
+                if (elem_iframe != null){
+                    elem_iframe.height = (elem_reference.offsetHeight-15)+"px";
+                    console.log(elem_reference.offsetHeight+"px");
+                }
+            }
         }
     </script>
 </head>
 
-<body>
+<body onresize="size_iframes()">
     <nav>
         <div>
-            <a onclick="toggle_visibility('home')" role="button" tabindex="0" href="#home/">Home</a>
-            <a onclick="toggle_visibility('demos')" role="button" tabindex="0" href="#demos/">Programming Projects</a>
-            <a onclick="toggle_visibility('art')" role="button" tabindex="0" href="#art/">Art</a>
+            <span>
+                <div class="nav_wrapper" style="width: 100px;"><a onclick="toggle_visibility('home')" role="button" tabindex="0" href="#home/">Home</a></div>
+                <div class="nav_wrapper" style="width: 200px;"><a onclick="toggle_visibility('demos')" role="button" tabindex="0" href="#demos/">Programming Projects</a></div>
+                <div class="nav_wrapper" style="width: 60px;"><a onclick="toggle_visibility('art')" role="button" tabindex="0" href="#art/">Art</a></div>
+    
+            </span>
+            
+            
+            
+            
             <!--<div class="dropdown">
                 <a href="#">Project Websites▼</a>
                 <div class="dropdown-content">
@@ -248,30 +326,14 @@
             </div>-->
         </div>
     </nav>
-    <div id="home" class="">
+    <div id="home" class="resume-section">
         <table class="container align_top">
             <tr>
-                <td class="constrain_width">
+                <td class="resume" colspan="2">
                     <div>
                         <h1>Justin Brown</h1>
                         <p><strong>Email:</strong> justin@jweb.dev</p>
                         <p><strong>Phone:</strong> (630) 880-7886</p>
-                        <h2>About Me</h2>
-                        <p>Above all I'm passionate about creating things and learning how things work. I’m always
-                            looking for the next skill to learn and the next problem to set my mind to. For as long as I
-                            can remember I’ve been taking things apart in the attempt to discover how they function. It
-                            didn’t take long for me to apply that passion to software, and for the better part of my
-                            life I’ve been learning about programming, computers, and electronics both in and out of
-                            school. </p>
-                    </div>
-                </td>
-                <td>
-                    <img class="portrait" src="me_smiling.jpg" alt="photo of myself" />
-                </td>
-            </tr>
-            <tr>
-                <td colspan="2">
-                    <div>
                         <h2>Skills</h2>
                         <p>Python, Web Development, Leadership Skills, C / C++, Cybersecurity Target Analysis, Linux</p>
 
@@ -283,130 +345,82 @@
                             <li>Completed courses in Machine Learning, Cybersecurity, and Software Development</li>
                         </ul>
                         <p><strong>College of DuPage – Glen Ellyn, IL</strong> (Aug 2019 – May 2023)</p>
-                        <h2>Programming Projects</h2>
-                        <ul>
-                            <li><strong>Web Development:</strong> Designed websites for vitalsage.com and
-                                brandyoupromotional.com.</li>
-                            <li><strong>Bibitinator:</strong> C# desktop app modifying game files for an evolution
-                                simulator.</li>
-                            <li><strong>Traffic Blaster:</strong> Python library managing multiple OpenVPN instances.
-                            </li>
-                            <li><strong>Spinning Cube:</strong> C++ console app simulating a 3D spinning cube with
-                                shadow rendering.</li>
-                        </ul>
+
                         <h2>Employment</h2>
                         <p><strong>DataAnnotation (2024 - Present)</strong> - AI Trainer</p>
-                        <ul>
-                            <li>Reviewing and correcting LLM chatbot responses for high-value training data.</li>
-                            <li>Testing and correcting AI-generated code snippets, API requests, and data structures.
-                            </li>
-                        </ul>
+
                         <p><strong>Hortons Home Lighting (2021-2023)</strong> - Warehouse Team Member</p>
-                        <ul>
-                            <li>Managed freight deliveries, assembled/delivered products, handled daily tasks.</li>
-                        </ul>
+
                         <p><strong>La Grange Theater (2018 – 2020)</strong> - Projectionist</p>
-                        <ul>
-                            <li>Operated projectors, scheduled movie playback, assisted with closing duties.</li>
-                        </ul>
-                        <h2>Other Skills & Hobbies</h2>
-                        <p>Drawing & Painting, Electronics Repair, Forklift Operation</p>
+
+                    </div>
+                </td>
+                <td class="slim_column">
+                    <img class="portrait" src="me_smiling.jpg" alt="photo of myself" />
+                    <h2>About Me</h2>
+                        <p>Above all I'm passionate about creating things and learning how things work. I’m always
+                            looking for the next skill to learn and the next problem to set my mind to. For as long as I
+                            can remember I’ve been taking things apart in the attempt to discover how they function. It
+                            didn’t take long for me to apply that passion to software, and for the better part of my
+                            life I’ve been learning about programming, computers, and electronics both in and out of
+                            school. </p>
+                </td>
+            </tr>
+            <tr>
+                <td colspan="2">
+                    <div>
+                        
+
                     </div>
                 </td>
             </tr>
         </table>
     </div>
-    <div id="art" class="invisible wrap_on_mobile center">
-        <table class="center no_whitespace">
-
-            <tr class="art_item">
-                <td class="td_description">
-                    <h2>'Gary Fischer'</h2>
-                    <p>India ink on paper</p>
-                </td>
-                <td class="td_art_image_full" colspan=2>
-                    <img class="art_image" src="bike.jpg" alt="Bike, Ink on Paper" />
-                </td>
+    <div id="art" class="invisible wrap_on_mobile">
+        <table class="portfolio_table">
+            <tr>
+                <td class="td_description"><h2>'Gary Fischer'</h2><p>India ink on paper</p></td>
+                <td class="td_image_doublewide" colspan=2><img src="bike.jpg" alt="Bike, Ink on Paper" /></td>
             </tr>
-            <tr class="art_item">
-                <td class="td_description">
-                    <h2>'The Fish'</h2>
-                    <p>Carved linoleum print</p>
-                </td>
-                <td class="td_art_image">
-                    <img class="art_image" src="lino.jpg" alt="linoleum block" />
-                </td>
-                <td class="td_art_image">
-                    <img class="art_image" src="lino_print.jpg" alt="linoleum print" />
-                </td>
+            <tr>
+                <td class="td_description"><h2>'The Fish'</h2><p>Carved linoleum print</p></td>
+                <td class="td_image"><img src="lino.jpg" alt="linoleum block" /><img src="lino_print.jpg" alt="linoleum print" /></td>
             </tr>
-            <tr class="art_item">
-                <td class="td_description">
-                    <h2>Self Portrait</h2>
-                    <p>Acrylic Paint on Canvas</p>
-                </td>
-                <td class="td_art_image_full" colspan="2">
-                    <img class="art_image" src="self_portrait.jpg" alt="Self Portrait" />
-                </td>
+            <tr>
+                <td class="td_description"><h2>Self Portrait</h2><p>Acrylic Paint on Canvas</p></td>
+                <td class="td_image_doublewide" colspan="2"><img src="self_portrait.jpg" alt="Self Portrait" /></td>
             </tr>
-            <tr class="art_item">
-                <td class="td_description ">
-                    <h2>Organic Television</h2>
-                    <p>Cast Iron - Lost wax technique</p>
-                </td>
-                <td class="td_art_image_full" colspan="2">
-                    <iframe class="embedded_landscape"
+            <tr>
+                <td class="td_description "><h2>Organic Television</h2><p>Cast Iron - Lost wax technique</p></td>
+                <td class="td_image_doublewide" colspan="2"><iframe class="embedded_landscape"
                         src="https://www.youtube.com/embed/AH_kq5zhvO4?si=KVcyx2h_5WNzxAJC" title="YouTube video player"
                         frameborder="0"
                         allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                        referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
-                </td>
+                        referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe></td>
             </tr>
-            <tr class="art_item">
-                <td class="td_description">
-                    <h2>'Teeth'</h2>
-                    <p>Acrylic Paint on Canvas</p>
-                </td>
-                <td class="td_art_image_full" colspan="2">
-                    <img class="art_image" src="teeth.jpg" alt="Teeth" />
-                </td>
+            <tr>
+                <td class="td_description"><h2>'Teeth'</h2><p>Acrylic Paint on Canvas</p></td>
+                <td class="td_image_doublewide" colspan="2"><img src="teeth.jpg" alt="Teeth" /></td>
             </tr>
-            <tr class="art_item">
-                <td class="td_description">
-                    <h2>Puppet Head</h2>
-                    <p>wire, tissue paper, glue, fabric</p>
-                </td>
-                <td class="td_art_image">
-                    <img class="art_image" src="puppet_image.jpg" alt="puppet" />
-                </td>
-                <td class="td_art_image fixed_width">
-                    <iframe class="embedded_portrait fixed_width"
+            <tr>
+                <td class="td_description"><h2>Puppet Head</h2><p>wire, tissue paper, glue, fabric</p></td>
+                <td class="td_image"><img src="puppet_image.jpg" alt="puppet" /><iframe
                         src="https://www.youtube.com/embed/5cZfCPcCd7M?si=VCmU5q9r1TFcm2k-" title="YouTube video player"
                         frameborder="0"
                         allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                        allowfullscreen></iframe>
-
-                </td>
+                        allowfullscreen></iframe></td>
             </tr>
         </table>
     </div>
-    <div id="demos" class="invisible wrap_on_mobile center">
-        <table class="center no_whitespace">
-            <tr class="art_item center">
-                <td class="td_description align_top">
-                    <span>
-                        <h2 class="remove_vertical_margin">Traffic Blaster</h2>
-
-                        <p class="remove_vertical_margin">2024
-                            <a class="remove_vertical_margin"
-                                href="https://github.com/JustinBrownDev/Traffic_Blaster">github</a>
-                        </p>
-                    </span>
+    <div id="demos" class="invisible wrap_on_mobile">
+        <table class="portfolio_table">
+            <tr class="">
+                <td class="td_description"><span><h2 class="">Traffic Blaster</h2><p class="">2024<br/><a class="" href="https://github.com/JustinBrownDev/Traffic_Blaster">github</a></p></span>
 
                     <p>Python - a library to create and manage several simulanteous OpenVPN instances</p>
 
                 </td>
-                <td class="td_art_image_full" colspan="2">
+                <td class="td_image_doublewide" colspan="2">
                     <iframe class="embedded_landscape"
                         src="https://www.youtube.com/embed/G5I3iAuYoNA?si=wAEQV7QPy0KdJHxg" title="YouTube video player"
                         frameborder="0"
@@ -414,42 +428,33 @@
                         referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
                 </td>
             </tr>
-            <tr class="art_item">
-                <td class="td_description align_top">
+            <tr>
+                <td class="td_description">
                     <span>
-                        <h2 class="remove_vertical_margin">Sliding Tiles</h2>
-                        <p class="remove_vertical_margin">2023
-                            <a href="https://github.com/JustinBrownDev/slidingTiles"
-                                class="remove_vertical_margin">github</a>
-                        </p>
+                        <h2 class="">Sliding Tiles</h2><p class="">2023<br/><a href="https://github.com/JustinBrownDev/slidingTiles" class="">github</a></p>
                     </span>
 
-                    <p>Python code based on the sliding tiles game where you have 8 tiles in a 3x3 grid with 1 missing,
-                        and you need to slide the tiles around to get the numbers in the right order or to complete a
-                        picture. This program finds all the possible game states and will provide a solution for any
-                        valid board state</p>
-                    <br />
+                    <p>Python code based on the sliding tiles game where you have 8 tiles in a 3x3 grid with 1 missing, and you need to slide the tiles around to get the numbers in the right order or to complete a picture. This program finds all the possible game states and will provide a solution for any valid board state</p>
+                    
 
                 </td>
-                <td class="td_art_image_full" colspan="2">
+                <td class="td_image_doublewide" colspan="2">
                     <img class="embedded_landscape" src="sliding tiles.png" alt="Sliding tiles image" />
                 </td>
             </tr>
-            <tr class="art_item">
-                <td class="td_description align_top">
+            <tr>
+                <td class="td_description">
                     <span>
-                        <h2 class="remove_vertical_margin">Spinning Cube</h2>
+                        <h2 class="">Spinning Cube</h2>
 
-                        <p class="remove_vertical_margin">2022
-                            <a href="https://github.com/JustinBrownDev/Spinning-Cube-Cpp"
-                                class="remove_vertical_margin">github</a>
-                        </p>
+                        <p class="">2022<br/><a href="https://github.com/JustinBrownDev/Spinning-Cube-Cpp" class="">github</a></p>
+                        
                     </span>
 
                     <p>C++ - a 3d spinning cube in the terminal</p>
 
                 </td>
-                <td class="td_art_image_full" colspan="2">
+                <td class="td_image_doublewide" colspan="2">
                     <iframe class="embedded_landscape"
                         src="https://www.youtube.com/embed/22J_g2LTdFI?si=16pp5EIvl6xfDuH6" title="YouTube video player"
                         frameborder="0"
@@ -457,41 +462,33 @@
                         referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
                 </td>
             </tr>
-            <tr class="art_item">
-                <td class="td_description align_top">
+            <tr>
+                <td class="td_description">
                     <span>
-                        <h2 class="remove_vertical_margin">Bibitinator</h2>
+                        <h2 class="">Bibitinator</h2>
 
-                        <p class="remove_vertical_margin">2021
-                            <a href="https://github.com/JustinBrownDev/Bibitinator"
-                                class="remove_vertical_margin">github</a>
-                        </p>
+                        <p class="">2021<br/><a href="https://github.com/JustinBrownDev/Bibitinator" class="">github</a></p>
                     </span>
 
-                    <p> C# - file editor for the evolution simulator "The Bibites". Including editing the neural
-                        networks and genes of individual bibites and editing the simulation parameters of a saved game.
-                    </p>
-
-                    <br />
-                    <a href="https://the-bibites.fandom.com/wiki/Editing_Bibites_(Tutorial)">Tutorial on the Bibites
-                        Wiki</a>
+                    <p> C# - file editor for the evolution simulator "The Bibites". Including editing the neural networks and genes of individual bibites and editing the simulation parameters of a saved game.<br/><br/><a href="https://the-bibites.fandom.com/wiki/Editing_Bibites_(Tutorial)">Tutorial on the Bibites Wiki</a></p>
+                    
                 </td>
-                <td class="td_art_image_full" colspan="2">
+                <td class="td_image_doublewide" colspan="2">
                     <img class="embedded_landscape" src="bibitinator.png" alt="Bibitinator image" />
                 </td>
             </tr>
 
-            <tr class="art_item">
-                <td class="td_description align_top">
+            <tr>
+                <td class="td_description">
                     <span>
-                        <h2 class="remove_vertical_margin">Cyberdeck</h2>
-                        <p class="remove_vertical_margin">2024</p>
+                        <h2 class="">Cyberdeck</h2>
+                        <p class="">2024</p>
                     </span>
 
                     <p class="">A Raspberry-pi computer & linear power supply I built for use with embedded projects</p>
 
                 </td>
-                <td class="td_art_image_full" colspan="2">
+                <td class="td_image_doublewide" colspan="2">
                     <iframe class="embedded_landscape"
                         src="https://www.youtube.com/embed/t5gVJymQnCY?si=i8-ev-ZdRH_ffaPG" title="YouTube video player"
                         frameborder="0"
@@ -499,17 +496,17 @@
                         referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
                 </td>
             </tr>
-            <tr class="art_item">
-                <td class="td_description align_top">
+            <tr>
+                <td class="td_description">
                     <span>
-                        <h2 class="remove_vertical_margin">EMP generator</h2>
-                        <p class="remove_vertical_margin">2024</p>
+                        <h2 class="">EMP generator</h2>
+                        <p class="">2024</p>
                     </span>
 
                     <p>A simple low-powered emp generator made from an electric grill lighter</p>
                 </td>
-                <td class="td_art_image_full" colspan="2">
-                    <iframe class="embedded_landscape"
+                <td class="td_image_doublewide" colspan="2">
+                    <iframe class="embedded_landscape" onload="size_iframes()"
                         src="https://www.youtube.com/embed/oh0h6ksnQ1Y?si=FjfqIkeDspeSYq09" title="YouTube video player"
                         frameborder="0"
                         allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
@@ -522,8 +519,9 @@
 
     <script>
         check_for_specific_page_on_load();
+        size_iframes();
     </script>
 
 </body>
-
+<footer><span>Justin Brown 2025</span></footer>
 </html>

@@ -36,7 +36,7 @@
             font-size: 12px;
         }
         nav {
-            text-align: center;
+            
             background-color: var(--dark_secondary);
             color: var(--light_primary);
             padding: 10px;
@@ -46,7 +46,16 @@
             z-index: 99;
             
         }
+        .nav_spacer{
+            width:calc(100vw - 500px);
+        }
+        .nav_links{
+            margin-left: 10px;
+            margin-right: 10px;
+            text-align: right;
+        }
         .nav_wrapper {
+            
             display: inline-block;
         }
         .nav_wrapper a {
@@ -62,7 +71,7 @@
         .container {
             margin: 20px auto 0px auto;
         }
-
+        
         .resume-section {
             display: flex;
             align-items: center;
@@ -121,7 +130,12 @@
             margin-top: 0px;
         }
 
-        @media all and (min-width: 760px) {
+        @media all and (min-width: 1000px) {
+            .home_wrapper{
+                width: 80vw;
+                margin-left:auto;
+                margin-right: auto;
+            }
         .slim_column{
             width: 20vw;
         }
@@ -185,7 +199,12 @@
         }
         }
 
-        @media all and (max-width: 759px) {
+        @media all and (max-width: 999px) {
+            .home_wrapper{
+                width: 92vw;
+                margin-left:auto;
+                margin-right: auto;
+            }
             .resume-section table {
                 display: block;
                         }
@@ -316,17 +335,15 @@
 
 <body onresize="size_iframes()">
     <nav>
-        <div>
-            <span>
+        <span>
+        <div class="nav_links">
                 <div class="nav_wrapper" style="width: 100px;"><a onclick="toggle_visibility('home')" role="button" tabindex="0" href="#home/">Home</a></div>
+                <div class="nav_wrapper nav_spacer"></div>
+                
                 <div class="nav_wrapper" style="width: 200px;"><a onclick="toggle_visibility('demos')" role="button" tabindex="0" href="#demos/">Programming Projects</a></div>
                 <div class="nav_wrapper" style="width: 60px;"><a onclick="toggle_visibility('art')" role="button" tabindex="0" href="#art/">Art</a></div>
     
-            </span>
-            
-            
-            
-            
+           
             <!--<div class="dropdown">
                 <a href="#">Project Websites▼</a>
                 <div class="dropdown-content">
@@ -335,56 +352,60 @@
                 </div>
             </div>-->
         </div>
+    </span>
     </nav>
     <div id="home" class="resume-section">
-        <table class="container align_top">
-            <tr>
-                <td class="resume" colspan="2">
-                    <div>
-                        <h1>Justin Brown</h1>
-                        <p><strong>Email:</strong> justin@jweb.dev</p>
-                        <p><strong>Phone:</strong> (630) 880-7886</p>
-                        <h2>Skills</h2>
-                        <p>Python, Web Development, Leadership Skills, C / C++, Cybersecurity Target Analysis, Linux</p>
-
-                        <h2>Education</h2>
-                        <p><strong>Southern Illinois University – Carbondale, IL</strong> (Aug 2023 – Present)</p>
-                        <p>Bachelor’s degree in Computer Science</p>
-                        <ul>
-                            <li>Vice-President of Association of Computing Machinery</li>
-                            <li>Completed courses in Machine Learning, Cybersecurity, and Software Development</li>
-                        </ul>
-                        <p><strong>College of DuPage – Glen Ellyn, IL</strong> (Aug 2019 – May 2023)</p>
-
-                        <h2>Employment</h2>
-                        <p><strong>DataAnnotation (2024 - Present)</strong> - AI Trainer</p>
-
-                        <p><strong>Hortons Home Lighting (2021-2023)</strong> - Warehouse Team Member</p>
-
-                        <p><strong>La Grange Theater (2018 – 2020)</strong> - Projectionist</p>
-
-                    </div>
-                </td>
-                <td class="slim_column">
-                    <img class="portrait" src="me_smiling.jpg" alt="photo of myself" />
-                    <h2>About Me</h2>
-                        <p>Above all I'm passionate about creating things and learning how things work. I’m always
-                            looking for the next skill to learn and the next problem to set my mind to. For as long as I
-                            can remember I’ve been taking things apart in the attempt to discover how they function. It
-                            didn’t take long for me to apply that passion to software, and for the better part of my
-                            life I’ve been learning about programming, computers, and electronics both in and out of
-                            school. </p>
-                </td>
-            </tr>
-            <tr>
-                <td colspan="2">
-                    <div>
-                        
-
-                    </div>
-                </td>
-            </tr>
-        </table>
+        <div class="home_wrapper">
+            <table class="container align_top">
+                <tr>
+                    <td class="resume" colspan="2">
+                        <div>
+                            <h1>Justin Brown</h1>
+                            <p><strong>Email:</strong> justin@jweb.dev</p>
+                            <p><strong>Phone:</strong> (630) 880-7886</p>
+                            <h2>Skills</h2>
+                            <p>Python, Web Development, Leadership Skills, C / C++, Cybersecurity Target Analysis, Linux</p>
+    
+                            <h2>Education</h2>
+                            <p><strong>Southern Illinois University – Carbondale, IL</strong> (Aug 2023 – Present)</p>
+                            <p>Bachelor’s degree in Computer Science</p>
+                            <ul>
+                                <li>Vice-President of Association of Computing Machinery</li>
+                                <li>Completed courses in Machine Learning, Cybersecurity, and Software Development</li>
+                            </ul>
+                            <p><strong>College of DuPage – Glen Ellyn, IL</strong> (Aug 2019 – May 2023)</p>
+    
+                            <h2>Employment</h2>
+                            <p><strong>DataAnnotation (2024 - Present)</strong> - AI Trainer</p>
+    
+                            <p><strong>Hortons Home Lighting (2021-2023)</strong> - Warehouse Team Member</p>
+    
+                            <p><strong>La Grange Theater (2018 – 2020)</strong> - Projectionist</p>
+    
+                        </div>
+                    </td>
+                    <td class="slim_column">
+                        <img class="portrait" src="me_smiling.jpg" alt="photo of myself" />
+                        <h2>About Me</h2>
+                            <p>Above all I'm passionate about creating things and learning how things work. I’m always
+                                looking for the next skill to learn and the next problem to set my mind to. For as long as I
+                                can remember I’ve been taking things apart in the attempt to discover how they function. It
+                                didn’t take long for me to apply that passion to software, and for the better part of my
+                                life I’ve been learning about programming, computers, and electronics both in and out of
+                                school. </p>
+                    </td>
+                </tr>
+                <tr>
+                    <td colspan="2">
+                        <div>
+                            
+    
+                        </div>
+                    </td>
+                </tr>
+            </table>
+        </div>
+        
     </div>
     <div id="art" class="invisible wrap_on_mobile">
         <table class="portfolio_table">
@@ -441,6 +462,22 @@
             <tr>
                 <td class="td_description">
                     <span>
+                        <h2 class="">VitalSage</h2>
+
+                        <p class="">2024<br/><a href="https://vitalsage.com/" class="">visit</a></p>
+                        
+                    </span>
+
+                    <p>A wordpress site I designed for a foot health consultant</p>
+
+                </td>
+                <td class="td_image_doublewide" colspan="2">
+                    <img class="embedded_landscape" src="vitalsage.png" alt="vital sage image" />
+                </td>
+            </tr>
+            <tr>
+                <td class="td_description">
+                    <span>
                         <h2 class="">Sliding Tiles</h2><p class="">2023<br/><a href="https://github.com/JustinBrownDev/slidingTiles" class="">github</a></p>
                     </span>
 
@@ -487,7 +524,23 @@
                     <img class="embedded_landscape" src="bibitinator.png" alt="Bibitinator image" />
                 </td>
             </tr>
+            
+            <tr>
+                <td class="td_description">
+                    <span>
+                        <h2 class="">brandyoupromotional</h2>
 
+                        <p class="">2022<br/><a href="https://www.brandyoupromotional.com/" class="">visit</a></p>
+                        
+                    </span>
+
+                    <p>An ASP.net site I built for a branded merchandise designer</p>
+
+                </td>
+                <td class="td_image_doublewide" colspan="2">
+                    <img class="embedded_landscape" src="brandyou.png" alt="Brand You image" />
+                </td>
+            </tr>
             <tr>
                 <td class="td_description">
                     <span>
@@ -499,11 +552,7 @@
 
                 </td>
                 <td class="td_image_doublewide" colspan="2">
-                    <iframe class="embedded_landscape"
-                        src="https://www.youtube.com/embed/t5gVJymQnCY?si=i8-ev-ZdRH_ffaPG" title="YouTube video player"
-                        frameborder="0"
-                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                        referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+                    <iframe class="embedded_landscape" src="https://www.youtube.com/embed/t5gVJymQnCY?si=i8-ev-ZdRH_ffaPG" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen=""></iframe>
                 </td>
             </tr>
             <tr>

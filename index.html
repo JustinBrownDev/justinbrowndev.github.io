@@ -7,12 +7,15 @@
     <title>My Portfolio</title>
     <style>
         :root {
-            --dark_primary: #0c0e14;
+            --dark_primary: #191f36;
+            --dark_secondary: #303853;
+            --light_primary: #fbfcff;
+            --light_secondary: #d1d9f5;
         }
 
         body {
             font-family: Arial, sans-serif;
-            background-color: #fff;
+            background-color: var(--light_primary);
             color: var(--dark_primary);
             margin: 0;
             padding: 0;
@@ -20,16 +23,22 @@
             display: grid;
             grid-template-rows: auto 1fr auto;
         }
+        h1,h2,h3 {
+            color: var(--dark_primary)
+        }
+        h4,h5,h6,p{
+            color: #010101
+        }
         footer{
-            background-color: var(--dark_primary);
-            color: #fff;
+            background-color: var(--dark_secondary);
+            color: var(--light_primary);
             text-align: center;
             font-size: 12px;
         }
         nav {
             text-align: center;
-            background-color: var(--dark_primary);
-            color: #fff;
+            background-color: var(--dark_secondary);
+            color: var(--light_primary);
             padding: 10px;
             top: 0;
             justify-content: space-between;
@@ -42,7 +51,7 @@
         }
         .nav_wrapper a {
 
-            color: #fff;
+            color: var(--light_primary);
             text-decoration: none;
             margin: 0 15px;
         }
@@ -61,9 +70,10 @@
         }
 
         .portrait {
-            max-width: 200px;
+            max-width: 300px;
             border-radius: 5%;
             margin: 20px auto 0px auto;
+            padding:15px;
         }
 
         .invisible {

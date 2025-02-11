@@ -11,11 +11,14 @@
             --dark_secondary: #303853;
             --light_primary: #fbfcff;
             --light_secondary: #d1d9f5;
+            --background-trans-overlay: rgba(255, 255, 255, 0.96);
         }
 
         body {
             font-family: Arial, sans-serif;
             background-color: var(--light_primary);
+            background-image: url('site_bg.png');
+            background-size: 100%, auto;
             color: var(--dark_primary);
             margin: 0;
             padding: 0;
@@ -135,6 +138,15 @@
                 width: 80vw;
                 margin-left:auto;
                 margin-right: auto;
+                background-color: var(--background-trans-overlay);
+                height: 100vh;
+            }
+            .background_container{
+                width: 80vw;
+                background-color: var(--background-trans-overlay);
+                height: 100%;
+                margin-left:auto;
+                margin-right: auto;
             }
         .slim_column{
             width: 20vw;
@@ -200,8 +212,26 @@
         }
 
         @media all and (max-width: 999px) {
+            .nav_wrapper{
+                display: inline;
+            }
+            .nav_spacer{
+                width: 0px;
+            }
+            .nav_links{
+                margin: 0px;
+            }
             .home_wrapper{
-                width: 92vw;
+                width: 90vw;
+                margin-left:auto;
+                margin-right: auto;
+                background-color: var(--background-trans-overlay);
+                height: 100%;
+            }
+            .background_container{
+                width: 95vw;
+                background-color: var(--background-trans-overlay);
+                height: 100%;
                 margin-left:auto;
                 margin-right: auto;
             }
@@ -223,7 +253,7 @@
 
             }
             .portfolio_table{
-                width: 100vw;
+                width: 90vw;
                 margin:auto;
 
             }
@@ -259,24 +289,24 @@
                 height: 50vw;
                 
             }
-            .wrap_on_mobile table thead {
+            .wrap_on_mobile div table thead {
                 display: none;
             }
 
-            .wrap_on_mobile table tr {
+            .wrap_on_mobile div table tr {
                 display: flex;
                 flex-direction: column;
 
             }
 
-            .wrap_on_mobile table th {
+            .wrap_on_mobile div table th {
                 content: attr(col);
                 font-weight: bold;
                 display: inline-block;
                 vertical-align: top
             }
 
-            .wrap_on_mobile table td {
+            .wrap_on_mobile div table td {
                 word-break: break-all;
 
 
@@ -408,171 +438,179 @@
         
     </div>
     <div id="art" class="invisible wrap_on_mobile">
-        <table class="portfolio_table">
-            <tr>
-                <td class="td_description"><h2>'Gary Fischer'</h2><p>India ink on paper</p></td>
-                <td class="td_image_doublewide" colspan=2><img src="bike.jpg" alt="Bike, Ink on Paper" /></td>
-            </tr>
-            <tr>
-                <td class="td_description"><h2>'The Fish'</h2><p>Carved linoleum print</p></td>
-                <td class="td_image"><img src="lino.jpg" alt="linoleum block" /><img src="lino_print.jpg" alt="linoleum print" /></td>
-            </tr>
-            <tr>
-                <td class="td_description"><h2>Self Portrait</h2><p>Acrylic Paint on Canvas</p></td>
-                <td class="td_image_doublewide" colspan="2"><img src="self_portrait.jpg" alt="Self Portrait" /></td>
-            </tr>
-            <tr>
-                <td class="td_description "><h2>Organic Television</h2><p>Cast Iron - Lost wax technique</p></td>
-                <td class="td_image_doublewide" colspan="2"><iframe class="embedded_landscape"
-                        src="https://www.youtube.com/embed/AH_kq5zhvO4?si=KVcyx2h_5WNzxAJC" title="YouTube video player"
-                        frameborder="0"
-                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                        referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe></td>
-            </tr>
-            <tr>
-                <td class="td_description"><h2>'Teeth'</h2><p>Acrylic Paint on Canvas</p></td>
-                <td class="td_image_doublewide" colspan="2"><img src="teeth.jpg" alt="Teeth" /></td>
-            </tr>
-            <tr>
-                <td class="td_description"><h2>Puppet Head</h2><p>wire, tissue paper, glue, fabric</p></td>
-                <td class="td_image"><img src="puppet_image.jpg" alt="puppet" /><iframe
-                        src="https://www.youtube.com/embed/5cZfCPcCd7M?si=VCmU5q9r1TFcm2k-" title="YouTube video player"
-                        frameborder="0"
-                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                        allowfullscreen></iframe></td>
-            </tr>
-        </table>
+        <div class="background_container">
+            <table class="portfolio_table">
+                <tr>
+                    <td class="td_description"><h2>'Teeth'</h2><p>Acrylic Paint on Canvas</p></td>
+                    <td class="td_image_doublewide" colspan="2"><img src="teeth.jpg" alt="Teeth" /></td>
+                </tr>
+                <tr>
+                    <td class="td_description"><h2>Self Portrait</h2><p>Acrylic Paint on Canvas</p></td>
+                    <td class="td_image_doublewide" colspan="2"><img src="self_portrait.jpg" alt="Self Portrait" /></td>
+                </tr>
+                <tr>
+                    <td class="td_description"><h2>'Gary Fischer'</h2><p>India ink on paper</p></td>
+                    <td class="td_image_doublewide" colspan=2><img src="bike.jpg" alt="Bike, Ink on Paper" /></td>
+                </tr>
+                <tr>
+                    <td class="td_description"><h2>'The Fish'</h2><p>Carved linoleum print</p></td>
+                    <td class="td_image"><img src="lino.jpg" alt="linoleum block" /><img src="lino_print.jpg" alt="linoleum print" /></td>
+                </tr>
+               
+                <tr>
+                    <td class="td_description "><h2>Organic Television</h2><p>Cast Iron - Lost wax technique</p></td>
+                    <td class="td_image_doublewide" colspan="2"><iframe class="embedded_landscape"
+                            src="https://www.youtube.com/embed/AH_kq5zhvO4?si=KVcyx2h_5WNzxAJC" title="YouTube video player"
+                            frameborder="0"
+                            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                            referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe></td>
+                </tr>
+                
+                <tr>
+                    <td class="td_description"><h2>Puppet Head</h2><p>wire, tissue paper, glue, fabric</p></td>
+                    <td class="td_image"><img src="puppet_image.jpg" alt="puppet" /><iframe
+                            src="https://www.youtube.com/embed/5cZfCPcCd7M?si=VCmU5q9r1TFcm2k-" title="YouTube video player"
+                            frameborder="0"
+                            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                            allowfullscreen></iframe></td>
+                </tr>
+            </table>
+        </div>
+        
     </div>
     <div id="demos" class="invisible wrap_on_mobile">
-        <table class="portfolio_table">
-            <tr class="">
-                <td class="td_description"><span><h2 class="">Traffic Blaster</h2><p class="">2024<br/><a class="" href="https://github.com/JustinBrownDev/Traffic_Blaster">github</a></p></span>
-
-                    <p>Python - a library to create and manage several simulanteous OpenVPN instances</p>
-
-                </td>
-                <td class="td_image_doublewide" colspan="2">
-                    <iframe class="embedded_landscape"
-                        src="https://www.youtube.com/embed/G5I3iAuYoNA?si=wAEQV7QPy0KdJHxg" title="YouTube video player"
-                        frameborder="0"
-                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                        referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
-                </td>
-            </tr>
-            <tr>
-                <td class="td_description">
-                    <span>
-                        <h2 class="">VitalSage</h2>
-
-                        <p class="">2024<br/><a href="https://vitalsage.com/" class="">visit</a></p>
+        <div class="background_container">
+            <table class="portfolio_table">
+                <tr class="">
+                    <td class="td_description"><span><h2 class="">Traffic Blaster</h2><p class="">2024<br/><a class="" href="https://github.com/JustinBrownDev/Traffic_Blaster">github</a></p></span>
+    
+                        <p>Python - a library to create and manage several simulanteous OpenVPN instances</p>
+    
+                    </td>
+                    <td class="td_image_doublewide" colspan="2">
+                        <iframe class="embedded_landscape"
+                            src="https://www.youtube.com/embed/G5I3iAuYoNA?si=wAEQV7QPy0KdJHxg" title="YouTube video player"
+                            frameborder="0"
+                            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                            referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+                    </td>
+                </tr>
+                <tr>
+                    <td class="td_description">
+                        <span>
+                            <h2 class="">VitalSage</h2>
+    
+                            <p class="">2024<br/><a href="https://vitalsage.com/" class="">visit</a></p>
+                            
+                        </span>
+    
+                        <p>A wordpress site I designed for a foot health consultant</p>
+    
+                    </td>
+                    <td class="td_image_doublewide" colspan="2">
+                        <img class="embedded_landscape" src="vitalsage.png" alt="vital sage image" />
+                    </td>
+                </tr>
+                <tr>
+                    <td class="td_description">
+                        <span>
+                            <h2 class="">Sliding Tiles</h2><p class="">2023<br/><a href="https://github.com/JustinBrownDev/slidingTiles" class="">github</a></p>
+                        </span>
+    
+                        <p>Python code based on the sliding tiles game where you have 8 tiles in a 3x3 grid with 1 missing, and you need to slide the tiles around to get the numbers in the right order or to complete a picture. This program finds all the possible game states and will provide a solution for any valid board state</p>
                         
-                    </span>
-
-                    <p>A wordpress site I designed for a foot health consultant</p>
-
-                </td>
-                <td class="td_image_doublewide" colspan="2">
-                    <img class="embedded_landscape" src="vitalsage.png" alt="vital sage image" />
-                </td>
-            </tr>
-            <tr>
-                <td class="td_description">
-                    <span>
-                        <h2 class="">Sliding Tiles</h2><p class="">2023<br/><a href="https://github.com/JustinBrownDev/slidingTiles" class="">github</a></p>
-                    </span>
-
-                    <p>Python code based on the sliding tiles game where you have 8 tiles in a 3x3 grid with 1 missing, and you need to slide the tiles around to get the numbers in the right order or to complete a picture. This program finds all the possible game states and will provide a solution for any valid board state</p>
-                    
-
-                </td>
-                <td class="td_image_doublewide" colspan="2">
-                    <img class="embedded_landscape" src="sliding tiles.png" alt="Sliding tiles image" />
-                </td>
-            </tr>
-            <tr>
-                <td class="td_description">
-                    <span>
-                        <h2 class="">Spinning Cube</h2>
-
-                        <p class="">2022<br/><a href="https://github.com/JustinBrownDev/Spinning-Cube-Cpp" class="">github</a></p>
+    
+                    </td>
+                    <td class="td_image_doublewide" colspan="2">
+                        <img class="embedded_landscape" src="sliding tiles.png" alt="Sliding tiles image" />
+                    </td>
+                </tr>
+                <tr>
+                    <td class="td_description">
+                        <span>
+                            <h2 class="">Spinning Cube</h2>
+    
+                            <p class="">2022<br/><a href="https://github.com/JustinBrownDev/Spinning-Cube-Cpp" class="">github</a></p>
+                            
+                        </span>
+    
+                        <p>C++ - a 3d spinning cube in the terminal</p>
+    
+                    </td>
+                    <td class="td_image_doublewide" colspan="2">
+                        <iframe class="embedded_landscape"
+                            src="https://www.youtube.com/embed/22J_g2LTdFI?si=16pp5EIvl6xfDuH6" title="YouTube video player"
+                            frameborder="0"
+                            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                            referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+                    </td>
+                </tr>
+                <tr>
+                    <td class="td_description">
+                        <span>
+                            <h2 class="">Bibitinator</h2>
+    
+                            <p class="">2021<br/><a href="https://github.com/JustinBrownDev/Bibitinator" class="">github</a></p>
+                        </span>
+    
+                        <p> C# - file editor for the evolution simulator "The Bibites". Including editing the neural networks and genes of individual bibites and editing the simulation parameters of a saved game.<br/><br/><a href="https://the-bibites.fandom.com/wiki/Editing_Bibites_(Tutorial)">Tutorial on the Bibites Wiki</a></p>
                         
-                    </span>
-
-                    <p>C++ - a 3d spinning cube in the terminal</p>
-
-                </td>
-                <td class="td_image_doublewide" colspan="2">
-                    <iframe class="embedded_landscape"
-                        src="https://www.youtube.com/embed/22J_g2LTdFI?si=16pp5EIvl6xfDuH6" title="YouTube video player"
-                        frameborder="0"
-                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                        referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
-                </td>
-            </tr>
-            <tr>
-                <td class="td_description">
-                    <span>
-                        <h2 class="">Bibitinator</h2>
-
-                        <p class="">2021<br/><a href="https://github.com/JustinBrownDev/Bibitinator" class="">github</a></p>
-                    </span>
-
-                    <p> C# - file editor for the evolution simulator "The Bibites". Including editing the neural networks and genes of individual bibites and editing the simulation parameters of a saved game.<br/><br/><a href="https://the-bibites.fandom.com/wiki/Editing_Bibites_(Tutorial)">Tutorial on the Bibites Wiki</a></p>
-                    
-                </td>
-                <td class="td_image_doublewide" colspan="2">
-                    <img class="embedded_landscape" src="bibitinator.png" alt="Bibitinator image" />
-                </td>
-            </tr>
-            
-            <tr>
-                <td class="td_description">
-                    <span>
-                        <h2 class="">brandyoupromotional</h2>
-
-                        <p class="">2022<br/><a href="https://www.brandyoupromotional.com/" class="">visit</a></p>
-                        
-                    </span>
-
-                    <p>An ASP.net site I built for a branded merchandise designer</p>
-
-                </td>
-                <td class="td_image_doublewide" colspan="2">
-                    <img class="embedded_landscape" src="brandyou.png" alt="Brand You image" />
-                </td>
-            </tr>
-            <tr>
-                <td class="td_description">
-                    <span>
-                        <h2 class="">Cyberdeck</h2>
-                        <p class="">2024</p>
-                    </span>
-
-                    <p class="">A Raspberry-pi computer & linear power supply I built for use with embedded projects</p>
-
-                </td>
-                <td class="td_image_doublewide" colspan="2">
-                    <iframe class="embedded_landscape" src="https://www.youtube.com/embed/t5gVJymQnCY?si=i8-ev-ZdRH_ffaPG" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen=""></iframe>
-                </td>
-            </tr>
-            <tr>
-                <td class="td_description">
-                    <span>
-                        <h2 class="">EMP generator</h2>
-                        <p class="">2024</p>
-                    </span>
-
-                    <p>A simple low-powered emp generator made from an electric grill lighter</p>
-                </td>
-                <td class="td_image_doublewide" colspan="2">
-                    <iframe class="embedded_landscape" onload="size_iframes()"
-                        src="https://www.youtube.com/embed/oh0h6ksnQ1Y?si=FjfqIkeDspeSYq09" title="YouTube video player"
-                        frameborder="0"
-                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                        referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
-                </td>
-            </tr>
-        </table>
+                    </td>
+                    <td class="td_image_doublewide" colspan="2">
+                        <img class="embedded_landscape" src="bibitinator.png" alt="Bibitinator image" />
+                    </td>
+                </tr>
+                
+                <tr>
+                    <td class="td_description">
+                        <span>
+                            <h2 class="">brandyoupromotional</h2>
+    
+                            <p class="">2022<br/><a href="https://www.brandyoupromotional.com/" class="">visit</a></p>
+                            
+                        </span>
+    
+                        <p>An ASP.net site I built for a branded merchandise designer</p>
+    
+                    </td>
+                    <td class="td_image_doublewide" colspan="2">
+                        <img class="embedded_landscape" src="brandyou.png" alt="Brand You image" />
+                    </td>
+                </tr>
+                <tr>
+                    <td class="td_description">
+                        <span>
+                            <h2 class="">Cyberdeck</h2>
+                            <p class="">2024</p>
+                        </span>
+    
+                        <p class="">A Raspberry-pi computer & linear power supply I built for use with embedded projects</p>
+    
+                    </td>
+                    <td class="td_image_doublewide" colspan="2">
+                        <iframe class="embedded_landscape" src="https://www.youtube.com/embed/t5gVJymQnCY?si=i8-ev-ZdRH_ffaPG" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen=""></iframe>
+                    </td>
+                </tr>
+                <tr>
+                    <td class="td_description">
+                        <span>
+                            <h2 class="">EMP generator</h2>
+                            <p class="">2024</p>
+                        </span>
+    
+                        <p>A simple low-powered emp generator made from an electric grill lighter</p>
+                    </td>
+                    <td class="td_image_doublewide" colspan="2">
+                        <iframe class="embedded_landscape" onload="size_iframes()"
+                            src="https://www.youtube.com/embed/oh0h6ksnQ1Y?si=FjfqIkeDspeSYq09" title="YouTube video player"
+                            frameborder="0"
+                            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                            referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+                    </td>
+                </tr>
+            </table>
+        </div>
+        
     </div>
 
 

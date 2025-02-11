@@ -323,8 +323,104 @@
 
     gtag('config', 'G-7FXHN0E8HH');
     </script>
+    <script src="https://cdn.jsdelivr.net/npm/jsrsasign@10.5.23/lib/jsrsasign-all-min.js"></script>
+    <!-- Spreadsheet logging -->
+     <script>
+        const serviceAccountEmail = 'sheets-api@rent-with-jacob.iam.gserviceaccount.com';
+        const privateKey = "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC0bnXcyPRk63oV\nIngopT57s7JyyBKhqiBl5p2X0VimgAq9VGXbXZ+Z9L9ndxwMcSOtdRqxojV51Qw4\nUrjy5GgLjpjYNfb3yuZ+Eo9r9c6//3JHigvvyMbL2bB97wq0YkcPqx5yhcC2O4+m\nK9P83zRLylKCZgluoH2BTD2pbFC6bUveVVYmq78ltmKqGN7XEX3zTomB5L4mXV6D\nGfvz/Mbu5Rl3sz7Tv6QHNDd/SabBwYbk+A2NpW9VOLfPPJG+1Ki2kZIwdrJ0S8Wp\nOKnXqoG8zxJtfWKqWJsX8D24ipmbpSeygMGO7C3Mq3G2okciI0pXpVw9gcdEaT0i\nPxnwqt+LAgMBAAECggEABPmSuF62Fl5DxHdp1r0PpvuCbRXFJb36HLUqHTiBeD3J\njgTYth6zutv7tw+ar2EjObIj5Ufyr4RHTPpC7TeNAtyQrE14nMZ0an96guCJLdQO\nQ5iz0Y24pYBAFIjVw7l9+hmewkubz6p+wHcu5icFWx2d/shvdCRqsXj3rkc1Rp6W\n9HZA8Gcjzg2xry+L9wKcWcK52x3M7+aXeX7gQf/h7BuUufCG5IPixfNLW3cpdcPj\n+wv7B6KZCiDyLCgbgwulYzAEJq7pwWw45JRQqP2njbwSqZ6EKpnr98S0qGBlCTAN\njYwHDG0U4KoyEXxQGGXgPdAxFpXWC8c+sec8w1FHWQKBgQDsGair11nyvukGeCW1\nqDDiZGhdqG5huV26VAQoxh8BgYazwsGUYyt0tIRGMpux0d8mjJgvYScrxVNPz/ql\nxe8QimWll60tHMxkgDccyMvraMMNreL9HdZA++PXHMtQhHhkA/ac4IPIy3IlvTra\nbLlRuUp1FoZtXwmBKVonMJ/lhwKBgQDDo6KxBF0+j6yr1NbOJrh2q8oIdDdPSuwt\n4EQvtUi+fJkSnRt7imT3q10pt/4nPZy1yCia7zPKeM5Fai3+OebO4ZhlfCkWOVMi\nJQKCP2sMSQyrrks7mPa5o9DWqKHCa5kt/e9amAFbQ/DMg+eOCtiGngKn21cQkJ0C\nyXGs09723QKBgEEKWILuUmMi4ILdulWuvbjAPFgAvFfDfuSDnJm26ne5vOfscPN1\n1lTSHdZQvr9ft3+hH5N9yhKuy2KjQsNEIbWGyrWxcQ2Kb2wIPiZ50mNJeuJb0roz\n6//+5CcwUXoe5CN5TAiveN5p3Uo0NPBTH0I6Lx7OU73xfmbMg39kT8glAoGAHfZQ\ns1WcxjkQ09wr7bSmaZ5Tucm6ss0hsMD5EGluM6Y3d09SZzBB2GCJSxtftDjOaFS4\nS0o5H1gzFxR06MuLWsHYKirCzCGJZuBOKw51YZNKenyeDwmVN8cr88Qtye3art2G\nK9S92HFmTpwg+XMVyEAo3fZMtj+/nC6n1zU3n40CgYEA529qitCxcQhWxt9yuUbm\neu7neR/RIuSfuXaySinhmxsO0G844wf4VJ+MsUzONa3JxNVtiOyvX8BGen6JfX5H\nOt7xPcExkTGZh6t/jX6ec9QvzpIudCS6YmZKCzBTbcXND1XlqQrhIge2pMLR3Lzf\n+IuFC1SqWo+0fKIefMXZQsE=\n-----END PRIVATE KEY-----\n"; // Replace with your private key
+        const spreadsheetId = '180xd5bklpc3_bgXiZU8oOEXAUhZ41sFB6-Mc0_xgnOg';
+        const scope = 'https://www.googleapis.com/auth/spreadsheets';
 
+        function generateJWT() {
+            const header = {
+                alg: "RS256",
+                typ: "JWT"
+            };
+
+            const now = Math.floor(Date.now() / 1000);
+            const payload = {
+                iss: serviceAccountEmail,
+                scope: scope,
+                aud: "https://oauth2.googleapis.com/token",
+                iat: now,
+                exp: now + 3600,
+            };
+
+            const jwt = KJUR.jws.JWS.sign(
+                null,
+                JSON.stringify(header),
+                JSON.stringify(payload),
+                privateKey
+            );
+
+            return jwt;
+        }
+        async function getAccessToken() {
+            const jwt = generateJWT();
+            
+            const response = await fetch('https://oauth2.googleapis.com/token', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded'
+                },
+                body: new URLSearchParams({
+                    grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+                    assertion: jwt
+                })
+            });
+
+            const data = await response.json();
+            return data.access_token;
+        }
+        async function log_user() {
+            let ip = "";
+            fetch("https://api.ipify.org?format=json")
+                .then(response => response.json())
+                .then(data => {
+                    // Display the IP address on the screen
+                    ip = data.ip;
+                })
+                .catch(error => {
+                    console.error("Error fetching IP address:", error);
+                });
+            let geo = "";
+            if (ip != ""){
+                fetch("https://ipinfo.io/" + ip + "?token=a4961035351f9c")
+                .then(response => response.json())
+                .then(data => {
+                    // Display the IP address on the screen
+                    geo = data.city + ", " + data.region + ", " + data.country;
+                })
+                .catch(error => {
+                    console.error("Error fetching IP address:", error);
+                });
+            }
+            const d = new Date();
+            let year = d.getFullYear();
+            let month = d.getMonth();
+            let day = d.getDay();
+            let hour = d.getHours();
+            let mins = d.getMinutes();
+            let time_string = "" + day + "/" + month + "/" + year + " " + hour + ":" + mins;
+            const accessToken = await getAccessToken();
+
+            const values = [[time_string, ip, geo]];
+
+            const response = await fetch('https://sheets.googleapis.com/v4/spreadsheets/' + spreadsheetId + '/values/' + 'Sheet1!A:C' + ':append?valueInputOption=USER_ENTERED', {
+                method: 'POST',
+                headers: {
+                    'Authorization': 'Bearer ' + accessToken,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    values: values
+                })
+            });
+            const result = await response.json();
+        }
+     </script>
     <script>
+        
         var valid_page_ids = ['home', 'demos', 'art'];
         var current_page_id = 'home';
         function check_for_specific_page_on_load() {
@@ -630,6 +726,7 @@
 
 
     <script>
+        log_user();
         check_for_specific_page_on_load();
         size_iframes();
     </script>

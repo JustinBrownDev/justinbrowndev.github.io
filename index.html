@@ -334,16 +334,17 @@
             page_going.classList.remove("invisible");
             current_page_id = page_id;
             size_iframes();
+            window.scrollTo(0,0);
         }
         function size_iframes(){
             let td_image_elements = document.getElementsByClassName("td_image");
             let elem_iframe;
             let elem_reference;
-            console.log(td_image_elements)
+
             for(let i =0; i < td_image_elements.length; i++){ 
                 elem_iframe = null;
                 elem_reference = null;
-                console.log(td_image_elements[i])
+
                 if (td_image_elements[i].children[0].nodeName == "IFRAME"){
                     elem_iframe = td_image_elements[i].children[0];
                     elem_reference = td_image_elements[i].children[1];
@@ -352,15 +353,14 @@
                     elem_iframe = td_image_elements[i].children[1];
                     elem_reference = td_image_elements[i].children[0];
                 }
-                console.log(elem_iframe);
-                console.log(elem_reference);
+
                 if (elem_iframe != null){
                     let padding_adjustment = 0;
                     if (window.innerWidth >= 1000){
                         padding_adjustment = 15
                     }
                     elem_iframe.height = (elem_reference.offsetHeight-padding_adjustment)+"px";
-                    console.log(elem_reference.offsetHeight+"px");
+                    
                 }
             }
         }

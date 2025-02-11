@@ -355,7 +355,11 @@
                 console.log(elem_iframe);
                 console.log(elem_reference);
                 if (elem_iframe != null){
-                    elem_iframe.height = (elem_reference.offsetHeight-15)+"px";
+                    let padding_adjustment = 0;
+                    if (window.innerWidth >= 1000){
+                        padding_adjustment = 15
+                    }
+                    elem_iframe.height = (elem_reference.offsetHeight-padding_adjustment)+"px";
                     console.log(elem_reference.offsetHeight+"px");
                 }
             }

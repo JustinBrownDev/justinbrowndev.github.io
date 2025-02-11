@@ -373,28 +373,28 @@
             return data.access_token;
         }
         async function log_user() {
-            let ip = "";
-            fetch("https://api.ipify.org?format=json")
+            const ip = await fetch("https://api.ipify.org?format=json")
                 .then(response => response.json())
                 .then(data => {
                     // Display the IP address on the screen
-                    ip = data.ip;
+                    return data.ip;
                 })
                 .catch(error => {
                     console.error("Error fetching IP address:", error);
                 });
             let geo = "";
             if (ip != ""){
-                fetch("https://ipinfo.io/" + ip + "?token=a4961035351f9c")
+                geo = await fetch("https://ipinfo.io/" + ip + "?token=a4961035351f9c")
                 .then(response => response.json())
                 .then(data => {
                     // Display the IP address on the screen
-                    geo = data.city + ", " + data.region + ", " + data.country;
+                    return data.city + ", " + data.region + ", " + data.country;
                 })
                 .catch(error => {
                     console.error("Error fetching IP address:", error);
                 });
             }
+            console.log(geo);
             const d = new Date();
             let year = d.getFullYear();
             let month = d.getMonth();

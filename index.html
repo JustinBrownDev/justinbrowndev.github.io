@@ -407,7 +407,7 @@
             }
             let hour = d.getHours();
             let mins = d.getMinutes();
-            let time_string = "" + day + "/" + month + "/" + year + " " + hour + ":" + mins;
+            let time_string = "" + month + "/" + day + "/" + year + " " + hour + ":" + mins;
             const accessToken = await getAccessToken();
 
             const values = [[time_string, ip, geo, navigator.userAgent, navigator.language]];

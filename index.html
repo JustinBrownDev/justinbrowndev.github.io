@@ -397,8 +397,14 @@
             
             const d = new Date();
             let year = d.getFullYear();
-            let month = d.getMonth();
-            let day = d.getDay();
+            let month = d.getMonth() + 1;
+            if (month < 10){
+                month = "0" + month
+            }
+            let day = d.getDate();
+            if (day < 10){
+                day = "0" + day
+            }
             let hour = d.getHours();
             let mins = d.getMinutes();
             let time_string = "" + day + "/" + month + "/" + year + " " + hour + ":" + mins;

@@ -5,6 +5,22 @@ import { RenderPass } from './vendor/three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from './vendor/three/addons/postprocessing/UnrealBloomPass.js';
 
 // =====================================================================
+// CONCEPT
+// This is the information superhighway rendered as a walkable back alley,
+// not a skyline of clean towers. Every surface is a query result — a sign,
+// a name, a listing — and the maze is what a search actually feels like:
+// everything here is *queryable*. Findable is a different question.
+// There are more Justin Browns than one person can Google. Somewhere in
+// this grid is exactly one true signal; the rest is noise wearing the
+// same name. That's on purpose — a public secret, hidden by abundance
+// rather than by hiding. The player is small against all of it (buildings
+// dwarf the 1.65-unit eye height on purpose) but still walks it unbound,
+// tracing a corridor between the oversaturated, over-indexed "light web"
+// and the sparse, half-abandoned "dark web" — in corporeal form, at
+// street level, between the two.
+// =====================================================================
+
+// =====================================================================
 // CONFIG — every tunable lives here. Desktop is the target experience;
 // the `mobile` block only overrides what needs to change for touch/perf.
 // =====================================================================
@@ -14,28 +30,59 @@ const CONFIG = {
     targetPlatform: 'desktop',
 
     scene: {
-        backgroundColor: 0x0a0407,
-        fogColor: 0x140508,
-        fogDensity: 0.05,
+        backgroundColor: 0x171018,
+        fogColor: 0x22141c,
+        fogDensity: 0.03,
+    },
+
+    // the maze runs along a north/south gradient (grid row, mirrored in
+    // world Z) between two poles. Nothing teleports you between them —
+    // you walk the gradient continuously, which is the point. Both poles
+    // are kept bright enough to actually see and navigate — the gradient
+    // is a color/density shift, not a light switch.
+    narrative: {
+        // south pole (+row/+Z): "light web" — oversaturated, over-indexed,
+        // loud. everything about you is here, which is exactly why none
+        // of it is you specifically.
+        lightWeb: {
+            fogColor: 0x3a0f1c,
+            fogDensity: 0.038,
+            ambientColor: 0x6a2030,
+            ambientIntensity: 1.6,
+            hemiIntensity: 0.75,
+            signChance: 0.95,
+            propDensityMul: 1.2,
+        },
+        // north pole (-row/-Z): "dark web" — cooler and sparser, but still
+        // lit — teal/slate, not black. quieter, not blind.
+        darkWeb: {
+            fogColor: 0x0e1a22,
+            fogDensity: 0.045,
+            ambientColor: 0x18323a,
+            ambientIntensity: 1.15,
+            hemiIntensity: 0.45,
+            signChance: 0.7,
+            propDensityMul: 0.85,
+        },
     },
 
     camera: {
         fov: 78,
         near: 0.05,
-        far: 200,
+        far: 220,
         eyeHeight: 1.65,
         playerRadius: 0.32,
     },
 
     lighting: {
-        ambientColor: 0x2a1018,
-        ambientIntensity: 0.85,
-        moonColor: 0x5a4468,
-        moonIntensity: 0.18,
+        ambientColor: 0x3a2028,
+        ambientIntensity: 1.4,
+        moonColor: 0x8a90b8,
+        moonIntensity: 0.4,
         moonPosition: { x: -5, y: 30, z: -10 },
-        // ambient red haze light so alleys aren't pitch black between signs
-        fillColor: 0xff3355,
-        fillIntensity: 0.25,
+        // ambient haze light so alleys aren't pitch black between signs
+        fillColor: 0xff4d5f,
+        fillIntensity: 0.5,
         signLight: {
             intensity: 5,
             distance: 9,
@@ -70,10 +117,10 @@ const CONFIG = {
     // either solid (a building) or open (an alley). A perimeter ring is
     // always solid so the maze is naturally walled in — no invisible clamp.
     maze: {
-        cols: 15,
-        rows: 15,
+        cols: 21,
+        rows: 21,
         cellSize: 7,        // world units per grid cell
-        loopChance: 0.12,   // chance a redundant wall opens up into a plaza/loop
+        loopChance: 0.14,   // chance a redundant wall opens up into a plaza/loop
         buildingMarginMin: 0.6,  // how much smaller than the cell a building footprint is
         buildingMarginMax: 1.8,
     },
@@ -81,18 +128,29 @@ const CONFIG = {
     buildings: {
         heightMin: 26,
         heightMax: 95,
-        roughness: 0.95,
-        // grimy low-fi facade tones — near-black with faint color casts
-        palette: [0x14100f, 0x120c10, 0x181212, 0x100e16, 0x151011, 0x0f0d12],
+        roughness: 0.92,
+        // varied low-fi facade tones — concrete, brick, rust, slate, olive.
+        // deliberately NOT purple-dominant; near-black is one option among many.
+        palette: [
+            0x2a2a2e, // concrete grey
+            0x3a2420, // brick red-brown
+            0x16282a, // dark teal
+            0x22281c, // olive/industrial green
+            0x3a2418, // rust
+            0x20242e, // slate blue-grey
+            0x18181a, // neutral near-black
+            0x33241c, // weathered brown
+            0x1c2a24, // dark green
+            0x2c2020, // dull maroon
+        ],
         curb: {
             height: 0.12,
             overhang: 0.35, // how far the curb/base skirt extends past the facade
-            color: 0x1c1414,
+            color: 0x2a2222,
         },
     },
 
-    // expanded neon palette — reds/pinks dominate (red-light district) but
-    // amber, gold, purple, cyan and green punch through for real variety.
+    // expanded neon palette — real variety, not just one hue family.
     neonPalette: [
         0xff1f4f, // crimson
         0xff2fd6, // magenta
@@ -100,13 +158,18 @@ const CONFIG = {
         0xffb02f, // amber
         0xfff02f, // sign yellow
         0xb02fff, // violet
-        0x7a2fff, // indigo
         0x2fe8ff, // cyan
         0x2fffb0, // acid green
         0xff2f8a, // hot pink
         0xffffff, // bare bulb white
         0x2f8aff, // cold blue
+        0x3aff6a, // signal green
     ],
+    // same colors, split by temperature so signage can lean warm toward
+    // the light-web pole and cool toward the dark-web pole. Purple is kept
+    // to a minority accent on the cool side, not the identity of "dark."
+    neonWarm: [0xff1f4f, 0xff2fd6, 0xff5f2f, 0xffb02f, 0xfff02f, 0xff2f8a, 0xffffff],
+    neonCool: [0x2fe8ff, 0x2fffb0, 0x2f8aff, 0x3aff6a, 0xffffff, 0xb02fff],
 
     billboards: {
         // small + nearest-filtered = chunky low-fi pixel signage
@@ -115,7 +178,6 @@ const CONFIG = {
         borderWidth: 3,
         titleFont: 'bold 20px "Courier New", monospace',
         subtitleFont: '11px "Courier New", monospace',
-        chancePerFace: 0.75, // odds a building face bordering an alley gets a sign
         navPages: [
             { title: 'PROJECTS', subtitle: 'selected work' },
             { title: 'ABOUT', subtitle: 'who\'s behind this' },
@@ -135,24 +197,118 @@ const CONFIG = {
             ['FORTUNE', 'palm read'], ['BAR', 'no name'], ['MARKET', 'night stalls'],
             ['VIDEO', 'rental'], ['CURRY', 'house special'], ['GACHA', '¥200'],
         ],
+        // the whole reason this is a maze: the internet has more Justin
+        // Browns on it than one person could ever Google through. these
+        // are all decoys — every one of them queryable, none of them him.
+        decoyIdentities: [
+            ['J. BROWN', 'orthodontist · OH'], ['JUSTIN BROWN', 'youth soccer, U12'],
+            ['J BROWN', 'in memoriam 1958–2011'], ['JUSTINBROWN99', 'last seen 2013'],
+            ['J BROWN LLC', 'entity dissolved'], ['JUSTIN R. BROWN', 'unclaimed property'],
+            ['@justinbrown', 'account suspended'], ['J. BROWN', '214 county matches'],
+            ['JUSTIN BROWN', 'this is not him'], ['J. BROWN', 'no relation'],
+            ['JUSTIN BROWN', 'real estate, TX'], ['J BROWN', 'obituary, 1972'],
+            ['JUSTIN BROWN', 'band, defunct'], ['J. BROWN', 'wrong number'],
+            ['JUSTIN BROWN', 'see also: 4,281 others'],
+        ],
+        // the site itself talking back — the machinery of search admitting
+        // it came up short, or asking you to keep paying for the privilege.
+        systemNoise: [
+            ['NO RESULTS', 'refine your query'], ['0 OF 4,281,006', 'matches'],
+            ['404', 'identity not found'], ['ACCESS DENIED', 'insufficient signal'],
+            ['CACHED', '3 years stale'], ['RATE LIMITED', 'try again later'],
+            ['DELETED', 'profile unavailable'], ['AMBIGUOUS', 'too common a name'],
+            ['LOADING', '...'], ['PAYWALL', 'subscribe to continue'],
+            ['UNVERIFIED', 'take with salt'], ['INDEXING', 'come back later'],
+        ],
+        // exactly one of these exists, at the farthest dead end from
+        // spawn. everything else in the city is noise wearing his name.
+        signal: { title: 'J. BROWN', subtitle: 'verified · you found it', color: 0xffffff },
+        // relative odds a given sign face pulls from each bucket — nav
+        // pages run out fast on purpose, so decoys and noise dominate.
+        contentWeights: { nav: 3, decoy: 6, noise: 3, flavor: 5 },
+    },
+
+    // pulled directly from the real jweb.dev content (index.html) — the
+    // maze isn't just mood-boarding "Justin Brown," it's built out of the
+    // actual resume/projects/art. ~35 entries across 7 categories, each
+    // rendered by one of 5 dedicated generator archetypes below.
+    siteContent: {
+        skills: [
+            ['PYTHON', 'daily driver'], ['WEB DEV', 'html/css/js'],
+            ['LEADERSHIP', 'ACM president'], ['C / C# / C++', 'systems'],
+            ['EMBEDDED', 'bare metal'], ['LINUX', 'no distro war'],
+        ],
+        education: [
+            ['SIU CARBONDALE', 'B.S. comp sci · 2023-now'],
+            ['ACM PRESIDENT', 'assoc. of computing machinery'],
+            ['COLLEGE OF DUPAGE', '2019-2023'],
+            ['COURSEWORK', 'ML · cybersecurity · SWE'],
+        ],
+        employment: [
+            ['DATAANNOTATION', 'AI trainer · 2024-now'],
+            ["HORTON'S LIGHTING", 'warehouse · 2021-23'],
+            ['LA GRANGE THEATER', 'projectionist · 2018-20'],
+        ],
+        art: [
+            ["'TEETH'", 'acrylic on canvas'],
+            ['SELF PORTRAIT', 'acrylic on canvas'],
+            ["'GARY FISCHER'", 'india ink on paper'],
+            ["'THE FISH'", 'linoleum print'],
+            ['ORGANIC TV', 'cast iron · lost wax'],
+            ['PUPPET HEAD', 'wire & tissue paper'],
+        ],
+        // technical builds — rendered as glowing terminal/CRT plaques
+        codeProjects: [
+            ['TRAFFIC BLASTER', 'python · openvpn, 2024'],
+            ['SLIDING TILES', 'python solver, 2023'],
+            ['SPINNING CUBE', 'c++ terminal 3d, 2022'],
+            ['BIBITINATOR', 'c# save editor, 2021'],
+            ['MC COMPUTER', 'copper bulb logic, 2025'],
+            ['CYBERDECK', 'raspberry pi rig, 2024'],
+            ['EMP GENERATOR', 'grill lighter build, 2024'],
+        ],
+        // client/design work — rendered as framed wall posters
+        webProjects: [
+            ['VITALSAGE', 'wordpress build, 2024'],
+            ['BRANDYOUPROMO', 'asp.net site, 2022'],
+        ],
+        // rhetoric fragments — half bio, half the concept itself
+        about: [
+            ['TAKE IT APART', 'to see how it works'],
+            ['ALWAYS LEARNING', 'next skill, next problem'],
+            ['UNBOUND', 'not afraid of the machine'],
+            ['THEY ASK ME', "for the advice"],
+            ['PUBLIC SECRET', 'hidden by numbers, not by hiding'],
+        ],
+        // dropped on the ground like litter — real contact info, decoyed
+        // among all the fake ones from billboards.decoyIdentities
+        contact: [
+            ['JUSTIN BROWN', 'justin@jweb.dev'],
+            ['J. BROWN', '(630) 880-7886'],
+            ['JWEB.DEV', 'expired business card'],
+        ],
     },
 
     props: {
-        // relative spawn weight per alley cell — higher = more common
+        // relative spawn weight per alley cell — higher = more common.
+        // "none" kept low on purpose: dense, high-frequency clutter.
         weights: {
             trashCan: 4,
             trafficCone: 3,
             trafficSign: 2,
             crate: 4,
-            lantern: 3,
-            vendingMachine: 2,
+            lantern: 4,
+            vendingMachine: 2.5,
             fenceSegment: 1.5,
-            none: 5, // keeps some open floor so it's not wall-to-wall clutter
+            museumPlacard: 2.5,
+            stickerTag: 3.5,
+            businessCardLitter: 2,
+            none: 1.5,
         },
         maxSpecialFeatures: {
-            statues: 2,
-            constructionZones: 2,
-            crimeScenes: 1,
+            statues: 3,
+            constructionZones: 3,
+            crimeScenes: 2,
         },
     },
 
@@ -163,7 +319,7 @@ const CONFIG = {
     },
 
     desktopControls: {
-        pointerSpeed: 1.0,
+        pointerSpeed: 3.2, // notably faster look — this was the #1 complaint
     },
 
     touchControls: {
@@ -177,6 +333,26 @@ const CONFIG = {
 
 const IS_TOUCH = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
 const QUALITY = IS_TOUCH ? CONFIG.quality.mobile : CONFIG.quality.desktop;
+
+// ---------- seeded RNG ----------
+// every bit of generation (maze, buildings, signs, props, spawn point)
+// runs through this one seeded generator instead of raw Math.random().
+// Default: a fresh random seed every load — the city is different each
+// time you visit, same as before. Pin ?seed=12345 in the URL to freeze
+// a specific layout for bug reports/comparisons — paste the console-
+// logged seed back and that exact city (bugs included) comes back.
+function mulberry32(seed) {
+    return function () {
+        seed |= 0; seed = (seed + 0x6D2B79F5) | 0;
+        let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+}
+const urlSeed = new URLSearchParams(location.search).get('seed');
+const SEED = urlSeed !== null ? Number(urlSeed) : Math.floor(Math.random() * 2 ** 31);
+const rng = mulberry32(SEED);
+console.log(`[testing] maze seed = ${SEED}  (reload with ?seed=${SEED} to get this exact layout)`);
 
 // ---------- basic setup ----------
 
@@ -216,23 +392,52 @@ window.addEventListener('resize', () => {
 
 // ---------- lighting ----------
 
-scene.add(new THREE.AmbientLight(CONFIG.lighting.ambientColor, CONFIG.lighting.ambientIntensity));
-scene.add(new THREE.HemisphereLight(CONFIG.lighting.fillColor, 0x0a0407, CONFIG.lighting.fillIntensity));
+const ambientLight = new THREE.AmbientLight(CONFIG.lighting.ambientColor, CONFIG.lighting.ambientIntensity);
+scene.add(ambientLight);
+const hemiLight = new THREE.HemisphereLight(CONFIG.lighting.fillColor, 0x0a0407, CONFIG.lighting.fillIntensity);
+scene.add(hemiLight);
 const moon = new THREE.DirectionalLight(CONFIG.lighting.moonColor, CONFIG.lighting.moonIntensity);
 moon.position.set(CONFIG.lighting.moonPosition.x, CONFIG.lighting.moonPosition.y, CONFIG.lighting.moonPosition.z);
 scene.add(moon);
 
 let dynamicLightsRemaining = QUALITY.maxDynamicLights;
 
+// ---------- light-web / dark-web gradient ----------
+// there's no teleport between the two poles — the player walks the
+// gradient continuously, driven entirely by world Z (north/south).
+// 0 = dark web (north), 1 = light web (south).
+
+const _fogLerp = new THREE.Color();
+const _ambLerp = new THREE.Color();
+
+function webAlignment(worldZ) {
+    return THREE.MathUtils.clamp((worldZ / (GRID_H / 2) + 1) / 2, 0, 1);
+}
+
+function updateWebGradient(worldZ) {
+    const t = webAlignment(worldZ);
+    const dark = CONFIG.narrative.darkWeb;
+    const light = CONFIG.narrative.lightWeb;
+
+    _fogLerp.set(dark.fogColor).lerp(new THREE.Color(light.fogColor), t);
+    scene.fog.color.copy(_fogLerp);
+    scene.fog.density = THREE.MathUtils.lerp(dark.fogDensity, light.fogDensity, t);
+
+    _ambLerp.set(dark.ambientColor).lerp(new THREE.Color(light.ambientColor), t);
+    ambientLight.color.copy(_ambLerp);
+    ambientLight.intensity = THREE.MathUtils.lerp(dark.ambientIntensity, light.ambientIntensity, t);
+    hemiLight.intensity = THREE.MathUtils.lerp(dark.hemiIntensity, light.hemiIntensity, t);
+}
+
 // ---------- small helpers ----------
 
-function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
-function randRange(min, max) { return min + Math.random() * (max - min); }
+function pick(arr) { return arr[Math.floor(rng() * arr.length)]; }
+function randRange(min, max) { return min + rng() * (max - min); }
 
 function weightedPick(weights) {
     const entries = Object.entries(weights);
     const total = entries.reduce((s, [, w]) => s + w, 0);
-    let r = Math.random() * total;
+    let r = rng() * total;
     for (const [key, w] of entries) {
         r -= w;
         if (r <= 0) return key;
@@ -256,6 +461,29 @@ function makePixelTexture(draw, w, h) {
 
 function hexToCss(hex) { return '#' + hex.toString(16).padStart(6, '0'); }
 
+function toContent([title, subtitle]) { return { title, subtitle }; }
+
+// picks sign copy for a given grid row — nav pages (real site links) are
+// scarce on purpose, decoys and system noise dominate everywhere else.
+let navPageIndex = 0;
+function pickSignContent() {
+    const weights = { ...CONFIG.billboards.contentWeights };
+    if (navPageIndex >= CONFIG.billboards.navPages.length) delete weights.nav;
+    switch (weightedPick(weights)) {
+        case 'nav': return CONFIG.billboards.navPages[navPageIndex++];
+        case 'decoy': return toContent(pick(CONFIG.billboards.decoyIdentities));
+        case 'noise': return toContent(pick(CONFIG.billboards.systemNoise));
+        default: return toContent(pick(CONFIG.billboards.flavorWords));
+    }
+}
+
+// neon color leans warm toward the light-web pole (south), cool toward
+// the dark-web pole (north) — the palette itself carries the gradient.
+function pickNeonForRow(row) {
+    const t = webAlignment(cellToWorld(0, row).z);
+    return rng() < t ? pick(CONFIG.neonWarm) : pick(CONFIG.neonCool);
+}
+
 // ---------- ground (whole maze footprint, one pixelated pavement plane) ----------
 
 const GRID_COLS = CONFIG.maze.cols;
@@ -277,9 +505,9 @@ function makeGroundTexture() {
         ctx.fillRect(0, 0, w, h);
         // grimy pavement speckle
         for (let i = 0; i < 260; i++) {
-            const shade = 10 + Math.floor(Math.random() * 14);
+            const shade = 10 + Math.floor(rng() * 14);
             ctx.fillStyle = `rgb(${shade + 8},${shade},${shade + 4})`;
-            ctx.fillRect(Math.floor(Math.random() * w), Math.floor(Math.random() * h), 1, 1);
+            ctx.fillRect(Math.floor(rng() * w), Math.floor(rng() * h), 1, 1);
         }
         // faint expansion-joint grid
         ctx.strokeStyle = '#1c1414';
@@ -325,7 +553,7 @@ const stack = [[startCol, startRow]];
 const DIRS = [[0, -2], [0, 2], [-2, 0], [2, 0]];
 while (stack.length) {
     const [c, r] = stack[stack.length - 1];
-    const dirs = [...DIRS].sort(() => Math.random() - 0.5);
+    const dirs = [...DIRS].sort(() => rng() - 0.5);
     let carved = false;
     for (const [dc, dr] of dirs) {
         const nc = c + dc, nr = r + dr;
@@ -346,7 +574,7 @@ for (let r = 1; r < GRID_ROWS - 1; r++) {
         if (!grid[r][c]) continue;
         const openNeighbors = [[0, -1], [0, 1], [-1, 0], [1, 0]]
             .filter(([dc, dr]) => !grid[r + dr]?.[c + dc]).length;
-        if (openNeighbors >= 2 && Math.random() < CONFIG.maze.loopChance) {
+        if (openNeighbors >= 2 && rng() < CONFIG.maze.loopChance) {
             grid[r][c] = false;
         }
     }
@@ -359,11 +587,19 @@ function openNeighborCount(c, r) {
 }
 
 const plazaCells = [];
+const allOpenCells = [];
 for (let r = 1; r < GRID_ROWS - 1; r++) {
     for (let c = 1; c < GRID_COLS - 1; c++) {
-        if (!grid[r][c] && openNeighborCount(c, r) >= 3) plazaCells.push([c, r]);
+        if (grid[r][c]) continue;
+        allOpenCells.push([c, r]);
+        if (openNeighborCount(c, r) >= 3) plazaCells.push([c, r]);
     }
 }
+
+// random spawn point every load — the maze generation seed (startCol/
+// startRow) stays fixed as the DFS anchor, but where *you* start is not
+// the same place twice. The "farthest signal" search below runs from here.
+const [spawnCol, spawnRow] = allOpenCells[Math.floor(rng() * allOpenCells.length)];
 
 // ---------- reusable geometry/materials ----------
 
@@ -402,25 +638,26 @@ function addBuilding(col, row) {
     skirt.position.set(x, curb.height / 2, z);
     scene.add(skirt);
 
-    // sign faces: one candidate per side that borders an open alley cell
-    const faceDefs = [
-        { dc: 0, dr: -1, rotY: 0, ox: 0, oz: -footprint / 2 - 0.03 },
-        { dc: 0, dr: 1, rotY: Math.PI, ox: 0, oz: footprint / 2 + 0.03 },
-        { dc: -1, dr: 0, rotY: -Math.PI / 2, ox: -footprint / 2 - 0.03, oz: 0 },
-        { dc: 1, dr: 0, rotY: Math.PI / 2, ox: footprint / 2 + 0.03, oz: 0 },
-    ];
-
-    for (const face of faceDefs) {
+    // sign faces: one candidate per side that borders an open alley cell.
+    // every qualifying face is recorded in candidateFaces regardless of
+    // whether a random sign lands on it — the content-card pass later
+    // claims whatever's left over so real content never double-mounts.
+    for (const face of buildingFaceDefs(footprint)) {
         const nc = col + face.dc, nr = row + face.dr;
         if (grid[nr]?.[nc] !== false) continue; // only sign faces open onto an alley
-        if (Math.random() > CONFIG.billboards.chancePerFace) continue;
 
-        const usesNav = navPageIndex < CONFIG.billboards.navPages.length && Math.random() < 0.35;
-        const content = usesNav
-            ? CONFIG.billboards.navPages[navPageIndex++]
-            : (([t, s]) => ({ title: t, subtitle: s }))(pick(CONFIG.billboards.flavorWords));
-        const neon = pick(CONFIG.neonPalette);
+        const t = webAlignment(z);
+        const signChance = THREE.MathUtils.lerp(
+            CONFIG.narrative.darkWeb.signChance, CONFIG.narrative.lightWeb.signChance, t
+        );
 
+        if (rng() > signChance) {
+            candidateFaces.push({ x: x + face.ox, z: z + face.oz, rotY: face.rotY, height });
+            continue;
+        }
+
+        const content = pickSignContent();
+        const neon = pickNeonForRow(row);
         const signHeight = randRange(2.2, Math.min(height - 2, 6));
         addSign(
             x + face.ox, signHeight, z + face.oz,
@@ -429,7 +666,18 @@ function addBuilding(col, row) {
     }
 }
 
-let navPageIndex = 0;
+const candidateFaces = []; // faces that skipped a random sign — free for content cards
+
+// the four wall-facing transforms for a building of a given footprint —
+// shared by normal sign placement and the single forced "signal" sign.
+function buildingFaceDefs(footprint) {
+    return [
+        { dc: 0, dr: -1, rotY: 0, ox: 0, oz: -footprint / 2 - 0.03 },
+        { dc: 0, dr: 1, rotY: Math.PI, ox: 0, oz: footprint / 2 + 0.03 },
+        { dc: -1, dr: 0, rotY: -Math.PI / 2, ox: -footprint / 2 - 0.03, oz: 0 },
+        { dc: 1, dr: 0, rotY: Math.PI / 2, ox: footprint / 2 + 0.03, oz: 0 },
+    ];
+}
 
 function addSign(x, y, z, rotY, title, subtitle, colorHex) {
     const b = CONFIG.billboards;
@@ -466,6 +714,89 @@ function addSign(x, y, z, rotY, title, subtitle, colorHex) {
             z + Math.cos(rotY) * 0.6
         );
         scene.add(light);
+    }
+}
+
+// framed wall poster — client/design work and art pieces. Warm paper tone,
+// thin border, two-line caption. Visually distinct from the neon signs.
+function addWallPoster(x, y, z, rotY, title, subtitle) {
+    const tex = makePixelTexture((ctx, w, h) => {
+        ctx.fillStyle = '#e8ddc2';
+        ctx.fillRect(0, 0, w, h);
+        ctx.strokeStyle = '#2a2420';
+        ctx.lineWidth = 4;
+        ctx.strokeRect(3, 3, w - 6, h - 6);
+        ctx.fillStyle = '#2a2420';
+        ctx.textAlign = 'center';
+        ctx.font = 'bold 15px "Courier New", monospace';
+        ctx.fillText(title, w / 2, h / 2 - 6, w - 12);
+        ctx.font = '10px "Courier New", monospace';
+        ctx.fillText(subtitle, w / 2, h / 2 + 14, w - 12);
+    }, 96, 72);
+    const width = randRange(1.4, 2.0);
+    const plane = new THREE.Mesh(
+        new THREE.PlaneGeometry(width, width * 0.75),
+        new THREE.MeshStandardMaterial({ map: tex, roughness: 0.9 })
+    );
+    plane.position.set(x, y, z);
+    plane.rotation.y = rotY;
+    scene.add(plane);
+}
+
+// glowing CRT/terminal plaque — the code projects. Green monospace on
+// black, faux scanlines, no border (screens don't have picture frames).
+function addTerminalPlaque(x, y, z, rotY, title, subtitle) {
+    const tex = makePixelTexture((ctx, w, h) => {
+        ctx.fillStyle = '#040a04';
+        ctx.fillRect(0, 0, w, h);
+        ctx.fillStyle = '#3aff6a';
+        ctx.textAlign = 'left';
+        ctx.font = '9px "Courier New", monospace';
+        ctx.fillText('> ' + title, 4, h / 2 - 6);
+        ctx.fillText('  ' + subtitle, 4, h / 2 + 8);
+        ctx.fillText('_', 4 + ctx.measureText('  ' + subtitle).width, h / 2 + 8);
+        for (let i = 0; i < h; i += 3) {
+            ctx.fillStyle = 'rgba(0,0,0,0.25)';
+            ctx.fillRect(0, i, w, 1);
+        }
+    }, 108, 40);
+    const width = randRange(1.3, 1.9);
+    const plane = new THREE.Mesh(
+        new THREE.PlaneGeometry(width, width * (40 / 108)),
+        new THREE.MeshBasicMaterial({ map: tex })
+    );
+    plane.position.set(x, y, z);
+    plane.rotation.y = rotY;
+    scene.add(plane);
+
+    if (dynamicLightsRemaining > 0) {
+        dynamicLightsRemaining--;
+        const light = new THREE.PointLight(0x3aff6a, 2, 4, 2);
+        light.position.set(x + Math.sin(rotY) * 0.3, y, z + Math.cos(rotY) * 0.3);
+        scene.add(light);
+    }
+}
+
+// ---------- content-card wall mounting ----------
+// real site content (art + projects) claims whatever building faces the
+// random-sign pass skipped. Runs after all buildings exist.
+function mountContentCards() {
+    const jobs = [];
+    for (const [title, subtitle] of CONFIG.siteContent.art) jobs.push({ title, subtitle, kind: 'poster' });
+    for (const [title, subtitle] of CONFIG.siteContent.webProjects) jobs.push({ title, subtitle, kind: 'poster' });
+    for (const [title, subtitle] of CONFIG.siteContent.codeProjects) jobs.push({ title, subtitle, kind: 'terminal' });
+
+    const faces = [...candidateFaces].sort(() => rng() - 0.5);
+    let fi = 0;
+    for (const job of jobs) {
+        if (fi >= faces.length) break;
+        const face = faces[fi++];
+        const y = randRange(2.2, Math.min(face.height - 2, 6));
+        if (job.kind === 'poster') {
+            addWallPoster(face.x, y, face.z, face.rotY, job.title, job.subtitle);
+        } else {
+            addTerminalPlaque(face.x, y, face.z, face.rotY, job.title, job.subtitle);
+        }
     }
 }
 
@@ -541,7 +872,7 @@ function addTrafficSign(x, z, rotY) {
 
 function addCrate(x, z) {
     const g = new THREE.Group();
-    const count = 1 + Math.floor(Math.random() * 3);
+    const count = 1 + Math.floor(rng() * 3);
     for (let i = 0; i < count; i++) {
         const size = randRange(0.35, 0.55);
         const crate = new THREE.Mesh(
@@ -629,6 +960,94 @@ function addFenceSegment(x, z, rotY) {
     panel.position.set(x, 0.55, z);
     scene.add(panel);
     return 0.1;
+}
+
+// small bronze-ish placard on a post, waist height — education & employment
+// history. The "resume, but you have to go find it" prop.
+function addMuseumPlacard(x, z) {
+    const [title, subtitle] = pick([...CONFIG.siteContent.education, ...CONFIG.siteContent.employment]);
+    const g = new THREE.Group();
+    const post = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.04, 0.04, 1.1, 6),
+        new THREE.MeshStandardMaterial({ color: 0x2c2c2c, roughness: 0.6, metalness: 0.5 })
+    );
+    post.position.y = 0.55;
+    const tex = makePixelTexture((ctx, w, h) => {
+        ctx.fillStyle = '#5a4a28';
+        ctx.fillRect(0, 0, w, h);
+        ctx.fillStyle = '#e8d9a0';
+        ctx.textAlign = 'center';
+        ctx.font = 'bold 9px "Courier New", monospace';
+        ctx.fillText(title, w / 2, h / 2 - 3, w - 6);
+        ctx.font = '7px "Courier New", monospace';
+        ctx.fillText(subtitle, w / 2, h / 2 + 9, w - 6);
+    }, 96, 32);
+    const plate = new THREE.Mesh(
+        new THREE.PlaneGeometry(0.5, 0.17),
+        new THREE.MeshStandardMaterial({ map: tex, roughness: 0.5, metalness: 0.3 })
+    );
+    plate.rotation.x = -0.3;
+    plate.position.set(0, 1.05, 0.02);
+    g.add(post, plate);
+    g.rotation.y = randRange(0, Math.PI * 2);
+    g.position.set(x, 0, z);
+    scene.add(g);
+    return 0.1;
+}
+
+// a flyer dropped flat on the pavement — skills & rhetoric fragments.
+// common, cheap, everywhere; the "public secret" hiding in plain sight.
+function addStickerTag(x, z) {
+    const [title, subtitle] = pick([...CONFIG.siteContent.skills, ...CONFIG.siteContent.about]);
+    const neon = pick(CONFIG.neonPalette);
+    const tex = makePixelTexture((ctx, w, h) => {
+        ctx.fillStyle = '#0a0a0a';
+        ctx.fillRect(0, 0, w, h);
+        ctx.strokeStyle = hexToCss(neon);
+        ctx.lineWidth = 2;
+        ctx.strokeRect(2, 2, w - 4, h - 4);
+        ctx.fillStyle = hexToCss(neon);
+        ctx.textAlign = 'center';
+        ctx.font = 'bold 10px "Courier New", monospace';
+        ctx.fillText(title, w / 2, h / 2 - 2, w - 6);
+        ctx.font = '7px "Courier New", monospace';
+        ctx.fillStyle = '#ccc';
+        ctx.fillText(subtitle, w / 2, h / 2 + 10, w - 6);
+    }, 72, 40);
+    const sticker = new THREE.Mesh(
+        new THREE.PlaneGeometry(0.4, 0.4 * (40 / 72)),
+        new THREE.MeshBasicMaterial({ map: tex })
+    );
+    sticker.rotation.x = -Math.PI / 2;
+    sticker.rotation.z = randRange(0, Math.PI * 2);
+    sticker.position.set(x, 0.015, z);
+    scene.add(sticker);
+    return 0.05;
+}
+
+// a real business card, dropped and stepped on — one of these is genuine
+// contact info, buried among all the fake JUSTIN BROWN leads elsewhere.
+function addBusinessCardLitter(x, z) {
+    const [title, subtitle] = pick(CONFIG.siteContent.contact);
+    const tex = makePixelTexture((ctx, w, h) => {
+        ctx.fillStyle = '#e8e4d8';
+        ctx.fillRect(0, 0, w, h);
+        ctx.fillStyle = '#1a1a1a';
+        ctx.textAlign = 'center';
+        ctx.font = 'bold 8px "Courier New", monospace';
+        ctx.fillText(title, w / 2, h / 2 - 3, w - 6);
+        ctx.font = '6px "Courier New", monospace';
+        ctx.fillText(subtitle, w / 2, h / 2 + 8, w - 6);
+    }, 64, 36);
+    const card = new THREE.Mesh(
+        new THREE.PlaneGeometry(0.16, 0.09),
+        new THREE.MeshStandardMaterial({ map: tex, roughness: 0.8 })
+    );
+    card.rotation.x = -Math.PI / 2;
+    card.rotation.z = randRange(0, Math.PI * 2);
+    card.position.set(x, 0.012, z);
+    scene.add(card);
+    return 0.04;
 }
 
 function addStatue(x, z) {
@@ -762,6 +1181,9 @@ const PROP_BUILDERS = {
     lantern: addLantern,
     vendingMachine: addVendingMachine,
     fenceSegment: (x, z) => addFenceSegment(x, z, randRange(0, Math.PI * 2)),
+    museumPlacard: addMuseumPlacard,
+    stickerTag: addStickerTag,
+    businessCardLitter: addBusinessCardLitter,
 };
 
 // ---------- lay out the grid ----------
@@ -774,8 +1196,55 @@ for (let r = 0; r < GRID_ROWS; r++) {
     }
 }
 
+mountContentCards(); // real site content claims leftover wall faces
+
+// ---------- the one true signal ----------
+// BFS out from spawn over open cells; the dead end with the greatest walk
+// distance gets the single real marker. Everything else you can find here
+// is noise wearing his name — this is the only verified one, and it's
+// buried as deep as the maze allows.
+{
+    const dist = new Map();
+    const key = (c, r) => `${c},${r}`;
+    dist.set(key(spawnCol, spawnRow), 0);
+    const queue = [[spawnCol, spawnRow]];
+    while (queue.length) {
+        const [c, r] = queue.shift();
+        const d = dist.get(key(c, r));
+        for (const [dc, dr] of [[0, -1], [0, 1], [-1, 0], [1, 0]]) {
+            const nc = c + dc, nr = r + dr;
+            if (grid[nr]?.[nc] === false && !dist.has(key(nc, nr))) {
+                dist.set(key(nc, nr), d + 1);
+                queue.push([nc, nr]);
+            }
+        }
+    }
+
+    let signalCell = null, signalDist = -1;
+    for (const [k, d] of dist) {
+        const [c, r] = k.split(',').map(Number);
+        if (openNeighborCount(c, r) === 1 && d > signalDist) { signalDist = d; signalCell = [c, r]; }
+    }
+
+    if (signalCell) {
+        const [sc, sr] = signalCell;
+        for (const [dc, dr] of [[0, -1], [0, 1], [-1, 0], [1, 0]]) {
+            const bc = sc + dc, br = sr + dr;
+            if (!grid[br]?.[bc]) continue; // needs a solid building to mount on
+            const footprint = footprintOf[br][bc];
+            const { x, z } = cellToWorld(bc, br);
+            // face pointing FROM the building back toward the dead end
+            const face = buildingFaceDefs(footprint).find(f => f.dc === -dc && f.dr === -dr);
+            if (!face) continue;
+            const sig = CONFIG.billboards.signal;
+            addSign(x + face.ox, 2.4, z + face.oz, face.rotY, sig.title, sig.subtitle, sig.color);
+            break;
+        }
+    }
+}
+
 // special features placed on plaza cells (wider open junctions)
-const shuffledPlazas = [...plazaCells].sort(() => Math.random() - 0.5);
+const shuffledPlazas = [...plazaCells].sort(() => rng() - 0.5);
 let plazaCursor = 0;
 function nextPlazaCell() {
     return plazaCursor < shuffledPlazas.length ? shuffledPlazas[plazaCursor++] : null;
@@ -807,9 +1276,14 @@ const usedPlazas = new Set(shuffledPlazas.slice(0, plazaCursor).map(([c, r]) => 
 for (let r = 1; r < GRID_ROWS - 1; r++) {
     for (let c = 1; c < GRID_COLS - 1; c++) {
         if (grid[r][c]) continue;
-        if (c === startCol && r === startRow) continue;
+        if (c === spawnCol && r === spawnRow) continue;
         if (usedPlazas.has(`${c},${r}`)) continue;
-        if (Math.random() > QUALITY.propDensity) continue;
+
+        const t = webAlignment(cellToWorld(c, r).z);
+        const gradientMul = THREE.MathUtils.lerp(
+            CONFIG.narrative.darkWeb.propDensityMul, CONFIG.narrative.lightWeb.propDensityMul, t
+        );
+        if (rng() > QUALITY.propDensity * gradientMul) continue;
 
         const choice = weightedPick(CONFIG.props.weights);
         if (choice === 'none') continue;
@@ -886,7 +1360,7 @@ const move = { forward: false, back: false, left: false, right: false };
 let touchMoveVec = { x: 0, y: 0 }; // from joystick, x = strafe, y = forward
 const velocity = new THREE.Vector3();
 
-const spawn = cellToWorld(startCol, startRow);
+const spawn = cellToWorld(spawnCol, spawnRow);
 camera.position.set(spawn.x, CONFIG.camera.eyeHeight, spawn.z);
 
 // ---------- desktop controls ----------
@@ -1046,6 +1520,7 @@ function animate() {
         resolveCollisions(camera.position);
     }
     camera.position.y = CONFIG.camera.eyeHeight;
+    updateWebGradient(camera.position.z);
 
     composer.render();
 }

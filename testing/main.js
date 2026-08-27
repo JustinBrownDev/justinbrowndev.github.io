@@ -364,6 +364,9 @@ const CONFIG = {
             manhole: 2,
             pigeon: 2.5,
             fissureCrack: 1.5,
+            tree: 1.5,
+            pottedPlant: 3,
+            weeds: 3.5,
             none: 1.5,
         },
         maxSpecialFeatures: {
@@ -806,6 +809,10 @@ function addBuilding(col, row) {
         // queryable is also everything watched.
         if (rng() < 0.06) {
             addSecurityCamera(x + face.ox * 0.97, z + face.oz * 0.97, face.rotY, height);
+        }
+        // ivy/dead-vine patch, independent of everything else on this wall
+        if (rng() < 0.14) {
+            addIvyPatch(x + face.ox * 0.98, randRange(0.6, Math.min(height - 1, 4)), z + face.oz * 0.98, face.rotY);
         }
     }
 
@@ -1364,6 +1371,133 @@ function addOverheadCable(xa, za, xb, zb) {
     scene.add(tube);
 }
 
+// a tree, alive or dead — never planted without the possibility of the
+// other. Living: green cluster canopy, upright. Dead: bare grey branches,
+// no leaves, often leaning. Same trunk generator either way.
+function addTree(x, z) {
+    const alive = rng() < 0.6;
+    const trunkHeight = randRange(1.8, 4.2);
+    const trunkTilt = alive ? randRange(-0.05, 0.05) : randRange(-0.3, 0.3);
+    const trunk = new THREE.Mesh(
+        new THREE.CylinderGeometry(randRange(0.08, 0.14), randRange(0.12, 0.2), trunkHeight, 6),
+        new THREE.MeshStandardMaterial({ color: alive ? 0x3a2c1c : 0x2a241c, roughness: 0.95 })
+    );
+    trunk.position.y = trunkHeight / 2;
+    trunk.rotation.z = trunkTilt;
+    const g = new THREE.Group();
+    g.add(trunk);
+
+    if (alive) {
+        const canopyColor = pick([0x1c3a1c, 0x223a1a, 0x1a331e]);
+        const clumps = 2 + Math.floor(rng() * 3);
+        for (let i = 0; i < clumps; i++) {
+            const s = randRange(0.5, 1.0);
+            const clump = new THREE.Mesh(
+                new THREE.IcosahedronGeometry(s, 0),
+                new THREE.MeshStandardMaterial({ color: canopyColor, roughness: 1, flatShading: true })
+            );
+            clump.position.set(randRange(-0.5, 0.5), trunkHeight + randRange(0.2, 0.7), randRange(-0.5, 0.5));
+            clump.scale.set(1, randRange(0.7, 1.1), 1);
+            g.add(clump);
+        }
+    } else {
+        // bare branches — a few thin cylinders radiating from the top
+        const branchCount = 3 + Math.floor(rng() * 3);
+        for (let i = 0; i < branchCount; i++) {
+            const len = randRange(0.6, 1.4);
+            const branch = new THREE.Mesh(
+                new THREE.CylinderGeometry(0.02, 0.04, len, 4),
+                new THREE.MeshStandardMaterial({ color: 0x2a241c, roughness: 1 })
+            );
+            branch.position.set(0, trunkHeight - 0.1, 0);
+            branch.rotation.z = randRange(-1.1, 1.1);
+            branch.rotation.x = randRange(-1.1, 1.1);
+            branch.translateY(len / 2);
+            g.add(branch);
+        }
+    }
+    g.position.set(x, 0, z);
+    g.rotation.y = randRange(0, Math.PI * 2);
+    scene.add(g);
+    return 0.25;
+}
+
+// a potted plant — thriving (full, green) or neglected (sparse, browning).
+function addPottedPlant(x, z) {
+    const thriving = rng() < 0.55;
+    const pot = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.16, 0.12, 0.22, 8),
+        new THREE.MeshStandardMaterial({ color: 0x5a4530, roughness: 0.9 })
+    );
+    pot.position.y = 0.11;
+    const g = new THREE.Group();
+    g.add(pot);
+    const leafColor = thriving ? pick([0x2a4a1e, 0x1e4a28]) : pick([0x5a5228, 0x6a5a3a]);
+    const leafCount = thriving ? 5 + Math.floor(rng() * 4) : 2 + Math.floor(rng() * 2);
+    for (let i = 0; i < leafCount; i++) {
+        const leaf = new THREE.Mesh(
+            new THREE.ConeGeometry(0.05, randRange(0.25, 0.5), 5),
+            new THREE.MeshStandardMaterial({ color: leafColor, roughness: 0.9 })
+        );
+        leaf.position.set(randRange(-0.1, 0.1), 0.22 + randRange(0.1, 0.25), randRange(-0.1, 0.1));
+        leaf.rotation.z = randRange(-0.4, 0.4);
+        leaf.rotation.x = randRange(-0.4, 0.4);
+        g.add(leaf);
+    }
+    g.position.set(x, 0, z);
+    scene.add(g);
+    return 0.18;
+}
+
+// ivy patch mounted on a wall — spreading and green, or dead and brown.
+// Layered onto alley-facing walls alongside graffiti/cameras.
+function addIvyPatch(x, y, z, rotY) {
+    const alive = rng() < 0.5;
+    const baseColor = alive ? 0x1e3a1a : 0x4a3a20;
+    const tex = makePixelTexture((ctx, w, h) => {
+        ctx.clearRect(0, 0, w, h);
+        const shade = hexToCss(baseColor);
+        for (let i = 0; i < 40; i++) {
+            ctx.fillStyle = shade;
+            ctx.globalAlpha = randRange(0.4, 0.9);
+            const cx = w / 2 + randRange(-w / 2, w / 2) * (i / 40);
+            const cy = h - (i / 40) * h * randRange(0.6, 1);
+            ctx.beginPath();
+            ctx.arc(cx, cy, randRange(2, 5), 0, Math.PI * 2);
+            ctx.fill();
+        }
+        ctx.globalAlpha = 1;
+    }, 48, 64);
+    const plane = new THREE.Mesh(
+        new THREE.PlaneGeometry(randRange(0.7, 1.3), randRange(1, 1.8)),
+        new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false })
+    );
+    plane.position.set(x, y, z);
+    plane.rotation.y = rotY;
+    scene.add(plane);
+}
+
+// weeds growing from a pavement crack — common, cheap, ground-level.
+function addWeeds(x, z) {
+    const g = new THREE.Group();
+    const alive = rng() < 0.7;
+    const color = alive ? pick([0x2a4a1e, 0x1e4a28, 0x3a5a24]) : pick([0x5a5228, 0x4a4020]);
+    const blades = 3 + Math.floor(rng() * 4);
+    for (let i = 0; i < blades; i++) {
+        const h = randRange(0.1, 0.3);
+        const blade = new THREE.Mesh(
+            new THREE.ConeGeometry(0.015, h, 3),
+            new THREE.MeshStandardMaterial({ color, roughness: 1 })
+        );
+        blade.position.set(randRange(-0.08, 0.08), h / 2, randRange(-0.08, 0.08));
+        blade.rotation.z = randRange(-0.3, 0.3);
+        g.add(blade);
+    }
+    g.position.set(x, 0, z);
+    scene.add(g);
+    return 0.05;
+}
+
 function addStatue(x, z) {
     const g = new THREE.Group();
     const stoneMat = new THREE.MeshStandardMaterial({ color: 0x3a4238, roughness: 1 });
@@ -1501,6 +1635,9 @@ const PROP_BUILDERS = {
     manhole: addManhole,
     pigeon: addPigeon,
     fissureCrack: addFissureCrack,
+    tree: addTree,
+    pottedPlant: addPottedPlant,
+    weeds: addWeeds,
 };
 
 // ---------- lay out the grid ----------

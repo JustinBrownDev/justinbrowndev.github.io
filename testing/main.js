@@ -303,6 +303,8 @@ const CONFIG = {
             museumPlacard: 2.5,
             stickerTag: 3.5,
             businessCardLitter: 2,
+            manhole: 2,
+            pigeon: 2.5,
             none: 1.5,
         },
         maxSpecialFeatures: {
@@ -469,13 +471,20 @@ let navPageIndex = 0;
 function pickSignContent() {
     const weights = { ...CONFIG.billboards.contentWeights };
     if (navPageIndex >= CONFIG.billboards.navPages.length) delete weights.nav;
-    switch (weightedPick(weights)) {
-        case 'nav': return CONFIG.billboards.navPages[navPageIndex++];
-        case 'decoy': return toContent(pick(CONFIG.billboards.decoyIdentities));
-        case 'noise': return toContent(pick(CONFIG.billboards.systemNoise));
-        default: return toContent(pick(CONFIG.billboards.flavorWords));
+    const kind = weightedPick(weights);
+    switch (kind) {
+        case 'nav': return { ...CONFIG.billboards.navPages[navPageIndex++], flicker: false };
+        case 'decoy': return { ...toContent(pick(CONFIG.billboards.decoyIdentities)), flicker: false };
+        // system noise flickers — it's the machinery admitting the signal
+        // is unreliable, so it should visibly read as unreliable.
+        case 'noise': return { ...toContent(pick(CONFIG.billboards.systemNoise)), flicker: true };
+        default: return { ...toContent(pick(CONFIG.billboards.flavorWords)), flicker: false };
     }
 }
+
+// lights that pulse/blink over time instead of holding steady. Populated
+// by addSign (noise signage) and security cameras; ticked in animate().
+const flickerLights = [];
 
 // neon color leans warm toward the light-web pole (south), cool toward
 // the dark-web pole (north) — the palette itself carries the gradient.
@@ -661,9 +670,22 @@ function addBuilding(col, row) {
         const signHeight = randRange(2.2, Math.min(height - 2, 6));
         addSign(
             x + face.ox, signHeight, z + face.oz,
-            face.rotY, content.title, content.subtitle, neon
+            face.rotY, content.title, content.subtitle, neon, content.flicker
         );
+
+        // low chance of a tag scrawled near ground level on the same wall —
+        // independent of whether a sign landed above it.
+        if (rng() < 0.16) {
+            addGraffitiTag(x + face.ox * 0.99, randRange(0.6, 1.6), z + face.oz * 0.99, face.rotY);
+        }
+        // low chance of a security camera watching the alley — everything
+        // queryable is also everything watched.
+        if (rng() < 0.06) {
+            addSecurityCamera(x + face.ox * 0.97, z + face.oz * 0.97, face.rotY, height);
+        }
     }
+
+    addRooftopClutter(x, z, footprint, height);
 }
 
 const candidateFaces = []; // faces that skipped a random sign — free for content cards
@@ -679,7 +701,7 @@ function buildingFaceDefs(footprint) {
     ];
 }
 
-function addSign(x, y, z, rotY, title, subtitle, colorHex) {
+function addSign(x, y, z, rotY, title, subtitle, colorHex, flicker = false) {
     const b = CONFIG.billboards;
     const tex = makePixelTexture((ctx, w, h) => {
         const color = hexToCss(colorHex);
@@ -714,6 +736,108 @@ function addSign(x, y, z, rotY, title, subtitle, colorHex) {
             z + Math.cos(rotY) * 0.6
         );
         scene.add(light);
+        if (flicker) {
+            flickerLights.push({ light, base: sl.intensity, phase: rng() * Math.PI * 2, speed: randRange(2, 5), mode: 'sine' });
+        }
+    }
+}
+
+// spray-paint scrawl near the ground — half bio-rhetoric, half the concept
+// talking to itself. Irregular jitter per letter so it reads as vandalism,
+// not signage.
+const GRAFFITI_TAGS = [
+    'U R HERE', 'SEARCH != FIND', 'STILL LOOKING?', 'NOBODY HOME',
+    '404 LOVE', 'HE WAS HERE', 'MORE THAN ONE', 'ASK THE GUY',
+    'NOT THIS ONE EITHER', 'KEEP WALKING', 'PUBLIC SECRET', 'UNBOUND',
+];
+function addGraffitiTag(x, y, z, rotY) {
+    const text = pick(GRAFFITI_TAGS);
+    const colorHex = pick(CONFIG.neonPalette);
+    const tex = makePixelTexture((ctx, w, h) => {
+        ctx.clearRect(0, 0, w, h);
+        ctx.fillStyle = hexToCss(colorHex) + 'cc';
+        ctx.textAlign = 'left';
+        ctx.font = 'italic bold 13px "Courier New", monospace';
+        let cx = 4;
+        const cy = h / 2 + randRange(-2, 2);
+        for (const ch of text) {
+            ctx.save();
+            ctx.translate(cx, cy + randRange(-2, 2));
+            ctx.rotate(randRange(-0.12, 0.12));
+            ctx.fillText(ch, 0, 0);
+            ctx.restore();
+            cx += ctx.measureText(ch).width + randRange(-0.5, 1.5);
+        }
+    }, Math.max(64, text.length * 10), 28);
+    const width = randRange(0.9, 1.6);
+    const plane = new THREE.Mesh(
+        new THREE.PlaneGeometry(width, width * 0.28),
+        new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false })
+    );
+    plane.position.set(x, y, z);
+    plane.rotation.y = rotY;
+    scene.add(plane);
+}
+
+// a camera on a bracket, watching the alley — a small red LED blinks.
+// everything queryable is also everything watched.
+function addSecurityCamera(x, z, rotY, buildingHeight) {
+    const y = randRange(2.6, Math.min(buildingHeight - 1, 5.5));
+    const g = new THREE.Group();
+    const bracket = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.025, 0.025, 0.3, 5),
+        new THREE.MeshStandardMaterial({ color: 0x1c1c1c, metalness: 0.6, roughness: 0.5 })
+    );
+    bracket.rotation.z = Math.PI / 2;
+    bracket.position.set(0, 0, 0.15);
+    const body = new THREE.Mesh(
+        new THREE.BoxGeometry(0.12, 0.12, 0.24),
+        new THREE.MeshStandardMaterial({ color: 0x2a2a2a, metalness: 0.5, roughness: 0.5 })
+    );
+    body.position.set(0, 0, 0.32);
+    const led = new THREE.Mesh(
+        new THREE.SphereGeometry(0.02, 6, 6),
+        new THREE.MeshBasicMaterial({ color: 0xff2020 })
+    );
+    led.position.set(0, 0.05, 0.44);
+    g.add(bracket, body, led);
+    g.position.set(x, y, z);
+    g.rotation.y = rotY;
+    scene.add(g);
+
+    if (dynamicLightsRemaining > 0) {
+        dynamicLightsRemaining--;
+        const light = new THREE.PointLight(0xff2020, 0.6, 1.2, 2);
+        light.position.set(
+            x + Math.sin(rotY) * 0.44, y + 0.05, z + Math.cos(rotY) * 0.44
+        );
+        scene.add(light);
+        flickerLights.push({ light, base: 0.6, phase: rng() * Math.PI * 2, speed: randRange(3, 6), mode: 'blink' });
+    }
+}
+
+// rooftop silhouette clutter — antennas, water tanks, AC units — so the
+// skyline reads as inhabited when glimpsed between buildings, not blank.
+function addRooftopClutter(x, z, footprint, height) {
+    const metalMat = new THREE.MeshStandardMaterial({ color: 0x2c2c2c, roughness: 0.7, metalness: 0.4 });
+
+    if (rng() < 0.35) { // antenna
+        const antenna = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, randRange(1.5, 4), 5), metalMat);
+        antenna.position.set(x + randRange(-footprint / 3, footprint / 3), height + antenna.geometry.parameters.height / 2, z + randRange(-footprint / 3, footprint / 3));
+        scene.add(antenna);
+    }
+    if (rng() < 0.25) { // water tank
+        const tank = new THREE.Mesh(
+            new THREE.CylinderGeometry(0.6, 0.6, 1.1, 10),
+            new THREE.MeshStandardMaterial({ color: 0x3a2c1c, roughness: 0.8 })
+        );
+        tank.position.set(x + randRange(-footprint / 4, footprint / 4), height + 0.55, z + randRange(-footprint / 4, footprint / 4));
+        scene.add(tank);
+    }
+    if (rng() < 0.3) { // AC/HVAC unit
+        const ac = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.4, 0.5), metalMat);
+        ac.position.set(x + randRange(-footprint / 3, footprint / 3), height + 0.2, z + randRange(-footprint / 3, footprint / 3));
+        scene.add(ac);
     }
 }
 
@@ -1050,6 +1174,72 @@ function addBusinessCardLitter(x, z) {
     return 0.04;
 }
 
+// flat grated disc set into the pavement — sewer/utility access. Purely
+// decorative but grounds the alley (literally) as real infrastructure.
+function addManhole(x, z) {
+    const tex = makePixelTexture((ctx, w, h) => {
+        ctx.fillStyle = '#2a2622';
+        ctx.beginPath(); ctx.arc(w / 2, h / 2, w / 2 - 1, 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = '#161412';
+        ctx.lineWidth = 2;
+        for (let i = 0; i < 8; i++) {
+            const a = (i / 8) * Math.PI * 2;
+            ctx.beginPath();
+            ctx.moveTo(w / 2, h / 2);
+            ctx.lineTo(w / 2 + Math.cos(a) * (w / 2 - 3), h / 2 + Math.sin(a) * (h / 2 - 3));
+            ctx.stroke();
+        }
+        ctx.beginPath(); ctx.arc(w / 2, h / 2, w * 0.3, 0, Math.PI * 2); ctx.stroke();
+    }, 48, 48);
+    const disc = new THREE.Mesh(
+        new THREE.CircleGeometry(0.45, 16),
+        new THREE.MeshStandardMaterial({ map: tex, roughness: 0.9 })
+    );
+    disc.rotation.x = -Math.PI / 2;
+    disc.rotation.z = randRange(0, Math.PI * 2);
+    disc.position.set(x, 0.011, z);
+    scene.add(disc);
+    return 0; // walk-over, no collider
+}
+
+// a pigeon, doing pigeon things. Pure "random bullshit" — no narrative
+// weight, just a sign the city has something alive in it.
+function addPigeon(x, z) {
+    const bodyMat = new THREE.MeshStandardMaterial({ color: pick([0x4a4a4e, 0x5a5450, 0x3a3a3e]), roughness: 0.9 });
+    const g = new THREE.Group();
+    const body = new THREE.Mesh(new THREE.SphereGeometry(0.09, 8, 6), bodyMat);
+    body.scale.set(1, 0.85, 1.3);
+    body.position.y = 0.09;
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.05, 6, 6), bodyMat);
+    head.position.set(0, 0.15, 0.11);
+    g.add(body, head);
+    g.position.set(x, 0, z);
+    g.rotation.y = randRange(0, Math.PI * 2);
+    scene.add(g);
+    return 0.1;
+}
+
+// a sagging cable strung between two building faces across an alley —
+// the network made literal. Occasionally a bright "fiber" line instead
+// of dull rubber-black, glowing faintly with data that's never for you.
+function addOverheadCable(xa, za, xb, zb) {
+    const midY = randRange(4, 9);
+    const sagY = midY - randRange(0.4, 1.2);
+    const isFiber = rng() < 0.2;
+    const curve = new THREE.QuadraticBezierCurve3(
+        new THREE.Vector3(xa, midY + randRange(-0.4, 0.4), za),
+        new THREE.Vector3((xa + xb) / 2, sagY, (za + zb) / 2),
+        new THREE.Vector3(xb, midY + randRange(-0.4, 0.4), zb)
+    );
+    const tube = new THREE.Mesh(
+        new THREE.TubeGeometry(curve, 8, isFiber ? 0.02 : 0.03, 5, false),
+        isFiber
+            ? new THREE.MeshBasicMaterial({ color: pick(CONFIG.neonPalette) })
+            : new THREE.MeshStandardMaterial({ color: 0x0c0c0c, roughness: 0.9 })
+    );
+    scene.add(tube);
+}
+
 function addStatue(x, z) {
     const g = new THREE.Group();
     const stoneMat = new THREE.MeshStandardMaterial({ color: 0x3a4238, roughness: 1 });
@@ -1184,6 +1374,8 @@ const PROP_BUILDERS = {
     museumPlacard: addMuseumPlacard,
     stickerTag: addStickerTag,
     businessCardLitter: addBusinessCardLitter,
+    manhole: addManhole,
+    pigeon: addPigeon,
 };
 
 // ---------- lay out the grid ----------
@@ -1278,6 +1470,20 @@ for (let r = 1; r < GRID_ROWS - 1; r++) {
         if (grid[r][c]) continue;
         if (c === spawnCol && r === spawnRow) continue;
         if (usedPlazas.has(`${c},${r}`)) continue;
+
+        // overhead cables: strung across the alley wherever there's a
+        // building directly on both sides (either axis) — the literal
+        // network overhead, independent of ground clutter below it.
+        if (grid[r]?.[c - 1] && grid[r]?.[c + 1] && rng() < 0.3) {
+            const wa = cellToWorld(c - 1, r), wb = cellToWorld(c + 1, r);
+            const fa = footprintOf[r][c - 1] ?? CELL * 0.6, fb = footprintOf[r][c + 1] ?? CELL * 0.6;
+            addOverheadCable(wa.x + fa / 2, wa.z, wb.x - fb / 2, wb.z);
+        }
+        if (grid[r - 1]?.[c] && grid[r + 1]?.[c] && rng() < 0.3) {
+            const wa = cellToWorld(c, r - 1), wb = cellToWorld(c, r + 1);
+            const fa = footprintOf[r - 1][c] ?? CELL * 0.6, fb = footprintOf[r + 1][c] ?? CELL * 0.6;
+            addOverheadCable(wa.x, wa.z + fa / 2, wb.x, wb.z - fb / 2);
+        }
 
         const t = webAlignment(cellToWorld(c, r).z);
         const gradientMul = THREE.MathUtils.lerp(
@@ -1500,9 +1706,18 @@ if (IS_TOUCH) {
 
 const clock = new THREE.Clock();
 
+let elapsedTime = 0; // hand-accumulated: clock.getElapsedTime() would double-consume delta
+
 function animate() {
     requestAnimationFrame(animate);
     const delta = Math.min(CONFIG.movement.maxDeltaSeconds, clock.getDelta());
+    elapsedTime += delta;
+
+    for (const f of flickerLights) {
+        f.light.intensity = f.mode === 'blink'
+            ? (Math.floor(elapsedTime * f.speed + f.phase) % 2 === 0 ? f.base : 0)
+            : f.base * (0.55 + 0.45 * Math.sin(elapsedTime * f.speed + f.phase));
+    }
 
     const forwardInput = (move.forward ? 1 : 0) - (move.back ? 1 : 0) - touchMoveVec.y;
     const rightInput = (move.right ? 1 : 0) - (move.left ? 1 : 0) + touchMoveVec.x;

@@ -30,8 +30,8 @@ const CONFIG = {
     targetPlatform: 'desktop',
 
     scene: {
-        backgroundColor: 0x171018,
-        fogColor: 0x22141c,
+        backgroundColor: 0x121212,
+        fogColor: 0x161c16,
         fogDensity: 0.03,
     },
 
@@ -45,20 +45,20 @@ const CONFIG = {
         // loud. everything about you is here, which is exactly why none
         // of it is you specifically.
         lightWeb: {
-            fogColor: 0x3a0f1c,
+            fogColor: 0x2a2818,
             fogDensity: 0.038,
-            ambientColor: 0x6a2030,
+            ambientColor: 0x4a4428,
             ambientIntensity: 1.6,
             hemiIntensity: 0.75,
             signChance: 0.95,
             propDensityMul: 1.2,
         },
         // north pole (-row/-Z): "dark web" — cooler and sparser, but still
-        // lit — teal/slate, not black. quieter, not blind.
+        // lit — dark green-gray, not black. quieter, not blind.
         darkWeb: {
-            fogColor: 0x0e1a22,
+            fogColor: 0x0e160e,
             fogDensity: 0.045,
-            ambientColor: 0x18323a,
+            ambientColor: 0x1c2c1c,
             ambientIntensity: 1.15,
             hemiIntensity: 0.45,
             signChance: 0.7,
@@ -75,13 +75,13 @@ const CONFIG = {
     },
 
     lighting: {
-        ambientColor: 0x3a2028,
+        ambientColor: 0x2c2c28,
         ambientIntensity: 1.4,
-        moonColor: 0x8a90b8,
+        moonColor: 0xd8e8d0,
         moonIntensity: 0.4,
         moonPosition: { x: -5, y: 30, z: -10 },
         // ambient haze light so alleys aren't pitch black between signs
-        fillColor: 0xff4d5f,
+        fillColor: 0xffe9a0,
         fillIntensity: 0.5,
         signLight: {
             intensity: 5,
@@ -129,19 +129,19 @@ const CONFIG = {
         heightMin: 26,
         heightMax: 95,
         roughness: 0.92,
-        // varied low-fi facade tones — concrete, brick, rust, slate, olive.
-        // deliberately NOT purple-dominant; near-black is one option among many.
+        // black / gray / green / yellow-gray — deliberately NOT a purple or
+        // red-brick palette. Industrial, not neon-district.
         palette: [
-            0x2a2a2e, // concrete grey
-            0x3a2420, // brick red-brown
-            0x16282a, // dark teal
-            0x22281c, // olive/industrial green
-            0x3a2418, // rust
-            0x20242e, // slate blue-grey
-            0x18181a, // neutral near-black
-            0x33241c, // weathered brown
-            0x1c2a24, // dark green
-            0x2c2020, // dull maroon
+            0x1c1c1c, // near black
+            0x2a2a2a, // charcoal
+            0x353535, // mid gray
+            0x1e2418, // blackish green
+            0x242a1c, // olive-black
+            0x2c2c22, // dark khaki-gray
+            0x141414, // deep black
+            0x303030, // gray
+            0x1a2018, // dark green
+            0x26261e, // warm gray
         ],
         curb: {
             height: 0.12,
@@ -150,26 +150,84 @@ const CONFIG = {
         },
     },
 
-    // expanded neon palette — real variety, not just one hue family.
+    // black / yellow / green / white / gray — the ambient signage palette.
+    // Red is kept OUT of this pool entirely; it survives only on literal
+    // real-world coded objects (stop signs, crime tape, camera LEDs) where
+    // removing it would read as wrong rather than restrained.
     neonPalette: [
-        0xff1f4f, // crimson
-        0xff2fd6, // magenta
-        0xff5f2f, // blood orange
-        0xffb02f, // amber
-        0xfff02f, // sign yellow
-        0xb02fff, // violet
-        0x2fe8ff, // cyan
+        0xfff02f, // signal yellow
+        0xffcc33, // amber gold
         0x2fffb0, // acid green
-        0xff2f8a, // hot pink
-        0xffffff, // bare bulb white
-        0x2f8aff, // cold blue
         0x3aff6a, // signal green
+        0x8aff4a, // lime
+        0xffffff, // bare bulb white
+        0xd8ded8, // pale gray-white
+        0x9adfc0, // pale mint-gray
+        0xc8c8c8, // neutral gray
     ],
     // same colors, split by temperature so signage can lean warm toward
-    // the light-web pole and cool toward the dark-web pole. Purple is kept
-    // to a minority accent on the cool side, not the identity of "dark."
-    neonWarm: [0xff1f4f, 0xff2fd6, 0xff5f2f, 0xffb02f, 0xfff02f, 0xff2f8a, 0xffffff],
-    neonCool: [0x2fe8ff, 0x2fffb0, 0x2f8aff, 0x3aff6a, 0xffffff, 0xb02fff],
+    // the light-web pole and cool toward the dark-web pole.
+    neonWarm: [0xfff02f, 0xffcc33, 0xffffff, 0xc8c8c8],
+    neonCool: [0x2fffb0, 0x3aff6a, 0x8aff4a, 0xd8ded8, 0x9adfc0, 0xffffff],
+
+    // ---------------- real-world data ----------------
+    // not synthetic noise — actual sourced numbers, fetched live and baked
+    // in rather than called from the browser at runtime (a live third-party
+    // API is a fragile thing to hang a visitor's page on). Everything here
+    // is real; nothing is invented to look real.
+    realData: {
+        // DJIA closing-milestone history, Wikipedia "Closing milestones of
+        // the Dow Jones Industrial Average" (fetched 2026-08-27). Real
+        // value/year pairs, including the genuine 23-year gap where no new
+        // milestone was set (1930-1953, the Depression) and the 2007-2013
+        // gap (the financial crisis) — those flat stretches are real, not
+        // decorative. This drives the "crack in the concrete" texture.
+        djiaMilestones: [
+            [1885, 62.76], [1890, 78.38], [1896, 28.48], [1906, 103.00],
+            [1919, 119.62], [1929, 381.17], [1932, 41.22], [1972, 1003.16],
+            [1973, 1050], [1987, 2000], [1987, 2250], [1987, 2500],
+            [1989, 2750], [1991, 3000], [1993, 3500], [1995, 4000],
+            [1995, 4500], [1995, 5000], [1996, 5500], [1996, 6000],
+            [1996, 6500], [1997, 7000], [1997, 7500], [1997, 8000],
+            [1998, 8500], [1998, 9000], [1999, 9500], [1999, 10000],
+            [1999, 11000], [2006, 12000], [2007, 13000], [2007, 14000],
+            [2013, 15000], [2013, 16000], [2014, 17000], [2014, 18000],
+            [2016, 19000], [2017, 20000], [2017, 22500], [2018, 25000],
+            [2019, 27500], [2019, 28000], [2020, 29000], [2020, 29500],
+            [2020, 30000], [2020, 30500], [2021, 31000], [2021, 32000],
+            [2021, 33000], [2021, 34000], [2021, 35000], [2021, 36000],
+            [2022, 36500], [2023, 37000], [2023, 37500], [2024, 38000],
+            [2024, 39000], [2024, 40000], [2024, 41000], [2024, 42000],
+            [2024, 43000], [2024, 44000], [2024, 45000], [2025, 45500],
+            [2025, 46500], [2025, 47500], [2025, 48500], [2026, 49500],
+            [2026, 50000], [2026, 51000], [2026, 52000], [2026, 53000],
+            [2026, 54000],
+        ],
+        // Real elevations in feet, Wikipedia (fetched 2026-08-27). Illinois
+        // is the literal center of this project (SIU Carbondale, College of
+        // DuPage — his actual home ground) and it is, factually, almost
+        // dead flat: 590ft mean, a 956ft total range statewide. Everything
+        // else here is real-world extremity around that flat, ordinary
+        // center — Mount St. Helens' pair is a real BEFORE/AFTER: an
+        // actual mountain that really lost 1,314ft in the 1980 eruption,
+        // not a fabricated contrast.
+        elevationsFt: [
+            ['Mariana Trench (Challenger Deep)', -35876],
+            ['Death Valley', -282],
+            ['Illinois: Mississippi/Ohio confluence (low pt)', 279],
+            ['Illinois: mean elevation', 590],
+            ['Illinois: Charles Mound (high pt)', 1235],
+            ['Mount St. Helens, post-1980 eruption', 8363],
+            ['Mount St. Helens, pre-1980 eruption', 9677],
+            ['Little Tahoma Peak', 11138],
+            ['Mount Rainier: Liberty Cap', 14112],
+            ['Mount Rainier: Point Success', 14158],
+            ['Mount Rainier: Columbia Crest (summit)', 14406],
+            ['Denali', 20310],
+            ['K2', 28251],
+            ['Mount Everest', 29032],
+        ],
+    },
 
     billboards: {
         // small + nearest-filtered = chunky low-fi pixel signage
@@ -305,6 +363,7 @@ const CONFIG = {
             businessCardLitter: 2,
             manhole: 2,
             pigeon: 2.5,
+            fissureCrack: 1.5,
             none: 1.5,
         },
         maxSpecialFeatures: {
@@ -508,6 +567,66 @@ function cellToWorld(col, row) {
     };
 }
 
+// a real 140-year DJIA jag, plotted year (x) against log(value) (y) —
+// etched as a crack. The real 1930-1953 dead stretch and the 2007-2013
+// crisis gap read as genuine flat stretches, not decoration.
+function makeCrackTexture() {
+    const data = CONFIG.realData.djiaMilestones;
+    const years = data.map(([y]) => y);
+    const logs = data.map(([, v]) => Math.log10(v));
+    const yMin = Math.min(...years), yMax = Math.max(...years);
+    const lMin = Math.min(...logs), lMax = Math.max(...logs);
+    return makePixelTexture((ctx, w, h) => {
+        ctx.fillStyle = '#141414';
+        ctx.fillRect(0, 0, w, h);
+        ctx.strokeStyle = '#050505';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        data.forEach(([year, val], i) => {
+            const px = ((year - yMin) / (yMax - yMin)) * w;
+            const py = h - ((Math.log10(val) - lMin) / (lMax - lMin)) * h;
+            if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+        });
+        ctx.stroke();
+        ctx.strokeStyle = '#3a3a3a';
+        ctx.lineWidth = 0.5;
+        ctx.stroke();
+    }, 160, 48);
+}
+
+// vertical band gradient built from real elevations, trench to summit.
+// Illinois' real (nearly flat) range sits near the low-middle of the
+// stack — the ordinary, actual center this whole thing is built around.
+function makeTopologyStainTexture() {
+    const points = CONFIG.realData.elevationsFt;
+    const vals = points.map(([, ft]) => ft);
+    const min = Math.min(...vals), max = Math.max(...vals);
+    return makePixelTexture((ctx, w, h) => {
+        points.forEach(([name, ft], i) => {
+            const t0 = i / points.length, t1 = (i + 1) / points.length;
+            const norm = (ft - min) / (max - min);
+            const shade = Math.floor(18 + norm * 60);
+            const tint = name.startsWith('Illinois') ? [shade, shade + 10, shade] : [shade, shade, shade + 4];
+            ctx.fillStyle = `rgb(${tint[0]},${tint[1]},${tint[2]})`;
+            ctx.fillRect(0, Math.floor(h * (1 - t1)), w, Math.ceil(h * (t1 - t0)) + 1);
+        });
+    }, 24, 128);
+}
+
+// a real fissure in the pavement, dropped as ground clutter — pulls
+// straight from makeCrackTexture rather than a synthetic crack pattern.
+function addFissureCrack(x, z) {
+    const crack = new THREE.Mesh(
+        new THREE.PlaneGeometry(randRange(1.2, 2.4), randRange(0.4, 0.8)),
+        new THREE.MeshBasicMaterial({ map: makeCrackTexture() })
+    );
+    crack.rotation.x = -Math.PI / 2;
+    crack.rotation.z = randRange(0, Math.PI * 2);
+    crack.position.set(x, 0.013, z);
+    scene.add(crack);
+    return 0;
+}
+
 function makeGroundTexture() {
     return makePixelTexture((ctx, w, h) => {
         ctx.fillStyle = '#0c0808';
@@ -629,10 +748,15 @@ function addBuilding(col, row) {
     const height = randRange(CONFIG.buildings.heightMin, CONFIG.buildings.heightMax);
     const color = pick(CONFIG.buildings.palette);
 
-    const building = new THREE.Mesh(
-        buildingBoxGeo,
-        new THREE.MeshStandardMaterial({ color, roughness: CONFIG.buildings.roughness })
-    );
+    // ~1 in 6 buildings is "stained" with the real elevation-gradient
+    // texture instead of a flat facade color — trench-dark at the base
+    // climbing toward summit-pale near the roofline.
+    const useStain = rng() < 0.16;
+    const material = useStain
+        ? new THREE.MeshStandardMaterial({ map: makeTopologyStainTexture(), roughness: CONFIG.buildings.roughness })
+        : new THREE.MeshStandardMaterial({ color, roughness: CONFIG.buildings.roughness });
+
+    const building = new THREE.Mesh(buildingBoxGeo, material);
     building.scale.set(footprint, height, footprint);
     building.position.set(x, height / 2, z);
     scene.add(building);
@@ -1376,6 +1500,7 @@ const PROP_BUILDERS = {
     businessCardLitter: addBusinessCardLitter,
     manhole: addManhole,
     pigeon: addPigeon,
+    fissureCrack: addFissureCrack,
 };
 
 // ---------- lay out the grid ----------

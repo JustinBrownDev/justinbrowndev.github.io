@@ -1,0 +1,10 @@
+# Working-directory scratch material — specs, raw dumps, lore drafts.
+# None of this is meant to be published to the public site repo.
+*.md
+!README.md
+neon_superhighway_prompt*.txt
+overpass_queries.txt
+physical_scene_taxonomy.txt
+LLM_SLURP_DUMP.txt
+*.pdf
+testing/lore/

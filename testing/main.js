@@ -1179,6 +1179,12 @@ const PERSONAL_WANTED_FACTS = [
     ['@BRUCEFALLITM', 'instagram -- unconfirmed sightings'],
     ['@SMALLPLANTENTHUSIAST', 'instagram -- succulents, mostly'],
     ['ARMED WITH OPINIONS', 'approach with snacks'],
+    // straight out of his own self-mythology (The Great Book of 8gH) --
+    // same in-voice absurdism as the facts above, just further out.
+    ['JUDGE OF THE FIFTH BUTTON', 'convened one microwave tribunal'],
+    ['KEEPER OF THE CYCLE', 'compress -- condense -- expand -- evaporate'],
+    ['THE WORKBENCH IS AN ALTAR', 'not a mess, allegedly'],
+    ['NO USER-SERVICEABLE PARTS', 'disputed, opened anyway'],
 ];
 const wantedPosterMeshes = [];
 
@@ -1935,6 +1941,10 @@ const GRAFFITI_TAGS = [
     'U R HERE', 'SEARCH != FIND', 'STILL LOOKING?', 'NOBODY HOME',
     '404 LOVE', 'HE WAS HERE', 'MORE THAN ONE', 'ASK THE GUY',
     'NOT THIS ONE EITHER', 'KEEP WALKING', 'PUBLIC SECRET', 'UNBOUND',
+    // The Great Book of 8gH — scrawled fragments of the same absurdist
+    // personal mythology that names the codeProjects wall plaques below.
+    'NO 5TH BUTTON', 'OPEN THE CASE', 'THE CYCLE KNOWS', 'JTHEWAY',
+    'HEAT SHALL MOVE', 'WHO LEFT THIS OPEN', 'YES BUT HOW', 'REMOVE THE COVER',
 ];
 function addGraffitiTag(x, y, z, rotY) {
     const text = pick(GRAFFITI_TAGS);
@@ -2115,6 +2125,21 @@ function mountContentCards() {
 
 // ---------- props / fixtures ----------
 
+// every collider radius below used to be a hand-picked number returned
+// alongside the mesh it describes -- close by eye, but a guess, and a
+// guess drifts out of sync with the geometry the moment either one
+// changes without the other. This computes the real thing instead: an
+// actual Box3 around the object that's actually in the scene, taken
+// after its final position/rotation are set, so the collider always
+// matches what's rendered rather than what someone estimated it to be.
+const _colliderBox = new THREE.Box3();
+const _colliderSize = new THREE.Vector3();
+function colliderRadiusFromObject(obj) {
+    _colliderBox.setFromObject(obj);
+    _colliderBox.getSize(_colliderSize);
+    return Math.max(_colliderSize.x, _colliderSize.z) / 2;
+}
+
 function addTrashCan(x, z) {
     const g = new THREE.Group();
     const body = new THREE.Mesh(
@@ -2130,7 +2155,7 @@ function addTrashCan(x, z) {
     g.add(body, lid);
     g.position.set(x, 0, z);
     scene.add(g);
-    return 0.32;
+    return colliderRadiusFromObject(g);
 }
 
 function addTrafficCone(x, z) {
@@ -2353,10 +2378,23 @@ function addMuseumPlacard(x, z, facingRotY) {
     return 0.1;
 }
 
+// mythology fragments — the same absurdist personal canon (The Great
+// Book of 8gH) that the graffiti/wanted-poster pools quote from, cut
+// down to sticker-flyer length. Kept separate from siteContent (real
+// resume/portfolio facts) so this stays clearly its own decorative genre.
+const MYTHOLOGY_FRAGMENTS = [
+    ['FOUR BUTTONS', 'time -- power -- start -- stop'],
+    ['THE FIFTH WAS JUDGED', 'ruled unnecessary, disputed since'],
+    ['HIS EMINENCE OF REFRIGERATION', 'sovereign of the cycle'],
+    ['THE VISE-GRIP REVELATION', 'the moment gripping acquired state'],
+    ['8gH', 'a signature attached to opened structures'],
+    ['TAKE IT APART', 'to see how it works'],
+];
+
 // a flyer dropped flat on the pavement — skills & rhetoric fragments.
 // common, cheap, everywhere; the "public secret" hiding in plain sight.
 function addStickerTag(x, z) {
-    const [title, subtitle] = pick([...CONFIG.siteContent.skills, ...CONFIG.siteContent.about, ...CONFIG.billboards.flavorWords]);
+    const [title, subtitle] = pick([...CONFIG.siteContent.skills, ...CONFIG.siteContent.about, ...CONFIG.billboards.flavorWords, ...MYTHOLOGY_FRAGMENTS]);
     const neon = pick(CONFIG.neonPalette);
     const tex = makePixelTexture((ctx, w, h) => {
         ctx.fillStyle = '#0a0a0a';

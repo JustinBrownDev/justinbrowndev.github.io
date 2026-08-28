@@ -133,9 +133,9 @@ const CONFIG = {
             bloom: { strength: 0.55, radius: 0.4, threshold: 0.88 },
             drawDistance: 380,
             maxDynamicLights: 40,
-            propDensity: 1.7,
-            skyJunkCount: 3800, // airborne clutter -- pure overdraw, so this is the dial that's safe to push hardest
-            floatingPlatformClusters: 26, // real colliders + individual meshes, unlike sky junk -- kept modest on purpose
+            propDensity: 2.3, // turned up another notch -- "way more everything" pass
+            skyJunkCount: 5200, // airborne clutter -- pure overdraw, so this is the dial that's safe to push hardest
+            floatingPlatformClusters: 34, // real colliders + individual meshes, unlike sky junk -- kept modest on purpose
         },
         mobile: {
             maxPixelRatio: 1.5,
@@ -143,9 +143,9 @@ const CONFIG = {
             bloom: { strength: 0.4, radius: 0.35, threshold: 0.9 },
             drawDistance: 260,
             maxDynamicLights: 18,
-            propDensity: 1.05,
-            skyJunkCount: 950,
-            floatingPlatformClusters: 12,
+            propDensity: 1.35,
+            skyJunkCount: 1300,
+            floatingPlatformClusters: 16,
         },
         // auto-selected on low core-count/low-memory machines (touch or
         // not -- see detectWeakGPU below), or forced with ?quality=low.
@@ -2021,7 +2021,7 @@ function addBuilding(col, row) {
     // doesn't.
     addCrate(x - hw * 0.4, z + hw * 0.3);
     addPottedPlant(x + hw * 0.5, z - hw * 0.4);
-    const indoorJunkCount = 1 + Math.floor((1 - buildingContext.maintenance) * 4 + rng() * 2);
+    const indoorJunkCount = 2 + Math.floor((1 - buildingContext.maintenance) * 5 + rng() * 3);
     scatterJunk('indoor', x, z, indoorJunkCount, hw * 0.55);
     // real furniture is more likely the better-kept this building rolled
     // -- the one real container -> contents -> contents-of-contents
@@ -2157,22 +2157,44 @@ function addBuilding(col, row) {
             );
         }
 
-        // low chance of a tag scrawled near ground level on the same wall —
-        // independent of whether a sign landed above it.
-        if (rng() < 0.3) {
-            addGraffitiTag(x + face.ox * 0.99, randRange(0.6, 1.6), z + face.oz * 0.99, face.rotY);
+        // graffiti tags scrawled near ground level -- independent of
+        // whether a sign landed above, and now often more than one, the
+        // way a real repeatedly-tagged wall accumulates over time.
+        const graffitiRolls = [0.42, 0.4, 0.25]; // always-ish one, decent odds of a 2nd, some of a 3rd
+        const usedGraffitiHeights = [];
+        for (const p of graffitiRolls) {
+            if (rng() >= p) break;
+            let gy, tries = 0;
+            do { gy = randRange(0.55, 1.7); tries++; } while (usedGraffitiHeights.some(h => Math.abs(h - gy) < 0.35) && tries < 5);
+            usedGraffitiHeights.push(gy);
+            addGraffitiTag(x + face.ox * 0.99, gy, z + face.oz * 0.99, face.rotY);
+        }
+        if (usedGraffitiHeights.length && rng() < 0.3 * QUALITY.propDensity) {
             // the tagger's supplies, left at the base of their own work
-            if (rng() < 0.3 * QUALITY.propDensity) {
-                placeRealModel('sprayCans', x + face.ox * 0.85, z + face.oz * 0.85, randRange(0, Math.PI * 2));
+            placeRealModel('sprayCans', x + face.ox * 0.85, z + face.oz * 0.85, randRange(0, Math.PI * 2));
+        }
+        // a flyer (or a small cluster of them) taped up nearby -- "more
+        // posters" without touching the real, curated site content.
+        if (rng() < 0.4) {
+            const flyerCount = rng() < 0.3 ? 2 : 1;
+            for (let i = 0; i < flyerCount; i++) {
+                // offset along the wall (tangential to its face normal),
+                // not into/out of it, so a cluster reads as side-by-side
+                const tangentX = face.oz !== 0 ? randRange(-hw * 0.6, hw * 0.6) : 0;
+                const tangentZ = face.ox !== 0 ? randRange(-hw * 0.6, hw * 0.6) : 0;
+                addWallFlyer(
+                    x + face.ox * 0.985 + tangentX, randRange(1.0, 1.8), z + face.oz * 0.985 + tangentZ,
+                    face.rotY
+                );
             }
         }
         // low chance of a security camera watching the alley — everything
         // queryable is also everything watched.
-        if (rng() < 0.1) {
+        if (rng() < 0.14) {
             addSecurityCamera(x + face.ox * 0.97, z + face.oz * 0.97, face.rotY, height);
         }
         // ivy/dead-vine patch, independent of everything else on this wall
-        if (rng() < 0.24) {
+        if (rng() < 0.3) {
             addIvyPatch(x + face.ox * 0.98, randRange(0.6, Math.min(height - 1, 4)), z + face.oz * 0.98, face.rotY);
         }
         // shop awning, roughly shopfront height -- above the shell's door
@@ -2959,6 +2981,37 @@ function addStickerTag(x, z) {
     sticker.position.set(x, 0.015, z);
     scene.add(sticker);
     return 0.05;
+}
+
+// a flyer taped flush to the wall -- real tape (not a standoff mount,
+// paper gets taped flat) at 1-3 corners, torn/curling edge on whichever
+// corner didn't get one. Pulls from the same decorative pools stickers
+// already draw from -- "more posters" without inventing new fake resume
+// content, just a lot more of the noise layer that already exists.
+function addWallFlyer(x, y, z, rotY) {
+    const [title, subtitle] = pick([...CONFIG.billboards.flavorWords, ...MYTHOLOGY_FRAGMENTS, ...CONFIG.siteContent.about]);
+    const paper = pick(['#e8ddc2', '#d8d0e8', '#e8d8c8', '#c8e0d8', '#f0e8d0']);
+    const tex = makePixelTexture((ctx, w, h) => {
+        ctx.fillStyle = paper;
+        ctx.fillRect(0, 0, w, h);
+        ctx.strokeStyle = '#00000030';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(2, 2, w - 4, h - 4);
+        ctx.fillStyle = '#1a1a1a';
+        ctx.textAlign = 'center';
+        ctx.font = 'bold 10px "Courier New", monospace';
+        ctx.fillText(title, w / 2, h / 2 - 2, w - 8);
+        ctx.font = '7px "Courier New", monospace';
+        ctx.fillText(subtitle, w / 2, h / 2 + 12, w - 8);
+    }, 72, 96);
+    const width = randRange(0.32, 0.5);
+    const plane = new THREE.Mesh(
+        new THREE.PlaneGeometry(width, width * (96 / 72)),
+        new THREE.MeshStandardMaterial({ map: tex, roughness: 0.95 })
+    );
+    plane.position.set(x, y, z);
+    plane.rotation.y = rotY + randRange(-0.06, 0.06); // never dead-flat, a little crooked like it was actually taped up by hand
+    scene.add(plane);
 }
 
 // a real business card, dropped and stepped on — one of these is genuine

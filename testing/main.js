@@ -541,7 +541,7 @@ const CONFIG = {
     movement: {
         speed: 4.5, // slower than before — cramped alleys, not a sprint
         maxDeltaSeconds: 0.1,
-        collisionIterations: 2,
+        collisionIterations: 4, // was 2 -- too few passes to settle cleanly now that alley clutter is this dense; this is what "trash cans feel impossible to walk past" actually was
     },
 
     desktopControls: {
@@ -1541,6 +1541,82 @@ function maybeAddMezzanine(x, z, hw, groundFloorHeight, door) {
     });
 }
 
+// ---------- generalized climbable stairs ----------
+// the exact same primitive maybeAddMezzanine uses above (push a rampRun,
+// groundHeightAt does the rest every frame) pulled out into a reusable
+// builder -- so exterior fire escapes and the tall vertical-layer
+// staircases climb exactly like an interior mezzanine already does,
+// real elevation and real collision, not a new physics system.
+function addStairFlight(axis, along0, along1, cross, y0, y1, opts = {}) {
+    const width = opts.width ?? 0.9;
+    const along = along1 - along0, rise = y1 - y0;
+    const n = Math.max(3, Math.round(Math.abs(rise) / 0.28));
+    const stepMat = new THREE.MeshStandardMaterial({ color: opts.color ?? 0x2e2a26, roughness: 0.85, metalness: 0.35 });
+    for (let i = 0; i < n; i++) {
+        const tMid = (i + 0.5) / n;
+        const posAlong = along0 + along * tMid;
+        const posY = y0 + rise * tMid;
+        const stepDepth = Math.abs(along) / n;
+        const step = new THREE.Mesh(
+            new THREE.BoxGeometry(axis === 'x' ? stepDepth * 1.05 : width, 0.1, axis === 'x' ? width : stepDepth * 1.05),
+            stepMat
+        );
+        step.position.set(axis === 'x' ? posAlong : cross, posY, axis === 'x' ? cross : posAlong);
+        scene.add(step);
+    }
+    // railings both sides -- also doubles as the visual tell that this
+    // one, unlike a decorative-only fire escape, is meant to be climbed
+    const railMat = new THREE.MeshStandardMaterial({ color: opts.railColor ?? 0x1c1c1c, roughness: 0.55, metalness: 0.5 });
+    for (const side of [-1, 1]) {
+        const rc = cross + side * (width / 2 + 0.03);
+        const rail = new THREE.Mesh(new THREE.BoxGeometry(
+            axis === 'x' ? Math.abs(along) * 1.03 : 0.05, 0.45, axis === 'x' ? 0.05 : Math.abs(along) * 1.03
+        ), railMat);
+        rail.position.set(
+            axis === 'x' ? along0 + along / 2 : rc, y0 + rise / 2 + 0.28, axis === 'x' ? rc : along0 + along / 2
+        );
+        scene.add(rail);
+    }
+    rampRuns.push({ axis, from: along0, to: along1, fixedCoord: cross, halfWidth: width / 2 + 0.15, y0, y1 });
+}
+
+function addLandingPlatform(x, z, halfW, y, opts = {}) {
+    const platform = new THREE.Mesh(
+        new THREE.BoxGeometry(halfW * 2, 0.1, halfW * 2),
+        new THREE.MeshStandardMaterial({ color: opts.color ?? 0x352f28, roughness: 0.85, metalness: 0.3 })
+    );
+    platform.position.set(x, y, z);
+    scene.add(platform);
+    elevatedPlatforms.push({ x, z, hx: halfW, hz: halfW, y });
+}
+
+// a real, climbable fire escape: a switchback of flights zigzagging up
+// the outside of a wall face, functionally identical to the interior
+// mezzanine stairs above -- walk onto it and groundHeightAt actually
+// lifts you. (x, z, rotY) is the same wall-face anchor point the
+// decorative GLTF model is placed at; this builds alongside it rather
+// than replacing it, so the detailed model still reads as the fire
+// escape's silhouette while these plain switchback treads are what
+// you're actually standing on (they won't pixel-align, and that's a
+// deliberate tradeoff -- this whole aesthetic is already "crude on
+// purpose" everywhere else).
+function buildFireEscapeStair(x, z, rotY, topY) {
+    const nx = Math.round(Math.sin(rotY)), nz = -Math.round(Math.cos(rotY));
+    const axis = nx === 0 ? 'x' : 'z';
+    let along = axis === 'x' ? x + nx * 0.7 : z + nz * 0.7;
+    const cross = axis === 'x' ? z + nz * 0.7 : x + nx * 0.7;
+    const flightLen = 1.7, risePerFlight = 2.4;
+    let y = 0, dir = 1;
+    while (y < topY) {
+        const y1 = Math.min(topY, y + risePerFlight);
+        const along1 = along + dir * flightLen;
+        addStairFlight(axis, along, along1, cross, y, y1);
+        const wx = axis === 'x' ? along1 : cross, wz = axis === 'x' ? cross : along1;
+        addLandingPlatform(wx, wz, 0.65, y1);
+        y = y1; along = along1; dir *= -1;
+    }
+}
+
 function addBuilding(col, row) {
     const { x, z } = cellToWorld(col, row);
     // ~12% of buildings are squat warehouses instead of towers: near-full
@@ -1712,9 +1788,15 @@ function addBuilding(col, row) {
             addAwning(x + face.ox, Math.max(2.4, groundFloorHeight + 0.2), z + face.oz, face.rotY, randRange(1.6, 2.4));
         }
         // a real fire escape zigzagging up the alley-facing wall -- the
-        // single most back-alley-defining architectural feature there is
+        // single most back-alley-defining architectural feature there is.
+        // the detailed GLTF model is the silhouette; buildFireEscapeStair
+        // is what actually holds you -- these used to be pure decoration
+        // (walk right through them) while ground junk blocked you solid,
+        // which was backwards. now they climb, for real, like any interior
+        // mezzanine stair does.
         if (rng() < 0.18) {
             placeRealModel('fireEscape', x + face.ox * 1.02, z + face.oz * 1.02, face.rotY);
+            buildFireEscapeStair(x + face.ox * 1.02, z + face.oz * 1.02, face.rotY, randRange(5, 11));
         }
     }
 

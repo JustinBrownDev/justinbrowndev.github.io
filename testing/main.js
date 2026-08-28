@@ -29,38 +29,40 @@ const CONFIG = {
 
     targetPlatform: 'desktop',
 
+    // DAYTIME. Bright open sky, real sun, long sightlines — the gradient
+    // below is still a real duality, just played across daylight instead
+    // of a day/night switch: blinding open-plaza glare vs. cooler
+    // overcast-alley shade, never full dark.
     scene: {
-        backgroundColor: 0x121212,
-        fogColor: 0x161c16,
-        fogDensity: 0.03,
+        backgroundColor: 0x7ec4e8,
+        fogColor: 0xcfe8f0,
+        fogDensity: 0.018,
     },
 
     // the maze runs along a north/south gradient (grid row, mirrored in
     // world Z) between two poles. Nothing teleports you between them —
-    // you walk the gradient continuously, which is the point. Both poles
-    // are kept bright enough to actually see and navigate — the gradient
-    // is a color/density shift, not a light switch.
+    // you walk the gradient continuously, which is the point.
     narrative: {
         // south pole (+row/+Z): "light web" — oversaturated, over-indexed,
-        // loud. everything about you is here, which is exactly why none
-        // of it is you specifically.
+        // loud, blinding noon glare. everything about you is here, which
+        // is exactly why none of it is you specifically.
         lightWeb: {
-            fogColor: 0x2a2818,
-            fogDensity: 0.038,
-            ambientColor: 0x4a4428,
-            ambientIntensity: 1.6,
-            hemiIntensity: 0.75,
+            fogColor: 0xf0f4e0,
+            fogDensity: 0.022,
+            ambientColor: 0xfff4d0,
+            ambientIntensity: 2.1,
+            hemiIntensity: 1.0,
             signChance: 0.95,
             propDensityMul: 1.2,
         },
-        // north pole (-row/-Z): "dark web" — cooler and sparser, but still
-        // lit — dark green-gray, not black. quieter, not blind.
+        // north pole (-row/-Z): "dark web" — cooler, flatter, overcast —
+        // sparser and quieter, never actually dark.
         darkWeb: {
-            fogColor: 0x0e160e,
-            fogDensity: 0.045,
-            ambientColor: 0x1c2c1c,
-            ambientIntensity: 1.15,
-            hemiIntensity: 0.45,
+            fogColor: 0xc8d8d8,
+            fogDensity: 0.026,
+            ambientColor: 0xd0e8e8,
+            ambientIntensity: 1.5,
+            hemiIntensity: 0.6,
             signChance: 0.7,
             propDensityMul: 0.85,
         },
@@ -75,14 +77,15 @@ const CONFIG = {
     },
 
     lighting: {
-        ambientColor: 0x2c2c28,
-        ambientIntensity: 1.4,
-        moonColor: 0xd8e8d0,
-        moonIntensity: 0.4,
-        moonPosition: { x: -5, y: 30, z: -10 },
-        // ambient haze light so alleys aren't pitch black between signs
-        fillColor: 0xffe9a0,
-        fillIntensity: 0.5,
+        ambientColor: 0xd8d8c8,
+        ambientIntensity: 1.8,
+        // "moon" is the sun now, high overhead — real directional daylight
+        moonColor: 0xfff8e0,
+        moonIntensity: 1.2,
+        moonPosition: { x: 20, y: 70, z: 10 },
+        // warm ground-bounce light so alley shade never reads as flat black
+        fillColor: 0xfff4d0,
+        fillIntensity: 0.6,
         signLight: {
             intensity: 5,
             distance: 9,
@@ -93,11 +96,14 @@ const CONFIG = {
     // per-platform render quality. Desktop values are the intended look;
     // mobile trims cost (pixel ratio, bloom, lights, prop count) to hold
     // frame rate on weaker GPUs instead of cutting features outright.
+    // Bloom threshold is high on purpose: daylight scenes are bright
+    // everywhere, so only genuinely emissive signage should glow, not
+    // sunlit concrete.
     quality: {
         desktop: {
             maxPixelRatio: 2,
             antialias: true,
-            bloom: { strength: 1.1, radius: 0.55, threshold: 0.2 },
+            bloom: { strength: 0.55, radius: 0.4, threshold: 0.88 },
             drawDistance: 200,
             maxDynamicLights: 40,
             propDensity: 1.0,
@@ -105,7 +111,7 @@ const CONFIG = {
         mobile: {
             maxPixelRatio: 1.5,
             antialias: false,
-            bloom: { strength: 0.85, radius: 0.45, threshold: 0.25 },
+            bloom: { strength: 0.4, radius: 0.35, threshold: 0.9 },
             drawDistance: 130,
             maxDynamicLights: 18,
             propDensity: 0.6,
@@ -129,46 +135,49 @@ const CONFIG = {
         heightMin: 26,
         heightMax: 95,
         roughness: 0.92,
-        // black / gray / green / yellow-gray — deliberately NOT a purple or
-        // red-brick palette. Industrial, not neon-district.
+        // daylight facades — light concrete/sandstone/brick tones with
+        // green/orange/red/cyan casts. NO black, NO purple, anywhere.
         palette: [
-            0x1c1c1c, // near black
-            0x2a2a2a, // charcoal
-            0x353535, // mid gray
-            0x1e2418, // blackish green
-            0x242a1c, // olive-black
-            0x2c2c22, // dark khaki-gray
-            0x141414, // deep black
-            0x303030, // gray
-            0x1a2018, // dark green
-            0x26261e, // warm gray
+            0xd8d4c4, // light concrete
+            0xc8c2a8, // sandstone tan
+            0xb8c8ac, // pale sage green
+            0xd8c488, // mustard tan
+            0xd89858, // warm orange-brick
+            0xc06858, // muted red-brick
+            0xa8c8c8, // pale cyan-gray
+            0xe8e4d4, // near-white cream
+            0xa0b890, // light olive green
+            0xc4b494, // khaki
         ],
         curb: {
             height: 0.12,
             overhang: 0.35, // how far the curb/base skirt extends past the facade
-            color: 0x2a2222,
+            color: 0xb8b0a0,
         },
     },
 
-    // black / yellow / green / white / gray — the ambient signage palette.
-    // Red is kept OUT of this pool entirely; it survives only on literal
-    // real-world coded objects (stop signs, crime tape, camera LEDs) where
-    // removing it would read as wrong rather than restrained.
+    // white / yellow / green / orange / red / cyan — the full signage
+    // palette. NO black, NO purple. In daylight these read as painted
+    // signage rather than glowing neon, which is fine — the color logic
+    // (warm toward light-web, cool toward dark-web) still carries the
+    // gradient regardless of what time of day it's rendered as.
     neonPalette: [
-        0xfff02f, // signal yellow
-        0xffcc33, // amber gold
-        0x2fffb0, // acid green
-        0x3aff6a, // signal green
-        0x8aff4a, // lime
-        0xffffff, // bare bulb white
-        0xd8ded8, // pale gray-white
-        0x9adfc0, // pale mint-gray
-        0xc8c8c8, // neutral gray
+        0xffffff, // white
+        0xfff02f, // yellow
+        0xffd93f, // gold-yellow
+        0x3aff6a, // green
+        0x5eff8a, // light green
+        0xff8a2f, // orange
+        0xffa64d, // light orange
+        0xff3b3b, // red
+        0xff5555, // light red
+        0x2fe8ff, // cyan
+        0x5ff0ff, // light cyan
     ],
     // same colors, split by temperature so signage can lean warm toward
     // the light-web pole and cool toward the dark-web pole.
-    neonWarm: [0xfff02f, 0xffcc33, 0xffffff, 0xc8c8c8],
-    neonCool: [0x2fffb0, 0x3aff6a, 0x8aff4a, 0xd8ded8, 0x9adfc0, 0xffffff],
+    neonWarm: [0xffffff, 0xfff02f, 0xffd93f, 0xff8a2f, 0xffa64d, 0xff3b3b, 0xff5555],
+    neonCool: [0xffffff, 0x3aff6a, 0x5eff8a, 0x2fe8ff, 0x5ff0ff],
 
     // ---------------- real-world data ----------------
     // not synthetic noise — actual sourced numbers, fetched live and baked
@@ -458,11 +467,11 @@ window.addEventListener('resize', () => {
 
 const ambientLight = new THREE.AmbientLight(CONFIG.lighting.ambientColor, CONFIG.lighting.ambientIntensity);
 scene.add(ambientLight);
-const hemiLight = new THREE.HemisphereLight(CONFIG.lighting.fillColor, 0x0a0407, CONFIG.lighting.fillIntensity);
+const hemiLight = new THREE.HemisphereLight(CONFIG.lighting.fillColor, 0x9a8a68, CONFIG.lighting.fillIntensity);
 scene.add(hemiLight);
-const moon = new THREE.DirectionalLight(CONFIG.lighting.moonColor, CONFIG.lighting.moonIntensity);
-moon.position.set(CONFIG.lighting.moonPosition.x, CONFIG.lighting.moonPosition.y, CONFIG.lighting.moonPosition.z);
-scene.add(moon);
+const sun = new THREE.DirectionalLight(CONFIG.lighting.moonColor, CONFIG.lighting.moonIntensity);
+sun.position.set(CONFIG.lighting.moonPosition.x, CONFIG.lighting.moonPosition.y, CONFIG.lighting.moonPosition.z);
+scene.add(sun);
 
 let dynamicLightsRemaining = QUALITY.maxDynamicLights;
 
@@ -734,8 +743,83 @@ const [spawnCol, spawnRow] = allOpenCells[Math.floor(rng() * allOpenCells.length
 
 // ---------- reusable geometry/materials ----------
 
-const buildingBoxGeo = new THREE.BoxGeometry(1, 1, 1);
+const skirtBoxGeo = new THREE.BoxGeometry(1, 1, 1);
 const signGeo = new THREE.PlaneGeometry(1, 1);
+
+// generic one-time vertex jitter — perturbs a geometry's own vertices at
+// creation so cheap primitives (crates, cans, machines) read as hand-built
+// rather than perfectly regular. Zero runtime cost: it runs once, not
+// per-frame, and doesn't add a single vertex or draw call.
+function jitterGeometry(geo, amount) {
+    const pos = geo.attributes.position;
+    for (let i = 0; i < pos.count; i++) {
+        pos.setXYZ(
+            i,
+            pos.getX(i) + randRange(-amount, amount),
+            pos.getY(i) + randRange(-amount, amount) * 0.4,
+            pos.getZ(i) + randRange(-amount, amount)
+        );
+    }
+    pos.needsUpdate = true;
+    geo.computeVertexNormals();
+    return geo;
+}
+
+// an organic tower: an 8-sided chamfered footprint (every corner cut by an
+// independently randomized amount — never a clean rectangle), tapered and
+// twisted between base and roof. Crucially, the 4 cardinal edge MIDPOINTS
+// (x=0 on the ±z edges, z=0 on the ±x edges) are untouched by the corner
+// cuts, since cuts are capped at half the footprint — so sign mounting and
+// grid collision (both keyed to those midpoints) don't need to change at
+// all; only the visible silhouette does.
+function buildOrganicTowerGeometry(hw, height) {
+    const maxCut = hw * 0.5;
+    const cut = () => randRange(hw * 0.12, maxCut);
+    const nwX = cut(), nwZ = cut(), neX = cut(), neZ = cut(),
+        seX = cut(), seZ = cut(), swX = cut(), swZ = cut();
+    const basePts = [
+        [-hw + nwX, -hw], [hw - neX, -hw],  // north edge, z = -hw
+        [hw, -hw + neZ], [hw, hw - seZ],    // east edge, x = hw
+        [hw - seX, hw], [-hw + swX, hw],    // south edge, z = hw
+        [-hw, hw - swZ], [-hw, -hw + nwZ],  // west edge, x = -hw
+    ];
+
+    const taper = randRange(0.7, 1.2);
+    const twist = randRange(-0.15, 0.15);
+    const cosT = Math.cos(twist), sinT = Math.sin(twist);
+    const topPts = basePts.map(([px, pz]) => {
+        const sx = px * taper, sz = pz * taper;
+        return [sx * cosT - sz * sinT, sx * sinT + sz * cosT];
+    });
+
+    const n = basePts.length;
+    const positions = [];
+    const uvs = [];
+    const pushTri = (a, b, c) => { positions.push(...a, ...b, ...c); };
+    const pushUV = (y0, y1, y2) => { uvs.push(0.5, y0 / height, 0.5, y1 / height, 0.5, y2 / height); };
+
+    for (let i = 0; i < n; i++) {
+        const j = (i + 1) % n;
+        const b0 = [basePts[i][0], 0, basePts[i][1]];
+        const b1 = [basePts[j][0], 0, basePts[j][1]];
+        const t0 = [topPts[i][0], height, topPts[i][1]];
+        const t1 = [topPts[j][0], height, topPts[j][1]];
+        pushTri(b0, b1, t1); pushUV(0, 0, 1);
+        pushTri(b0, t1, t0); pushUV(0, 1, 1);
+    }
+    for (let i = 1; i < n - 1; i++) { // top cap fan (footprint is convex)
+        const t0 = [topPts[0][0], height, topPts[0][1]];
+        const ti = [topPts[i][0], height, topPts[i][1]];
+        const tj = [topPts[i + 1][0], height, topPts[i + 1][1]];
+        pushTri(t0, ti, tj); pushUV(1, 1, 1);
+    }
+
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+    geo.computeVertexNormals();
+    return geo;
+}
 
 // actual footprint per building cell, so collision always matches what's
 // rendered instead of assuming a worst-case size (that mismatch is exactly
@@ -759,15 +843,14 @@ function addBuilding(col, row) {
         ? new THREE.MeshStandardMaterial({ map: makeTopologyStainTexture(), roughness: CONFIG.buildings.roughness })
         : new THREE.MeshStandardMaterial({ color, roughness: CONFIG.buildings.roughness });
 
-    const building = new THREE.Mesh(buildingBoxGeo, material);
-    building.scale.set(footprint, height, footprint);
-    building.position.set(x, height / 2, z);
+    const building = new THREE.Mesh(buildOrganicTowerGeometry(footprint / 2, height), material);
+    building.position.set(x, 0, z); // organic geometry already spans y=0..height
     scene.add(building);
 
     // curb/base skirt so the building reads as sitting on something, not floating
     const curb = CONFIG.buildings.curb;
     const skirt = new THREE.Mesh(
-        buildingBoxGeo,
+        skirtBoxGeo,
         new THREE.MeshStandardMaterial({ color: curb.color, roughness: 1 })
     );
     skirt.scale.set(footprint + curb.overhang, curb.height, footprint + curb.overhang);
@@ -1060,12 +1143,12 @@ function mountContentCards() {
 function addTrashCan(x, z) {
     const g = new THREE.Group();
     const body = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.28, 0.24, 0.75, 10),
+        jitterGeometry(new THREE.CylinderGeometry(0.28, 0.24, 0.75, 10), 0.025),
         new THREE.MeshStandardMaterial({ color: 0x201c1a, roughness: 0.85, metalness: 0.3 })
     );
     body.position.y = 0.375;
     const lid = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.3, 0.3, 0.06, 10),
+        jitterGeometry(new THREE.CylinderGeometry(0.3, 0.3, 0.06, 10), 0.02),
         new THREE.MeshStandardMaterial({ color: 0x2a2422, roughness: 0.8, metalness: 0.3 })
     );
     lid.position.y = 0.78;
@@ -1131,7 +1214,7 @@ function addCrate(x, z) {
     for (let i = 0; i < count; i++) {
         const size = randRange(0.35, 0.55);
         const crate = new THREE.Mesh(
-            new THREE.BoxGeometry(size, size, size),
+            jitterGeometry(new THREE.BoxGeometry(size, size, size), size * 0.12),
             new THREE.MeshStandardMaterial({ color: 0x4a3524, roughness: 0.95 })
         );
         crate.position.set(randRange(-0.15, 0.15), size / 2 + i * (size * 0.95), randRange(-0.15, 0.15));
@@ -1170,9 +1253,9 @@ function addLantern(x, z) {
 }
 
 function addVendingMachine(x, z) {
-    const colorHex = pick([0xff2f4f, 0x2fe8ff, 0xffb02f]);
+    const colorHex = pick(CONFIG.neonPalette);
     const body = new THREE.Mesh(
-        new THREE.BoxGeometry(0.65, 1.6, 0.55),
+        jitterGeometry(new THREE.BoxGeometry(0.65, 1.6, 0.55), 0.04),
         new THREE.MeshStandardMaterial({ color: 0x151515, roughness: 0.5, metalness: 0.4 })
     );
     body.position.y = 0.8;

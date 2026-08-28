@@ -2025,15 +2025,30 @@ function addBuilding(col, row) {
             continue;
         }
 
-        const content = pickSignContent();
-        const neon = pickNeonForRow(row);
-        // never below the shell's roofline -- otherwise a sign could end
-        // up floating in an open doorway gap on whichever face has one
-        const signHeight = randRange(Math.max(2.2, groundFloorHeight + 0.3), Math.max(groundFloorHeight + 1, Math.min(height - 2, 6)));
-        addSign(
-            x + face.ox, signHeight, z + face.oz,
-            face.rotY, content.title, content.subtitle, neon, content.flicker
-        );
+        // more than one sign per face now -- a real signage-choked
+        // facade is layered, not one polite billboard each. Heights are
+        // kept apart on retry so a 2nd/3rd roll doesn't just double up on
+        // the first one's spot.
+        const signRolls = [1, 0.65, 0.35]; // always 1, 65% of a 2nd, 35% of a 3rd (if the 2nd landed)
+        let signCount = 0;
+        for (const p of signRolls) { if (rng() < p) signCount++; else break; }
+        const usedSignHeights = [];
+        for (let i = 0; i < signCount; i++) {
+            const content = pickSignContent();
+            const neon = pickNeonForRow(row);
+            // never below the shell's roofline -- otherwise a sign could
+            // end up floating in an open doorway gap on whichever face has one
+            let signHeight, tries = 0;
+            do {
+                signHeight = randRange(Math.max(2.2, groundFloorHeight + 0.3), Math.max(groundFloorHeight + 1, Math.min(height - 2, 6)));
+                tries++;
+            } while (usedSignHeights.some(h => Math.abs(h - signHeight) < 0.7) && tries < 6);
+            usedSignHeights.push(signHeight);
+            addSign(
+                x + face.ox, signHeight, z + face.oz,
+                face.rotY, content.title, content.subtitle, neon, content.flicker
+            );
+        }
 
         // low chance of a tag scrawled near ground level on the same wall —
         // independent of whether a sign landed above it.
@@ -2110,20 +2125,43 @@ function addSign(x, y, z, rotY, title, subtitle, colorHex, flicker = false) {
 
     const width = randRange(1.6, 2.6);
     const height = width * (b.canvasHeight / b.canvasWidth);
-    const plane = new THREE.Mesh(signGeo, new THREE.MeshBasicMaterial({ map: tex }));
+
+    // projecting/blade-sign mount: a bracket arm carries the panel out
+    // from the wall instead of it lying flush against the facade --
+    // built in local space (bracket along local +Z, panel rotated 90 deg
+    // so it reads to someone walking along the sidewalk) and rotated as
+    // one group, the same pattern addSecurityCamera's bracket already
+    // uses. Double-sided since a real projecting sign reads from either
+    // direction you approach it from, not just head-on.
+    const armLength = randRange(0.55, 1.0);
+    const g = new THREE.Group();
+
+    const bracket = new THREE.Mesh(
+        jitterGeometry(new THREE.CylinderGeometry(0.03, 0.03, armLength, 5), 0.006),
+        new THREE.MeshStandardMaterial({ color: 0x1c1c1c, roughness: 0.6, metalness: 0.6 })
+    );
+    bracket.rotation.x = Math.PI / 2; // long axis: local +Y -> local +Z
+    bracket.position.set(0, 0, armLength / 2);
+    g.add(bracket);
+
+    const plane = new THREE.Mesh(signGeo, new THREE.MeshBasicMaterial({ map: tex, side: THREE.DoubleSide }));
     plane.scale.set(width, height, 1);
-    plane.position.set(x, y, z);
-    plane.rotation.y = rotY;
-    scene.add(plane);
+    plane.rotation.y = Math.PI / 2; // perpendicular to the wall, not flush against it
+    plane.position.set(0, 0, armLength);
+    g.add(plane);
+
+    g.rotation.y = rotY;
+    g.position.set(x, y, z);
+    scene.add(g);
 
     if (dynamicLightsRemaining > 0) {
         dynamicLightsRemaining--;
         const sl = CONFIG.lighting.signLight;
         const light = new THREE.PointLight(colorHex, sl.intensity, sl.distance, sl.decay);
         light.position.set(
-            x + Math.sin(rotY) * 0.6,
+            x + Math.sin(rotY) * armLength,
             y,
-            z + Math.cos(rotY) * 0.6
+            z + Math.cos(rotY) * armLength
         );
         scene.add(light);
         if (flicker) {

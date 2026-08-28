@@ -1748,6 +1748,60 @@ const [spawnCol, spawnRow] = allOpenCells[Math.floor(rng() * allOpenCells.length
 console.log(`[gen] maze grid ready at ${bootElapsed()}: ${GRID_COLS}x${GRID_ROWS} cells, ${allOpenCells.length} open, ${plazaCells.length} plazas, spawn=(${spawnCol},${spawnRow})`);
 bootStatus(`maze carved (${allOpenCells.length} open cells) -- building the city…`);
 
+// ---------- maze topology: explicit OPEN/CLOSED edges ----------
+// grid[r][c] marks a cell solid/open, but a *rendered* building only
+// fills an inset footprint (CELL - margin) of its cell -- up to ~1.4
+// units smaller than the cell, on each side. Two adjacent "solid" cells
+// can therefore leave a real 0.5-1.4 unit gap between their facades,
+// wide enough for the player capsule to slip through what the maze
+// topology says is a sealed wall -- the rendered geometry defeats the
+// DFS topology. Enforcing the maze is now a structural system
+// independent of whatever geometry (buildings, wings, annexes, decor)
+// happens to be inset within each cell: every cell-to-cell boundary is
+// either OPEN (both cells are alley -- already-contiguous pavement, no
+// seal needed -- that's just the maze's own carved passage) or CLOSED
+// (anything else), and every CLOSED boundary gets a guaranteed
+// collision seal spanning the full cell width, regardless of what's
+// drawn nearby. Buildings can stay inset/irregular/modular without ever
+// opening an accidental shortcut, because this doesn't rely on their
+// footprint reaching the boundary at all.
+const mazeSealWalls = []; // {x1,z1,x2,z2,yMin,yMax} -- ground-level only, see MAZE_SEAL_HEIGHT
+// just above eye height + jump apex (~0.94) -- tall enough nothing can
+// walk or hop over it at ground level, but well under even the
+// shortest warehouse's real roof (enterHeight >= 3.0 always), so
+// rooftop-to-rooftop traversal -- an intentional alternate route, not a
+// crack in the maze -- is never blocked by ground-level sealing.
+const MAZE_SEAL_HEIGHT = 2.2;
+function isCellOpen(c, r) { return grid[r]?.[c] === false; }
+for (let r = 0; r < GRID_ROWS; r++) {
+    for (let c = 0; c < GRID_COLS; c++) {
+        const { x: cx, z: cz } = cellToWorld(c, r);
+        // east boundary, (c,r)-(c+1,r)
+        if (c + 1 < GRID_COLS && !(isCellOpen(c, r) && isCellOpen(c + 1, r))) {
+            const bx = cx + CELL / 2;
+            mazeSealWalls.push({ x1: bx, z1: cz - CELL / 2, x2: bx, z2: cz + CELL / 2, yMin: 0, yMax: MAZE_SEAL_HEIGHT });
+            // visible dressing only where BOTH cells are solid -- the
+            // riskiest case (two buildings that could otherwise read as
+            // touching but leave a real gap between their facades).
+            // Alley-facing closed edges already have a real building
+            // wall dominating the view; this seal there is a pure
+            // backstop and doesn't need its own decoration.
+            if (grid[r]?.[c] && grid[r]?.[c + 1]) {
+                for (let i = 0; i < 4; i++) addFenceSegment(bx, cz - CELL / 2 + (i + 0.5) * (CELL / 4), Math.PI / 2);
+            }
+        }
+        // south boundary, (c,r)-(c,r+1)
+        if (r + 1 < GRID_ROWS && !(isCellOpen(c, r) && isCellOpen(c, r + 1))) {
+            const bz = cz + CELL / 2;
+            mazeSealWalls.push({ x1: cx - CELL / 2, z1: bz, x2: cx + CELL / 2, z2: bz, yMin: 0, yMax: MAZE_SEAL_HEIGHT });
+            if (grid[r]?.[c] && grid[r + 1]?.[c]) {
+                for (let i = 0; i < 4; i++) addFenceSegment(cx - CELL / 2 + (i + 0.5) * (CELL / 4), bz, 0);
+            }
+        }
+    }
+}
+console.log(`[testing] maze topology: ${mazeSealWalls.length} cell boundaries sealed -- squeezing between adjacent buildings is no longer physically possible`);
+
 // ---------- reusable geometry/materials ----------
 
 const skirtBoxGeo = new THREE.BoxGeometry(1, 1, 1);
@@ -1847,7 +1901,15 @@ for (let r = 0; r < GRID_ROWS; r++) footprintOf.push(new Array(GRID_COLS).fill(n
 // also doubles as the "does this cell have registered collision" map
 // used by resolveCollisions, replacing the old whole-footprint-square
 // check for every building cell, not just the special-cased few.
-const buildingWallSegments = new Map(); // "row,col" -> { segments: [{x1,z1,x2,z2}, ...], topY }
+// "row,col" -> { floors: [{yMin, yMax, segments: [{x1,z1,x2,z2}, ...]}, ...] }
+// -- per-floor now, not one shared list + a single topY cutoff: a wall
+// registered for floor 2 only ever blocks a player whose feet are within
+// THAT floor's own [yMin,yMax] band (see resolveCollisions), so an upper
+// floor's (now independently laid-out) walls can never block a lower
+// floor at the same X/Z, and standing above every registered floor's
+// yMax means this building can't block you horizontally at all -- out
+// over the roof/skyline, same as before.
+const buildingWallSegments = new Map();
 const WALL_THICKNESS = 0.12; // nominal -- the visual walls are flat planes with no real thickness
 
 // elevation: mezzanines inside ~30% of building interiors, reached by a
@@ -1903,6 +1965,52 @@ function groundHeightAt(x, z, feetY = Infinity) {
     return best;
 }
 
+// every floor-like surface whose XZ footprint contains (x,z), regardless
+// of how far away its Y is -- ground plane is always included as the
+// ultimate backstop. Used only for the airborne landing check below;
+// walking/auto-step still goes through groundHeightAt's MAX_STEP_HEIGHT
+// gating above, a genuinely different rule (can you step up onto this
+// while grounded) from "did you just fall through this while airborne."
+function surfaceHeightsAt(x, z) {
+    const ys = [0];
+    for (const p of elevatedPlatforms) {
+        if (Math.abs(x - p.x) < p.hx && Math.abs(z - p.z) < p.hz) ys.push(p.y);
+    }
+    for (const r of rampRuns) {
+        const along = r.axis === 'x' ? x : z;
+        const cross = r.axis === 'x' ? z : x;
+        if (Math.abs(cross - r.fixedCoord) > r.halfWidth) continue;
+        const t = (along - r.from) / (r.to - r.from);
+        if (t < 0 || t > 1) continue;
+        ys.push(r.y0 + (r.y1 - r.y0) * t);
+    }
+    for (const p of propColliders) {
+        if (p.height === Infinity) continue;
+        const dx = x - p.x, dz = z - p.z;
+        if (dx * dx + dz * dz <= p.radius * p.radius) ys.push(p.height);
+    }
+    return ys;
+}
+
+// the airborne half of vertical motion: world-Y is authoritative while
+// airborne (see the big comment on `grounded` near where it's declared)
+// -- this only ever SNAPS feet Y down onto a surface at the moment of a
+// real crossing (was at/above it, about to be at/below it, within this
+// surface's own footprint), never merely because some unrelated surface
+// now happens to sit within reach of last frame's foot height. Returns
+// the landing Y, or null if nothing was crossed this frame.
+const LANDING_EPS = 0.02;
+function findLandingSurface(x, z, feetY, predictedFeetY, verticalVelocity) {
+    if (verticalVelocity > 0) return null; // still ascending -- can't land mid-rise
+    let landing = null;
+    for (const y of surfaceHeightsAt(x, z)) {
+        if (feetY >= y - LANDING_EPS && predictedFeetY <= y + LANDING_EPS) {
+            if (landing === null || y > landing) landing = y; // highest crossed surface -- the first one you'd actually hit falling
+        }
+    }
+    return landing;
+}
+
 // a single interior partition wall with one doorway gap -- the building
 // block the room-layout pass below uses to carve a single floor into
 // several rooms. axis='x' means a wall of constant x (its normal points
@@ -1916,12 +2024,17 @@ function groundHeightAt(x, z, feetY = Infinity) {
 // movement on a lower floor with a different layout). Returns collision
 // segments the same shape buildingWallSegments already expects, so no
 // other code needs to know interior walls exist at all.
-function addInteriorWall(axis, fixedCoord, spanA, spanB, doorFrac, height, mat, doorWidth, yBase = 0) {
-    const spanLen = spanB - spanA;
-    const doorCenter = spanA + spanLen * doorFrac;
-    const doorLo = doorCenter - doorWidth / 2, doorHi = doorCenter + doorWidth / 2;
+// draws a straight wall along `axis` at `fixedCoord`, spanning
+// [spanA, spanB], with zero or more rectangular gaps left fully open --
+// doorways, archways into an attached wing module, a stairwell entrance,
+// whatever. Generalizes what used to be two separate single-gap
+// functions (addInteriorWall's own door cut, and buildExteriorPerimeter's
+// duplicate jamb-cutting logic) into one. Returns collision segments for
+// the solid parts only -- gaps are genuinely open, not implied doors.
+function buildWallWithGaps(axis, fixedCoord, spanA, spanB, gaps, height, mat, yBase = 0) {
+    const sorted = gaps.slice().sort((a, b) => a.lo - b.lo);
     const segs = [];
-    const addSeg = (a0, a1) => {
+    const addSolid = (a0, a1) => {
         if (a1 - a0 < 0.05) return;
         const len = a1 - a0, mid = (a0 + a1) / 2;
         const wall = new THREE.Mesh(new THREE.PlaneGeometry(len, height), mat);
@@ -1935,77 +2048,76 @@ function addInteriorWall(axis, fixedCoord, spanA, spanB, doorFrac, height, mat, 
         }
         scene.add(wall);
     };
-    addSeg(spanA, Math.max(spanA, doorLo));
-    addSeg(Math.min(spanB, doorHi), spanB);
+    let cursor = spanA;
+    for (const g of sorted) {
+        const lo = Math.max(spanA, Math.min(g.lo, g.hi)), hi = Math.min(spanB, Math.max(g.lo, g.hi));
+        if (hi <= cursor) continue; // degenerate/out-of-range gap -- ignore rather than corrupt the cursor
+        addSolid(cursor, Math.max(cursor, lo));
+        cursor = Math.max(cursor, hi);
+    }
+    addSolid(cursor, spanB);
     return segs;
 }
 
-// the 4 exterior walls of one floor -- solid on all sides, or one real
-// doorway toward `door` (fully solid if door is null: either this cell
-// has no open neighbor to put a door toward, or this is an upper floor,
-// which never gets an exterior door at all -- only the interior stairwell
-// reaches it). Parameterized by y0/floorHeight so the exact same call
-// builds any floor of a multi-floor building. Returns wall segments for
+// the 4 exterior walls of one floor of one module -- solid on all sides,
+// or a real doorway toward `door` (the building's single street entrance,
+// ground floor of the core module only), plus zero or more extra open
+// gaps (`openGaps`, {dx,dz,lo,hi}) -- an archway into an attached wing on
+// whichever side it's attached, full floor-to-ceiling open, no lintel
+// (that's what makes it read as one connected interior rather than two
+// rooms joined by a doorway). hwx/hwz let a module be a genuine rectangle
+// (needed for wings), not just a square. Returns wall segments for
 // collision.
-function buildExteriorPerimeter(x, z, hw, y0, floorHeight, door, mat) {
+function buildExteriorPerimeter(x, z, hwx, hwz, y0, floorHeight, door, mat, openGaps = []) {
     const doorWidth = 1.5, doorHeight = 2.3;
     const faces = [
-        { dx: 0, dz: -1, rotY: 0 }, { dx: 0, dz: 1, rotY: Math.PI },
-        { dx: -1, dz: 0, rotY: -Math.PI / 2 }, { dx: 1, dz: 0, rotY: Math.PI / 2 },
+        { dx: 0, dz: -1, rotY: 0, axis: 'z', fixedCoord: z - hwz, spanA: x - hwx, spanB: x + hwx, along: x },
+        { dx: 0, dz: 1, rotY: Math.PI, axis: 'z', fixedCoord: z + hwz, spanA: x - hwx, spanB: x + hwx, along: x },
+        { dx: -1, dz: 0, rotY: -Math.PI / 2, axis: 'x', fixedCoord: x - hwx, spanA: z - hwz, spanB: z + hwz, along: z },
+        { dx: 1, dz: 0, rotY: Math.PI / 2, axis: 'x', fixedCoord: x + hwx, spanA: z - hwz, spanB: z + hwz, along: z },
     ];
     const segments = [];
     for (const f of faces) {
+        const gaps = [];
         const isDoorWall = door && f.dx === door.dx && f.dz === door.dz;
-        const wallLen = hw * 2;
-        const cx = x + f.dx * hw, cz = z + f.dz * hw;
-        const ex = f.dz !== 0 ? hw : 0, ez = f.dx !== 0 ? hw : 0; // tangent half-extent
-
-        if (!isDoorWall) {
-            const wall = new THREE.Mesh(new THREE.PlaneGeometry(wallLen, floorHeight), mat);
-            wall.position.set(cx, y0 + floorHeight / 2, cz);
-            wall.rotation.y = f.rotY;
-            scene.add(wall);
-            segments.push({ x1: cx - ex, z1: cz - ez, x2: cx + ex, z2: cz + ez });
-        } else {
-            const jambWidth = (wallLen - doorWidth) / 2;
-            const jex = f.dz !== 0 ? jambWidth / 2 : 0, jez = f.dx !== 0 ? jambWidth / 2 : 0;
-            for (const side of [-1, 1]) {
-                const jamb = new THREE.Mesh(new THREE.PlaneGeometry(jambWidth, floorHeight), mat);
-                const along = side * (doorWidth / 2 + jambWidth / 2);
-                const jx = cx + (f.dz !== 0 ? along : 0);
-                const jz = cz + (f.dx !== 0 ? along : 0);
-                jamb.position.set(jx, y0 + floorHeight / 2, jz);
-                jamb.rotation.y = f.rotY;
-                scene.add(jamb);
-                segments.push({ x1: jx - jex, z1: jz - jez, x2: jx + jex, z2: jz + jez });
-            }
+        if (isDoorWall) gaps.push({ lo: f.along - doorWidth / 2, hi: f.along + doorWidth / 2 });
+        for (const g of openGaps) if (g.dx === f.dx && g.dz === f.dz) gaps.push({ lo: g.lo, hi: g.hi });
+        segments.push(...buildWallWithGaps(f.axis, f.fixedCoord, f.spanA, f.spanB, gaps, floorHeight, mat, y0));
+        if (isDoorWall) {
+            // header above the doorway, floor-to-ceiling minus doorHeight
+            // -- the gap below it is real open space, no segment there.
+            // Archway gaps (into a wing) skip this on purpose: those read
+            // as one open room, not a doorway.
             const lintel = new THREE.Mesh(new THREE.PlaneGeometry(doorWidth, floorHeight - doorHeight), mat);
-            lintel.position.set(cx, y0 + doorHeight + (floorHeight - doorHeight) / 2, cz);
+            if (f.axis === 'x') lintel.position.set(f.fixedCoord, y0 + doorHeight + (floorHeight - doorHeight) / 2, f.along);
+            else lintel.position.set(f.along, y0 + doorHeight + (floorHeight - doorHeight) / 2, f.fixedCoord);
             lintel.rotation.y = f.rotY;
             scene.add(lintel);
-            // lintel sits above head height -- the gap below it stays open, no segment there
         }
     }
     return segments;
 }
 
 // computes (but doesn't draw) the interior partition-wall layout for one
-// floor -- 2-4 rooms, every doorway carved to open onto whatever's
-// already reachable from the exterior door, so connectivity falls out of
-// construction order instead of needing a graph search. Every floor in a
-// building reuses the exact same layout (see the big comment on
-// addInteriorWall for why that's load-bearing, not just convenient) --
-// this is computed once per building and handed to every floor.
-function buildFloorLayout(x, z, hw, door) {
+// floor of one module -- 2-4 rooms, every doorway carved to open onto
+// whatever's already reachable from the entrance, so connectivity falls
+// out of construction order instead of needing a graph search. Called
+// FRESH for every floor now (each floor gets its own independent layout
+// -- see buildWallWithGaps/the per-floor collision banding in
+// buildingWallSegments for why floors no longer need to agree on one
+// shared X/Z layout the way they used to).
+function buildFloorLayout(x, z, hwx, hwz, door) {
     const awayX = door ? -door.dx : 0;
     const awayZ = door ? -door.dz : -1;
     const depthAxis = awayX !== 0 ? 'x' : 'z';
     const depthCenter = depthAxis === 'x' ? x : z;
     const depthAway = depthAxis === 'x' ? awayX : awayZ;
+    const depthHalf = depthAxis === 'x' ? hwx : hwz;
     const widthCenter = depthAxis === 'x' ? z : x;
+    const widthHalf = depthAxis === 'x' ? hwz : hwx;
     // world coordinate along the depth axis at fraction f, from the door
     // wall (f=0) to the far wall (f=1)
-    const depthAt = (f) => depthCenter + depthAway * hw * (2 * f - 1);
+    const depthAt = (f) => depthCenter + depthAway * depthHalf * (2 * f - 1);
 
     // 'single' (no interior walls at all) used to be in this pool -- at
     // 20% odds, it read as "most buildings are still just one room."
@@ -2014,34 +2126,35 @@ function buildFloorLayout(x, z, hw, door) {
     const walls = []; // {axis, fixedCoord, spanA, spanB, doorFrac}
     if (layout === 'twoRoom') {
         const f1 = randRange(0.38, 0.6);
-        walls.push({ axis: depthAxis, fixedCoord: depthAt(f1), spanA: widthCenter - hw, spanB: widthCenter + hw, doorFrac: randRange(0.25, 0.75) });
+        walls.push({ axis: depthAxis, fixedCoord: depthAt(f1), spanA: widthCenter - widthHalf, spanB: widthCenter + widthHalf, doorFrac: randRange(0.25, 0.75) });
     } else if (layout === 'threeRow') {
         const f1 = randRange(0.28, 0.4), f2 = randRange(0.62, 0.75);
-        walls.push({ axis: depthAxis, fixedCoord: depthAt(f1), spanA: widthCenter - hw, spanB: widthCenter + hw, doorFrac: randRange(0.2, 0.45) });
-        walls.push({ axis: depthAxis, fixedCoord: depthAt(f2), spanA: widthCenter - hw, spanB: widthCenter + hw, doorFrac: randRange(0.55, 0.8) });
+        walls.push({ axis: depthAxis, fixedCoord: depthAt(f1), spanA: widthCenter - widthHalf, spanB: widthCenter + widthHalf, doorFrac: randRange(0.2, 0.45) });
+        walls.push({ axis: depthAxis, fixedCoord: depthAt(f2), spanA: widthCenter - widthHalf, spanB: widthCenter + widthHalf, doorFrac: randRange(0.55, 0.8) });
     } else if (layout === 'lshape') {
         const f1 = randRange(0.42, 0.58);
         // front/back divider -- doorway forced to the low-width side so
         // the room it opens into is always the same one the 2nd wall
         // (below) also opens into, chaining front -> side A -> side B
         // instead of risking a room only reachable through a wall.
-        walls.push({ axis: depthAxis, fixedCoord: depthAt(f1), spanA: widthCenter - hw, spanB: widthCenter + hw, doorFrac: randRange(0.18, 0.38) });
+        walls.push({ axis: depthAxis, fixedCoord: depthAt(f1), spanA: widthCenter - widthHalf, spanB: widthCenter + widthHalf, doorFrac: randRange(0.18, 0.38) });
         const widthAxis = depthAxis === 'x' ? 'z' : 'x';
         const backLo = Math.min(depthAt(f1), depthAt(1)), backHi = Math.max(depthAt(f1), depthAt(1));
         walls.push({ axis: widthAxis, fixedCoord: widthCenter, spanA: backLo, spanB: backHi, doorFrac: randRange(0.3, 0.7) });
     }
-    return { walls, depthAxis, depthAt, widthCenter };
+    return { walls };
 }
 
-// draws buildFloorLayout's partition walls at one floor's height. Pushes
-// collision segments only when pushSegments is true -- every floor draws
-// the same walls (visually), but since collision is Y-independent they
-// only need to be registered once (see addInteriorWall's comment).
-function drawFloorLayout(layoutWalls, floorHeight, mat, yBase, pushSegments, outSegments) {
+// draws buildFloorLayout's partition walls at one floor's height and
+// pushes their collision segments -- every floor now gets its own real,
+// independently-registered segments (see buildingWallSegments), not a
+// shared layout registered once on the ground floor.
+function drawFloorLayout(layoutWalls, floorHeight, mat, yBase, outSegments) {
     const doorInteriorWidth = 1.3;
     for (const w of layoutWalls) {
-        const segs = addInteriorWall(w.axis, w.fixedCoord, w.spanA, w.spanB, w.doorFrac, floorHeight, mat, doorInteriorWidth, yBase);
-        if (pushSegments) outSegments.push(...segs);
+        const doorCenter = w.spanA + (w.spanB - w.spanA) * w.doorFrac;
+        const segs = buildWallWithGaps(w.axis, w.fixedCoord, w.spanA, w.spanB, [{ lo: doorCenter - doorInteriorWidth / 2, hi: doorCenter + doorInteriorWidth / 2 }], floorHeight, mat, yBase);
+        outSegments.push(...segs);
     }
 }
 
@@ -2051,8 +2164,8 @@ function drawFloorLayout(layoutWalls, floorHeight, mat, yBase, pushSegments, out
 // Used for both a floor's ceiling (the hole a stair rises through) and
 // the floor above it (the hole that stair rises INTO). {x,z,hx,hz}
 // matches what overheadCeilings and elevatedPlatforms already expect.
-function computeNotchedRects(x, z, hw, holeXLo, holeXHi, holeZLo, holeZHi) {
-    const fx0 = x - hw, fx1 = x + hw, fz0 = z - hw, fz1 = z + hw;
+function computeNotchedRects(x, z, hwx, hwz, holeXLo, holeXHi, holeZLo, holeZHi) {
+    const fx0 = x - hwx, fx1 = x + hwx, fz0 = z - hwz, fz1 = z + hwz;
     const hx0 = Math.max(fx0, Math.min(holeXLo, holeXHi));
     const hx1 = Math.min(fx1, Math.max(holeXLo, holeXHi));
     const hz0 = Math.max(fz0, Math.min(holeZLo, holeZHi));
@@ -2074,140 +2187,171 @@ function addHorizontalPlane(rect, y, mat) {
     scene.add(plane);
 }
 
-// builds a walkable ground floor: solid walls with exactly one real
-// doorway (see buildExteriorPerimeter), the shared room layout, and --
-// if this building has more than one enterable floor -- a stairwell shaft
-// in a fixed corner that every floor above reuses. Returns everything the
-// caller needs to keep building the floors above: wall segments (for
-// collision), the room layout (so upper floors repeat it), and the
-// stairwell's position (so upper floors know where to leave the hole).
-function buildGroundFloorShell(x, z, hw, floorHeight, door, shellMat, hasUpperFloors) {
-    const segments = buildExteriorPerimeter(x, z, hw, 0, floorHeight, door, shellMat);
-    const { walls } = buildFloorLayout(x, z, hw, door);
-    drawFloorLayout(walls, floorHeight, shellMat, 0, true, segments);
+// ---------- modular building plan ----------
+// a building used to BE one inset square footprint that got cosmetically
+// partitioned after the fact -- every floor forced to share that same
+// square and the same interior layout, because collision had no way to
+// tell floors apart (see buildingWallSegments below). Now a building is
+// assembled from independent rectangular volumes: the core (the same
+// square footprint as before, unchanged -- signage/content-card mounting
+// still assumes it) plus an optional wing, a genuinely separate volume
+// attached to one side, its own width/depth, and -- critically -- its own
+// floor RANGE (it can stop short of the core's full height), which is
+// what actually produces an asymmetric/stepped silhouette instead of a
+// bigger square. The wing is fully open to the core everywhere they
+// coexist (an archway, not a doorway) -- connectivity by construction,
+// same philosophy buildFloorLayout already uses for its own rooms.
+function buildBuildingPlan(x, z, hw, isWarehouse, floorCount) {
+    const core = { cx: x, cz: z, hwx: hw, hwz: hw };
+    let wing = null;
+    // clearance measured against the actual cell half-width, not the
+    // core's own (already-tight, post-density-pass) margin gap -- the
+    // maze topology seal (see mazeSealWalls) is the real hard boundary
+    // at CELL/2, so a wing is free to reach almost all the way out to
+    // it, the same way a real building's bay window/storefront often
+    // sits closer to the property line than the main massing does.
+    const wingRoom = (CELL / 2 - 0.15) - hw;
+    if (!isWarehouse && wingRoom > 0.25 && rng() < 0.5) {
+        const side = pick([{ dx: 0, dz: -1 }, { dx: 0, dz: 1 }, { dx: -1, dz: 0 }, { dx: 1, dz: 0 }]);
+        const axisIsX = side.dx !== 0; // wing projects outward along x
+        // `depth` is the TOTAL extra footprint beyond the core's own edge
+        // (bounded by wingRoom, the real clearance out to the maze seal)
+        // -- the wing's own half-extent in that direction is half of it,
+        // and its center sits half of it further out again. Conflating
+        // "how far the wing's center sits from the core" with "the
+        // wing's own half-width" here double-counts depth and can push
+        // the wing's outer face past the cell boundary; keep them separate.
+        const depth = randRange(0.25, Math.min(1.3, wingRoom));
+        const halfDepth = depth / 2;
+        const width = randRange(hw * 0.55, hw * 1.15);
+        const maxOffset = Math.max(0, hw - width * 0.4); // how far the wing's center can drift along the shared face before it barely overlaps the core at all
+        const offset = randRange(-maxOffset, maxOffset);
+        const wcx = axisIsX ? x + side.dx * (hw + halfDepth) : x + offset;
+        const wcz = axisIsX ? z + offset : z + side.dz * (hw + halfDepth);
+        // annex-style: only a fraction of buildings get a wing that
+        // matches the core's full height -- most stop short, reading as
+        // a genuine stepped addition instead of a wider tower.
+        const floorMax = rng() < 0.4 ? floorCount : Math.max(1, Math.min(floorCount, 1 + Math.floor(rng() * floorCount)));
+        wing = { side, cx: wcx, cz: wcz, hwx: axisIsX ? halfDepth : width, hwz: axisIsX ? width : halfDepth, floorMax };
+    }
+    return { core, wing, floorCount };
+}
 
-    // a 2nd light for anything past a single room -- one central light
-    // used to leave a back room dark once there was a wall in the way.
-    if (dynamicLightsRemaining > 0) {
+// the world-space span of the open boundary between the core and its
+// wing, along whichever axis is tangent to the shared face -- the
+// overlap of the two modules' own extents there, not a fixed-width
+// doorway, so the connection is exactly as wide as the two rooms
+// actually share (an alcove, not a corridor).
+function computeArchwaySpan(side, core, wing) {
+    if (side.dx !== 0) return { lo: Math.max(core.cz - core.hwz, wing.cz - wing.hwz), hi: Math.min(core.cz + core.hwz, wing.cz + wing.hwz) };
+    return { lo: Math.max(core.cx - core.hwx, wing.cx - wing.hwx), hi: Math.min(core.cx + core.hwx, wing.cx + wing.hwx) };
+}
+
+// builds one floor of the core module: exterior (with the street door on
+// floor 0, plus an archway toward the wing if it's active this floor),
+// a fresh interior partition layout, and -- the one thing that's still
+// shared/fixed across every floor, since it's one continuous physical
+// shaft -- the stairwell in the same corner every time. Returns this
+// floor's own collision segments.
+function buildCoreFloor(core, fl, floorCount, floorHeight, door, extMat, shellMat, wingGap, stairwell) {
+    const { cx, cz, hwx: hw } = core; // core is always square (hwx === hwz)
+    const y0 = fl * floorHeight;
+    const segments = [];
+    const openGaps = wingGap ? [wingGap] : [];
+    segments.push(...buildExteriorPerimeter(cx, cz, hw, hw, y0, floorHeight, door, extMat, openGaps));
+    const { walls } = buildFloorLayout(cx, cz, hw, hw, door);
+    drawFloorLayout(walls, floorHeight, shellMat, y0, segments);
+
+    if (fl === 0 && dynamicLightsRemaining > 0) {
         dynamicLightsRemaining--;
         const light2 = new THREE.PointLight(0xffe9b0, 2.2, floorHeight * 2, 2);
-        light2.position.set(x + randRange(-hw * 0.3, hw * 0.3), floorHeight * 0.7, z + randRange(-hw * 0.3, hw * 0.3));
+        light2.position.set(cx + randRange(-hw * 0.3, hw * 0.3), floorHeight * 0.7, cz + randRange(-hw * 0.3, hw * 0.3));
         scene.add(light2);
     }
 
-    // the stairwell: a fixed corner of the footprint, reused by every
-    // floor above so the vertical shaft actually lines up. Two short
-    // walls close off the corner (the other two sides are already the
-    // real exterior walls); Wall1 gets the entrance doorway.
-    //
-    // The flight only crosses PART of the shaft (doorX to flightEndX),
-    // not all the way to the real exterior corner -- it used to run the
-    // full depth, which meant climbing it dead-ended right against the
-    // building's own 2 exterior walls with no way out except walking
-    // back over the same ramp you just climbed. Since collision doesn't
-    // care about height, walking back over your own ramp's footprint
-    // doesn't just look wrong, it actually slides you back down it (any
-    // point on the ramp reports its own ramp height, lower the further
-    // back you go). Stopping short leaves real, ordinary, already-
-    // connected room floor beyond flightEndX -- finishing the climb
-    // lands you in the room, not in a dead end.
-    let stairwell = null;
-    if (hasUpperFloors) {
-        const swHalf = 1.1;
-        const cornerSignX = rng() < 0.5 ? -1 : 1, cornerSignZ = rng() < 0.5 ? -1 : 1;
-        const swX = x + cornerSignX * (hw - swHalf - 0.15);
-        const swZ = z + cornerSignZ * (hw - swHalf - 0.15);
-        const doorX = swX - cornerSignX * swHalf;
-        const flightEndX = swX + cornerSignX * swHalf * 0.3;
-        stairwell = { swX, swZ, swHalf, cornerSignX, cornerSignZ, doorX, flightEndX };
-        segments.push(...addInteriorWall('x', doorX, swZ - swHalf, swZ + swHalf, 0.5, floorHeight, shellMat, 1.1, 0));
-        // Wall2 only guards the flight's own run, not the whole shaft --
-        // beyond flightEndX toward the real corner there's nothing to
-        // wall off, it's just the room.
-        segments.push(...addInteriorWall('z', swZ - cornerSignZ * swHalf, Math.min(doorX, flightEndX), Math.max(doorX, flightEndX), 0, floorHeight, shellMat, 0, 0));
-        // the flight from ground up to floor 1, inside the shaft
-        addStairFlight('x', doorX, flightEndX, swZ, 0, floorHeight, { width: swHalf * 1.1 });
+    if (stairwell) {
+        const { swZ, swHalf, cornerSignZ, doorX, flightEndX } = stairwell;
+        // shaft-closing walls, redrawn (real collision) at every floor now
+        segments.push(...buildWallWithGaps('x', doorX, swZ - swHalf, swZ + swHalf, [{ lo: swZ - 0.55, hi: swZ + 0.55 }], floorHeight, shellMat, y0));
+        segments.push(...buildWallWithGaps('z', swZ - cornerSignZ * swHalf, Math.min(doorX, flightEndX), Math.max(doorX, flightEndX), [], floorHeight, shellMat, y0));
 
-        const rects = computeNotchedRects(x, z, hw, doorX, flightEndX, swZ - swHalf, swZ + swHalf);
-        for (const r of rects) {
-            overheadCeilings.push({ ...r, y: floorHeight });
-            addHorizontalPlane(r, floorHeight, shellMat);
+        const hasStairUp = fl < floorCount - 1;
+        if (fl > 0) {
+            // this floor's own walkable surface, notched around the hole
+            // the stair below rises into.
+            const floorRects = computeNotchedRects(cx, cz, hw, hw, doorX, flightEndX, swZ - swHalf, swZ + swHalf);
+            for (const r of floorRects) {
+                elevatedPlatforms.push({ ...r, y: y0 });
+                addHorizontalPlane(r, y0 + 0.02, shellMat);
+            }
+        }
+        if (hasStairUp) {
+            addStairFlight('x', doorX, flightEndX, swZ, y0, y0 + floorHeight, { width: swHalf * 1.1 });
+            const ceilRects = computeNotchedRects(cx, cz, hw, hw, doorX, flightEndX, swZ - swHalf, swZ + swHalf);
+            for (const r of ceilRects) {
+                overheadCeilings.push({ ...r, y: y0 + floorHeight });
+                addHorizontalPlane(r, y0 + floorHeight, shellMat);
+            }
+        } else {
+            overheadCeilings.push({ x: cx, z: cz, hx: hw, hz: hw, y: y0 + floorHeight });
+            addHorizontalPlane({ x: cx, z: cz, hx: hw, hz: hw }, y0 + floorHeight, shellMat);
         }
     } else {
-        overheadCeilings.push({ x, z, hx: hw, hz: hw, y: floorHeight });
-        addHorizontalPlane({ x, z, hx: hw, hz: hw }, floorHeight, shellMat);
+        overheadCeilings.push({ x: cx, z: cz, hx: hw, hz: hw, y: y0 + floorHeight });
+        addHorizontalPlane({ x: cx, z: cz, hx: hw, hz: hw }, y0 + floorHeight, shellMat);
     }
-
-    const floorTex = makePixelTexture((ctx, w, h) => {
-        ctx.fillStyle = '#6a5030';
-        ctx.fillRect(0, 0, w, h);
-        ctx.strokeStyle = '#4a3520';
-        for (let i = 0; i < w; i += 10) { ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, h); ctx.stroke(); }
-    }, 64, 64);
-    const floor = new THREE.Mesh(
-        new THREE.PlaneGeometry(hw * 1.9, hw * 1.9),
-        new THREE.MeshStandardMaterial({ map: floorTex, roughness: 0.8 })
-    );
-    floor.rotation.x = -Math.PI / 2;
-    floor.position.set(x, 0.02, z);
-    scene.add(floor);
 
     if (dynamicLightsRemaining > 0) {
         dynamicLightsRemaining--;
-        const light = new THREE.PointLight(0xffe9b0, 3, floorHeight * 2.2, 2);
-        light.position.set(x, floorHeight * 0.7, z);
+        const light = new THREE.PointLight(0xffe9b0, fl === 0 ? 3 : 2.4, floorHeight * 2.2, 2);
+        light.position.set(cx + randRange(-hw * 0.25, hw * 0.25), y0 + floorHeight * (fl === 0 ? 0.35 : 0.6), cz + randRange(-hw * 0.25, hw * 0.25));
         scene.add(light);
     }
-    return { segments, walls, stairwell };
+    if (fl === 0) {
+        const floorTex = makePixelTexture((ctx, w, h) => {
+            ctx.fillStyle = '#6a5030';
+            ctx.fillRect(0, 0, w, h);
+            ctx.strokeStyle = '#4a3520';
+            for (let i = 0; i < w; i += 10) { ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, h); ctx.stroke(); }
+        }, 64, 64);
+        const floor = new THREE.Mesh(new THREE.PlaneGeometry(hw * 1.9, hw * 1.9), new THREE.MeshStandardMaterial({ map: floorTex, roughness: 0.8 }));
+        floor.rotation.x = -Math.PI / 2;
+        floor.position.set(cx, 0.02, cz);
+        scene.add(floor);
+    }
+    return segments;
 }
 
-// one real floor above ground level: a fully solid exterior (textured to
-// match the tower's own facade material -- no exterior door, the
-// stairwell is the only way up here), the same room layout as every other
-// floor in this building, and -- if there's a floor above this one -- the
-// same stairwell shaft continuing up through a notched ceiling, or a
-// full, solid ceiling if this is the top enterable floor. Either way this
-// floor's own floor surface is notched where the stair below rises into
-// it (every upper floor is reached that way, never through its own
-// exterior wall).
-function buildUpperFloor(x, z, hw, y0, floorHeight, extMaterial, shellMat, layoutWalls, stairwell, hasStairUp) {
-    buildExteriorPerimeter(x, z, hw, y0, floorHeight, null, extMaterial);
-    drawFloorLayout(layoutWalls, floorHeight, shellMat, y0, false, []);
-
-    if (!stairwell) return; // defensive -- addBuilding never calls this without one
-    const { swX, swZ, swHalf, cornerSignX, cornerSignZ, doorX, flightEndX } = stairwell;
-    const floorRects = computeNotchedRects(x, z, hw, doorX, flightEndX, swZ - swHalf, swZ + swHalf);
-
-    // this floor's own walkable surface -- notched, since it's reached
-    // through the hole in the floor below rather than any wall.
-    for (const r of floorRects) {
-        elevatedPlatforms.push({ ...r, y: y0 });
-        addHorizontalPlane(r, y0 + 0.02, shellMat);
+// builds one floor of a wing module -- a single open room (no further
+// partitioning; a wing is an annex, not its own subdivided building),
+// open to the core through the shared archway, with its own floor/
+// ceiling/roof-deck handling exactly like the core's, just without a
+// stairwell. Returns this floor's own collision segments.
+function buildWingFloor(wing, fl, floorHeight, extMat, wingGap) {
+    const { cx, cz, hwx, hwz } = wing;
+    const y0 = fl * floorHeight;
+    const segments = buildExteriorPerimeter(cx, cz, hwx, hwz, y0, floorHeight, null, extMat, [wingGap]);
+    const isTopFloor = fl === wing.floorMax - 1;
+    if (fl > 0) {
+        elevatedPlatforms.push({ x: cx, z: cz, hx: hwx, hz: hwz, y: y0 });
+        addHorizontalPlane({ x: cx, z: cz, hx: hwx, hz: hwz }, y0 + 0.02, extMat);
     }
-
-    // stairwell framing, redrawn at this floor's height (visual only --
-    // the collision segments were already registered on the ground floor)
-    addInteriorWall('x', doorX, swZ - swHalf, swZ + swHalf, 0.5, floorHeight, shellMat, 1.1, y0);
-    addInteriorWall('z', swZ - cornerSignZ * swHalf, Math.min(doorX, flightEndX), Math.max(doorX, flightEndX), 0, floorHeight, shellMat, 0, y0);
-
-    if (hasStairUp) {
-        addStairFlight('x', doorX, flightEndX, swZ, y0, y0 + floorHeight, { width: swHalf * 1.1 });
-        const ceilRects = computeNotchedRects(x, z, hw, doorX, flightEndX, swZ - swHalf, swZ + swHalf);
-        for (const r of ceilRects) {
-            overheadCeilings.push({ ...r, y: y0 + floorHeight });
-            addHorizontalPlane(r, y0 + floorHeight, shellMat);
-        }
+    if (isTopFloor) {
+        // its own real roof deck -- a genuinely lower, separately
+        // reachable landing next to the core, not just a wider square.
+        elevatedPlatforms.push({ x: cx, z: cz, hx: hwx, hz: hwz, y: y0 + floorHeight });
     } else {
-        overheadCeilings.push({ x, z, hx: hw, hz: hw, y: y0 + floorHeight });
-        addHorizontalPlane({ x, z, hx: hw, hz: hw }, y0 + floorHeight, shellMat);
+        overheadCeilings.push({ x: cx, z: cz, hx: hwx, hz: hwz, y: y0 + floorHeight });
     }
-
-    if (dynamicLightsRemaining > 0) {
+    addHorizontalPlane({ x: cx, z: cz, hx: hwx, hz: hwz }, y0 + floorHeight, extMat);
+    if (fl === 0) scatterJunk('indoor', cx, cz, 2 + Math.floor(rng() * 3), Math.min(hwx, hwz) * 0.6);
+    if (dynamicLightsRemaining > 0 && rng() < 0.6) {
         dynamicLightsRemaining--;
-        const light = new THREE.PointLight(0xffe9b0, 2.4, floorHeight * 2.2, 2);
-        light.position.set(x + randRange(-hw * 0.25, hw * 0.25), y0 + floorHeight * 0.6, z + randRange(-hw * 0.25, hw * 0.25));
+        const light = new THREE.PointLight(0xffe9b0, 2, floorHeight * 2, 2);
+        light.position.set(cx, y0 + floorHeight * 0.6, cz);
         scene.add(light);
     }
+    return segments;
 }
 
 // ~30% of interiors get a raised mezzanine + a straight run of steps --
@@ -2586,6 +2730,75 @@ function addBalcony(x, y, z, rotY, maintenance = 0.5) {
 // too close to the mast or too far from it, so the whole thing still
 // generally wraps the mast (and whatever real buildings happen to be
 // nearby) without ever tracing the same clean square twice.
+// ascent palette: one continuous gradient from grimy industrial at the
+// bottom to pale/warm/gold near the top -- NOT a hue cycle. `t` is
+// normalized ascent (y / topHeight); every material/light call below
+// samples the same gradient at its own height, so the whole structure
+// reads as one architectural progression, not a rainbow.
+const HEAVEN_BOTTOM_STEP = new THREE.Color(0x3a3228), HEAVEN_TOP_STEP = new THREE.Color(0xdcd2ba);
+const HEAVEN_BOTTOM_RAIL = new THREE.Color(0x161616), HEAVEN_TOP_RAIL = new THREE.Color(0xe0c078);
+const HEAVEN_BOTTOM_LIGHT = new THREE.Color(0xaab0b8), HEAVEN_TOP_LIGHT = new THREE.Color(0xfff2d0);
+function heavenAscentColors(t) {
+    return {
+        step: HEAVEN_BOTTOM_STEP.clone().lerp(HEAVEN_TOP_STEP, t).getHex(),
+        rail: HEAVEN_BOTTOM_RAIL.clone().lerp(HEAVEN_TOP_RAIL, t).getHex(),
+        light: HEAVEN_BOTTOM_LIGHT.clone().lerp(HEAVEN_TOP_LIGHT, t).getHex(),
+    };
+}
+
+// a real arch a climber walks straight through -- opening centered
+// exactly on the landing it's built onto, so it can only ever frame the
+// route, never block it. Two posts plus a lintel; more refined (thinner,
+// paler) the higher it sits.
+function addAscentArch(x, z, y, t) {
+    const colors = heavenAscentColors(t);
+    const width = 1.6, postH = 2.3, postR = THREE.MathUtils.lerp(0.09, 0.05, t);
+    const mat = new THREE.MeshStandardMaterial({
+        color: colors.rail, roughness: THREE.MathUtils.lerp(0.7, 0.25, t), metalness: THREE.MathUtils.lerp(0.5, 0.75, t),
+    });
+    for (const side of [-1, 1]) {
+        const post = new THREE.Mesh(jitterGeometry(new THREE.CylinderGeometry(postR, postR, postH, 8), 0.01), mat);
+        post.position.set(x + side * width / 2, y + postH / 2, z);
+        scene.add(post);
+    }
+    const lintel = new THREE.Mesh(jitterGeometry(new THREE.BoxGeometry(width + postR * 2, postR * 2, postR * 2), 0.005), mat);
+    lintel.position.set(x, y + postH, z);
+    scene.add(lintel);
+    if (t > 0.5 && dynamicLightsRemaining > 0) {
+        // a hanging light under the arch, higher up only -- the
+        // "occasional larger rest platform" band already reads busy
+        // enough lower down without one under every arch too.
+        dynamicLightsRemaining--;
+        const light = new THREE.PointLight(colors.light, 3, 6, 2);
+        light.position.set(x, y + postH - 0.3, z);
+        scene.add(light);
+    }
+}
+
+// the one true vertical secret: a real, climbable staircase that just
+// keeps going, all the way up into the white-fog "heaven" band
+// (LAYER_Y.heavenBase is only 20 -- this clears it by 7x and keeps
+// climbing). One exists in the entire map, planted on a reserved plaza
+// cell (real open room on every side, unlike a boxed-in dead end), with
+// nothing marking it from a distance -- it has to be stumbled onto and
+// then actually committed to. Built from the exact same primitives as
+// every other stair here (addStairFlight/addLandingPlatform), just run
+// for dozens of flights instead of 2-3.
+//
+// The path is a genuine random walk around a central mast, not a fixed
+// repeating shape -- every flight continues straight, turns left, or
+// turns right (never doubles straight back on itself), weighted to
+// wander back toward a comfortable radius band whenever it's drifted
+// too close to the mast or too far from it, so the whole thing still
+// generally wraps the mast (and whatever real buildings happen to be
+// nearby) without ever tracing the same clean square twice.
+//
+// The climb itself changes character as it goes: grimy industrial at
+// the bottom (dark battered steel, utility-white light), continuously
+// warmer/paler toward pale gold near the top, with occasional real
+// rest/observation landings (not just identical turn squares) and a
+// couple of walk-through arches -- an architectural ascent, not a
+// palette swap.
 function buildStairwayToHeaven(cx, cz) {
     const topHeight = 150;
     const minRadius = 1.5, maxRadius = 3.4;
@@ -2595,24 +2808,103 @@ function buildStairwayToHeaven(cx, cz) {
     mast.position.set(cx, topHeight / 2, cz);
     scene.add(mast);
 
+    // a real cable run and a couple of graffiti tags near the base --
+    // the bottom of the climb should still feel like it belongs to the
+    // grimy city it rises out of.
+    if (dynamicLightsRemaining > 0) {
+        dynamicLightsRemaining--;
+        const baseLight = new THREE.PointLight(0xaab0b8, 2.5, 6, 2);
+        baseLight.position.set(cx, 2.2, cz);
+        scene.add(baseLight);
+    }
+    addGraffitiTag(cx + minRadius * 0.7, 1.2, cz + minRadius * 0.7, randRange(0, Math.PI * 2));
+
     const dirs = [[1, 0], [0, 1], [-1, 0], [0, -1]]; // +x, +z, -x, -z
     let dirIdx = Math.floor(rng() * 4);
     let px = cx + dirs[dirIdx][0] * randRange(minRadius, maxRadius);
     let pz = cz + dirs[dirIdx][1] * randRange(minRadius, maxRadius);
     let y = 0;
-    let lastX = px, lastZ = pz;
+    let lastX = px, lastZ = pz, lastLandingHalf = 0.75;
+    let archesBuilt = 0;
     while (y < topHeight) {
         const segLen = randRange(1.6, 3.2);
         const risePerSide = randRange(2.4, 3.4);
         const [dx, dz] = dirs[dirIdx];
         const nx = px + dx * segLen, nz = pz + dz * segLen;
         const y1 = Math.min(topHeight, y + risePerSide);
+        const tMid = ((y + y1) / 2) / topHeight;
+        const colors = heavenAscentColors(tMid);
         if (dx !== 0) {
-            addStairFlight('x', px, nx, pz, y, y1, { width: 1.0, color: 0x3a3228, railColor: 0x161616 });
+            addStairFlight('x', px, nx, pz, y, y1, { width: 1.0, color: colors.step, railColor: colors.rail });
         } else {
-            addStairFlight('z', pz, nz, px, y, y1, { width: 1.0, color: 0x3a3228, railColor: 0x161616 });
+            addStairFlight('z', pz, nz, px, y, y1, { width: 1.0, color: colors.step, railColor: colors.rail });
         }
-        addLandingPlatform(nx, nz, 0.75, y1, { color: 0x322c24 });
+
+        // occasional real rest/observation landing -- substantially
+        // bigger than the usual turn square, more likely the higher the
+        // climb has already gone (the view earns the pause). Still
+        // exactly where the flight actually ends, same as every other
+        // landing here -- bigger, never offset.
+        const isRestLanding = rng() < 0.1 + tMid * 0.22;
+        const landingHalf = isRestLanding ? randRange(1.6, 2.3) : 0.75;
+        addLandingPlatform(nx, nz, landingHalf, y1, { color: colors.step });
+        lastLandingHalf = landingHalf;
+
+        // decoration lives on the landing's outer edge (away from the
+        // mast), never the walkable center the flight/next flight
+        // actually connects through -- it can dress the route, it can
+        // never be in it.
+        const outDirX = Math.sign(nx - cx) || 1, outDirZ = Math.sign(nz - cz) || 1;
+        const decorX = nx + outDirX * landingHalf * 0.65, decorZ = nz + outDirZ * landingHalf * 0.65;
+        if (tMid < 0.3 && rng() < 0.35) {
+            addGraffitiTag(decorX, y1 + 0.9, decorZ, randRange(0, Math.PI * 2));
+        } else if (tMid > 0.35 && isRestLanding) {
+            // a small planter box -- lighter metals/stone and real
+            // greenery the higher this goes, same idea as a real
+            // elevated garden terrace.
+            const planter = new THREE.Mesh(
+                jitterGeometry(new THREE.BoxGeometry(0.5, 0.35, 0.5), 0.03),
+                new THREE.MeshStandardMaterial({ color: colors.step, roughness: 0.8 })
+            );
+            planter.position.set(decorX, y1 + 0.18, decorZ);
+            scene.add(planter);
+            const bush = new THREE.Mesh(
+                new THREE.SphereGeometry(0.28, 6, 5),
+                new THREE.MeshStandardMaterial({ color: 0x3a6a3a, roughness: 0.9 })
+            );
+            bush.position.set(decorX, y1 + 0.5, decorZ);
+            scene.add(bush);
+        }
+        if (isRestLanding) {
+            // fabric banner between the landing and the mast -- reads as
+            // ceremonial/architectural higher up, purely decorative,
+            // hung well above head height so it never reads as a wall.
+            const banner = new THREE.Mesh(
+                new THREE.PlaneGeometry(0.6, 1.4),
+                new THREE.MeshStandardMaterial({ color: colors.rail, roughness: 0.6, side: THREE.DoubleSide })
+            );
+            banner.position.set((nx + cx) / 2, y1 + 2.6, (nz + cz) / 2);
+            banner.rotation.y = Math.atan2(nx - cx, nz - cz);
+            scene.add(banner);
+            if (dynamicLightsRemaining > 0) {
+                dynamicLightsRemaining--;
+                const light = new THREE.PointLight(colors.light, 2 + tMid * 2.5, 8, 2);
+                light.position.set(nx, y1 + 1.6, nz);
+                scene.add(light);
+            }
+        }
+
+        // two walk-through arches on the climb -- right at the
+        // "heaven" threshold, and again nearing the very top -- built
+        // ON the landing so their opening is centered on the route by
+        // construction, not just placed nearby.
+        const crossedHeaven = y < LAYER_Y.heavenBase && y1 >= LAYER_Y.heavenBase;
+        const nearTop = y1 >= topHeight * 0.92 && archesBuilt < 2;
+        if ((crossedHeaven || nearTop) && archesBuilt < 2) {
+            addAscentArch(nx, nz, y1, tMid);
+            archesBuilt++;
+        }
+
         px = nx; pz = nz; y = y1;
         lastX = px; lastZ = pz;
 
@@ -2640,15 +2932,16 @@ function buildStairwayToHeaven(cx, cz) {
 
     // the payoff -- a real light and a real sign, so finding this and
     // actually climbing all the way up gets you something at the top,
-    // not just a ledge that stops.
+    // not just a ledge that stops. Pale/gold/luminous, matching the top
+    // of the ascent gradient rather than a flat white.
     if (dynamicLightsRemaining > 0) {
         dynamicLightsRemaining--;
-        const light = new THREE.PointLight(0xffffff, 5, 40, 2);
+        const light = new THREE.PointLight(0xfff2d0, 5, 40, 2);
         light.position.set(lastX, topHeight + 1.5, lastZ);
         scene.add(light);
     }
     const signRotY = Math.atan2(lastX - cx, lastZ - cz) + Math.PI; // faces back toward the mast, readable standing on the top landing
-    addSign(lastX, topHeight + 1.6, lastZ, signRotY, 'THE TOP', 'nothing up here but you', 0xffffff, false);
+    addSign(lastX, topHeight + 1.6, lastZ, signRotY, 'THE TOP', 'nothing up here but you', 0xfff2d0, false);
 }
 
 function addBuilding(col, row) {
@@ -2728,17 +3021,54 @@ function addBuilding(col, row) {
     const floorCount = Math.max(1, Math.min(maxEnterableFloors, Math.floor(height / floorHeight)));
     const enterHeight = floorCount * floorHeight;
     const shellMat = new THREE.MeshStandardMaterial({ color, roughness: 0.9, side: THREE.DoubleSide });
-    const ground = buildGroundFloorShell(x, z, hw, floorHeight, door, shellMat, floorCount > 1);
-    // topY: real walls only ever exist up to enterHeight -- the
-    // tapered/twisted mass above that is a solid-looking but always-
-    // collision-less visual shell (it always was, even before this
-    // building had any interior at all). resolveCollisions needs this so
-    // it can stop treating a wall as an infinite vertical plane once
-    // you're at/above the height it actually stops at -- otherwise
-    // there's no way to ever reach a rooftop from outside/above, since
-    // the walls blocked movement into the footprint at every height,
-    // roof included.
-    buildingWallSegments.set(`${row},${col}`, { segments: ground.segments, topY: enterHeight });
+
+    // the stairwell is the one thing that stays fixed across every floor
+    // -- it's one continuous physical shaft, so its corner/footprint
+    // can't move floor to floor the way everything else now can.
+    let stairwell = null;
+    if (floorCount > 1) {
+        const swHalf = 1.1;
+        const cornerSignX = rng() < 0.5 ? -1 : 1, cornerSignZ = rng() < 0.5 ? -1 : 1;
+        const swX = x + cornerSignX * (hw - swHalf - 0.15);
+        const swZ = z + cornerSignZ * (hw - swHalf - 0.15);
+        const doorX = swX - cornerSignX * swHalf;
+        const flightEndX = swX + cornerSignX * swHalf * 0.3;
+        stairwell = { swX, swZ, swHalf, cornerSignX, cornerSignZ, doorX, flightEndX };
+    }
+
+    // a modular plan -- the core (this building's original square
+    // footprint, unchanged) plus an optional wing: a genuinely separate
+    // volume, its own width/depth, that can stop at any floor. Every
+    // floor gets its OWN fresh interior layout and its OWN real,
+    // per-floor-Y-banded collision segments now (see buildingWallSegments
+    // below) -- floors no longer have to agree on one shared X/Z layout.
+    const plan = buildBuildingPlan(x, z, hw, isWarehouse, floorCount);
+    const floors = [];
+    for (let fl = 0; fl < floorCount; fl++) {
+        const y0 = fl * floorHeight;
+        const wingActive = plan.wing && fl < plan.wing.floorMax;
+        let coreGap = null, wingGap = null;
+        if (wingActive) {
+            const span = computeArchwaySpan(plan.wing.side, plan.core, plan.wing);
+            coreGap = { dx: plan.wing.side.dx, dz: plan.wing.side.dz, lo: span.lo, hi: span.hi };
+            wingGap = { dx: -plan.wing.side.dx, dz: -plan.wing.side.dz, lo: span.lo, hi: span.hi };
+        }
+        const coreDoor = fl === 0 ? door : null;
+        const coreExtMat = fl === 0 ? shellMat : material;
+        const segments = buildCoreFloor(plan.core, fl, floorCount, floorHeight, coreDoor, coreExtMat, shellMat, coreGap, stairwell);
+        if (wingActive) segments.push(...buildWingFloor(plan.wing, fl, floorHeight, material, wingGap));
+        floors.push({ yMin: y0, yMax: y0 + floorHeight, segments });
+    }
+    // real walls only ever exist up to enterHeight (floors.length worth)
+    // -- the tapered/twisted mass above that is a solid-looking but
+    // always-collision-less visual shell. Height-aware per floor now
+    // (see resolveCollisions): an upper floor's walls only ever block
+    // within their OWN [yMin,yMax] band, never a lower floor's real
+    // layout, and once you're above every registered floor's yMax at
+    // all, this building can't block you horizontally -- that's what
+    // lets you actually reach a rooftop from outside/above.
+    buildingWallSegments.set(`${row},${col}`, { floors });
+
     maybeAddMezzanine(x, z, hw, floorHeight, door);
     maybeAddElevator(x, z, hw, floorHeight, door);
     // denser interior dressing -- guaranteed pieces plus situational junk,
@@ -2756,13 +3086,6 @@ function addBuilding(col, row) {
     // chain in the whole maze: a table carrying a bowl carrying fruit,
     // occasionally carrying one more thing still.
     if (rng() < 0.2 + buildingContext.maintenance * 0.35) addTableWithClutter(x + randRange(-hw * 0.35, hw * 0.35), z + randRange(-hw * 0.35, hw * 0.35));
-
-    // real material on upper floors' exterior -- same window/stain/flat
-    // facade the tower above uses, so the two read as one continuous
-    // building rather than a seam where the "real" part stops.
-    for (let fl = 1; fl < floorCount; fl++) {
-        buildUpperFloor(x, z, hw, fl * floorHeight, floorHeight, material, shellMat, ground.walls, ground.stairwell, fl < floorCount - 1);
-    }
 
     // whatever height is left above the topmost enterable floor -- for a
     // normal tower this is still nearly the whole building (enterHeight
@@ -5254,23 +5577,53 @@ function addStreetSurface(c, r, x, z) {
         if (vertical) for (let i = 6; i < h; i += 16) ctx.fillRect(w / 2 - 1, i, 2, 8);
 
         if (intersection) {
-            // real zebra crosswalk stripes across both approaches, plus a
-            // stop bar just inside each of the 4 sides -- the one piece
-            // of real traffic-control marking this street grid was still
-            // missing entirely.
+            // 4 INDEPENDENT crossings, one per actual approach -- each
+            // sits near that approach's own outer edge (connecting one
+            // sidewalk to the opposite one straight across the roadway),
+            // not a single zebra "+" baked through the center. Only the
+            // approaches that actually exist get one, so a T-intersection
+            // gets 3 crossings, never a phantom 4th toward a wall. Stop
+            // bars sit just outside (further from center than) their own
+            // crossing, on the vehicle-approach side -- encountered
+            // first, same order a real driver hits them in. The whole
+            // middle of the intersection stays open asphalt.
+            const approaches = [
+                { open: grid[r - 1]?.[c] === false, edge: 'n' },
+                { open: grid[r + 1]?.[c] === false, edge: 's' },
+                { open: grid[r]?.[c - 1] === false, edge: 'w' },
+                { open: grid[r]?.[c + 1] === false, edge: 'e' },
+            ];
+            const crossDepth = 11, edgeGap = 7, span = 34, stripeW = 5, stripeGap = 4;
+            const barLen = span - 4, barThick = 3;
             ctx.fillStyle = '#e8e8dc';
-            const band = 12; // stripe-zone width, centered on the intersection
-            for (let i = 4; i < w; i += 9) ctx.fillRect(i, h / 2 - band / 2, 5, band); // crossing the horizontal street -- stripes run along z
-            for (let i = 4; i < h; i += 9) ctx.fillRect(w / 2 - band / 2, i, band, 5); // crossing the vertical street -- stripes run along x
-            const barLen = 14, barThick = 3, inset = 18;
-            ctx.fillRect(inset, h / 2 - barThick / 2, barLen, barThick); // west approach
-            ctx.fillRect(w - inset - barLen, h / 2 - barThick / 2, barLen, barThick); // east
-            ctx.fillRect(w / 2 - barThick / 2, inset, barThick, barLen); // north
-            ctx.fillRect(w / 2 - barThick / 2, h - inset - barLen, barThick, barLen); // south
+            for (const a of approaches) {
+                if (!a.open) continue;
+                if (a.edge === 'n' || a.edge === 's') {
+                    const y0 = a.edge === 'n' ? edgeGap : h - edgeGap - crossDepth;
+                    for (let sx = w / 2 - span / 2; sx < w / 2 + span / 2; sx += stripeGap + stripeW) {
+                        ctx.fillRect(sx, y0, stripeW, crossDepth);
+                    }
+                } else {
+                    const x0 = a.edge === 'w' ? edgeGap : w - edgeGap - crossDepth;
+                    for (let sz = h / 2 - span / 2; sz < h / 2 + span / 2; sz += stripeGap + stripeW) {
+                        ctx.fillRect(x0, sz, crossDepth, stripeW);
+                    }
+                }
+                if (a.edge === 'n') ctx.fillRect(w / 2 - barLen / 2, edgeGap - barThick - 2, barLen, barThick);
+                else if (a.edge === 's') ctx.fillRect(w / 2 - barLen / 2, h - edgeGap + 2, barLen, barThick);
+                else if (a.edge === 'w') ctx.fillRect(edgeGap - barThick - 2, h / 2 - barLen / 2, barThick, barLen);
+                else ctx.fillRect(w - edgeGap + 2, h / 2 - barLen / 2, barThick, barLen);
+            }
         }
     }, 64, 64);
+    // full cell width (a hair OVER it, not under) -- connected street
+    // cells now share an exact or slightly-overlapping boundary instead
+    // of each shrinking in from it, so there's no gap for the ground
+    // plane underneath to show through as a seam/crack. Y offset (below)
+    // is still what handles z-fighting against the ground plane -- never
+    // physical X/Z shrinkage.
     const road = new THREE.Mesh(
-        new THREE.PlaneGeometry(CELL * 0.94, CELL * 0.94),
+        new THREE.PlaneGeometry(CELL * 1.01, CELL * 1.01),
         new THREE.MeshStandardMaterial({ map: tex, roughness: 1 })
     );
     road.rotation.x = -Math.PI / 2;
@@ -5278,10 +5631,13 @@ function addStreetSurface(c, r, x, z) {
     scene.add(road);
 
     // real sidewalk strip wherever this street cell actually borders a
-    // building — a raised, lighter concrete band with a curb lip.
+    // building — a raised, lighter concrete band with a curb lip. Same
+    // full-width-plus-a-hair rule along its own length so consecutive
+    // sidewalk cells butt/overlap continuously instead of leaving a gap
+    // every CELL units.
     for (const w of wallDirections(c, r)) {
         const stripWidth = CELL * 0.18;
-        const stripLen = CELL * 0.92;
+        const stripLen = CELL * 1.01;
         const strip = new THREE.Mesh(
             new THREE.BoxGeometry(w.dx !== 0 ? stripWidth : stripLen, 0.06, w.dz !== 0 ? stripWidth : stripLen),
             new THREE.MeshStandardMaterial({ color: 0xc8c2a8, roughness: 0.9 })
@@ -5404,6 +5760,71 @@ function wallDirections(c, r) {
     return dirs;
 }
 
+// a real inside corner: exactly two of this cell's wall directions that
+// are perpendicular (not opposite) -- the actual geometric nook debris
+// would realistically accumulate in (building/building around an alley
+// corner, building/dead-end, etc), not just "this cell has some walls."
+function findCornerDirs(c, r) {
+    const walls = wallDirections(c, r);
+    for (let i = 0; i < walls.length; i++) {
+        for (let j = i + 1; j < walls.length; j++) {
+            const a = walls[i], b = walls[j];
+            if (a.dx * b.dx + a.dz * b.dz === 0) return [a, b]; // dot product 0 -> perpendicular
+        }
+    }
+    return null;
+}
+
+// a single climbable-terrain item -- exactly `targetTop` tall (footprint
+// jitters for visual variety, height doesn't) so the collider height
+// (what groundHeightAt/resolveCollisions see) always exactly matches
+// what's rendered, and every item within one tier is genuinely
+// step-across-flat with the others -- the same "no daylight between
+// geometry and collision" rule the rest of this refactor holds to.
+const CORNER_PILE_COLORS = [0x6a5a42, 0x8a7858, 0x3a3a3a, 0x5a4a34, 0x707060, 0x4a4438];
+function addPileCrate(x, z, targetTop) {
+    const h = targetTop;
+    const w = randRange(0.45, 0.7), d = randRange(0.45, 0.7);
+    const mesh = new THREE.Mesh(
+        jitterGeometry(new THREE.BoxGeometry(w, h, d), 0.04),
+        new THREE.MeshStandardMaterial({ color: pick(CORNER_PILE_COLORS), roughness: 0.9 })
+    );
+    mesh.position.set(x, h / 2, z);
+    mesh.rotation.y = randRange(0, Math.PI * 2);
+    scene.add(mesh);
+    return { radius: Math.max(w, d) / 2, height: h };
+}
+
+// debris genuinely accumulated into a corner -- spreads horizontally
+// near the floor and grows vertically toward the back/dense end (deeper
+// into the nook, backed against both walls), in tiers rather than one
+// big flat-topped collider. The first couple of tiers rise gently enough
+// to auto-step onto (same MAX_STEP_HEIGHT logic as stepping onto a single
+// crate); the later ones are a deliberately bigger rise that needs a
+// real jump -- a genuine climbable progression, not a ramp in disguise.
+// Each tier is 2-3 independent crates (independent colliders/walkable
+// tops), not one wide box, so the pile's silhouette is irregular and it
+// still reads as accumulated junk up close.
+function buildCornerPile(x, z, intoX, intoZ, tierCount) {
+    let height = 0, px = x, pz = z;
+    for (let i = 0; i < tierCount; i++) {
+        const rise = i < 2 ? randRange(0.35, 0.6) : randRange(0.75, 0.92);
+        height += rise;
+        px += intoX * randRange(0.3, 0.5);
+        pz += intoZ * randRange(0.3, 0.5);
+        const itemCount = 2 + Math.floor(rng() * 2);
+        for (let j = 0; j < itemCount; j++) {
+            const jx = px + randRange(-0.45, 0.45), jz = pz + randRange(-0.45, 0.45);
+            const { radius, height: realHeight } = addPileCrate(jx, jz, height);
+            propColliders.push({ x: jx, z: jz, radius, height: realHeight });
+        }
+    }
+    // loose debris around the base -- tires/bags/scrap, purely cosmetic
+    // flavor scattered at the pile's foot, not part of the climb itself.
+    scatterJunk('alley', x + intoX * 0.3, z + intoZ * 0.3, 2 + Math.floor(rng() * 2), 0.9);
+    return height;
+}
+
 // which single axis (if any) this open cell is a straight through-
 // corridor along -- open neighbors on both sides of exactly one axis.
 // null for dead ends, corners, and plaza junctions, where there's no
@@ -5471,6 +5892,19 @@ for (let r = 1; r < GRID_ROWS - 1; r++) {
             }
         } else if (rng() < 0.75 * QUALITY.propDensity) {
             scatterJunk('alley', x, z, 1 + Math.floor(rng() * 3), CELL * 0.3, laneAxis);
+        }
+        // corner piles: a real inside corner (2 perpendicular walls --
+        // building/building, building/dead-end, etc.) gets a chance at
+        // accumulated debris that's actually climbable terrain, not just
+        // denser scatter. Never on a through-street -- that's thoroughfare,
+        // not a place junk piles up.
+        if (!onStreet) {
+            const corner = findCornerDirs(c, r);
+            if (corner && rng() < 0.22 * QUALITY.propDensity) {
+                const intoX = corner[0].dx + corner[1].dx, intoZ = corner[0].dz + corner[1].dz; // toward the nook both walls form
+                const len = Math.hypot(intoX, intoZ) || 1;
+                buildCornerPile(x + (intoX / len) * CELL * 0.22, z + (intoZ / len) * CELL * 0.22, intoX / len, intoZ / len, 2 + Math.floor(rng() * 3));
+            }
         }
         // real scanned props are NOT instanced (each is its own draw
         // call) -- sparse by design, and doubly gated on quality tier.
@@ -5645,14 +6079,54 @@ function worldToCell(x, z) {
     };
 }
 
+// where segment (p1->p2) crosses segment (q1->q2), as t along p1->p2, or
+// null if they don't cross within both segments' bounds.
+function segmentCrossing(p1x, p1z, p2x, p2z, q1x, q1z, q2x, q2z) {
+    const rx = p2x - p1x, rz = p2z - p1z;
+    const sx = q2x - q1x, sz = q2z - q1z;
+    const denom = rx * sz - rz * sx;
+    if (Math.abs(denom) < 1e-9) return null; // parallel (or degenerate) -- can't cross
+    const t = ((q1x - p1x) * sz - (q1z - p1z) * sx) / denom;
+    const u = ((q1x - p1x) * rz - (q1z - p1z) * rx) / denom;
+    if (t < 0 || t > 1 || u < 0 || u > 1) return null;
+    return t;
+}
+
+// hard topological guarantee for the maze seal specifically (see
+// mazeSealWalls, built right after maze generation): radius-based push-
+// out alone (same model every other wall in the game uses) can only ever
+// react to the CURRENT distance to a wall, not the path just travelled --
+// a single frame's raw movement landing past a thin wall's push-out
+// radius on the far side gets resolved comfortably onto that wrong side,
+// not bounced back, because push-out has no memory of which side the
+// player approached from. Ordinary walking speed never gets remotely
+// close to triggering this (per-frame movement is a small fraction of
+// the push-out radius), but a lag spike combined with a high jittered
+// sprintMultiplier can, in principle, produce a single frame large
+// enough to jump clean over it -- and "squeeze between two buildings"
+// is exactly the bug this whole system exists to close, so it gets a
+// real swept check on top of the radius push-out, not just the same
+// best-effort model as everything else. Clamps the travelled segment to
+// stop just short of any seal it would otherwise cross.
+function enforceMazeSeal(prevX, prevZ, position) {
+    for (const seg of mazeSealWalls) {
+        if (Math.abs(position.x - (seg.x1 + seg.x2) / 2) > CELL && Math.abs(position.z - (seg.z1 + seg.z2) / 2) > CELL) continue;
+        const t = segmentCrossing(prevX, prevZ, position.x, position.z, seg.x1, seg.z1, seg.x2, seg.z2);
+        if (t === null) continue;
+        const stopT = Math.max(0, t - 0.02); // stop just short of the seal, not exactly on it
+        position.x = prevX + (position.x - prevX) * stopT;
+        position.z = prevZ + (position.z - prevZ) * stopT;
+    }
+}
+
 function resolveCollisions(position, feetY = Infinity) {
     const { col, row } = worldToCell(position.x, position.z);
 
     // real per-wall collision: every building has registered wall
-    // segments (buildGroundFloorShell) -- only the actual solid walls
-    // block, the door gap genuinely doesn't. Replaces the old whole-
-    // footprint-square check entirely, for every building, not just a
-    // special-cased few.
+    // segments per floor (see buildCoreFloor/buildWingFloor and the
+    // buildingWallSegments comment) -- only the actual solid walls
+    // block, door/archway gaps genuinely don't, and each floor's walls
+    // only apply within their own Y band.
     for (let dr = -1; dr <= 1; dr++) {
         for (let dc = -1; dc <= 1; dc++) {
             const c = col + dc, r = row + dr;
@@ -5663,23 +6137,58 @@ function resolveCollisions(position, feetY = Infinity) {
             // (topY), this building can't block you horizontally at all
             // -- you're above its walled structure, out over the roof/
             // skyline, the same as if there were no building here.
-            if (feetY >= walls.topY - 0.05) continue;
-            for (const seg of walls.segments) {
-                const sdx = seg.x2 - seg.x1, sdz = seg.z2 - seg.z1;
-                const len2 = sdx * sdx + sdz * sdz;
-                let t = len2 > 1e-9 ? ((position.x - seg.x1) * sdx + (position.z - seg.z1) * sdz) / len2 : 0;
-                t = Math.max(0, Math.min(1, t));
-                const cx = seg.x1 + sdx * t, cz = seg.z1 + sdz * t;
-                const dx = position.x - cx, dz = position.z - cz;
-                const distSq = dx * dx + dz * dz;
-                const minDist = PLAYER_RADIUS + WALL_THICKNESS;
-                if (distSq < minDist * minDist) {
-                    const dist = Math.sqrt(distSq) || 0.0001;
-                    const push = (minDist - dist) / dist;
-                    position.x += dx * push;
-                    position.z += dz * push;
+            // height-aware now: a wall only blocks while feetY is within
+            // the specific floor it was registered for, so an upper
+            // floor's (now independently laid-out) walls never block a
+            // lower floor at the same X/Z, and standing above every
+            // registered floor's yMax means this building can't block
+            // you horizontally at all -- out over the roof/skyline.
+            for (const floor of walls.floors) {
+                if (feetY < floor.yMin - 0.05 || feetY >= floor.yMax - 0.05) continue;
+                for (const seg of floor.segments) {
+                    const sdx = seg.x2 - seg.x1, sdz = seg.z2 - seg.z1;
+                    const len2 = sdx * sdx + sdz * sdz;
+                    let t = len2 > 1e-9 ? ((position.x - seg.x1) * sdx + (position.z - seg.z1) * sdz) / len2 : 0;
+                    t = Math.max(0, Math.min(1, t));
+                    const cx = seg.x1 + sdx * t, cz = seg.z1 + sdz * t;
+                    const dx = position.x - cx, dz = position.z - cz;
+                    const distSq = dx * dx + dz * dz;
+                    const minDist = PLAYER_RADIUS + WALL_THICKNESS;
+                    if (distSq < minDist * minDist) {
+                        const dist = Math.sqrt(distSq) || 0.0001;
+                        const push = (minDist - dist) / dist;
+                        position.x += dx * push;
+                        position.z += dz * push;
+                    }
                 }
             }
+        }
+    }
+
+    // maze topology seal: guaranteed-impassable boundary between two
+    // cells the DFS/loop-carve never connected, independent of whatever
+    // building/decoration geometry is actually inset nearby (see where
+    // mazeSealWalls is built, right after maze generation). Same segment
+    // push-out math as building walls, gated the same feetY-vs-height
+    // way so it never interferes with genuine rooftop traversal.
+    for (const seg of mazeSealWalls) {
+        if (feetY >= seg.yMax - 0.05) continue;
+        // cheap reject before the real distance math -- most of these
+        // 150-250ish segments are nowhere near the player on any given frame
+        if (Math.abs(position.x - (seg.x1 + seg.x2) / 2) > CELL || Math.abs(position.z - (seg.z1 + seg.z2) / 2) > CELL) continue;
+        const sdx = seg.x2 - seg.x1, sdz = seg.z2 - seg.z1;
+        const len2 = sdx * sdx + sdz * sdz;
+        let t = len2 > 1e-9 ? ((position.x - seg.x1) * sdx + (position.z - seg.z1) * sdz) / len2 : 0;
+        t = Math.max(0, Math.min(1, t));
+        const cx = seg.x1 + sdx * t, cz = seg.z1 + sdz * t;
+        const dx = position.x - cx, dz = position.z - cz;
+        const distSq = dx * dx + dz * dz;
+        const minDist = PLAYER_RADIUS + WALL_THICKNESS;
+        if (distSq < minDist * minDist) {
+            const dist = Math.sqrt(distSq) || 0.0001;
+            const push = (minDist - dist) / dist;
+            position.x += dx * push;
+            position.z += dz * push;
         }
     }
 
@@ -5726,24 +6235,23 @@ const velocity = new THREE.Vector3();
 // jumping mid-staircase just hops you along the same climb, it can't
 // clip you through anything).
 let verticalVelocity = 0;
-let heightAboveFloor = 0; // airborne offset above groundHeightAt; 0 = grounded
+// world-Y is authoritative while airborne (see the big comment in
+// animate() where this is consumed) -- `grounded` is the only state that
+// decides which of the two vertical-motion rules applies this frame.
+// There used to be a `heightAboveFloor` riding on top of a freshly
+// re-queried `floorY` every single frame, airborne or not; that let a
+// support-surface swap while airborne (drifting over a different,
+// unrelated platform) add its Y on top of the stale offset and produce
+// an apparent super-launch. Landing is now a real crossing check
+// (findLandingSurface), not "some surface came within reach."
+let grounded = true;
 const JUMP_SPEED = 5.5;
 const GRAVITY = -16;
-// walking off the edge of a mezzanine/fire-escape/rooftop used to be an
-// instant teleport straight down to whatever groundHeightAt reports under
-// your new x/z -- the table lookup has no concept of "was standing on
-// something, that something just ended". Small height changes (a stair
-// riser, a curb, a continuous ramp) still snap immediately; only a drop
-// bigger than this counts as walking off a real ledge.
+// walking off the edge of a mezzanine/fire-escape/rooftop while GROUNDED:
+// small height changes (a stair riser, a curb, a continuous ramp) still
+// snap immediately (ordinary auto-step); only a drop bigger than this
+// counts as walking off a real ledge and becomes airborne instead.
 const STEP_DOWN_TOLERANCE = 0.5;
-// tracked every frame regardless of grounded/airborne state -- the ledge-
-// fall smoothing below used to only apply while wasGrounded, which meant
-// crossing a ledge's edge WHILE already airborne (mid-jump, or via
-// coyote time/jump buffering right at the edge) skipped it entirely and
-// let floorY -- and therefore camera.position.y -- snap straight down
-// the instant the platform stopped matching. Tracking unconditionally
-// catches that case too.
-let prevFloorY = null;
 
 // ---- parkour physics: coyote time, jump buffering, real auto-step ----
 // MAX_STEP_HEIGHT is the one number both resolveCollisions and
@@ -5822,7 +6330,12 @@ document.addEventListener('keydown', (e) => {
         case 'KeyC': move.flyDown = true; break;
         case 'KeyF':
             freecamEnabled = !freecamEnabled;
-            verticalVelocity = 0; heightAboveFloor = 0; // clean physics state whichever way this toggled
+            // clean physics state whichever way this toggled -- exiting
+            // freecam always starts airborne rather than assuming
+            // grounded, since freecam can leave the player floating
+            // anywhere; the next frame's real landing check (not an
+            // assumption) sorts out whatever's actually below them.
+            verticalVelocity = 0; grounded = false;
             showHint(freecamEnabled ? 'freecam: space up · C down · F to exit' : 'freecam off');
             fadeHint(2000);
             break;
@@ -5993,6 +6506,15 @@ function animate() {
     const speedMul = move.sprint ? CONFIG.movement.sprintMultiplier : 1; // held Shift -- full air control still applies mid-jump, this just covers more ground per second
     velocity.multiplyScalar(CONFIG.movement.speed * speedMul * delta);
 
+    // captured before horizontal movement -- enforceMazeSeal (below, after
+    // the freecam early-return) needs the actual travelled segment, not
+    // just the post-move point, so a fast single frame can't hop clean
+    // over a maze seal's radius-based push-out the way any thin-line
+    // collider can if the raw step is big enough (a lag spike, a jittered
+    // sprintMultiplier roll, or just bad luck) to land past it before
+    // push-out ever sees it on the near side.
+    const prevPlayerX = camera.position.x, prevPlayerZ = camera.position.z;
+
     if (controls.isLocked || IS_TOUCH) {
         controls.moveRight(velocity.x);
         controls.moveForward(-velocity.z);
@@ -6022,61 +6544,95 @@ function animate() {
         const flySpeed = CONFIG.movement.speed * (move.sprint ? CONFIG.movement.sprintMultiplier : 1) * 1.6;
         const vertical = (move.flyUp ? 1 : 0) - (move.flyDown ? 1 : 0);
         camera.position.y += vertical * flySpeed * delta;
-        prevFloorY = camera.position.y - CONFIG.camera.eyeHeight;
         updateWebGradient(camera.position.z, camera.position.y, elapsedTime);
         updateRain(delta);
         composer.render();
         return;
     }
+    // hard maze-topology guarantee, before the ordinary radius-based
+    // push-out below -- see enforceMazeSeal's own comment.
+    enforceMazeSeal(prevPlayerX, prevPlayerZ, camera.position);
     for (let i = 0; i < CONFIG.movement.collisionIterations; i++) {
         resolveCollisions(camera.position, feetY);
     }
+
     // real elevation: standing on a mezzanine, climbing its stairs, or
     // standing on top of a crate/car/junk pile all actually change eye
     // height now, not just X/Z collision. Jump is layered on top as a
-    // genuine arc, not an instant hop: a launch impulse when grounded (or
-    // still within coyote time), gravity every frame after, clamped so it
-    // never carries you below the floor/stair/platform/prop-top under
-    // your feet.
-    let floorY = groundHeightAt(camera.position.x, camera.position.z, feetY) + CONFIG.camera.eyeHeight;
-    const wasGrounded = heightAboveFloor <= 0.001;
-    coyoteTimer = wasGrounded ? COYOTE_TIME : Math.max(0, coyoteTimer - delta);
-    if (prevFloorY !== null && floorY < prevFloorY - STEP_DOWN_TOLERANCE) {
-        // the floor under our current x/z just dropped a lot -- walked
-        // off a real ledge, OR drifted past its edge mid-jump (this used
-        // to only catch the walking case, gated on wasGrounded; crossing
-        // an edge while already airborne skipped it and let
-        // camera.position.y snap straight down the instant the ledge
-        // stopped matching). Either way: don't snap to the new floor,
-        // add the drop to whatever airborne offset already exists so
-        // this frame renders unchanged, then gravity carries it down
-        // for real.
-        heightAboveFloor += prevFloorY - floorY;
-    }
+    // genuine arc, not an instant hop.
+    //
+    // World-Y is authoritative here, not "floor + offset": `grounded`
+    // decides which of two entirely different rules applies this frame,
+    // and the two rules never fight each other over the same frame.
+    //   - grounded: groundHeightAt is safe to re-query every frame,
+    //     because "grounded" already means we're resting on SOME real
+    //     surface, so re-resolving exactly which surface is under the
+    //     new (post-horizontal-move) x/z is ordinary floor-following,
+    //     not a surprise mid-air reassignment. A big drop here means we
+    //     walked off a real ledge; become airborne, preserve position.
+    //   - airborne: camera.position.y only ever changes by integrating
+    //     verticalVelocity, or by a genuine LANDING -- feetY was at/above
+    //     some surface's top, the predicted new feetY is at/below it,
+    //     within that surface's own footprint (findLandingSurface). A
+    //     surface merely coming into "reach" under an unrelated x/z the
+    //     player drifted over can never move camera.position.y by
+    //     itself; only an actual crossing can. This is what the old
+    //     model got wrong -- it re-picked a support surface from
+    //     scratch every frame (groundHeightAt) and added the stale
+    //     airborne offset on top of whatever that surface's height was,
+    //     so a support-surface swap while airborne could add its own
+    //     rise on top of the existing offset instead of just continuing
+    //     the fall/rise in place.
+    coyoteTimer = grounded ? COYOTE_TIME : Math.max(0, coyoteTimer - delta);
     jumpBufferTimer = Math.max(0, jumpBufferTimer - delta);
-    if (jumpBufferTimer > 0 && (heightAboveFloor <= 0.001 || coyoteTimer > 0)) {
+    if (jumpBufferTimer > 0 && (grounded || coyoteTimer > 0)) {
         verticalVelocity = JUMP_SPEED;
+        grounded = false;
         jumpBufferTimer = 0;
         coyoteTimer = 0;
     }
-    verticalVelocity += GRAVITY * delta;
-    heightAboveFloor = Math.max(0, heightAboveFloor + verticalVelocity * delta);
-    if (heightAboveFloor <= 0) verticalVelocity = 0;
-    camera.position.y = floorY + heightAboveFloor;
+
+    let nextFeetY;
+    if (grounded) {
+        const surfaceY = groundHeightAt(camera.position.x, camera.position.z, feetY);
+        if (surfaceY < feetY - STEP_DOWN_TOLERANCE) {
+            // the floor under our current x/z just dropped a lot --
+            // walked off a real ledge. Preserve position this frame;
+            // gravity (below) carries it down for real starting next.
+            grounded = false;
+            nextFeetY = feetY;
+        } else {
+            nextFeetY = surfaceY; // ordinary walk / auto-step onto a curb, stair riser, ramp, low prop
+        }
+    }
+    if (!grounded) {
+        verticalVelocity += GRAVITY * delta;
+        const predictedFeetY = feetY + verticalVelocity * delta;
+        const landing = findLandingSurface(camera.position.x, camera.position.z, feetY, predictedFeetY, verticalVelocity);
+        if (landing !== null) {
+            nextFeetY = landing;
+            verticalVelocity = 0;
+            grounded = true;
+        } else {
+            nextFeetY = predictedFeetY; // world-stable fall/rise -- unaffected by whatever unrelated surface merely sits underneath
+        }
+    }
+    camera.position.y = nextFeetY + CONFIG.camera.eyeHeight;
 
     // ceiling clamp: a mezzanine's underside (approached from below) and
     // every building's own ground-floor roof cap both block upward
     // movement the same way a floor blocks downward movement -- a real
     // head-bonk, not a clip-through. elevatedPlatforms double as floors
     // once you're standing at/above them, so those are only a ceiling
-    // while you're genuinely still underneath.
+    // while you're genuinely still underneath. Only stops upward
+    // velocity, same as before -- bonking your head doesn't make you
+    // "grounded," you're still falling next frame.
     for (const c of elevatedPlatforms) {
         if (Math.abs(camera.position.x - c.x) >= c.hx || Math.abs(camera.position.z - c.z) >= c.hz) continue;
         if (camera.position.y - CONFIG.camera.eyeHeight >= c.y - 0.01) continue; // at/above it -- that's the floor, not a ceiling, from here
         const maxEyeY = c.y - HEAD_CLEARANCE;
         if (camera.position.y > maxEyeY) {
             camera.position.y = maxEyeY;
-            heightAboveFloor = Math.max(0, camera.position.y - floorY); // never negative -- a negative value here would read as "grounded" next frame and corrupt prevFloorY
             if (verticalVelocity > 0) verticalVelocity = 0;
         }
     }
@@ -6086,11 +6642,9 @@ function animate() {
         const maxEyeY = c.y - HEAD_CLEARANCE;
         if (camera.position.y > maxEyeY) {
             camera.position.y = maxEyeY;
-            heightAboveFloor = Math.max(0, camera.position.y - floorY); // never negative -- a negative value here would read as "grounded" next frame and corrupt prevFloorY
             if (verticalVelocity > 0) verticalVelocity = 0;
         }
     }
-    prevFloorY = floorY; // tracked every frame now, not just while grounded -- see the comment on its declaration
     updateWebGradient(camera.position.z, camera.position.y, elapsedTime);
     updateRain(delta);
 
@@ -6111,6 +6665,78 @@ function animate() {
 }
 let fpsFrameCount = 0;
 let fpsLastLogMs = performance.now();
+
+// ---------- 3D traversal graph: validate reachability, don't assume it ----------
+// built post-hoc from the same data every vertical-traversal system
+// already populates (elevatedPlatforms for walkable surfaces, rampRuns
+// for the stair/ramp connections between them) rather than requiring
+// every add*/build* call site to also thread graph-node bookkeeping
+// through -- the graph is a real reachability structure over real
+// generated geometry either way, just assembled once, after generation,
+// instead of live during it. Nodes: every registered walkable surface
+// (elevatedPlatforms entries) plus one big implicit ground-plane node.
+// Edges: every stair/ramp run connecting two surfaces' endpoints, plus
+// same-height surfaces whose footprints actually touch/overlap (walkable
+// between them with no stair at all -- two notched floor rects either
+// side of a stairwell hole, a core floor next to its wing's floor, etc).
+function buildTraversalGraph() {
+    const nodes = elevatedPlatforms.map((p, i) => ({ ...p, id: i }));
+    const groundId = nodes.length;
+    nodes.push({ x: 0, z: 0, hx: GRID_W, hz: GRID_H, y: 0, id: groundId }); // whole ground plane, one node
+    const adj = nodes.map(() => new Set());
+    function link(a, b) { if (a !== null && b !== null && a !== b) { adj[a].add(b); adj[b].add(a); } }
+
+    function nodeNear(x, z, y, tol = 0.5) {
+        let best = null, bestD = Infinity;
+        for (const n of nodes) {
+            if (Math.abs(n.y - y) > tol) continue;
+            if (x < n.x - n.hx - tol || x > n.x + n.hx + tol || z < n.z - n.hz - tol || z > n.z + n.hz + tol) continue;
+            const d = Math.hypot(x - n.x, z - n.z);
+            if (d < bestD) { bestD = d; best = n.id; }
+        }
+        return best;
+    }
+    let unmatchedRamps = 0;
+    for (const r of rampRuns) {
+        const x0 = r.axis === 'x' ? r.from : r.fixedCoord, z0 = r.axis === 'x' ? r.fixedCoord : r.from;
+        const x1 = r.axis === 'x' ? r.to : r.fixedCoord, z1 = r.axis === 'x' ? r.fixedCoord : r.to;
+        const a = nodeNear(x0, z0, r.y0), b = nodeNear(x1, z1, r.y1);
+        if (a === null || b === null) unmatchedRamps++;
+        link(a, b);
+    }
+    // same-height footprints that actually touch/overlap -- walkable
+    // between with no stair (adjacent floor rects, core<->wing floors).
+    // O(n^2) but this runs once, after generation, over surface counts
+    // that stay in the low thousands even on desktop quality.
+    for (let i = 0; i < nodes.length; i++) {
+        for (let j = i + 1; j < nodes.length; j++) {
+            const a = nodes[i], b = nodes[j];
+            if (Math.abs(a.y - b.y) > 0.3) continue;
+            if (Math.abs(a.x - b.x) < a.hx + b.hx + 0.3 && Math.abs(a.z - b.z) < a.hz + b.hz + 0.3) link(i, j);
+        }
+    }
+    return { nodes, adj, groundId, unmatchedRamps };
+}
+
+function validateTraversal() {
+    const { nodes, adj, groundId, unmatchedRamps } = buildTraversalGraph();
+    const seen = new Set([groundId]);
+    const queue = [groundId];
+    while (queue.length) {
+        const cur = queue.shift();
+        for (const nb of adj[cur]) if (!seen.has(nb)) { seen.add(nb); queue.push(nb); }
+    }
+    const total = nodes.length, reachable = seen.size;
+    const pct = (100 * reachable / total).toFixed(1);
+    console.log(`[traversal] ${reachable}/${total} walkable surfaces reachable from ground (${pct}%), ${rampRuns.length} stair/ramp runs (${unmatchedRamps} didn't match a surface at either end)`);
+    if (reachable < total * 0.5) {
+        console.warn(`[traversal] WARNING: fewer than half of all registered walkable surfaces are reachable from the ground -- some generated geometry may be an unreachable island. Not fatal (a lot of this is genuinely far-apart rooftops/platforms only meant to be reached by jumping/climbing, which this simple graph doesn't model), but worth a look if it's ever much lower than usual.`);
+    }
+    if (unmatchedRamps > 0) {
+        console.warn(`[traversal] WARNING: ${unmatchedRamps} stair/ramp run(s) didn't find a registered walkable surface within 0.5 units of one of their own endpoints -- possible gap between a flight and its landing.`);
+    }
+}
+validateTraversal();
 
 console.log(`[perf] generation complete at ${bootElapsed()} since page start -- starting render loop`);
 bootStatus(`ready (generation took ${bootElapsed()})`);

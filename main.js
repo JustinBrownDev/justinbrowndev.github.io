@@ -2522,6 +2522,65 @@ function buildRooftopCatwalks() {
     console.log(`[gen] ${built} rooftop catwalks built (${rooftopDecks.length} candidate rooftop decks)`);
 }
 
+// purely cosmetic exterior expression of the stair core -- a thin
+// protruding bump on the face nearest the actual interior stairwell
+// corner, with a stacked column of window slits, one per floor, reading
+// as the real vertical shaft behind it. No collision of its own (it
+// rides on the outside of the core's already-registered wall, the same
+// way a sign bracket or security camera does); this is about making the
+// stair/elevator core LOOK like its own module from outside, not
+// changing where the actual climbable stairwell lives.
+function addStairTowerExpression(bx, bz, cornerSignX, swZ, enterHeight, hw, floorHeight) {
+    const bumpDepth = 0.35, bumpWidth = 1.3;
+    const faceX = bx + cornerSignX * hw;
+    const mat = new THREE.MeshStandardMaterial({ color: 0x2c2a26, roughness: 0.6, metalness: 0.4 });
+    const bump = new THREE.Mesh(new THREE.BoxGeometry(bumpDepth, enterHeight, bumpWidth), mat);
+    bump.position.set(faceX + cornerSignX * bumpDepth / 2, enterHeight / 2, swZ);
+    scene.add(bump);
+    const winMat = new THREE.MeshStandardMaterial({
+        color: 0x8adfe0, roughness: 0.3, metalness: 0.1, emissive: 0x113030, emissiveIntensity: 0.4,
+    });
+    const floorsHere = Math.max(1, Math.round(enterHeight / floorHeight));
+    for (let i = 0; i < floorsHere; i++) {
+        const win = new THREE.Mesh(new THREE.PlaneGeometry(0.12, 1.1), winMat);
+        win.position.set(faceX + cornerSignX * (bumpDepth + 0.005), (i + 0.5) * floorHeight, swZ);
+        win.rotation.y = cornerSignX > 0 ? Math.PI / 2 : -Math.PI / 2;
+        scene.add(win);
+    }
+}
+
+// courtyard/void, the emergent kind rather than true boolean subtraction
+// -- the current module system only ever adds volume, so a real notched-
+// out core is out of scope, but when a building's 2 wings land on
+// ADJACENT (perpendicular) sides rather than opposite ones, the diagonal
+// gap between them is already a genuine, real negative space nobody's
+// standing in. Dressing it as a small paved courtyard nook (instead of
+// leaving it as unremarkable alley) makes that gap read as intentional.
+function addCourtyardNook(cx, cz) {
+    const paverTex = makePixelTexture((ctx, w, h) => {
+        ctx.fillStyle = '#8a8270';
+        ctx.fillRect(0, 0, w, h);
+        ctx.strokeStyle = '#5a5648';
+        for (let i = 0; i < w; i += 12) { ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, h); ctx.stroke(); }
+        for (let i = 0; i < h; i += 12) { ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(w, i); ctx.stroke(); }
+    }, 48, 48);
+    const pavers = new THREE.Mesh(
+        new THREE.PlaneGeometry(1.6, 1.6),
+        new THREE.MeshStandardMaterial({ map: paverTex, roughness: 0.9 })
+    );
+    pavers.rotation.x = -Math.PI / 2;
+    pavers.position.set(cx, 0.015, cz);
+    scene.add(pavers);
+    addPottedPlant(cx + 0.4, cz + 0.4);
+    addBench(cx - 0.3, cz - 0.3, randRange(0, Math.PI * 2));
+    if (dynamicLightsRemaining > 0) {
+        dynamicLightsRemaining--;
+        const light = new THREE.PointLight(0xfff0d0, 1.8, 4, 2);
+        light.position.set(cx, 1.6, cz);
+        scene.add(light);
+    }
+}
+
 // ~30% of interiors get a raised mezzanine + a straight run of steps --
 // real vertical elevation, not just a taller room. Always axis-aligned
 // (built along whichever cardinal axis "away from the door" already is)
@@ -3212,6 +3271,20 @@ function addBuilding(col, row) {
     // collision segments now (see buildingWallSegments below) -- floors
     // no longer have to agree on one shared X/Z layout.
     const plan = buildBuildingPlan(x, z, hw, isWarehouse, floorCount);
+    // cosmetic stair-core expression -- skipped if a wing already claims
+    // this same face, so the bump never visually collides with it.
+    if (stairwell && !plan.wings.some(w => w.side.dx === stairwell.cornerSignX && w.side.dz === 0)) {
+        addStairTowerExpression(x, z, stairwell.cornerSignX, stairwell.swZ, enterHeight, hw, floorHeight);
+    }
+    // courtyard nook -- only when the 2 wings land on perpendicular
+    // (not opposite) sides, so there's an actual diagonal gap to dress.
+    if (plan.wings.length === 2) {
+        const [wa, wb] = plan.wings;
+        const perpendicular = wa.side.dx * wb.side.dx + wa.side.dz * wb.side.dz === 0;
+        if (perpendicular) {
+            addCourtyardNook(x + (wa.side.dx + wb.side.dx) * hw * 0.85, z + (wa.side.dz + wb.side.dz) * hw * 0.85);
+        }
+    }
     const floors = [];
     for (let fl = 0; fl < floorCount; fl++) {
         const y0 = fl * floorHeight;

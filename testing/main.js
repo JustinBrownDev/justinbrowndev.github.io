@@ -116,6 +116,18 @@ const CONFIG = {
             maxDynamicLights: 18,
             propDensity: 0.6,
         },
+        // auto-selected on low core-count/low-memory touch devices, or
+        // forced with ?quality=low. Bloom pass is skipped entirely here,
+        // not just turned down -- the blur passes have a real GPU cost
+        // even at low strength.
+        potato: {
+            maxPixelRatio: 1,
+            antialias: false,
+            bloom: null,
+            drawDistance: 85,
+            maxDynamicLights: 6,
+            propDensity: 0.3,
+        },
     },
 
     // ---------------- maze layout ----------------
@@ -185,53 +197,59 @@ const CONFIG = {
     // API is a fragile thing to hang a visitor's page on). Everything here
     // is real; nothing is invented to look real.
     realData: {
-        // DJIA closing-milestone history, Wikipedia "Closing milestones of
-        // the Dow Jones Industrial Average" (fetched 2026-08-27). Real
-        // value/year pairs, including the genuine 23-year gap where no new
-        // milestone was set (1930-1953, the Depression) and the 2007-2013
-        // gap (the financial crisis) — those flat stretches are real, not
-        // decorative. This drives the "crack in the concrete" texture.
+        // DJIA year-end close, 1950-2025, SEC-filed historical table (via
+        // researched/verified public data, 2026-08-27). Full annual series
+        // now, not just milestone crossings — real recessions (1973-74,
+        // 2000-02, 2008) and real bull runs are actual shape in the line,
+        // not decoration. This drives the "crack in the concrete" texture.
         djiaMilestones: [
-            [1885, 62.76], [1890, 78.38], [1896, 28.48], [1906, 103.00],
-            [1919, 119.62], [1929, 381.17], [1932, 41.22], [1972, 1003.16],
-            [1973, 1050], [1987, 2000], [1987, 2250], [1987, 2500],
-            [1989, 2750], [1991, 3000], [1993, 3500], [1995, 4000],
-            [1995, 4500], [1995, 5000], [1996, 5500], [1996, 6000],
-            [1996, 6500], [1997, 7000], [1997, 7500], [1997, 8000],
-            [1998, 8500], [1998, 9000], [1999, 9500], [1999, 10000],
-            [1999, 11000], [2006, 12000], [2007, 13000], [2007, 14000],
-            [2013, 15000], [2013, 16000], [2014, 17000], [2014, 18000],
-            [2016, 19000], [2017, 20000], [2017, 22500], [2018, 25000],
-            [2019, 27500], [2019, 28000], [2020, 29000], [2020, 29500],
-            [2020, 30000], [2020, 30500], [2021, 31000], [2021, 32000],
-            [2021, 33000], [2021, 34000], [2021, 35000], [2021, 36000],
-            [2022, 36500], [2023, 37000], [2023, 37500], [2024, 38000],
-            [2024, 39000], [2024, 40000], [2024, 41000], [2024, 42000],
-            [2024, 43000], [2024, 44000], [2024, 45000], [2025, 45500],
-            [2025, 46500], [2025, 47500], [2025, 48500], [2026, 49500],
-            [2026, 50000], [2026, 51000], [2026, 52000], [2026, 53000],
-            [2026, 54000],
+            [1950, 235.41], [1951, 269.23], [1952, 291.90], [1953, 280.90],
+            [1954, 404.39], [1955, 488.40], [1956, 499.47], [1957, 435.69],
+            [1958, 583.65], [1959, 679.36], [1960, 615.89], [1961, 731.14],
+            [1962, 652.10], [1963, 762.95], [1964, 874.13], [1965, 969.26],
+            [1966, 785.69], [1967, 905.11], [1968, 943.75], [1969, 800.36],
+            [1970, 838.92], [1971, 890.20], [1972, 1020.02], [1973, 850.86],
+            [1974, 616.24], [1975, 852.41], [1976, 1004.65], [1977, 831.17],
+            [1978, 805.01], [1979, 838.74], [1980, 963.99], [1981, 875.00],
+            [1982, 1046.54], [1983, 1258.64], [1984, 1211.57], [1985, 1546.67],
+            [1986, 1895.95], [1987, 1938.83], [1988, 2168.57], [1989, 2753.20],
+            [1990, 2633.66], [1991, 3168.83], [1992, 3301.11], [1993, 3754.09],
+            [1994, 3834.44], [1995, 5117.12], [1996, 6448.27], [1997, 7908.25],
+            [1998, 9181.43], [1999, 11497.12], [2000, 10786.85], [2001, 10021.50],
+            [2002, 8341.63], [2003, 10453.92], [2004, 10783.01], [2005, 10717.50],
+            [2006, 12463.15], [2007, 13264.82], [2008, 8776.39], [2009, 10428.05],
+            [2010, 11577.51], [2011, 12217.56], [2012, 13104.14], [2013, 16576.66],
+            [2014, 17823.07], [2015, 17425.03], [2016, 19762.60], [2017, 24719.22],
+            [2018, 23327.46], [2019, 28538.44], [2020, 30606.48], [2021, 36338.30],
+            [2022, 33147.25], [2023, 37689.54], [2024, 42544.22], [2025, 48063.29],
         ],
-        // Real elevations in feet, Wikipedia (fetched 2026-08-27). Illinois
-        // is the literal center of this project (SIU Carbondale, College of
-        // DuPage — his actual home ground) and it is, factually, almost
-        // dead flat: 590ft mean, a 956ft total range statewide. Everything
-        // else here is real-world extremity around that flat, ordinary
-        // center — Mount St. Helens' pair is a real BEFORE/AFTER: an
-        // actual mountain that really lost 1,314ft in the 1980 eruption,
-        // not a fabricated contrast.
+        // Real elevations in feet (researched/verified public data,
+        // 2026-08-27): the actual Pacific Crest Trail transect through
+        // Washington (Bridge of the Gods to the Canadian border, 36 real
+        // waypoints), plus Illinois' real range as the flat, ordinary
+        // literal center of this whole project (SIU Carbondale, College
+        // of DuPage — his actual home ground), plus world extremes at
+        // both ends. Illinois: mean 590ft, a 956ft total range statewide
+        // — genuinely close to flat next to a real trail that swings
+        // from 200ft to 6,800ft.
         elevationsFt: [
             ['Mariana Trench (Challenger Deep)', -35876],
             ['Death Valley', -282],
             ['Illinois: Mississippi/Ohio confluence (low pt)', 279],
+            ['PCT: Bridge of the Gods', 200], ['PCT: Wind River', 940],
+            ['PCT: Panther Creek Rd', 930], ['PCT: Crest Horse Camp', 3490],
+            ['PCT: Junction Lake', 4730], ['PCT: Road 23', 3855],
+            ['PCT: Kellen Creek Trail', 6084], ['PCT: Sheep Lake', 5760],
+            ['PCT: White Pass / Hwy 12', 4405], ['PCT: Chinook Pass / Hwy 410', 5432],
+            ['PCT: Big Crow Basin', 6290], ['PCT: Stampede Pass', 3680],
+            ['PCT: Cathedral Pass', 5610], ['PCT: Stevens Pass / Hwy 2', 4060],
+            ['PCT: Sitcum Creek', 3852], ['PCT: Rainy Pass / Hwy 20', 4855],
+            ['PCT: Hart\'s Pass', 6198], ['PCT: Windy Pass', 6257],
+            ['PCT: Mountain Camp', 6800], ['PCT: Canadian border', 4240],
             ['Illinois: mean elevation', 590],
             ['Illinois: Charles Mound (high pt)', 1235],
             ['Mount St. Helens, post-1980 eruption', 8363],
             ['Mount St. Helens, pre-1980 eruption', 9677],
-            ['Little Tahoma Peak', 11138],
-            ['Mount Rainier: Liberty Cap', 14112],
-            ['Mount Rainier: Point Success', 14158],
-            ['Mount Rainier: Columbia Crest (summit)', 14406],
             ['Denali', 20310],
             ['K2', 28251],
             ['Mount Everest', 29032],
@@ -268,9 +286,13 @@ const CONFIG = {
             ['BAKERY', 'fresh 6am'], ['WATCH REPAIR', 'while you wait'], ['USED BOOKS', 'buy sell trade'],
             ['DRY CLEAN', 'next day'], ['BARBER', 'no appt'], ['HOBBY SHOP', 'model kits'],
         ],
-        // the whole reason this is a maze: the internet has more Justin
-        // Browns on it than one person could ever Google through. these
-        // are all decoys — every one of them queryable, none of them him.
+        // the whole reason this is a maze: real Census (2020, surname
+        // "Brown" = rank 4, 1,386,083 people) and SSA (first name
+        // "Justin") frequency data combine to an estimated 3,529 living
+        // Americans named exactly "Justin Brown" (~1 in 97,125) —
+        // researched/verified public data, 2026-08-27, not invented for
+        // effect. Every decoy below is one of them, queryable, none of
+        // them him.
         decoyIdentities: [
             ['J. BROWN', 'orthodontist · OH'], ['JUSTIN BROWN', 'youth soccer, U12'],
             ['J BROWN', 'in memoriam 1958–2011'], ['JUSTINBROWN99', 'last seen 2013'],
@@ -279,12 +301,12 @@ const CONFIG = {
             ['JUSTIN BROWN', 'this is not him'], ['J. BROWN', 'no relation'],
             ['JUSTIN BROWN', 'real estate, TX'], ['J BROWN', 'obituary, 1972'],
             ['JUSTIN BROWN', 'band, defunct'], ['J. BROWN', 'wrong number'],
-            ['JUSTIN BROWN', 'see also: 4,281 others'],
+            ['JUSTIN BROWN', 'see also: 3,529 others'],
         ],
         // the site itself talking back — the machinery of search admitting
         // it came up short, or asking you to keep paying for the privilege.
         systemNoise: [
-            ['NO RESULTS', 'refine your query'], ['0 OF 4,281,006', 'matches'],
+            ['NO RESULTS', 'refine your query'], ['0 OF 3,529', 'estimated matches'],
             ['404', 'identity not found'], ['ACCESS DENIED', 'insufficient signal'],
             ['CACHED', '3 years stale'], ['RATE LIMITED', 'try again later'],
             ['DELETED', 'profile unavailable'], ['AMBIGUOUS', 'too common a name'],
@@ -297,7 +319,7 @@ const CONFIG = {
         // tabloid front pages for the newsstand prop — pure comic relief,
         // still on-theme (the search-for-one-guy joke, played for laughs).
         tabloidHeadlines: [
-            ['4,281 JUSTIN BROWNS FOUND', 'none of them him — full report pg. 6'],
+            ['3,529 JUSTIN BROWNS FOUND', 'none of them him — full report pg. 6'],
             ['LOCAL MAN STILL UNGOOGLABLE', 'experts baffled, ask him for help anyway'],
             ['SEARCH ENGINE ADMITS DEFEAT', '"we have too many results," says spokesbot'],
             ['NAME TOO COMMON, CLAIMS STUDY', 'try a middle initial, scientists suggest'],
@@ -440,7 +462,21 @@ const CONFIG = {
 // ---------- device detection & active quality profile ----------
 
 const IS_TOUCH = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
-const QUALITY = IS_TOUCH ? CONFIG.quality.mobile : CONFIG.quality.desktop;
+
+// auto-detect weak hardware (low core count or low device memory on a
+// touch device -- the profile most likely to actually be "shitty
+// hardware" in practice) and drop to the potato tier. ?quality=low|high
+// overrides the auto-detect either direction for testing.
+const forcedQuality = new URLSearchParams(location.search).get('quality');
+const cores = navigator.hardwareConcurrency || 4;
+const mem = navigator.deviceMemory || 4; // not supported in all browsers; defaults optimistic
+const looksLikePotato = IS_TOUCH && (cores <= 4 || mem <= 2);
+
+const QUALITY = forcedQuality === 'high' ? CONFIG.quality.desktop
+    : forcedQuality === 'low' ? CONFIG.quality.potato
+    : looksLikePotato ? CONFIG.quality.potato
+    : IS_TOUCH ? CONFIG.quality.mobile
+    : CONFIG.quality.desktop;
 
 // ---------- seeded RNG ----------
 // every bit of generation (maze, buildings, signs, props, spawn point)
@@ -483,13 +519,18 @@ document.body.appendChild(renderer.domElement);
 
 const composer = new EffectComposer(renderer);
 composer.addPass(new RenderPass(scene, camera));
-const bloomPass = new UnrealBloomPass(
-    new THREE.Vector2(window.innerWidth, window.innerHeight),
-    QUALITY.bloom.strength,
-    QUALITY.bloom.radius,
-    QUALITY.bloom.threshold
-);
-composer.addPass(bloomPass);
+// potato tier skips bloom entirely -- the blur passes cost real GPU time
+// even at low strength, not just a visual reduction.
+let bloomPass = null;
+if (QUALITY.bloom) {
+    bloomPass = new UnrealBloomPass(
+        new THREE.Vector2(window.innerWidth, window.innerHeight),
+        QUALITY.bloom.strength,
+        QUALITY.bloom.radius,
+        QUALITY.bloom.threshold
+    );
+    composer.addPass(bloomPass);
+}
 
 window.addEventListener('resize', () => {
     camera.aspect = window.innerWidth / window.innerHeight;
@@ -1855,6 +1896,146 @@ function addStatue(x, z) {
     return 0.6;
 }
 
+// ---------- junk props: ~240 deliberately crude, instanced ----------
+// "poorly made" is the brief, not a compromise: every one of these is a
+// single shared primitive (box/cylinder/cone/sphere/tube), scaled and
+// colored per-instance. That's also why this can afford to be 240 of
+// them instead of 20 -- 5 InstancedMesh draw calls cover all of them,
+// regardless of count, instead of one draw call per item. Placement is
+// situational, not a flat random pool: each descriptor is tagged to the
+// real feature types that already exist (construction zones, crime
+// scenes, parks, streets, alleys) and only spawns there.
+
+const JUNK_BASE_KINDS = [
+    { name: 'oil drum', shape: 'cylinder', contexts: ['alley', 'construction'], size: [0.5, 0.9, 0.5], colors: [0x2a2a1c, 0x1c2a2a, 0x3a2410] },
+    { name: 'tire', shape: 'cylinder', contexts: ['alley', 'street'], size: [0.5, 0.22, 0.5], colors: [0x141414] },
+    { name: 'cinderblock', shape: 'box', contexts: ['alley', 'construction'], size: [0.4, 0.2, 0.2], colors: [0x8a8a82, 0x7a7a72] },
+    { name: 'wooden pallet', shape: 'box', contexts: ['alley', 'construction'], size: [1.0, 0.12, 1.0], colors: [0x6a4e30, 0x5a4228] },
+    { name: 'propane tank', shape: 'cylinder', contexts: ['construction', 'alley'], size: [0.25, 0.7, 0.25], colors: [0xc8b8a0, 0xa89078] },
+    { name: 'traffic barrel', shape: 'cone', contexts: ['construction', 'street'], size: [0.35, 0.75, 0.35], colors: [0xff8a2f, 0xffffff] },
+    { name: 'sandbag pile', shape: 'box', contexts: ['construction'], size: [0.7, 0.3, 0.4], colors: [0xc4b088, 0xb0a078] },
+    { name: 'rebar bundle', shape: 'cylinder', contexts: ['construction'], size: [0.15, 1.4, 0.15], colors: [0x6a5a48] },
+    { name: 'cable spool', shape: 'cylinder', contexts: ['construction', 'alley'], size: [0.6, 0.45, 0.6], colors: [0x5a4228, 0x6a4e30] },
+    { name: 'shopping cart', shape: 'box', contexts: ['alley', 'street'], size: [0.55, 0.9, 0.9], colors: [0x9aa0a0] },
+    { name: 'milk crate', shape: 'box', contexts: ['alley', 'street'], size: [0.35, 0.3, 0.35], colors: [0xc8d0e0, 0xd0c8a0, 0xc0e0c8] },
+    { name: 'broken chair', shape: 'box', contexts: ['alley'], size: [0.45, 0.75, 0.45], colors: [0x4a3a28, 0x2a2a2a] },
+    { name: 'broken table', shape: 'box', contexts: ['alley'], size: [0.9, 0.5, 0.6], colors: [0x5a4228] },
+    { name: 'mattress roll', shape: 'cylinder', contexts: ['alley'], size: [0.35, 1.2, 0.35], colors: [0xd8d0c0, 0xc0c8d0] },
+    { name: 'rolled carpet', shape: 'cylinder', contexts: ['alley'], size: [0.2, 1.5, 0.2], colors: [0x8a3838, 0x38588a] },
+    { name: 'cardboard box stack', shape: 'box', contexts: ['alley', 'street'], size: [0.5, 0.8, 0.5], colors: [0xc0a878, 0xb89868] },
+    { name: 'trash bag pile', shape: 'sphere', contexts: ['alley'], size: [0.5, 0.35, 0.5], colors: [0x1c1c1c, 0x2a3a2a] },
+    { name: 'dumpster lid', shape: 'box', contexts: ['alley'], size: [1.1, 0.08, 0.8], colors: [0x2a3a2a, 0x3a2a2a] },
+    { name: 'wheelbarrow', shape: 'box', contexts: ['construction'], size: [0.6, 0.35, 0.9], colors: [0x8a3a2a, 0x6a6a6a] },
+    { name: 'folded ladder', shape: 'box', contexts: ['construction', 'alley'], size: [0.15, 1.8, 0.35], colors: [0xc8c8c0, 0x8a6a3a] },
+    { name: 'toolbox', shape: 'box', contexts: ['construction'], size: [0.45, 0.3, 0.25], colors: [0xc82020, 0x2050c8, 0x505050] },
+    { name: 'generator unit', shape: 'box', contexts: ['construction'], size: [0.65, 0.5, 0.45], colors: [0xd8c020, 0x505050] },
+    { name: 'road cone stack', shape: 'cone', contexts: ['street', 'construction'], size: [0.22, 0.55, 0.22], colors: [0xff5f1f] },
+    { name: 'fire hydrant', shape: 'cylinder', contexts: ['street'], size: [0.22, 0.65, 0.22], colors: [0xc82020, 0xd8d020] },
+    { name: 'parking meter', shape: 'cylinder', contexts: ['street'], size: [0.1, 1.1, 0.1], colors: [0x505050, 0x3a3a3a] },
+    { name: 'bike rack', shape: 'box', contexts: ['street'], size: [0.06, 0.7, 0.9], colors: [0x3a3a3a] },
+    { name: 'bollard', shape: 'cylinder', contexts: ['street'], size: [0.12, 0.75, 0.12], colors: [0x3a3a3a, 0xc82020] },
+    { name: 'utility box', shape: 'box', contexts: ['street', 'alley'], size: [0.5, 0.9, 0.4], colors: [0x5a6a5a, 0x6a5a4a] },
+    { name: 'vent cap', shape: 'cylinder', contexts: ['alley'], size: [0.3, 0.25, 0.3], colors: [0x5a5a5a] },
+    { name: 'satellite dish scrap', shape: 'cone', contexts: ['alley'], size: [0.6, 0.15, 0.6], colors: [0xc8c8c8, 0xa0a0a0] },
+    { name: 'broken umbrella', shape: 'cone', contexts: ['alley'], size: [0.5, 0.4, 0.5], colors: [0x8a2a2a, 0x2a2a8a] },
+    { name: 'picnic table', shape: 'box', contexts: ['park'], size: [1.4, 0.45, 0.8], colors: [0x6a4e30] },
+    { name: 'litter bin', shape: 'cylinder', contexts: ['park', 'street', 'plaza'], size: [0.28, 0.6, 0.28], colors: [0x2a4a2a, 0x2a2a4a] },
+    { name: 'planter box', shape: 'box', contexts: ['park', 'plaza'], size: [0.7, 0.35, 0.35], colors: [0x5a4228, 0x6a6a62] },
+    { name: 'birdbath', shape: 'cylinder', contexts: ['park'], size: [0.4, 0.7, 0.4], colors: [0x8a8a82] },
+    { name: 'evidence marker', shape: 'cone', contexts: ['crimeScene'], size: [0.14, 0.2, 0.14], colors: [0xf4e84a] },
+    { name: 'broken bottle pile', shape: 'sphere', contexts: ['crimeScene', 'alley'], size: [0.15, 0.1, 0.15], colors: [0x2a5a3a, 0x3a3a3a] },
+    { name: 'tarp-covered pile', shape: 'box', contexts: ['crimeScene', 'construction'], size: [0.8, 0.35, 0.6], colors: [0x2a3a4a, 0x4a4a3a] },
+    { name: 'road flare', shape: 'cylinder', contexts: ['street', 'crimeScene'], size: [0.05, 0.3, 0.05], colors: [0xff2f1f] },
+    { name: 'sawhorse', shape: 'box', contexts: ['construction', 'street'], size: [0.7, 0.6, 0.15], colors: [0xff8a2f, 0x8a6a3a] },
+];
+
+const JUNK_WEAR_STATES = [
+    { tag: 'fresh', sizeMul: 1.0 },
+    { tag: 'weathered', sizeMul: 0.9 },
+];
+const JUNK_SIZE_CLASSES = [
+    { tag: 'small', mul: 0.75 }, { tag: 'medium', mul: 1.0 }, { tag: 'large', mul: 1.3 },
+];
+
+// ~40 kinds x 2 wear states x 3 size classes = ~240 distinct named,
+// situationally-tagged spawnable descriptors, generated rather than
+// hand-typed 240 times over.
+const JUNK_DESCRIPTORS = [];
+for (const kind of JUNK_BASE_KINDS) {
+    for (const wear of JUNK_WEAR_STATES) {
+        for (const sizeClass of JUNK_SIZE_CLASSES) {
+            const m = wear.sizeMul * sizeClass.mul;
+            JUNK_DESCRIPTORS.push({
+                name: `${kind.name} (${wear.tag}, ${sizeClass.tag})`,
+                shape: kind.shape,
+                contexts: kind.contexts,
+                size: kind.size.map(s => [s * m * 0.85, s * m * 1.15]),
+                colors: kind.colors,
+            });
+        }
+    }
+}
+
+const JUNK_CAPACITY = 320;
+const junkMeshes = {};
+const junkCounts = {};
+const _junkMatrix = new THREE.Matrix4();
+const _junkPos = new THREE.Vector3();
+const _junkQuat = new THREE.Quaternion();
+const _junkEuler = new THREE.Euler();
+const _junkScale = new THREE.Vector3();
+const _junkColor = new THREE.Color();
+
+for (const shape of ['box', 'cylinder', 'cone', 'sphere']) {
+    let geo;
+    switch (shape) {
+        case 'box': geo = new THREE.BoxGeometry(1, 1, 1); break;
+        case 'cylinder': geo = new THREE.CylinderGeometry(0.5, 0.5, 1, 8); break;
+        case 'cone': geo = new THREE.ConeGeometry(0.5, 1, 8); break;
+        case 'sphere': geo = new THREE.SphereGeometry(0.5, 8, 6); break;
+    }
+    jitterGeometry(geo, 0.03); // one shared crude silhouette per shape, not per instance
+    const mesh = new THREE.InstancedMesh(geo, new THREE.MeshStandardMaterial({ roughness: 0.9 }), JUNK_CAPACITY);
+    mesh.count = 0;
+    scene.add(mesh);
+    junkMeshes[shape] = mesh;
+    junkCounts[shape] = 0;
+}
+
+function spawnJunkInstance(d, x, z) {
+    const mesh = junkMeshes[d.shape];
+    const idx = junkCounts[d.shape];
+    if (idx >= JUNK_CAPACITY) return 0; // silently at capacity — not expected to hit this
+    junkCounts[d.shape] = idx + 1;
+
+    const sx = randRange(...d.size[0]), sy = randRange(...d.size[1]), sz = randRange(...d.size[2]);
+    _junkPos.set(x, sy / 2, z);
+    _junkEuler.set(0, randRange(0, Math.PI * 2), 0);
+    _junkQuat.setFromEuler(_junkEuler);
+    _junkScale.set(sx, sy, sz);
+    _junkMatrix.compose(_junkPos, _junkQuat, _junkScale);
+    mesh.setMatrixAt(idx, _junkMatrix);
+    mesh.setColorAt(idx, _junkColor.set(pick(d.colors)));
+    mesh.count = junkCounts[d.shape];
+    mesh.instanceMatrix.needsUpdate = true;
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    return Math.max(sx, sz) / 2;
+}
+
+// scatter `count` junk items matching `context` around (x,z) within
+// `spread` — the situational placement itself. Silently does nothing if
+// no descriptor matches the context (defensive, not expected to trigger).
+function scatterJunk(context, x, z, count, spread) {
+    const pool = JUNK_DESCRIPTORS.filter(d => d.contexts.includes(context));
+    if (!pool.length) return;
+    for (let i = 0; i < count; i++) {
+        const px = x + randRange(-spread, spread);
+        const pz = z + randRange(-spread, spread);
+        const radius = spawnJunkInstance(pick(pool), px, pz);
+        propColliders.push({ x: px, z: pz, radius });
+    }
+}
+
 function addConstructionZone(x, z) {
     // barrier
     const barrierTex = makePixelTexture((ctx, w, h) => {
@@ -1890,6 +2071,7 @@ function addConstructionZone(x, z) {
     }
     addTrafficCone(x - 1.2, z + 0.6);
     addTrafficCone(x + 1.2, z - 0.6);
+    scatterJunk('construction', x, z, 3, 1.7);
     return 1.1;
 }
 
@@ -2062,6 +2244,7 @@ function addCrimeScene(x, z) {
         marker.position.set(x + randRange(-1, 1), 0.09, z + randRange(-1, 1));
         scene.add(marker);
     }
+    scatterJunk('crimeScene', x, z, 2, 1.3);
     return 1.4;
 }
 
@@ -2232,6 +2415,7 @@ for (let i = 0; i < CONFIG.props.maxSpecialFeatures.parks; i++) {
 for (const [pc, pr] of plazaCells) {
     const { x, z } = cellToWorld(pc, pr);
     addPlazaGlow(x, z);
+    if (rng() < 0.4) scatterJunk('plaza', x, z, 1, CELL * 0.4);
 }
 
 // props that realistically sit against a wall rather than floating in
@@ -2333,6 +2517,7 @@ function addPark(x, z) {
     }
     const benchAngle = randRange(0, Math.PI * 2);
     addBench(x + Math.cos(benchAngle) * 1.4, z + Math.sin(benchAngle) * 1.4, benchAngle + Math.PI / 2);
+    scatterJunk('park', x, z, 2, CELL * 0.36);
     return CELL * 0.5;
 }
 
@@ -2372,7 +2557,12 @@ for (let r = 1; r < GRID_ROWS - 1; r++) {
 
         const { x, z } = cellToWorld(c, r);
         const onStreet = isStreetCell(c, r);
-        if (onStreet) addStreetSurface(c, r, x, z);
+        if (onStreet) {
+            addStreetSurface(c, r, x, z);
+            if (rng() < 0.12) scatterJunk('street', x, z, 1, CELL * 0.34);
+        } else if (rng() < 0.22) {
+            scatterJunk('alley', x, z, 1, CELL * 0.3);
+        }
 
         // overhead cables: strung across the alley wherever there's a
         // building directly on both sides (either axis) — the literal

@@ -1405,7 +1405,6 @@ const [spawnCol, spawnRow] = allOpenCells[Math.floor(rng() * allOpenCells.length
 // ---------- reusable geometry/materials ----------
 
 const skirtBoxGeo = new THREE.BoxGeometry(1, 1, 1);
-const signGeo = new THREE.PlaneGeometry(1, 1);
 
 // generic one-time vertex jitter — perturbs a geometry's own vertices at
 // creation so cheap primitives (crates, cans, machines) read as hand-built
@@ -2125,30 +2124,57 @@ function addSign(x, y, z, rotY, title, subtitle, colorHex, flicker = false) {
 
     const width = randRange(1.6, 2.6);
     const height = width * (b.canvasHeight / b.canvasWidth);
+    const panelDepth = randRange(0.06, 0.1);
 
-    // projecting/blade-sign mount: a bracket arm carries the panel out
-    // from the wall instead of it lying flush against the facade --
-    // built in local space (bracket along local +Z, panel rotated 90 deg
-    // so it reads to someone walking along the sidewalk) and rotated as
-    // one group, the same pattern addSecurityCamera's bracket already
-    // uses. Double-sided since a real projecting sign reads from either
-    // direction you approach it from, not just head-on.
+    // projecting/blade-sign mount: a wall plate, a horizontal arm, and a
+    // diagonal brace back to the wall -- reads as something load-bearing,
+    // not a rod floating in space. Built in local space (everything
+    // along local +Z, the group's own rotation.y = rotY carries it to
+    // the wall's real outward direction, same pattern addSecurityCamera's
+    // bracket already uses). The panel itself is a real box now, not a
+    // flat plane -- metal edges on the 4 thin sides, the texture only on
+    // the front/back faces -- rotated 90 deg off the wall's facing angle
+    // so it reads to someone walking along the sidewalk, not just
+    // someone standing dead-on in front of the wall. Both the front and
+    // back faces carry the texture, so it still reads from either
+    // approach direction.
     const armLength = randRange(0.55, 1.0);
+    const bracketMat = new THREE.MeshStandardMaterial({ color: 0x1c1c1c, roughness: 0.6, metalness: 0.6 });
     const g = new THREE.Group();
 
-    const bracket = new THREE.Mesh(
-        jitterGeometry(new THREE.CylinderGeometry(0.03, 0.03, armLength, 5), 0.006),
-        new THREE.MeshStandardMaterial({ color: 0x1c1c1c, roughness: 0.6, metalness: 0.6 })
-    );
-    bracket.rotation.x = Math.PI / 2; // long axis: local +Y -> local +Z
-    bracket.position.set(0, 0, armLength / 2);
-    g.add(bracket);
+    const plate = new THREE.Mesh(skirtBoxGeo, bracketMat); // wall-mounted plate the arm actually anchors to
+    plate.scale.set(0.16, 0.16, 0.03);
+    plate.position.set(0, 0, 0.015);
+    g.add(plate);
 
-    const plane = new THREE.Mesh(signGeo, new THREE.MeshBasicMaterial({ map: tex, side: THREE.DoubleSide }));
-    plane.scale.set(width, height, 1);
-    plane.rotation.y = Math.PI / 2; // perpendicular to the wall, not flush against it
-    plane.position.set(0, 0, armLength);
-    g.add(plane);
+    const arm = new THREE.Mesh(
+        jitterGeometry(new THREE.CylinderGeometry(0.03, 0.03, armLength, 5), 0.006),
+        bracketMat
+    );
+    arm.rotation.x = Math.PI / 2; // long axis: local +Y -> local +Z
+    arm.position.set(0, 0, armLength / 2);
+    g.add(arm);
+
+    // diagonal brace, wall (below the arm's pivot) to the arm's outer
+    // tip -- the actual "why this doesn't just fall off the wall" detail
+    // real projecting signs almost always have.
+    const braceDrop = armLength * 0.55;
+    const braceLen = Math.hypot(braceDrop, armLength);
+    const brace = new THREE.Mesh(
+        jitterGeometry(new THREE.CylinderGeometry(0.02, 0.02, braceLen, 5), 0.004),
+        bracketMat
+    );
+    brace.rotation.x = Math.atan2(armLength, braceDrop);
+    brace.position.set(0, -braceDrop / 2, armLength / 2);
+    g.add(brace);
+
+    const edgeMat = new THREE.MeshStandardMaterial({ color: 0x181818, roughness: 0.5, metalness: 0.6 });
+    const faceMat = new THREE.MeshBasicMaterial({ map: tex });
+    const panel = new THREE.Mesh(skirtBoxGeo, [edgeMat, edgeMat, edgeMat, edgeMat, faceMat, faceMat]);
+    panel.scale.set(width, height, panelDepth);
+    panel.rotation.y = Math.PI / 2; // perpendicular to the wall, not flush against it
+    panel.position.set(0, 0, armLength);
+    g.add(panel);
 
     g.rotation.y = rotY;
     g.position.set(x, y, z);

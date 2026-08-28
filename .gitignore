@@ -8,3 +8,4 @@ physical_scene_taxonomy.txt
 LLM_SLURP_DUMP.txt
 *.pdf
 lore/
+.noise-cache/

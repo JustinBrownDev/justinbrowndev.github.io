@@ -4,6 +4,24 @@ import { EffectComposer } from './vendor/three/addons/postprocessing/EffectCompo
 import { RenderPass } from './vendor/three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from './vendor/three/addons/postprocessing/UnrealBloomPass.js';
 import { GLTFLoader } from './vendor/three/addons/loaders/GLTFLoader.js';
+// ~14 MB local corpus (Unicode/MIME/services/protocols/timezones, concrete
+// + a ~17.9B-combination virtual address space) and a ~48 MB corpus of
+// real public-data rows fetched at build time (IANA/RFC/OurAirports/
+// GeoNames/NOAA/USGS). See build_local_noise_pack.py and
+// fetch_massive_public_noise.py to regenerate either. NOISE_SOURCES.md
+// has the attribution this data is fetched under.
+import {
+    UNICODE_NOISE, MIME_NOISE, SERVICE_NOISE, PROTOCOL_NOISE, TIMEZONE_NOISE, INDEX_STATUS_NOISE,
+    NOISE_ACTIONS,
+    pickMassiveNoisePair, MASSIVE_NOISE_META,
+} from './noise-data-hard.js';
+import {
+    IANA_PORTS_NOISE, IANA_TLDS_NOISE, RFC_INDEX_NOISE,
+    OURAIRPORTS_AIRPORTS_NOISE, OURAIRPORTS_FREQUENCIES_NOISE, OURAIRPORTS_RUNWAYS_NOISE, OURAIRPORTS_NAVAIDS_NOISE,
+    GEONAMES_CITIES500_NOISE,
+    NOAA_GHCND_STATIONS_NOISE, USGS_EARTHQUAKES_MONTH_NOISE,
+    REMOTE_NOISE_META,
+} from './noise-data-remote.js';
 
 // =====================================================================
 // CONCEPT
@@ -452,7 +470,7 @@ const CONFIG = {
         ],
         // relative odds a given sign face pulls from each bucket — nav
         // pages run out fast on purpose, so decoys and noise dominate.
-        contentWeights: { nav: 3, decoy: 6, noise: 3, flavor: 5 },
+        contentWeights: { nav: 3, decoy: 6, noise: 3, flavor: 5, data: 18 },
     },
 
     // pulled directly from the real jweb.dev content (index.html) — the
@@ -622,6 +640,99 @@ const urlSeed = new URLSearchParams(location.search).get('seed');
 const SEED = urlSeed !== null ? Number(urlSeed) : Math.floor(Math.random() * 2 ** 31);
 const rng = mulberry32(SEED);
 console.log(`[testing] maze seed = ${SEED}  (reload with ?seed=${SEED} to get this exact layout)`);
+
+// ---------- massive information-noise corpus ----------
+// this never touches CONFIG.siteContent / PERSONAL_WANTED_FACTS / real
+// contact cards / photo-backed content -- that's the scarce signal this
+// whole maze is about. Everything below is the noise it's buried in.
+console.log(`[noise] local corpus: ${MASSIVE_NOISE_META.concreteRows.toLocaleString()} concrete rows, ${Number(MASSIVE_NOISE_META.virtualRows).toLocaleString()} virtual combinations`);
+console.log(`[noise] remote corpus: ${REMOTE_NOISE_META.rows.toLocaleString()} rows fetched ${REMOTE_NOISE_META.generatedUtc}`);
+for (const [key, m] of Object.entries(REMOTE_NOISE_META.sources)) {
+    console.log(m.error ? `[noise]   ${key}: ERROR -- ${m.error}` : `[noise]   ${key}: ${m.rows.toLocaleString()} rows -- ${m.attribution}`);
+}
+
+// query-result "families" -- the whole point is that the player can
+// vaguely tell "this block is vomiting aviation records" without ever
+// running out of records. Grouped by real-world semantics, not by which
+// file they happened to be generated into.
+const NOISE_DISTRICTS = {
+    network: [MIME_NOISE, SERVICE_NOISE, PROTOCOL_NOISE, INDEX_STATUS_NOISE, IANA_PORTS_NOISE, IANA_TLDS_NOISE, RFC_INDEX_NOISE],
+    transport: [OURAIRPORTS_AIRPORTS_NOISE, OURAIRPORTS_FREQUENCIES_NOISE, OURAIRPORTS_RUNWAYS_NOISE, OURAIRPORTS_NAVAIDS_NOISE],
+    geographic: [GEONAMES_CITIES500_NOISE, TIMEZONE_NOISE],
+    scientific: [NOAA_GHCND_STATIONS_NOISE, USGS_EARTHQUAKES_MONTH_NOISE],
+    encoding: [UNICODE_NOISE],
+};
+const DISTRICT_KEYS = Object.keys(NOISE_DISTRICTS);
+function pickFromPools(rng, pools) {
+    const pool = pools[Math.floor(rng() * pools.length)];
+    return pool[Math.floor(rng() * pool.length)];
+}
+
+// deterministic per-block thematic affinity, derived from the maze seed
+// plus cell coords (never Math.random) so ?seed= still reproduces which
+// block leans toward which district. No hard borders -- pickCityNoisePair
+// below lets picks "escape" their block's theme at random instead of
+// hard-cutting at a cell boundary.
+function districtHash(col, row) {
+    let h = Math.imul(SEED ^ 0x9e3779b9, 0x2545f491);
+    h = Math.imul(h ^ col, 0x85ebca6b);
+    h = Math.imul(h ^ row, 0xc2b2ae35);
+    h ^= h >>> 15;
+    return (h >>> 0) / 4294967296;
+}
+function districtForCell(col, row) {
+    return DISTRICT_KEYS[Math.floor(districtHash(col, row) * DISTRICT_KEYS.length)];
+}
+
+// deterministic presentational transforms of the same source rows, so the
+// corpus reads as "indexed," not just randomly picked -- a search-result
+// counter, a database row/shard/offset, a cache record, a crawler verb
+// prefix. Most picks stay raw; this is a garnish, not the whole dish.
+function stylizeNoisePair(rng, pair) {
+    if (rng() > 0.35) return pair;
+    const [title, subtitle] = pair;
+    switch (Math.floor(rng() * 4)) {
+        case 0: {
+            const n = 1 + Math.floor(rng() * 999999);
+            const total = n + Math.floor(rng() * 9000000);
+            return [title, `RESULT ${String(n).padStart(6, '0')} / ${total.toLocaleString()}`];
+        }
+        case 1: {
+            const offset = Math.floor(rng() * 0xffffff);
+            return [title, `ROW 0x${offset.toString(16).toUpperCase().padStart(6, '0')} · SHARD ${Math.floor(rng() * 64)}`];
+        }
+        case 2: return [`${pick(NOISE_ACTIONS)} ${title}`, subtitle];
+        default: {
+            const etag = Math.floor(rng() * 0xffffff).toString(16).toUpperCase();
+            return [title, `ETAG ${etag} · AGE ${Math.floor(rng() * 9999)}S`];
+        }
+    }
+}
+
+// the huge undifferentiated pool -- local virtual/concrete corpus plus an
+// even mix across every remote district family. Used when a pick has no
+// location (e.g. a cached texture) or rolls past its block's own theme.
+function pickAnyNoisePair(rng) {
+    if (rng() < 0.65) return stylizeNoisePair(rng, pickFromPools(rng, NOISE_DISTRICTS[DISTRICT_KEYS[Math.floor(rng() * DISTRICT_KEYS.length)]]));
+    return pickMassiveNoisePair(rng, 0.7);
+}
+
+// main game-facing picker: biases toward whichever district family the
+// given world position falls in, with a real escape chance so districts
+// crossfade at their edges instead of hard-bordering.
+function pickCityNoisePair(rng, worldX, worldZ) {
+    if (worldX === undefined) return pickAnyNoisePair(rng);
+    const { col, row } = worldToCell(worldX, worldZ);
+    if (rng() < 0.72) return stylizeNoisePair(rng, pickFromPools(rng, NOISE_DISTRICTS[districtForCell(col, row)]));
+    return pickAnyNoisePair(rng);
+}
+
+// network-flavored surfaces (ATMs, etc.) stay in their own semantic lane
+// rather than falling into the generic mix -- a "packet view" reads right
+// on a cash machine in a way a GeoNames city row wouldn't.
+function pickNetworkNoise(rng) {
+    return stylizeNoisePair(rng, pickFromPools(rng, NOISE_DISTRICTS.network));
+}
 
 // ---------- config randomization ----------
 // the seed above only ever touched geometry (maze layout, spawn point).
@@ -1228,7 +1339,7 @@ function toContent([title, subtitle]) { return { title, subtitle }; }
 // picks sign copy for a given grid row — nav pages (real site links) are
 // scarce on purpose, decoys and system noise dominate everywhere else.
 let navPageIndex = 0;
-function pickSignContent() {
+function pickSignContent(x, z) {
     const weights = { ...CONFIG.billboards.contentWeights };
     if (navPageIndex >= CONFIG.billboards.navPages.length) delete weights.nav;
     const kind = weightedPick(weights);
@@ -1238,6 +1349,9 @@ function pickSignContent() {
         // system noise flickers — it's the machinery admitting the signal
         // is unreliable, so it should visibly read as unreliable.
         case 'noise': return { ...toContent(pick(CONFIG.billboards.systemNoise)), flicker: true };
+        // the giant public-data corpus -- highest weight on purpose, see
+        // NOISE_DISTRICTS above. Location-biased where a location exists.
+        case 'data': return { ...toContent(pickCityNoisePair(rng, x, z)), flicker: rng() < 0.16 };
         default: return { ...toContent(pick(CONFIG.billboards.flavorWords)), flicker: false };
     }
 }
@@ -1442,7 +1556,9 @@ function addWantedPoster(x, z, rotY) {
     // ~1 in 5 -- scarce enough that finding one still feels like a find,
     // same logic as everything else in this maze that's actually real.
     const isPersonal = rng() < 0.2;
-    const [title, subtitle] = pick(isPersonal ? PERSONAL_WANTED_FACTS : WIKI_FALLBACK);
+    const [title, subtitle] = isPersonal
+        ? pick(PERSONAL_WANTED_FACTS)
+        : (rng() < 0.55 ? pick(WIKI_FALLBACK) : pickCityNoisePair(rng, x, z));
     const [tagline1, tagline2] = pick(WANTED_TAGLINES);
     const tex = isPersonal
         ? makeWantedTexture(title, subtitle, 'ON FILE, ALLEGEDLY', "REWARD: NONE, HE'S FINE")
@@ -2738,7 +2854,7 @@ function addBuilding(col, row) {
         for (const p of signRolls) { if (rng() < p) signCount++; else break; }
         const usedSignHeights = [];
         for (let i = 0; i < signCount; i++) {
-            const content = pickSignContent();
+            const content = pickSignContent(x + face.ox, z + face.oz);
             const neon = pickNeonForRow(row);
             // never below the shell's roofline -- otherwise a sign could
             // end up floating in an open doorway gap on whichever face has one
@@ -3453,9 +3569,24 @@ function addVendingMachine(x, z, facingRotY) {
         new THREE.MeshStandardMaterial({ color: 0x151515, roughness: 0.5, metalness: 0.4 })
     );
     body.position.y = 0.8;
+    // screen glow used to be a flat color -- now it's a glitching noise
+    // readout, same "the machinery is confused too" joke as the ATM.
+    const [msg, sub] = pickCityNoisePair(rng, x, z);
+    const glowTex = makePixelTexture((ctx, w, h) => {
+        ctx.fillStyle = hexToCss(colorHex);
+        ctx.fillRect(0, 0, w, h);
+        ctx.fillStyle = 'rgba(0,0,0,0.75)';
+        ctx.fillRect(2, 2, w - 4, h - 4);
+        ctx.fillStyle = hexToCss(colorHex);
+        ctx.textAlign = 'center';
+        ctx.font = 'bold 5px "Courier New", monospace';
+        ctx.fillText(msg, w / 2, h / 2 - 4, w - 4);
+        ctx.font = '4px "Courier New", monospace';
+        ctx.fillText(sub, w / 2, h / 2 + 5, w - 4);
+    }, 48, 96);
     const glow = new THREE.Mesh(
         new THREE.PlaneGeometry(0.5, 1.1),
-        new THREE.MeshBasicMaterial({ color: colorHex })
+        new THREE.MeshBasicMaterial({ map: glowTex })
     );
     glow.position.set(0, 0.85, 0.28);
     const g = new THREE.Group();
@@ -3575,7 +3706,9 @@ const MYTHOLOGY_FRAGMENTS = [
 // a flyer dropped flat on the pavement — skills & rhetoric fragments.
 // common, cheap, everywhere; the "public secret" hiding in plain sight.
 function addStickerTag(x, z) {
-    const [title, subtitle] = pick([...CONFIG.siteContent.skills, ...CONFIG.siteContent.about, ...CONFIG.billboards.flavorWords, ...MYTHOLOGY_FRAGMENTS]);
+    const [title, subtitle] = rng() < 0.78
+        ? pickCityNoisePair(rng, x, z)
+        : pick([...CONFIG.siteContent.skills, ...CONFIG.siteContent.about, ...CONFIG.billboards.flavorWords, ...MYTHOLOGY_FRAGMENTS]);
     const neon = pick(CONFIG.neonPalette);
     const tex = makePixelTexture((ctx, w, h) => {
         ctx.fillStyle = '#0a0a0a';
@@ -3608,7 +3741,9 @@ function addStickerTag(x, z) {
 // already draw from -- "more posters" without inventing new fake resume
 // content, just a lot more of the noise layer that already exists.
 function addWallFlyer(x, y, z, rotY) {
-    const [title, subtitle] = pick([...CONFIG.billboards.flavorWords, ...MYTHOLOGY_FRAGMENTS, ...CONFIG.siteContent.about]);
+    const [title, subtitle] = rng() < 0.78
+        ? pickCityNoisePair(rng, x, z)
+        : pick([...CONFIG.billboards.flavorWords, ...MYTHOLOGY_FRAGMENTS, ...CONFIG.siteContent.about]);
     const paper = pick(['#e8ddc2', '#d8d0e8', '#e8d8c8', '#c8e0d8', '#f0e8d0']);
     const tex = makePixelTexture((ctx, w, h) => {
         ctx.fillStyle = paper;
@@ -4538,6 +4673,29 @@ function addConstructionZone(x, z) {
     barrier.rotation.y = randRange(0, Math.PI * 2);
     scene.add(barrier);
 
+    // permit placard zip-tied to the barrier -- every real work site has
+    // one of these, and it's a free noise-corpus surface.
+    const [permitTitle, permitSub] = pickCityNoisePair(rng, x, z);
+    const permitTex = makePixelTexture((ctx, w, h) => {
+        ctx.fillStyle = '#e8dcae';
+        ctx.fillRect(0, 0, w, h);
+        ctx.fillStyle = '#181818';
+        ctx.textAlign = 'center';
+        ctx.font = 'bold 6px "Courier New", monospace';
+        ctx.fillText('PERMIT ON FILE', w / 2, 8);
+        ctx.font = 'bold 6px "Courier New", monospace';
+        ctx.fillText(permitTitle, w / 2, h / 2 + 2, w - 6);
+        ctx.font = '5px "Courier New", monospace';
+        ctx.fillText(permitSub, w / 2, h - 6, w - 6);
+    }, 56, 40);
+    const permit = new THREE.Mesh(
+        new THREE.PlaneGeometry(0.36, 0.26),
+        new THREE.MeshStandardMaterial({ map: permitTex, roughness: 0.8 })
+    );
+    permit.position.set(x + Math.sin(barrier.rotation.y) * 0.42, 0.62, z + Math.cos(barrier.rotation.y) * 0.42);
+    permit.rotation.y = barrier.rotation.y;
+    scene.add(permit);
+
     // scaffolding poles nearby against the tallest adjacent wall
     const poleMat = new THREE.MeshStandardMaterial({ color: 0x8a6a3a, roughness: 0.6, metalness: 0.5 });
     for (let i = 0; i < 4; i++) {
@@ -4575,7 +4733,9 @@ function plazaFacingRotY(c, r) {
 }
 
 function addNewsstand(x, z, facingRotY) {
-    const [headline, sub] = pick(CONFIG.billboards.tabloidHeadlines);
+    const [headline, sub] = rng() < 0.72
+        ? pickCityNoisePair(rng, x, z)
+        : pick(CONFIG.billboards.tabloidHeadlines);
     const booth = new THREE.Mesh(
         jitterGeometry(new THREE.BoxGeometry(1.1, 2.0, 0.9), 0.04),
         new THREE.MeshStandardMaterial({ color: pick([0xc8b878, 0xa8c8c8, 0xc06858]), roughness: 0.85 })
@@ -4615,6 +4775,29 @@ function addPhoneBooth(x, z) {
     const glass = new THREE.Mesh(new THREE.BoxGeometry(0.7, 1.8, 0.7), glassMat);
     glass.position.y = 1.1;
     g.add(frame, glass);
+
+    // a directory card on the back panel -- obsolete infrastructure still
+    // has paperwork, and it's one more free noise-corpus surface.
+    const [dirTitle, dirSub] = pickCityNoisePair(rng, x, z);
+    const dirTex = makePixelTexture((ctx, w, h) => {
+        ctx.fillStyle = '#f0ece0';
+        ctx.fillRect(0, 0, w, h);
+        ctx.fillStyle = '#181818';
+        ctx.textAlign = 'center';
+        ctx.font = 'bold 5px "Courier New", monospace';
+        ctx.fillText('DIRECTORY', w / 2, 7);
+        ctx.font = '5px "Courier New", monospace';
+        ctx.fillText(dirTitle, w / 2, h / 2, w - 6);
+        ctx.fillText(dirSub, w / 2, h / 2 + 9, w - 6);
+    }, 44, 56);
+    const directory = new THREE.Mesh(
+        new THREE.PlaneGeometry(0.4, 0.5),
+        new THREE.MeshStandardMaterial({ map: dirTex, roughness: 0.85 })
+    );
+    directory.position.set(0, 1.15, -0.43);
+    directory.rotation.y = Math.PI;
+    g.add(directory);
+
     g.position.set(x, 0, z);
     scene.add(g);
 
@@ -4630,7 +4813,9 @@ function addPhoneBooth(x, z) {
 // an ATM kiosk, screen glowing with the same "system noise" humor as the
 // signage elsewhere — the machinery of finance admitting it's confused too.
 function addAtmKiosk(x, z, facingRotY) {
-    const [msg, sub] = pick(CONFIG.billboards.systemNoise);
+    const [msg, sub] = rng() < 0.72
+        ? pickNetworkNoise(rng)
+        : pick(CONFIG.billboards.systemNoise);
     const body = new THREE.Mesh(
         jitterGeometry(new THREE.BoxGeometry(0.6, 1.4, 0.5), 0.03),
         new THREE.MeshStandardMaterial({ color: 0x9adfc0, roughness: 0.4, metalness: 0.5 })
@@ -5050,7 +5235,7 @@ function addMegaBillboard(x, z) {
         g.add(leg);
     }
     for (let i = 0; i < 2; i++) {
-        const content = pickSignContent();
+        const content = pickSignContent(x, z);
         const neon = pick(CONFIG.neonPalette);
         const tex = makePixelTexture((ctx, w, h) => {
             const color = hexToCss(neon);
@@ -5269,6 +5454,74 @@ fetchRandomWikiArticles(15); // live random articles start swapping into the sta
 // the sky, filled last so it can spawn straight through anything already
 // placed -- see CONFIG.quality.*.skyJunkCount for the per-tier amount.
 spawnSkyJunk(QUALITY.skyJunkCount);
+
+// ---------- airborne information layer ----------
+// skyJunk above is pure geometry -- this is a separate population of
+// text-bearing shards so the sky itself reads as query output, not just
+// debris. The corpus behind it is enormous, but render cost stays fixed:
+// a small cache of real textures (TEXT_SHARD_CACHE_SIZE), reused across
+// however many shard meshes get placed. None of these are colliders.
+const TEXT_SHARD_CACHE_SIZE = QUALITY === CONFIG.quality.desktop ? 512 : QUALITY === CONFIG.quality.mobile ? 160 : 48;
+const TEXT_SHARD_COUNT = QUALITY === CONFIG.quality.desktop ? 2200 : QUALITY === CONFIG.quality.mobile ? 550 : 60;
+
+function makeNoiseShardTexture(title, subtitle) {
+    const neon = hexToCss(pick(CONFIG.neonPalette));
+    return makePixelTexture((ctx, w, h) => {
+        ctx.fillStyle = '#050505';
+        ctx.fillRect(0, 0, w, h);
+        ctx.strokeStyle = neon + '55';
+        ctx.strokeRect(0.5, 0.5, w - 1, h - 1);
+        ctx.fillStyle = neon;
+        ctx.textAlign = 'center';
+        ctx.font = 'bold 8px "Courier New", monospace';
+        ctx.fillText(title, w / 2, h / 2 - 3, w - 6);
+        ctx.font = '6px "Courier New", monospace';
+        ctx.fillStyle = '#cfd6d6';
+        ctx.fillText(subtitle, w / 2, h / 2 + 8, w - 6);
+    }, 112, 32);
+}
+
+const textShardMaterials = [];
+for (let i = 0; i < TEXT_SHARD_CACHE_SIZE; i++) {
+    const [title, subtitle] = pickAnyNoisePair(rng);
+    textShardMaterials.push(new THREE.MeshBasicMaterial({
+        map: makeNoiseShardTexture(title, subtitle),
+        transparent: true, side: THREE.DoubleSide, depthWrite: false,
+    }));
+}
+console.log(`[noise] ${textShardMaterials.length} airborne text-shard textures cached`);
+
+const textShardGeo = new THREE.PlaneGeometry(1, 1);
+function spawnTextShards(count) {
+    let placed = 0;
+    for (let i = 0; i < count; i++) {
+        const x = randRange(-GRID_W / 2, GRID_W / 2);
+        const z = randRange(-GRID_H / 2, GRID_H / 2);
+
+        // same light-web/dark-web density gradient as skyJunk/regular props
+        const t = webAlignment(z);
+        const gradientMul = THREE.MathUtils.lerp(CONFIG.narrative.darkWeb.propDensityMul, CONFIG.narrative.lightWeb.propDensityMul, t);
+        if (rng() > gradientMul) continue;
+
+        let y = CONFIG.skyJunk.heightMin + (CONFIG.skyJunk.heightMax - CONFIG.skyJunk.heightMin) * (rng() ** CONFIG.skyJunk.heightBias);
+        if (y > LAYER_Y.heavenBase && rng() < 0.85) continue;
+
+        const { col, row } = worldToCell(x, z);
+        if (grid[row]?.[col] === false && y < CONFIG.skyJunk.streetClearance) y = CONFIG.skyJunk.streetClearance + rng() * 2;
+
+        const mesh = new THREE.Mesh(textShardGeo, textShardMaterials[Math.floor(rng() * textShardMaterials.length)]);
+        // some tiny/illegible from the ground, some big enough to read
+        // only once you've climbed close -- both are intentional.
+        const s = randRange(0.25, 1.7);
+        mesh.scale.set(s * 1.75, s * 0.5, 1);
+        mesh.position.set(x, y, z);
+        mesh.rotation.set(randRange(0, Math.PI * 2), randRange(0, Math.PI * 2), randRange(0, Math.PI * 2));
+        scene.add(mesh);
+        placed++;
+    }
+    console.log(`[noise] ${placed} airborne text shards spawned (requested ${count})`);
+}
+spawnTextShards(TEXT_SHARD_COUNT);
 
 // real climbable platform chains, one per pick, each starting over an
 // open (non-building) cell so the base of a chain isn't spawning inside

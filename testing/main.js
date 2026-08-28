@@ -1778,6 +1778,10 @@ function addBuilding(col, row) {
     addCrate(x - hw * 0.4, z + hw * 0.3);
     addPottedPlant(x + hw * 0.5, z - hw * 0.4);
     scatterJunk('indoor', x, z, 2 + Math.floor(rng() * 3), hw * 0.55);
+    // ~40% of interiors get the one real container -> contents ->
+    // contents-of-contents chain in the whole maze: a table carrying a
+    // bowl carrying fruit, occasionally carrying one more thing still.
+    if (rng() < 0.4) addTableWithClutter(x + randRange(-hw * 0.35, hw * 0.35), z + randRange(-hw * 0.35, hw * 0.35));
 
     const upperHeight = height - groundFloorHeight;
 
@@ -2722,6 +2726,65 @@ function addPottedPlant(x, z) {
     g.position.set(x, 0, z);
     scene.add(g);
     return 0.18;
+}
+
+// a table carrying a bowl carrying fruit -- the one spot in the whole
+// maze that goes container -> contents -> contents-of-contents three
+// levels deep instead of bottoming out at "one more crude primitive."
+// Interior-only (called directly from addBuilding, not through the
+// outdoor PROP_BUILDERS pool).
+function addTableWithClutter(x, z) {
+    const g = new THREE.Group();
+    const legMat = new THREE.MeshStandardMaterial({ color: 0x4a3524, roughness: 0.9 });
+    const topW = randRange(0.7, 1.0), topD = randRange(0.5, 0.8), topH = 0.72;
+    const top = new THREE.Mesh(jitterGeometry(new THREE.BoxGeometry(topW, 0.05, topD), 0.01), legMat);
+    top.position.y = topH;
+    g.add(top);
+    for (const sx of [-1, 1]) {
+        for (const sz of [-1, 1]) {
+            const leg = new THREE.Mesh(jitterGeometry(new THREE.CylinderGeometry(0.03, 0.03, topH, 5), 0.008), legMat);
+            leg.position.set(sx * (topW / 2 - 0.06), topH / 2, sz * (topD / 2 - 0.06));
+            g.add(leg);
+        }
+    }
+
+    if (rng() < 0.7) { // the bowl, on the table
+        const bowl = new THREE.Mesh(
+            jitterGeometry(new THREE.CylinderGeometry(0.16, 0.11, 0.1, 8), 0.01),
+            new THREE.MeshStandardMaterial({ color: pick([0xd8d0c0, 0xa0b8c0, 0x8a3838]), roughness: 0.6 })
+        );
+        bowl.position.y = topH + 0.05;
+        g.add(bowl);
+
+        const fruitCount = 1 + Math.floor(rng() * 3); // the fruit, in the bowl
+        const fruitColor = pick([0xc82818, 0xd89818, 0x9ac030]);
+        let hasInsect = false;
+        for (let i = 0; i < fruitCount; i++) {
+            const fy = topH + 0.11;
+            const fx = randRange(-0.08, 0.08), fz = randRange(-0.08, 0.08);
+            const fruit = new THREE.Mesh(
+                new THREE.SphereGeometry(randRange(0.045, 0.06), 6, 6),
+                new THREE.MeshStandardMaterial({ color: fruitColor, roughness: 0.5 })
+            );
+            fruit.position.set(fx, fy, fz);
+            g.add(fruit);
+
+            if (!hasInsect && rng() < 0.08) { // the insect, on the fruit -- one level deeper still
+                hasInsect = true;
+                const insect = new THREE.Mesh(
+                    new THREE.SphereGeometry(0.008, 4, 4),
+                    new THREE.MeshStandardMaterial({ color: 0x1a1a1a })
+                );
+                insect.position.set(fx, fy + 0.05, fz);
+                g.add(insect);
+            }
+        }
+    }
+
+    g.rotation.y = randRange(0, Math.PI * 2);
+    g.position.set(x, 0, z);
+    scene.add(g);
+    return 0.5;
 }
 
 // ivy patch mounted on a wall — spreading and green, or dead and brown.

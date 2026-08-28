@@ -2087,6 +2087,7 @@ function buildFireEscapeStair(x, z, rotY, topY) {
     const modelTopY = 5.4;
     const clampedTop = Math.min(topY, modelTopY);
     let y = 0, dir = 1;
+    let lastWx = along, lastWz = cross; // tracks the final landing so the bridging ladder below picks up from where the stairs actually end, not the original wall anchor
     const landings = []; // {y} -- returned so a balcony can anchor to a real, reachable height
     while (y < clampedTop) {
         const y1 = Math.min(clampedTop, y + risePerFlight);
@@ -2095,15 +2096,24 @@ function buildFireEscapeStair(x, z, rotY, topY) {
         const wx = axis === 'x' ? along1 : cross, wz = axis === 'x' ? cross : along1;
         addLandingPlatform(wx, wz, 0.65, y1);
         landings.push({ y: y1 });
+        lastWx = wx; lastWz = wz;
         y = y1; along = along1; dir *= -1;
     }
     // anything taller than the model itself (mainly warehouses, short
     // enough their own roof is still in reach) bridges the remaining gap
     // with a real ladder instead of pretending the stairs keep going --
     // also doubles as the model's own built-in drop-ladder actually doing
-    // something, not just sitting there as decoration.
+    // something, not just sitting there as decoration. Anchored to the
+    // stairs' actual last landing (which has drifted sideways by however
+    // many switchback flights it took to get there), not the original
+    // wall-mount point -- a ladder rooted back at the start would be
+    // stranded off to the side of wherever the stairs actually left you.
     if (topY > clampedTop + 0.3) {
-        addLadder(x, z, rotY, clampedTop, topY);
+        // lastWx/lastWz is already out past the wall (the landing's own
+        // stand-off) -- a small climbStandoff here, not the usual
+        // against-a-wall default, so the ladder rises right from the
+        // landing instead of drifting even further out.
+        addLadder(lastWx, lastWz, rotY, clampedTop, topY, { climbStandoff: 0.15 });
     }
     return landings;
 }
@@ -2116,8 +2126,19 @@ function buildFireEscapeStair(x, z, rotY, topY) {
 // needed, just the existing "step up onto a short prop" rule applied
 // vertically instead of onto a single crate. (x, z, rotY) is the same
 // wall-anchor convention every other wall-mounted prop here uses.
+//
+// The actual walkable column is kept well clear of the wall itself --
+// resolveCollisions won't let the player's center get closer than
+// PLAYER_RADIUS + WALL_THICKNESS (~0.44) to a wall segment, so a climb
+// point sitting flush against the wall (like the visual rungs are) could
+// never actually be reached; the player would be shoved back out before
+// ever standing in the tiny box groundHeightAt needs them in. climbStandoff
+// defaults well past that, and the box itself is generous, not the tight
+// footprint a purely visual prop would need.
 function addLadder(x, z, rotY, y0, y1, opts = {}) {
-    const standoff = opts.standoff ?? 0.22;
+    const standoff = opts.standoff ?? 0.22; // visual only -- how flush the rails/rungs read against the wall
+    const climbStandoff = opts.climbStandoff ?? 0.55; // the real, walkable column
+    const climbHalf = opts.climbHalf ?? 0.4;
     const width = opts.width ?? 0.42;
     const rise = y1 - y0;
     if (rise <= 0.05) return;
@@ -2149,16 +2170,17 @@ function addLadder(x, z, rotY, y0, y1, opts = {}) {
     scene.add(g);
 
     // the actual climb: a tight stack of shallow floor candidates at the
-    // ladder's standoff point, spaced well under the auto-step limit
-    // (MAX_STEP_HEIGHT, defined later in this file as 0.65 -- kept as a
-    // literal here since this runs long before that const exists).
-    const climbX = x + Math.sin(rotY) * standoff;
-    const climbZ = z + Math.cos(rotY) * standoff;
+    // ladder's (generously offset) standoff point, spaced well under the
+    // auto-step limit (MAX_STEP_HEIGHT, defined later in this file as
+    // 0.65 -- kept as a literal here since this runs long before that
+    // const exists).
+    const climbX = x + Math.sin(rotY) * climbStandoff;
+    const climbZ = z + Math.cos(rotY) * climbStandoff;
     const stepGap = 0.48;
     const steps = Math.max(1, Math.ceil(rise / stepGap));
     for (let i = 1; i <= steps; i++) {
         const y = y0 + (rise * i) / steps;
-        elevatedPlatforms.push({ x: climbX, z: climbZ, hx: width * 0.6, hz: width * 0.6, y });
+        elevatedPlatforms.push({ x: climbX, z: climbZ, hx: climbHalf, hz: climbHalf, y });
     }
 }
 
@@ -2226,6 +2248,64 @@ function addBalcony(x, y, z, rotY, maintenance = 0.5) {
     elevatedPlatforms.push({ x: wx, z: wz, hx: width / 2 * 0.9, hz: depth / 2 * 0.9, y });
 }
 
+// the one true vertical secret: a real, climbable staircase that just
+// keeps going, switchbacking in a square spiral around a central mast
+// all the way up into the white-fog "heaven" band (LAYER_Y.heavenBase is
+// only 20 -- this clears it by 7x and keeps climbing). One exists in the
+// entire map, planted on a reserved plaza cell (real open room on every
+// side, unlike a boxed-in dead end), with nothing marking it from a
+// distance -- it has to be stumbled onto and then actually committed to.
+// Built from the exact same primitives as every other stair here
+// (addStairFlight/addLandingPlatform), just run for 50 flights instead
+// of 2-3.
+function buildStairwayToHeaven(cx, cz) {
+    const topHeight = 150;
+    const radius = 2.0;
+    const risePerSide = 3.0;
+
+    const mastMat = new THREE.MeshStandardMaterial({ color: 0x24221e, roughness: 0.5, metalness: 0.65 });
+    const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.24, topHeight, 8), mastMat);
+    mast.position.set(cx, topHeight / 2, cz);
+    scene.add(mast);
+
+    // 4 fixed corners -- every "side" of the spiral reuses the same 4
+    // points, just at ever-increasing height, so it's a real vertical
+    // helix wrapping the mast rather than a drifting random walk.
+    const corners = [
+        [cx + radius, cz + radius],
+        [cx - radius, cz + radius],
+        [cx - radius, cz - radius],
+        [cx + radius, cz - radius],
+    ];
+    let y = 0, ci = 0;
+    let lastX = corners[0][0], lastZ = corners[0][1];
+    while (y < topHeight) {
+        const [ax, az] = corners[ci];
+        const [bx, bz] = corners[(ci + 1) % 4];
+        const y1 = Math.min(topHeight, y + risePerSide);
+        if (ax === bx) {
+            addStairFlight('z', az, bz, ax, y, y1, { width: 1.0, color: 0x3a3228, railColor: 0x161616 });
+        } else {
+            addStairFlight('x', ax, bx, az, y, y1, { width: 1.0, color: 0x3a3228, railColor: 0x161616 });
+        }
+        addLandingPlatform(bx, bz, 0.75, y1, { color: 0x322c24 });
+        lastX = bx; lastZ = bz;
+        y = y1; ci = (ci + 1) % 4;
+    }
+
+    // the payoff -- a real light and a real sign, so finding this and
+    // actually climbing all the way up gets you something at the top,
+    // not just a ledge that stops.
+    if (dynamicLightsRemaining > 0) {
+        dynamicLightsRemaining--;
+        const light = new THREE.PointLight(0xffffff, 5, 40, 2);
+        light.position.set(lastX, topHeight + 1.5, lastZ);
+        scene.add(light);
+    }
+    const signRotY = Math.atan2(lastX - cx, lastZ - cz) + Math.PI; // faces back toward the mast, readable standing on the top landing
+    addSign(lastX, topHeight + 1.6, lastZ, signRotY, 'THE TOP', 'nothing up here but you', 0xffffff, false);
+}
+
 function addBuilding(col, row) {
     const { x, z } = cellToWorld(col, row);
     // ~12% of buildings are squat warehouses instead of towers: near-full
@@ -2272,11 +2352,16 @@ function addBuilding(col, row) {
     // night, neglected ones darker -- the same window grid, just a
     // different fraction of its panes glowing.
     const litRatio = Math.max(0.05, Math.min(0.4, 0.15 + buildingContext.wealth * 0.2 - (1 - buildingContext.maintenance) * 0.08));
+    // double-sided: this material used to only ever wrap the outside of a
+    // solid, unenterable tower mass, so the inside face never mattered.
+    // Now it's also the exterior wall material for real, enterable upper
+    // floors -- single-sided would make those walls invisible from inside
+    // the room they're supposed to enclose.
     const material = useStain
-        ? new THREE.MeshStandardMaterial({ map: makeTopologyStainTexture(), roughness: CONFIG.buildings.roughness })
+        ? new THREE.MeshStandardMaterial({ map: makeTopologyStainTexture(), roughness: CONFIG.buildings.roughness, side: THREE.DoubleSide })
         : useWindows
-            ? new THREE.MeshStandardMaterial({ map: makeWindowGridTexture(height, color, litRatio), roughness: CONFIG.buildings.roughness })
-            : new THREE.MeshStandardMaterial({ color, roughness: CONFIG.buildings.roughness });
+            ? new THREE.MeshStandardMaterial({ map: makeWindowGridTexture(height, color, litRatio), roughness: CONFIG.buildings.roughness, side: THREE.DoubleSide })
+            : new THREE.MeshStandardMaterial({ color, roughness: CONFIG.buildings.roughness, side: THREE.DoubleSide });
 
     // every building is now a real, multi-floor structure: K stacked
     // floors (K from QUALITY.maxEnterableFloors, clamped to what the
@@ -4552,8 +4637,18 @@ mountContentCards(); // real site content claims leftover wall faces
     });
 }
 
+// one plaza cell reserved up front, before the general shuffle below
+// hands cells out to statues/parks/etc -- guarantees the Stairway to
+// Heaven always gets a spot with real open room around it (a dead end's
+// own building is boxed in on 3 sides by definition, no room for
+// anything to wrap around) instead of competing for leftovers. Falls
+// back to spawn's own cell on the rare maze with no plazas at all.
+const heavenCell = plazaCells.length ? pick(plazaCells) : [spawnCol, spawnRow];
+
 // special features placed on plaza cells (wider open junctions)
-const shuffledPlazas = [...plazaCells].sort(() => rng() - 0.5);
+const shuffledPlazas = [...plazaCells]
+    .filter(c => c[0] !== heavenCell[0] || c[1] !== heavenCell[1])
+    .sort(() => rng() - 0.5);
 let plazaCursor = 0;
 function nextPlazaCell() {
     return plazaCursor < shuffledPlazas.length ? shuffledPlazas[plazaCursor++] : null;
@@ -4627,6 +4722,14 @@ for (let i = 0; i < CONFIG.props.maxSpecialFeatures.megaBillboards; i++) {
     // thin legs holding a sign high overhead, not a solid object at
     // ground level -- Infinity keeps it the plain always-wall it was
     propColliders.push({ x, z, radius: r, height: Infinity });
+}
+
+// the one, findable Stairway to Heaven -- see buildStairwayToHeaven's own
+// comment. heavenCell was reserved before any of the loops above touched
+// plazaCells, so this always gets a real spot.
+{
+    const { x, z } = cellToWorld(heavenCell[0], heavenCell[1]);
+    buildStairwayToHeaven(x, z);
 }
 
 // every plaza gets a bright pool of light, regardless of whether it also

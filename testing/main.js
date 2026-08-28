@@ -447,6 +447,7 @@ const CONFIG = {
             phoneBooths: 4,
             atmKiosks: 4,
             parks: 5,
+            megaBillboards: 4,
         },
     },
 
@@ -2689,6 +2690,13 @@ for (let i = 0; i < CONFIG.props.maxSpecialFeatures.parks; i++) {
     propColliders.push({ x, z, radius: r });
     parkCells.add(`${cell[0]},${cell[1]}`);
 }
+for (let i = 0; i < CONFIG.props.maxSpecialFeatures.megaBillboards; i++) {
+    const cell = nextPlazaCell();
+    if (!cell) break;
+    const { x, z } = cellToWorld(cell[0], cell[1]);
+    const r = addMegaBillboard(x, z);
+    propColliders.push({ x, z, radius: r });
+}
 
 // every plaza gets a bright pool of light, regardless of whether it also
 // hosts a statue/landmark — open areas are lit, full stop.
@@ -2770,6 +2778,56 @@ function addBench(x, z, rotY) {
 
 // a real park — grass patch, a small cluster of (mostly living) trees,
 // a bench. The green counterweight to everything paved and neon.
+// an oversized jumbotron-style billboard on a scaffold tower -- real
+// Times-Square-style plazas have a few of these towering over everything
+// else, not just shopfront-scale signs. Two stacked ad panels + a
+// support frame, pulling from the same content pools as regular signs.
+function addMegaBillboard(x, z) {
+    const rotY = randRange(0, Math.PI * 2);
+    const frameMat = new THREE.MeshStandardMaterial({ color: 0x1c1c1c, roughness: 0.6, metalness: 0.5 });
+    const g = new THREE.Group();
+    for (const side of [-1, 1]) {
+        const leg = new THREE.Mesh(jitterGeometry(new THREE.CylinderGeometry(0.12, 0.14, 7, 6), 0.02), frameMat);
+        leg.position.set(side * 1.3, 3.5, 0);
+        g.add(leg);
+    }
+    for (let i = 0; i < 2; i++) {
+        const content = pickSignContent();
+        const neon = pick(CONFIG.neonPalette);
+        const tex = makePixelTexture((ctx, w, h) => {
+            const color = hexToCss(neon);
+            ctx.fillStyle = '#020202';
+            ctx.fillRect(0, 0, w, h);
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 4;
+            ctx.strokeRect(2, 2, w - 4, h - 4);
+            ctx.fillStyle = color;
+            ctx.textAlign = 'center';
+            ctx.font = 'bold 34px "Courier New", monospace';
+            ctx.fillText(content.title, w / 2, h / 2 - 8, w - 16);
+            ctx.font = '18px "Courier New", monospace';
+            ctx.fillText(content.subtitle, w / 2, h / 2 + 26, w - 16);
+        }, 160, 96);
+        const panel = new THREE.Mesh(
+            new THREE.PlaneGeometry(3.2, 1.9),
+            new THREE.MeshBasicMaterial({ map: tex })
+        );
+        panel.position.set(0, 5 + i * 2.1, 0.05);
+        g.add(panel);
+
+        if (dynamicLightsRemaining > 0) {
+            dynamicLightsRemaining--;
+            const light = new THREE.PointLight(neon, 6, 12, 2);
+            light.position.set(0, 5 + i * 2.1, 1);
+            g.add(light);
+        }
+    }
+    g.rotation.y = rotY;
+    g.position.set(x, 0, z);
+    scene.add(g);
+    return 1.4;
+}
+
 function addPark(x, z) {
     const grassTex = makePixelTexture((ctx, w, h) => {
         ctx.fillStyle = '#3a5c2e';

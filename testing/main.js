@@ -1751,19 +1751,25 @@ function drawFloorLayout(layoutWalls, floorHeight, mat, yBase, pushSegments, out
     }
 }
 
-// the footprint minus a swSize x swSize corner square, as an exact L
-// shape (2 axis-aligned rects) -- used for both a floor's ceiling (the
-// hole a stair rises through) and the floor above it (the hole that
-// stair rises INTO). {x,z,hx,hz} matches what overheadCeilings and
-// elevatedPlatforms already expect.
-function computeNotchedRects(x, z, hw, swX, swZ, swHalf, cornerSignX, cornerSignZ) {
-    const ax0 = cornerSignX === 1 ? x - hw : swX + swHalf;
-    const ax1 = cornerSignX === 1 ? swX - swHalf : x + hw;
-    const rectA = { x: (ax0 + ax1) / 2, z, hx: (ax1 - ax0) / 2, hz: hw };
-    const bz0 = cornerSignZ === 1 ? z - hw : swZ + swHalf;
-    const bz1 = cornerSignZ === 1 ? swZ - swHalf : z + hw;
-    const rectB = { x: swX, z: (bz0 + bz1) / 2, hx: swHalf, hz: (bz1 - bz0) / 2 };
-    return [rectA, rectB];
+// footprint minus an arbitrary interior hole, as up to 4 axis-aligned
+// rects (a "picture frame" decomposition) -- works whether the hole
+// touches 0, 1, or 2 edges of the footprint, not just a corner square.
+// Used for both a floor's ceiling (the hole a stair rises through) and
+// the floor above it (the hole that stair rises INTO). {x,z,hx,hz}
+// matches what overheadCeilings and elevatedPlatforms already expect.
+function computeNotchedRects(x, z, hw, holeXLo, holeXHi, holeZLo, holeZHi) {
+    const fx0 = x - hw, fx1 = x + hw, fz0 = z - hw, fz1 = z + hw;
+    const hx0 = Math.max(fx0, Math.min(holeXLo, holeXHi));
+    const hx1 = Math.min(fx1, Math.max(holeXLo, holeXHi));
+    const hz0 = Math.max(fz0, Math.min(holeZLo, holeZHi));
+    const hz1 = Math.min(fz1, Math.max(holeZLo, holeZHi));
+    const rectFrom = (x0, x1, z0, z1) => ({ x: (x0 + x1) / 2, z: (z0 + z1) / 2, hx: (x1 - x0) / 2, hz: (z1 - z0) / 2 });
+    const rects = [];
+    if (hz0 > fz0) rects.push(rectFrom(fx0, fx1, fz0, hz0)); // band below the hole, full width
+    if (hz1 < fz1) rects.push(rectFrom(fx0, fx1, hz1, fz1)); // band above the hole, full width
+    if (hx0 > fx0) rects.push(rectFrom(fx0, hx0, hz0, hz1)); // left of the hole, hole's own z-band
+    if (hx1 < fx1) rects.push(rectFrom(hx1, fx1, hz0, hz1)); // right of the hole, hole's own z-band
+    return rects;
 }
 
 function addHorizontalPlane(rect, y, mat) {
@@ -1798,23 +1804,41 @@ function buildGroundFloorShell(x, z, hw, floorHeight, door, shellMat, hasUpperFl
     // the stairwell: a fixed corner of the footprint, reused by every
     // floor above so the vertical shaft actually lines up. Two short
     // walls close off the corner (the other two sides are already the
-    // real exterior walls); one of them gets a doorway.
+    // real exterior walls); Wall1 gets the entrance doorway.
+    //
+    // The flight only crosses PART of the shaft (doorX to flightEndX),
+    // not all the way to the real exterior corner -- it used to run the
+    // full depth, which meant climbing it dead-ended right against the
+    // building's own 2 exterior walls with no way out except walking
+    // back over the same ramp you just climbed. Since collision doesn't
+    // care about height, walking back over your own ramp's footprint
+    // doesn't just look wrong, it actually slides you back down it (any
+    // point on the ramp reports its own ramp height, lower the further
+    // back you go). Stopping short leaves real, ordinary, already-
+    // connected room floor beyond flightEndX -- finishing the climb
+    // lands you in the room, not in a dead end.
     let stairwell = null;
     if (hasUpperFloors) {
-        const swHalf = 0.9;
+        const swHalf = 1.1;
         const cornerSignX = rng() < 0.5 ? -1 : 1, cornerSignZ = rng() < 0.5 ? -1 : 1;
         const swX = x + cornerSignX * (hw - swHalf - 0.15);
         const swZ = z + cornerSignZ * (hw - swHalf - 0.15);
-        stairwell = { swX, swZ, swHalf, cornerSignX, cornerSignZ };
-        segments.push(...addInteriorWall('x', swX - cornerSignX * swHalf, swZ - swHalf, swZ + swHalf, 0.5, floorHeight, shellMat, 1.0, 0));
-        segments.push(...addInteriorWall('z', swZ - cornerSignZ * swHalf, swX - swHalf, swX + swHalf, 0, floorHeight, shellMat, 0, 0));
+        const doorX = swX - cornerSignX * swHalf;
+        const flightEndX = swX + cornerSignX * swHalf * 0.3;
+        stairwell = { swX, swZ, swHalf, cornerSignX, cornerSignZ, doorX, flightEndX };
+        segments.push(...addInteriorWall('x', doorX, swZ - swHalf, swZ + swHalf, 0.5, floorHeight, shellMat, 1.1, 0));
+        // Wall2 only guards the flight's own run, not the whole shaft --
+        // beyond flightEndX toward the real corner there's nothing to
+        // wall off, it's just the room.
+        segments.push(...addInteriorWall('z', swZ - cornerSignZ * swHalf, Math.min(doorX, flightEndX), Math.max(doorX, flightEndX), 0, floorHeight, shellMat, 0, 0));
         // the flight from ground up to floor 1, inside the shaft
-        addStairFlight('x', swX - cornerSignX * swHalf, swX + cornerSignX * swHalf, swZ, 0, floorHeight, { width: swHalf * 1.3 });
+        addStairFlight('x', doorX, flightEndX, swZ, 0, floorHeight, { width: swHalf * 1.1 });
 
-        const [rectA, rectB] = computeNotchedRects(x, z, hw, swX, swZ, swHalf, cornerSignX, cornerSignZ);
-        overheadCeilings.push({ ...rectA, y: floorHeight }, { ...rectB, y: floorHeight });
-        addHorizontalPlane(rectA, floorHeight, shellMat);
-        addHorizontalPlane(rectB, floorHeight, shellMat);
+        const rects = computeNotchedRects(x, z, hw, doorX, flightEndX, swZ - swHalf, swZ + swHalf);
+        for (const r of rects) {
+            overheadCeilings.push({ ...r, y: floorHeight });
+            addHorizontalPlane(r, floorHeight, shellMat);
+        }
     } else {
         overheadCeilings.push({ x, z, hx: hw, hz: hw, y: floorHeight });
         addHorizontalPlane({ x, z, hx: hw, hz: hw }, floorHeight, shellMat);
@@ -1857,25 +1881,28 @@ function buildUpperFloor(x, z, hw, y0, floorHeight, extMaterial, shellMat, layou
     drawFloorLayout(layoutWalls, floorHeight, shellMat, y0, false, []);
 
     if (!stairwell) return; // defensive -- addBuilding never calls this without one
-    const { swX, swZ, swHalf, cornerSignX, cornerSignZ } = stairwell;
-    const [rectA, rectB] = computeNotchedRects(x, z, hw, swX, swZ, swHalf, cornerSignX, cornerSignZ);
+    const { swX, swZ, swHalf, cornerSignX, cornerSignZ, doorX, flightEndX } = stairwell;
+    const floorRects = computeNotchedRects(x, z, hw, doorX, flightEndX, swZ - swHalf, swZ + swHalf);
 
     // this floor's own walkable surface -- notched, since it's reached
     // through the hole in the floor below rather than any wall.
-    elevatedPlatforms.push({ ...rectA, y: y0 }, { ...rectB, y: y0 });
-    addHorizontalPlane(rectA, y0 + 0.02, shellMat);
-    addHorizontalPlane(rectB, y0 + 0.02, shellMat);
+    for (const r of floorRects) {
+        elevatedPlatforms.push({ ...r, y: y0 });
+        addHorizontalPlane(r, y0 + 0.02, shellMat);
+    }
 
     // stairwell framing, redrawn at this floor's height (visual only --
     // the collision segments were already registered on the ground floor)
-    addInteriorWall('x', swX - cornerSignX * swHalf, swZ - swHalf, swZ + swHalf, 0.5, floorHeight, shellMat, 1.0, y0);
-    addInteriorWall('z', swZ - cornerSignZ * swHalf, swX - swHalf, swX + swHalf, 0, floorHeight, shellMat, 0, y0);
+    addInteriorWall('x', doorX, swZ - swHalf, swZ + swHalf, 0.5, floorHeight, shellMat, 1.1, y0);
+    addInteriorWall('z', swZ - cornerSignZ * swHalf, Math.min(doorX, flightEndX), Math.max(doorX, flightEndX), 0, floorHeight, shellMat, 0, y0);
 
     if (hasStairUp) {
-        addStairFlight('x', swX - cornerSignX * swHalf, swX + cornerSignX * swHalf, swZ, y0, y0 + floorHeight, { width: swHalf * 1.3 });
-        overheadCeilings.push({ ...rectA, y: y0 + floorHeight }, { ...rectB, y: y0 + floorHeight });
-        addHorizontalPlane(rectA, y0 + floorHeight, shellMat);
-        addHorizontalPlane(rectB, y0 + floorHeight, shellMat);
+        addStairFlight('x', doorX, flightEndX, swZ, y0, y0 + floorHeight, { width: swHalf * 1.1 });
+        const ceilRects = computeNotchedRects(x, z, hw, doorX, flightEndX, swZ - swHalf, swZ + swHalf);
+        for (const r of ceilRects) {
+            overheadCeilings.push({ ...r, y: y0 + floorHeight });
+            addHorizontalPlane(r, y0 + floorHeight, shellMat);
+        }
     } else {
         overheadCeilings.push({ x, z, hx: hw, hz: hw, y: y0 + floorHeight });
         addHorizontalPlane({ x, z, hx: hw, hz: hw }, y0 + floorHeight, shellMat);
@@ -2440,6 +2467,9 @@ function addBuilding(col, row) {
         const upper = new THREE.Mesh(buildOrganicTowerGeometry(upperHw, topHeight), material);
         upper.position.set(x, enterHeight + baseHeight, z);
         scene.add(upper);
+        // the upper stage's own flat cap, real roof -- every archetype's
+        // actual top surface is landable now, not just warehouses.
+        elevatedPlatforms.push({ x, z, hx: upperHw, hz: upperHw, y: height });
     } else if (archetype === 'clustered') {
         // 2-3 independent thin towers sharing one footprint and a shared
         // low base block, instead of one solid mass -- a multi-spire
@@ -2458,17 +2488,21 @@ function addBuilding(col, row) {
             spireTower.position.set(x + ox, enterHeight + baseHeight, z + oz);
             scene.add(spireTower);
         }
+        // the shared base block's own deck, real roof (spires just stand
+        // on it, same as antennas/tanks already do on every rooftop).
+        elevatedPlatforms.push({ x, z, hx: hw, hz: hw, y: enterHeight + baseHeight });
     } else {
         const building = new THREE.Mesh(buildOrganicTowerGeometry(hw, upperHeight), material);
         building.position.set(x, enterHeight, z);
         scene.add(building);
 
-        // warehouses are short enough (6-12 total) to actually reach and
-        // stand on, unlike a 40-340-unit tower -- register the real roof
-        // cap as a walkable platform, not just a rendered surface. Towers
-        // stay unclimbable to their peak on purpose; that scale was
-        // always meant to read as skyline, not as a jump target.
-        if (isWarehouse) elevatedPlatforms.push({ x, z, hx: hw, hz: hw, y: height });
+        // every rooftop is a real, landable surface now -- it always
+        // looked solid from below/the side, it just never registered as
+        // one to land on unless this was a (short, easy-to-reach)
+        // warehouse. A 40-340 unit tower's peak is still effectively
+        // out of casual reach, but that's distance/no-fall-damage doing
+        // the gatekeeping now, not an invisible floor that isn't there.
+        elevatedPlatforms.push({ x, z, hx: hw, hz: hw, y: height });
 
         // roof toppers -- a fifth/sixth flavor of building silhouette,
         // skipped on warehouses (too short to read) and setbacks (already

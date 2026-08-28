@@ -23,6 +23,14 @@ import {
     NOAA_GHCND_STATIONS_NOISE, USGS_EARTHQUAKES_MONTH_NOISE,
     REMOTE_NOISE_META,
 } from './noise-data-remote.js';
+// ~3,300 deduplicated human-voiced fragments (found-poetry lines, overheard
+// hardware-store speech, in-universe maze commentary) built from
+// noise-poetry-corpus.csv -- the "verbal" district, a warmer voice than the
+// registry data above. See build_poetry_noise_pack.py / NOISE_SOURCES.md.
+import {
+    POETRY_SHORT_NOISE, POETRY_MEDIUM_NOISE, POETRY_PAIRS_NOISE,
+    pickPoetryTag, POETRY_NOISE_META,
+} from './noise-data-poetry.js';
 
 // ---------- boot diagnostics ----------
 // window.__boot (defined inline in index.html, before this module even
@@ -689,6 +697,7 @@ console.log(`[noise] remote corpus: ${REMOTE_NOISE_META.rows.toLocaleString()} r
 for (const [key, m] of Object.entries(REMOTE_NOISE_META.sources)) {
     console.log(m.error ? `[noise]   ${key}: ERROR -- ${m.error}` : `[noise]   ${key}: ${m.rows.toLocaleString()} rows -- ${m.attribution}`);
 }
+console.log(`[noise] verbal corpus: ${POETRY_NOISE_META.totalLines.toLocaleString()} deduplicated lines, ${POETRY_NOISE_META.pairs.toLocaleString()} collage pairs -- ${POETRY_NOISE_META.source}`);
 
 // query-result "families" -- the whole point is that the player can
 // vaguely tell "this block is vomiting aviation records" without ever
@@ -700,6 +709,11 @@ const NOISE_DISTRICTS = {
     geographic: [GEONAMES_CITIES500_NOISE, TIMEZONE_NOISE],
     scientific: [NOAA_GHCND_STATIONS_NOISE, USGS_EARTHQUAKES_MONTH_NOISE],
     encoding: [UNICODE_NOISE],
+    // the one district that isn't registry/standards data -- found-poetry
+    // lines collaged into title/subtitle pairs (see noise-data-poetry.js).
+    // A human voice mixed in with the machinery, same non-hard-border
+    // crossfade as every other district.
+    verbal: [POETRY_PAIRS_NOISE],
 };
 const DISTRICT_KEYS = Object.keys(NOISE_DISTRICTS);
 function pickFromPools(rng, pools) {
@@ -1441,6 +1455,24 @@ const PHOTO_BY_TITLE = {
 function pick(arr) { return arr[Math.floor(rng() * arr.length)]; }
 function randRange(min, max) { return min + rng() * (max - min); }
 
+// shared style axes for every *generic noise* text surface (wanted
+// posters, wall posters, flyers, stickers, mega billboards, airborne text
+// shards -- everything except real infrastructure signage like stop
+// signs, and the CRT terminal-plaque identity used for real code-project
+// content). Same idea as SIGN_FONTS/SIGN_BACKINGS below, just factored
+// out early so surfaces defined before addSign (e.g. makeWantedTexture)
+// can roll their own look too instead of sharing one fixed font/paper.
+const TEXT_FONTS = [
+    '"Courier New", monospace', 'Consolas, monospace', '"Lucida Console", monospace',
+    'Verdana, sans-serif', '"Arial Black", sans-serif', 'Georgia, serif',
+    'Tahoma, sans-serif', '"Trebuchet MS", sans-serif',
+];
+const PAPER_COLORS = ['#e8ddc2', '#d8d0e8', '#e8d8c8', '#c8e0d8', '#f0e8d0', '#e8dfc0', '#e0e0d8', '#ece2d0'];
+const INK_COLORS = ['#2a2420', '#1a1a1a', '#241814', '#1c2420', '#221a2a'];
+function pickTextFont() { return pick(TEXT_FONTS); }
+function pickPaperColor() { return pick(PAPER_COLORS); }
+function pickInkColor() { return pick(INK_COLORS); }
+
 function weightedPick(weights) {
     const entries = Object.entries(weights);
     const total = entries.reduce((s, [, w]) => s + w, 0);
@@ -1669,24 +1701,53 @@ const WANTED_TAGLINES = [
     ['ONE STRAIGHT ANSWER', 'REWARD: NONE OFFERED'],
     ['THE ORIGINAL CITATION', 'REWARD: GOOD LUCK'],
     ['A SECOND WITNESS', 'REWARD: STILL LOOKING'],
+    // the six hand-written pairs above paired one subject with one fixed
+    // reward each; cross-joining a bigger subject/reward pool the same
+    // way GRAFFITI_TAGS and CONFIG.billboards.flavorWords already do
+    // turns 6 into 150 without writing 144 more jokes by hand.
+    ...(() => {
+        const subjects = [
+            'A WORKING LINK', 'THE REST OF THE SENTENCE', 'A NAME THAT MATCHES',
+            'ANY CORROBORATION', 'A DATE THAT CHECKS OUT', 'THE MISSING CONTEXT',
+            'A SOURCE THAT ISN\'T THIS PAGE', 'WHOEVER SAID THIS FIRST', 'THE FULL STORY',
+            'ONE VERIFIABLE FACT', 'A SECOND OPINION', 'THE ORIGINAL POST',
+            'A PLAUSIBLE EXPLANATION', 'ANYONE WHO REMEMBERS', 'THE FINE PRINT',
+        ];
+        const rewards = [
+            'REWARD: PEACE OF MIND', 'REWARD: A GOOD STORY', 'REWARD: DISBELIEF, EARNED',
+            'REWARD: NONE OFFERED', 'REWARD: GOOD LUCK', 'REWARD: STILL LOOKING',
+            'REWARD: NOTHING, PROBABLY', 'REWARD: AN EXPLANATION, EVENTUALLY',
+            'REWARD: A SHRUG', 'REWARD: YOU TELL ME',
+        ];
+        const out = [];
+        for (const s of subjects) for (const r of rewards) out.push([s, r]);
+        return out;
+    })(),
 ];
 
 function makeWantedTexture(title, subtitle, tagline1 = 'KNOWLEDGE OF THIS TOPIC', tagline2 = 'REWARD: PEACE OF MIND') {
+    // every axis below rolls independently -- paper tone, ink, font,
+    // border weight -- so a wall of these doesn't read as one photocopy
+    // run off a hundred times, same treatment addSign's SIGN_FONTS gets.
+    const paper = pickPaperColor();
+    const ink = pickInkColor();
+    const font = pickTextFont();
+    const borderWidth = Math.round(randRange(2, 4));
     return makePixelTexture((ctx, w, h) => {
-        ctx.fillStyle = '#e8dfc0';
+        ctx.fillStyle = paper;
         ctx.fillRect(0, 0, w, h);
-        ctx.strokeStyle = '#2a2420';
-        ctx.lineWidth = 3;
+        ctx.strokeStyle = ink;
+        ctx.lineWidth = borderWidth;
         ctx.strokeRect(4, 4, w - 8, h - 8);
-        ctx.fillStyle = '#2a2420';
+        ctx.fillStyle = ink;
         ctx.textAlign = 'center';
-        ctx.font = 'bold 15px "Courier New", monospace';
+        ctx.font = `bold 15px ${font}`;
         ctx.fillText('WANTED', w / 2, 20);
-        ctx.font = 'bold 9px "Courier New", monospace';
+        ctx.font = `bold 9px ${font}`;
         ctx.fillText(title, w / 2, h / 2, w - 12);
-        ctx.font = '8px "Courier New", monospace';
+        ctx.font = `8px ${font}`;
         ctx.fillText(subtitle, w / 2, h / 2 + 16, w - 12);
-        ctx.font = '7px "Courier New", monospace';
+        ctx.font = `7px ${font}`;
         ctx.fillText(tagline1, w / 2, h - 20);
         ctx.fillText(tagline2, w / 2, h - 10);
     }, 96, 128);
@@ -1696,9 +1757,13 @@ function addWantedPoster(x, z, rotY) {
     // ~1 in 5 -- scarce enough that finding one still feels like a find,
     // same logic as everything else in this maze that's actually real.
     const isPersonal = rng() < 0.2;
+    // WIKI_FALLBACK is a good but small (20-entry) curated pool -- dropped
+    // its weight so the giant/verbal corpus (which never runs dry) carries
+    // most of the non-personal load; the curated trivia still shows up
+    // often enough to be a nice surprise instead of the default.
     const [title, subtitle] = isPersonal
         ? pick(PERSONAL_WANTED_FACTS)
-        : (rng() < 0.55 ? pick(WIKI_FALLBACK) : pickCityNoisePair(rng, x, z));
+        : (rng() < 0.25 ? pick(WIKI_FALLBACK) : pickCityNoisePair(rng, x, z));
     const [tagline1, tagline2] = pick(WANTED_TAGLINES);
     const tex = isPersonal
         ? makeWantedTexture(title, subtitle, 'ON FILE, ALLEGEDLY', "REWARD: NONE, HE'S FINE")
@@ -3887,29 +3952,54 @@ const GRAFFITI_TAGS = [
         for (const s of subjects) for (const p of predicates) out.push(`${s} ${p}`);
         return out;
     })(),
+    // a few thousand more, in a different voice -- found-poetry lines and
+    // overheard fragments from the noise-poetry corpus (see
+    // noise-data-poetry.js) instead of more hand-written mythology scrawl.
+    // Natural case on purpose: these read as quoted/overheard, not another
+    // spray tag, so the wall stops repeating itself long before a normal
+    // session could exhaust it. Short-bucket only (<=40 chars) -- a tag
+    // is scrawled in one breath, not an essay; the medium/long lines read
+    // better on flyers/stickers, which have the physical space for them.
+    ...POETRY_SHORT_NOISE,
 ];
+// graffiti rolls its own look independently every time -- font family,
+// weight/slant, size, and how much each letter jitters/rotates -- same
+// "push it hard" style-variety treatment SIGN_FONTS gets for addSign,
+// so two tags on the same wall don't read as the same hand.
+const GRAFFITI_FONTS = [
+    '"Courier New", monospace', 'Consolas, monospace', 'Impact, sans-serif',
+    '"Comic Sans MS", cursive', 'Georgia, serif', '"Brush Script MT", cursive',
+    'Verdana, sans-serif', '"Lucida Console", monospace',
+];
+const GRAFFITI_WEIGHTS = ['italic bold', 'bold', 'italic', 'normal'];
 function addGraffitiTag(x, y, z, rotY) {
     const text = pick(GRAFFITI_TAGS);
     const colorHex = pick(CONFIG.neonPalette);
+    const font = pick(GRAFFITI_FONTS);
+    const weight = pick(GRAFFITI_WEIGHTS);
+    const fontSize = Math.round(randRange(11, 17));
+    const jitterAmp = randRange(1, 3.5);
+    const rotAmp = randRange(0.04, 0.22);
+    const texH = Math.max(28, Math.round(fontSize * 2.2));
     const tex = makePixelTexture((ctx, w, h) => {
         ctx.clearRect(0, 0, w, h);
         ctx.fillStyle = hexToCss(colorHex) + 'cc';
         ctx.textAlign = 'left';
-        ctx.font = 'italic bold 13px "Courier New", monospace';
+        ctx.font = `${weight} ${fontSize}px ${font}`;
         let cx = 4;
         const cy = h / 2 + randRange(-2, 2);
         for (const ch of text) {
             ctx.save();
-            ctx.translate(cx, cy + randRange(-2, 2));
-            ctx.rotate(randRange(-0.12, 0.12));
+            ctx.translate(cx, cy + randRange(-jitterAmp, jitterAmp));
+            ctx.rotate(randRange(-rotAmp, rotAmp));
             ctx.fillText(ch, 0, 0);
             ctx.restore();
             cx += ctx.measureText(ch).width + randRange(-0.5, 1.5);
         }
-    }, Math.max(64, text.length * 10), 28);
+    }, Math.max(64, Math.round(text.length * fontSize * 0.72)), texH);
     const width = randRange(0.9, 1.6);
     const plane = new THREE.Mesh(
-        new THREE.PlaneGeometry(width, width * 0.28),
+        new THREE.PlaneGeometry(width, width * (texH / Math.max(64, text.length * fontSize * 0.72))),
         new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false })
     );
     plane.position.set(x, y, z);
@@ -4071,17 +4161,24 @@ function mountStandoffPanel(x, y, z, rotY, width, height, panelMat, opts = {}) {
 }
 
 function addWallPoster(x, y, z, rotY, title, subtitle) {
+    // style rolls independently of content -- this mounts both real
+    // portfolio posters and generic noise ones, so only the look varies
+    // here, never the title/subtitle text that was actually passed in.
+    const paper = pickPaperColor();
+    const ink = pickInkColor();
+    const font = pickTextFont();
+    const borderWidth = Math.round(randRange(2, 5));
     const tex = makePixelTexture((ctx, w, h) => {
-        ctx.fillStyle = '#e8ddc2';
+        ctx.fillStyle = paper;
         ctx.fillRect(0, 0, w, h);
-        ctx.strokeStyle = '#2a2420';
-        ctx.lineWidth = 4;
+        ctx.strokeStyle = ink;
+        ctx.lineWidth = borderWidth;
         ctx.strokeRect(3, 3, w - 6, h - 6);
-        ctx.fillStyle = '#2a2420';
+        ctx.fillStyle = ink;
         ctx.textAlign = 'center';
-        ctx.font = 'bold 15px "Courier New", monospace';
+        ctx.font = `bold 15px ${font}`;
         ctx.fillText(title, w / 2, h / 2 - 6, w - 12);
-        ctx.font = '10px "Courier New", monospace';
+        ctx.font = `10px ${font}`;
         ctx.fillText(subtitle, w / 2, h / 2 + 14, w - 12);
     }, 96, 72);
     const width = randRange(1.4, 2.0);
@@ -4499,8 +4596,11 @@ const MYTHOLOGY_FRAGMENTS = [
 function addStickerTag(x, z) {
     const [title, subtitle] = rng() < 0.78
         ? pickCityNoisePair(rng, x, z)
-        : pick([...CONFIG.siteContent.skills, ...CONFIG.siteContent.about, ...CONFIG.billboards.flavorWords, ...MYTHOLOGY_FRAGMENTS]);
+        : (rng() < 0.4
+            ? [pickPoetryTag(rng), pick(POETRY_SHORT_NOISE)]
+            : pick([...CONFIG.siteContent.skills, ...CONFIG.siteContent.about, ...CONFIG.billboards.flavorWords, ...MYTHOLOGY_FRAGMENTS]));
     const neon = pick(CONFIG.neonPalette);
+    const font = pickTextFont();
     const tex = makePixelTexture((ctx, w, h) => {
         ctx.fillStyle = '#0a0a0a';
         ctx.fillRect(0, 0, w, h);
@@ -4509,9 +4609,9 @@ function addStickerTag(x, z) {
         ctx.strokeRect(2, 2, w - 4, h - 4);
         ctx.fillStyle = hexToCss(neon);
         ctx.textAlign = 'center';
-        ctx.font = 'bold 10px "Courier New", monospace';
+        ctx.font = `bold 10px ${font}`;
         ctx.fillText(title, w / 2, h / 2 - 2, w - 6);
-        ctx.font = '7px "Courier New", monospace';
+        ctx.font = `7px ${font}`;
         ctx.fillStyle = '#ccc';
         ctx.fillText(subtitle, w / 2, h / 2 + 10, w - 6);
     }, 72, 40);
@@ -4534,19 +4634,23 @@ function addStickerTag(x, z) {
 function addWallFlyer(x, y, z, rotY) {
     const [title, subtitle] = rng() < 0.78
         ? pickCityNoisePair(rng, x, z)
-        : pick([...CONFIG.billboards.flavorWords, ...MYTHOLOGY_FRAGMENTS, ...CONFIG.siteContent.about]);
-    const paper = pick(['#e8ddc2', '#d8d0e8', '#e8d8c8', '#c8e0d8', '#f0e8d0']);
+        : (rng() < 0.4
+            ? [pickPoetryTag(rng), pick(POETRY_MEDIUM_NOISE)]
+            : pick([...CONFIG.billboards.flavorWords, ...MYTHOLOGY_FRAGMENTS, ...CONFIG.siteContent.about]));
+    const paper = pickPaperColor();
+    const ink = pickInkColor();
+    const font = pickTextFont();
     const tex = makePixelTexture((ctx, w, h) => {
         ctx.fillStyle = paper;
         ctx.fillRect(0, 0, w, h);
         ctx.strokeStyle = '#00000030';
         ctx.lineWidth = 2;
         ctx.strokeRect(2, 2, w - 4, h - 4);
-        ctx.fillStyle = '#1a1a1a';
+        ctx.fillStyle = ink;
         ctx.textAlign = 'center';
-        ctx.font = 'bold 10px "Courier New", monospace';
+        ctx.font = `bold 10px ${font}`;
         ctx.fillText(title, w / 2, h / 2 - 2, w - 8);
-        ctx.font = '7px "Courier New", monospace';
+        ctx.font = `7px ${font}`;
         ctx.fillText(subtitle, w / 2, h / 2 + 12, w - 8);
     }, 72, 96);
     const width = randRange(0.32, 0.5);
@@ -5532,14 +5636,15 @@ function addNewsstand(x, z, facingRotY) {
         new THREE.MeshStandardMaterial({ color: pick([0xc8b878, 0xa8c8c8, 0xc06858]), roughness: 0.85 })
     );
     booth.position.y = 1.0;
+    const newsFont = pickTextFont();
     const tex = makePixelTexture((ctx, w, h) => {
         ctx.fillStyle = '#eee8d8';
         ctx.fillRect(0, 0, w, h);
         ctx.fillStyle = '#181818';
         ctx.textAlign = 'center';
-        ctx.font = 'bold 11px "Courier New", monospace';
+        ctx.font = `bold 11px ${newsFont}`;
         ctx.fillText(headline, w / 2, h / 2 - 6, w - 6);
-        ctx.font = '8px "Courier New", monospace';
+        ctx.font = `8px ${newsFont}`;
         ctx.fillText(sub, w / 2, h / 2 + 10, w - 6);
     }, 120, 60);
     const board = new THREE.Mesh(
@@ -6066,18 +6171,20 @@ function addMegaBillboard(x, z) {
     for (let i = 0; i < 2; i++) {
         const content = pickSignContent(x, z);
         const neon = pick(CONFIG.neonPalette);
+        const font = pickTextFont();
+        const backing = pick(SIGN_BACKINGS);
         const tex = makePixelTexture((ctx, w, h) => {
             const color = hexToCss(neon);
-            ctx.fillStyle = '#020202';
+            ctx.fillStyle = backing;
             ctx.fillRect(0, 0, w, h);
             ctx.strokeStyle = color;
             ctx.lineWidth = 4;
             ctx.strokeRect(2, 2, w - 4, h - 4);
             ctx.fillStyle = color;
             ctx.textAlign = 'center';
-            ctx.font = 'bold 34px "Courier New", monospace';
+            ctx.font = `bold 34px ${font}`;
             ctx.fillText(content.title, w / 2, h / 2 - 8, w - 16);
-            ctx.font = '18px "Courier New", monospace';
+            ctx.font = `18px ${font}`;
             ctx.fillText(content.subtitle, w / 2, h / 2 + 26, w - 16);
         }, 160, 96);
         const panel = new THREE.Mesh(
@@ -6404,6 +6511,7 @@ const TEXT_SHARD_COUNT = QUALITY === CONFIG.quality.desktop ? 850 : QUALITY === 
 
 function makeNoiseShardTexture(title, subtitle) {
     const neon = hexToCss(pick(CONFIG.neonPalette));
+    const font = pickTextFont();
     return makePixelTexture((ctx, w, h) => {
         ctx.fillStyle = '#050505';
         ctx.fillRect(0, 0, w, h);
@@ -6411,9 +6519,9 @@ function makeNoiseShardTexture(title, subtitle) {
         ctx.strokeRect(0.5, 0.5, w - 1, h - 1);
         ctx.fillStyle = neon;
         ctx.textAlign = 'center';
-        ctx.font = 'bold 8px "Courier New", monospace';
+        ctx.font = `bold 8px ${font}`;
         ctx.fillText(title, w / 2, h / 2 - 3, w - 6);
-        ctx.font = '6px "Courier New", monospace';
+        ctx.font = `6px ${font}`;
         ctx.fillStyle = '#cfd6d6';
         ctx.fillText(subtitle, w / 2, h / 2 + 8, w - 6);
     }, 112, 32);

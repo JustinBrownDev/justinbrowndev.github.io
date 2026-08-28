@@ -1606,6 +1606,37 @@ function groundHeightAt(x, z, feetY = Infinity) {
     return best;
 }
 
+// a single interior partition wall with one doorway gap -- the building
+// block buildGroundFloorShell's room-layout pass below uses to carve a
+// single room into several. axis='x' means a wall of constant x (its
+// normal points along x), spanning z across [spanA, spanB]; axis='z' is
+// the same thing rotated 90 degrees. Returns collision segments the same
+// shape buildingWallSegments already expects, so no other code needs to
+// know interior walls exist at all.
+function addInteriorWall(axis, fixedCoord, spanA, spanB, doorFrac, height, mat, doorWidth) {
+    const spanLen = spanB - spanA;
+    const doorCenter = spanA + spanLen * doorFrac;
+    const doorLo = doorCenter - doorWidth / 2, doorHi = doorCenter + doorWidth / 2;
+    const segs = [];
+    const addSeg = (a0, a1) => {
+        if (a1 - a0 < 0.05) return;
+        const len = a1 - a0, mid = (a0 + a1) / 2;
+        const wall = new THREE.Mesh(new THREE.PlaneGeometry(len, height), mat);
+        if (axis === 'x') {
+            wall.position.set(fixedCoord, height / 2, mid);
+            wall.rotation.y = Math.PI / 2;
+            segs.push({ x1: fixedCoord, z1: a0, x2: fixedCoord, z2: a1 });
+        } else {
+            wall.position.set(mid, height / 2, fixedCoord);
+            segs.push({ x1: a0, z1: fixedCoord, x2: a1, z2: fixedCoord });
+        }
+        scene.add(wall);
+    };
+    addSeg(spanA, Math.max(spanA, doorLo));
+    addSeg(Math.min(spanB, doorHi), spanB);
+    return segs;
+}
+
 // builds a walkable ground-floor shell: solid walls with exactly one
 // real doorway (fully solid on all 4 sides if this cell happens to have
 // no open neighbor to put a door toward -- rare, and correctly means
@@ -1648,6 +1679,58 @@ function buildGroundFloorShell(x, z, hw, groundFloorHeight, door, shellMat) {
             scene.add(lintel);
             // lintel sits above head height -- the gap below it stays open, no segment there
         }
+    }
+
+    // ---- interior floor plan: subdivide the one room into 2-4 real,
+    // interconnected rooms instead of a single flat rectangle. Every
+    // partition's doorway is carved to open onto whatever's already
+    // reachable from the exterior door, so connectivity falls out of how
+    // each wall is built rather than needing a separate reachability
+    // check -- fine if the resulting rooms come out oddly shaped or
+    // shallow, real floor plans aren't clean rectangles either.
+    const awayX = door ? -door.dx : 0;
+    const awayZ = door ? -door.dz : -1;
+    const depthAxis = awayX !== 0 ? 'x' : 'z';
+    const depthCenter = depthAxis === 'x' ? x : z;
+    const depthAway = depthAxis === 'x' ? awayX : awayZ;
+    const widthCenter = depthAxis === 'x' ? z : x;
+    // world coordinate along the depth axis at fraction f, from the door
+    // wall (f=0) to the far wall (f=1)
+    const depthAt = (f) => depthCenter + depthAway * hw * (2 * f - 1);
+    const doorInteriorWidth = 1.3;
+
+    const layout = weightedPick({ single: 3, twoRoom: 5, threeRow: 4, lshape: 3 });
+    if (layout === 'twoRoom') {
+        const f1 = randRange(0.38, 0.6);
+        segments.push(...addInteriorWall(
+            depthAxis, depthAt(f1), widthCenter - hw, widthCenter + hw,
+            randRange(0.25, 0.75), groundFloorHeight, shellMat, doorInteriorWidth
+        ));
+    } else if (layout === 'threeRow') {
+        const f1 = randRange(0.28, 0.4), f2 = randRange(0.62, 0.75);
+        segments.push(...addInteriorWall(depthAxis, depthAt(f1), widthCenter - hw, widthCenter + hw, randRange(0.2, 0.45), groundFloorHeight, shellMat, doorInteriorWidth));
+        segments.push(...addInteriorWall(depthAxis, depthAt(f2), widthCenter - hw, widthCenter + hw, randRange(0.55, 0.8), groundFloorHeight, shellMat, doorInteriorWidth));
+    } else if (layout === 'lshape') {
+        const f1 = randRange(0.42, 0.58);
+        // front/back divider -- doorway forced to the low-width side so
+        // the room it opens into is always the same one the 2nd wall
+        // (below) also opens into, chaining front -> side A -> side B
+        // instead of risking a room only reachable through a wall.
+        segments.push(...addInteriorWall(depthAxis, depthAt(f1), widthCenter - hw, widthCenter + hw, randRange(0.18, 0.38), groundFloorHeight, shellMat, doorInteriorWidth));
+        // splits the back region across the width axis
+        const widthAxis = depthAxis === 'x' ? 'z' : 'x';
+        const backLo = Math.min(depthAt(f1), depthAt(1)), backHi = Math.max(depthAt(f1), depthAt(1));
+        segments.push(...addInteriorWall(widthAxis, widthCenter, backLo, backHi, randRange(0.3, 0.7), groundFloorHeight, shellMat, doorInteriorWidth));
+    }
+    // a 2nd light for anything past a single room -- one central light
+    // used to leave a back room dark once there was a wall in the way.
+    if (layout !== 'single' && dynamicLightsRemaining > 0) {
+        dynamicLightsRemaining--;
+        const backX = depthAxis === 'x' ? depthAt(0.82) : widthCenter;
+        const backZ = depthAxis === 'x' ? widthCenter : depthAt(0.82);
+        const light2 = new THREE.PointLight(0xffe9b0, 2.2, groundFloorHeight * 2, 2);
+        light2.position.set(backX, groundFloorHeight * 0.7, backZ);
+        scene.add(light2);
     }
 
     const roofCap = new THREE.Mesh(new THREE.PlaneGeometry(hw * 2, hw * 2), shellMat);

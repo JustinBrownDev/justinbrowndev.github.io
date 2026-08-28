@@ -1392,7 +1392,7 @@ function addBuilding(col, row) {
 
         // low chance of a tag scrawled near ground level on the same wall —
         // independent of whether a sign landed above it.
-        if (rng() < 0.16) {
+        if (rng() < 0.3) {
             addGraffitiTag(x + face.ox * 0.99, randRange(0.6, 1.6), z + face.oz * 0.99, face.rotY);
             // the tagger's supplies, left at the base of their own work
             if (rng() < 0.3 * QUALITY.propDensity) {
@@ -1401,11 +1401,11 @@ function addBuilding(col, row) {
         }
         // low chance of a security camera watching the alley — everything
         // queryable is also everything watched.
-        if (rng() < 0.06) {
+        if (rng() < 0.1) {
             addSecurityCamera(x + face.ox * 0.97, z + face.oz * 0.97, face.rotY, height);
         }
         // ivy/dead-vine patch, independent of everything else on this wall
-        if (rng() < 0.14) {
+        if (rng() < 0.24) {
             addIvyPatch(x + face.ox * 0.98, randRange(0.6, Math.min(height - 1, 4)), z + face.oz * 0.98, face.rotY);
         }
     }
@@ -1857,7 +1857,7 @@ function addMuseumPlacard(x, z, facingRotY) {
 // a flyer dropped flat on the pavement — skills & rhetoric fragments.
 // common, cheap, everywhere; the "public secret" hiding in plain sight.
 function addStickerTag(x, z) {
-    const [title, subtitle] = pick([...CONFIG.siteContent.skills, ...CONFIG.siteContent.about]);
+    const [title, subtitle] = pick([...CONFIG.siteContent.skills, ...CONFIG.siteContent.about, ...CONFIG.billboards.flavorWords]);
     const neon = pick(CONFIG.neonPalette);
     const tex = makePixelTexture((ctx, w, h) => {
         ctx.fillStyle = '#0a0a0a';
@@ -2857,12 +2857,12 @@ for (let r = 1; r < GRID_ROWS - 1; r++) {
         // overhead cables: strung across the alley wherever there's a
         // building directly on both sides (either axis) — the literal
         // network overhead, independent of ground clutter below it.
-        if (grid[r]?.[c - 1] && grid[r]?.[c + 1] && rng() < 0.3) {
+        if (grid[r]?.[c - 1] && grid[r]?.[c + 1] && rng() < 0.5) {
             const wa = cellToWorld(c - 1, r), wb = cellToWorld(c + 1, r);
             const fa = footprintOf[r][c - 1] ?? CELL * 0.6, fb = footprintOf[r][c + 1] ?? CELL * 0.6;
             addOverheadCable(wa.x + fa / 2, wa.z, wb.x - fb / 2, wb.z);
         }
-        if (grid[r - 1]?.[c] && grid[r + 1]?.[c] && rng() < 0.3) {
+        if (grid[r - 1]?.[c] && grid[r + 1]?.[c] && rng() < 0.5) {
             const wa = cellToWorld(c, r - 1), wb = cellToWorld(c, r + 1);
             const fa = footprintOf[r - 1][c] ?? CELL * 0.6, fb = footprintOf[r + 1][c] ?? CELL * 0.6;
             addOverheadCable(wa.x, wa.z + fa / 2, wb.x, wb.z - fb / 2);

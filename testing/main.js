@@ -434,16 +434,16 @@ const CONFIG = {
             tree: 1.5,
             pottedPlant: 3,
             weeds: 3.5,
-            none: 1.5,
+            none: 0.5,
         },
         maxSpecialFeatures: {
-            statues: 3,
-            constructionZones: 3,
-            crimeScenes: 2,
-            newsstands: 2,
-            phoneBooths: 2,
-            atmKiosks: 2,
-            parks: 3,
+            statues: 5,
+            constructionZones: 5,
+            crimeScenes: 3,
+            newsstands: 4,
+            phoneBooths: 4,
+            atmKiosks: 4,
+            parks: 5,
         },
     },
 
@@ -667,6 +667,88 @@ loadRealModel('trashbag', 'trashbag.gltf', 1);
 loadRealModel('manhole', 'water_manhole_cover.gltf', 1.4);
 loadRealModel('sprayCans', 'spray_paint_bottles.gltf', 1);
 loadRealModel('trashCanReal', 'metal_trash_can.gltf', 1);
+
+// ---------- real photos ----------
+// his actual site images, resized/recompressed for a texture instead of
+// print resolution (originals ran 20KB-3.5MB; these are 8-50KB) — the
+// art gallery and project posters show the real pieces, and the one true
+// signal at the farthest dead end carries his actual photo, not just text.
+const photoImages = {};
+const pendingPhotoPlacements = {};
+
+function loadPhoto(key, file) {
+    const img = new Image();
+    img.onload = () => {
+        photoImages[key] = img;
+        for (const req of (pendingPhotoPlacements[key] || [])) buildPhotoPosterMesh(img, req);
+        pendingPhotoPlacements[key] = [];
+    };
+    img.onerror = () => console.warn(`[testing] photo "${key}" didn't load, skipping`);
+    img.src = './vendor/photos/' + file;
+}
+
+function buildPhotoPosterMesh(img, req) {
+    const canvas = document.createElement('canvas');
+    canvas.width = 128; canvas.height = 168;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = req.paper || '#e8ddc2';
+    ctx.fillRect(0, 0, 128, 168);
+    const imgH = Math.min(112, (img.height / img.width) * 112);
+    const imgY = 8 + (112 - imgH) / 2;
+    ctx.drawImage(img, 8, imgY, 112, imgH);
+    ctx.strokeStyle = req.frameColor || '#2a2420';
+    ctx.lineWidth = 3;
+    ctx.strokeRect(8, 8, 112, 112);
+    ctx.fillStyle = req.frameColor || '#2a2420';
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 11px "Courier New", monospace';
+    ctx.fillText(req.title, 64, 136, 118);
+    ctx.font = '9px "Courier New", monospace';
+    ctx.fillText(req.subtitle, 64, 152, 118);
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    const width = req.width || randRange(1.4, 2.0);
+    const plane = new THREE.Mesh(
+        new THREE.PlaneGeometry(width, width * (168 / 128)),
+        new THREE.MeshStandardMaterial({ map: tex, roughness: 0.85 })
+    );
+    plane.position.set(req.x, req.y, req.z);
+    plane.rotation.y = req.rotY;
+    scene.add(plane);
+}
+
+// placement is decoupled the same way real models are (loading is async,
+// scene layout is synchronous) -- call this any time, it either mounts
+// immediately (photo already loaded) or queues until it is.
+function placePhotoPoster(key, x, y, z, rotY, title, subtitle, opts = {}) {
+    const req = { x, y, z, rotY, title, subtitle, ...opts };
+    if (photoImages[key]) buildPhotoPosterMesh(photoImages[key], req);
+    else (pendingPhotoPlacements[key] ??= []).push(req);
+}
+
+loadPhoto('portrait', 'me_smiling.jpg');
+loadPhoto('teeth', 'teeth.jpg');
+loadPhoto('selfPortrait', 'self_portrait.jpg');
+loadPhoto('bike', 'bike.jpg');
+loadPhoto('linoPrint', 'lino_print.jpg');
+loadPhoto('puppet', 'puppet_image.jpg');
+loadPhoto('vitalsage', 'vitalsage.jpg');
+loadPhoto('brandyou', 'brandyou.jpg');
+loadPhoto('bibitinator', 'bibitinator.jpg');
+loadPhoto('slidingTiles', 'sliding_tiles.jpg');
+
+// maps CONFIG.siteContent titles to the real photo that goes with them
+const PHOTO_BY_TITLE = {
+    "'TEETH'": 'teeth',
+    'SELF PORTRAIT': 'selfPortrait',
+    "'GARY FISCHER'": 'bike',
+    "'THE FISH'": 'linoPrint',
+    'PUPPET HEAD': 'puppet',
+    'VITALSAGE': 'vitalsage',
+    'BRANDYOUPROMO': 'brandyou',
+    'BIBITINATOR': 'bibitinator',
+    'SLIDING TILES': 'slidingTiles',
+};
 
 // ---------- small helpers ----------
 
@@ -997,74 +1079,86 @@ function buildOrganicTowerGeometry(hw, height) {
 const footprintOf = [];
 for (let r = 0; r < GRID_ROWS; r++) footprintOf.push(new Array(GRID_COLS).fill(null));
 
-// cells with a walkable interior — excluded from solid collision in
-// resolveCollisions. Simplification, disclosed: the whole cell is
-// walkable rather than true per-wall collision, since the 3-sided shell
-// (built below) only has one real door. A player who deliberately walks
-// at a visually-solid side wall could clip through it; normal play never
-// finds a reason to.
-const interiorCells = new Set();
+// ---------- real per-wall interior collision ----------
+// every building has a walkable ground-floor shell now -- this replaces
+// the earlier "whole cell walkable" simplification entirely. Solid walls
+// are stored as line segments and the player collides with each one
+// individually; only the actual door gap is open. buildingWallSegments
+// also doubles as the "does this cell have registered collision" map
+// used by resolveCollisions, replacing the old whole-footprint-square
+// check for every building cell, not just the special-cased few.
+const buildingWallSegments = new Map(); // "row,col" -> [{x1,z1,x2,z2}, ...]
+const WALL_THICKNESS = 0.12; // nominal -- the visual walls are flat planes with no real thickness
 
-// a small handful of buildings get a real walkable ground floor instead
-// of being a solid mass all the way down: 3 solid walls + one open
-// doorway + a floor + interior light + a little dressing, with a normal
-// organic tower continuing upward from the roof of this shell. Built
-// from simple double-sided planes rather than the tower loft — cheap,
-// and immune to the winding-order bug that hit the main towers, since
-// side:THREE.DoubleSide renders regardless of triangle winding.
-function addInteriorBuilding(col, row, door) {
-    interiorCells.add(`${row},${col}`);
-    const { x, z } = cellToWorld(col, row);
-    const hw = (CELL - CONFIG.maze.buildingMarginMin) / 2; // fixed, roomier footprint for these
-    footprintOf[row][col] = hw * 2;
-    const groundFloorHeight = 3.2;
-    const totalHeight = randRange(CONFIG.buildings.heightMin, CONFIG.buildings.heightMax);
-    const shellMat = new THREE.MeshStandardMaterial({ color: pick(CONFIG.buildings.palette), roughness: 0.9, side: THREE.DoubleSide });
+// elevation: mezzanines inside ~30% of building interiors, reached by a
+// straight (always axis-aligned, never an arbitrary angle) run of steps.
+// groundHeightAt() below is what actually moves the camera up/down.
+const elevatedPlatforms = []; // {x,z,hx,hz,y}
+const rampRuns = []; // {axis, from, to, fixedCoord, halfWidth, y0, y1}
 
+function groundHeightAt(x, z) {
+    for (const p of elevatedPlatforms) {
+        if (Math.abs(x - p.x) < p.hx && Math.abs(z - p.z) < p.hz) return p.y;
+    }
+    for (const r of rampRuns) {
+        const along = r.axis === 'x' ? x : z;
+        const cross = r.axis === 'x' ? z : x;
+        if (Math.abs(cross - r.fixedCoord) > r.halfWidth) continue;
+        const t = (along - r.from) / (r.to - r.from);
+        if (t >= 0 && t <= 1) return r.y0 + (r.y1 - r.y0) * t;
+    }
+    return 0;
+}
+
+// builds a walkable ground-floor shell: solid walls with exactly one
+// real doorway (fully solid on all 4 sides if this cell happens to have
+// no open neighbor to put a door toward -- rare, and correctly means
+// "unreachable, so no door needed"). Returns wall segments for collision.
+function buildGroundFloorShell(x, z, hw, groundFloorHeight, door, shellMat) {
     const doorWidth = 1.5, doorHeight = 2.3;
     const faces = [
         { dx: 0, dz: -1, rotY: 0 }, { dx: 0, dz: 1, rotY: Math.PI },
         { dx: -1, dz: 0, rotY: -Math.PI / 2 }, { dx: 1, dz: 0, rotY: Math.PI / 2 },
     ];
+    const segments = [];
     for (const f of faces) {
-        const isDoorWall = f.dx === door.dx && f.dz === door.dz;
+        const isDoorWall = door && f.dx === door.dx && f.dz === door.dz;
         const wallLen = hw * 2;
         const cx = x + f.dx * hw, cz = z + f.dz * hw;
+        const ex = f.dz !== 0 ? hw : 0, ez = f.dx !== 0 ? hw : 0; // tangent half-extent
+
         if (!isDoorWall) {
             const wall = new THREE.Mesh(new THREE.PlaneGeometry(wallLen, groundFloorHeight), shellMat);
             wall.position.set(cx, groundFloorHeight / 2, cz);
             wall.rotation.y = f.rotY;
             scene.add(wall);
+            segments.push({ x1: cx - ex, z1: cz - ez, x2: cx + ex, z2: cz + ez });
         } else {
             const jambWidth = (wallLen - doorWidth) / 2;
+            const jex = f.dz !== 0 ? jambWidth / 2 : 0, jez = f.dx !== 0 ? jambWidth / 2 : 0;
             for (const side of [-1, 1]) {
                 const jamb = new THREE.Mesh(new THREE.PlaneGeometry(jambWidth, groundFloorHeight), shellMat);
                 const along = side * (doorWidth / 2 + jambWidth / 2);
-                jamb.position.set(
-                    cx + (f.dz !== 0 ? along : 0),
-                    groundFloorHeight / 2,
-                    cz + (f.dx !== 0 ? along : 0)
-                );
+                const jx = cx + (f.dz !== 0 ? along : 0);
+                const jz = cz + (f.dx !== 0 ? along : 0);
+                jamb.position.set(jx, groundFloorHeight / 2, jz);
                 jamb.rotation.y = f.rotY;
                 scene.add(jamb);
+                segments.push({ x1: jx - jex, z1: jz - jez, x2: jx + jex, z2: jz + jez });
             }
             const lintel = new THREE.Mesh(new THREE.PlaneGeometry(doorWidth, groundFloorHeight - doorHeight), shellMat);
             lintel.position.set(cx, doorHeight + (groundFloorHeight - doorHeight) / 2, cz);
             lintel.rotation.y = f.rotY;
             scene.add(lintel);
+            // lintel sits above head height -- the gap below it stays open, no segment there
         }
     }
 
-    // roof deck for the tower above to stand on, plus the tower itself
     const roofCap = new THREE.Mesh(new THREE.PlaneGeometry(hw * 2, hw * 2), shellMat);
     roofCap.rotation.x = -Math.PI / 2;
     roofCap.position.set(x, groundFloorHeight, z);
     scene.add(roofCap);
-    const tower = new THREE.Mesh(buildOrganicTowerGeometry(hw, totalHeight - groundFloorHeight), shellMat);
-    tower.position.set(x, groundFloorHeight, z);
-    scene.add(tower);
 
-    // interior: distinct floor, warm light, a little dressing
     const floorTex = makePixelTexture((ctx, w, h) => {
         ctx.fillStyle = '#6a5030';
         ctx.fillRect(0, 0, w, h);
@@ -1085,42 +1179,112 @@ function addInteriorBuilding(col, row, door) {
         light.position.set(x, groundFloorHeight * 0.7, z);
         scene.add(light);
     }
-    addCrate(x - hw * 0.4, z + hw * 0.3);
-    addPottedPlant(x + hw * 0.5, z - hw * 0.4);
+    return segments;
+}
 
-    // curb skirt, same as every other building
-    const curb = CONFIG.buildings.curb;
-    const skirt = new THREE.Mesh(
-        skirtBoxGeo,
-        new THREE.MeshStandardMaterial({ color: curb.color, roughness: 1 })
+// ~30% of interiors get a raised mezzanine + a straight run of steps --
+// real vertical elevation, not just a taller room. Always axis-aligned
+// (built along whichever cardinal axis "away from the door" already is)
+// so there's no rotation/tilt math to get wrong.
+function maybeAddMezzanine(x, z, hw, groundFloorHeight, door) {
+    if (rng() > 0.3) return;
+    const awayX = door ? -door.dx : 0;
+    const awayZ = door ? -door.dz : -1;
+    const axis = awayX !== 0 ? 'x' : 'z';
+    const platformY = Math.min(1.6, groundFloorHeight * 0.5);
+    const platformHalf = hw * 0.4;
+
+    const px = x + awayX * (hw - platformHalf - 0.2);
+    const pz = z + awayZ * (hw - platformHalf - 0.2);
+
+    const platform = new THREE.Mesh(
+        jitterGeometry(new THREE.BoxGeometry(platformHalf * 2, 0.12, platformHalf * 2), 0.02),
+        new THREE.MeshStandardMaterial({ color: 0x5a4530, roughness: 0.85 })
     );
-    skirt.scale.set(hw * 2 + curb.overhang, curb.height, hw * 2 + curb.overhang);
-    skirt.position.set(x, curb.height / 2, z);
-    scene.add(skirt);
+    platform.position.set(px, platformY, pz);
+    scene.add(platform);
+
+    // railing on the far edge, so falling off reads as an actual choice
+    const railMat = new THREE.MeshStandardMaterial({ color: 0x2a2a2a, roughness: 0.6 });
+    const rail = new THREE.Mesh(new THREE.BoxGeometry(
+        axis === 'x' ? 0.06 : platformHalf * 2, 0.5, axis === 'x' ? platformHalf * 2 : 0.06
+    ), railMat);
+    rail.position.set(
+        px + (axis === 'x' ? awayX * platformHalf : 0),
+        platformY + 0.28,
+        pz + (axis === 'z' ? awayZ * platformHalf : 0)
+    );
+    scene.add(rail);
+
+    // straight stair run from near room-center up to the platform edge
+    const stairFrom = axis === 'x' ? x : z;
+    const stairTo = axis === 'x' ? px - awayX * platformHalf : pz - awayZ * platformHalf;
+    const steps = 6;
+    for (let i = 0; i < steps; i++) {
+        const tMid = (i + 0.5) / steps;
+        const stepPos = stairFrom + (stairTo - stairFrom) * tMid;
+        const stepY = platformY * tMid;
+        const stepDepth = Math.abs(stairTo - stairFrom) / steps;
+        const step = new THREE.Mesh(
+            new THREE.BoxGeometry(
+                axis === 'x' ? stepDepth * 1.05 : 1.1, 0.12, axis === 'x' ? 1.1 : stepDepth * 1.05
+            ),
+            new THREE.MeshStandardMaterial({ color: 0x5a4530, roughness: 0.9 })
+        );
+        step.position.set(axis === 'x' ? stepPos : x, stepY, axis === 'x' ? z : stepPos);
+        scene.add(step);
+    }
+
+    elevatedPlatforms.push({ x: px, z: pz, hx: platformHalf, hz: platformHalf, y: platformY });
+    rampRuns.push({
+        axis, from: stairFrom, to: stairTo,
+        fixedCoord: axis === 'x' ? z : x, halfWidth: 0.6,
+        y0: 0, y1: platformY,
+    });
 }
 
 function addBuilding(col, row) {
     const { x, z } = cellToWorld(col, row);
     // ~12% of buildings are squat warehouses instead of towers: near-full
-    // cell width, a fraction of the usual height. A fourth building
-    // archetype alongside single-tower/setback-tower/interior.
+    // cell width, a fraction of the usual height.
     const isWarehouse = rng() < 0.12;
     const margin = isWarehouse ? CONFIG.maze.buildingMarginMin : randRange(CONFIG.maze.buildingMarginMin, CONFIG.maze.buildingMarginMax);
     const footprint = CELL - margin;
+    const hw = footprint / 2;
     footprintOf[row][col] = footprint;
     const height = isWarehouse ? randRange(6, 12) : randRange(CONFIG.buildings.heightMin, CONFIG.buildings.heightMax);
     const color = pick(CONFIG.buildings.palette);
 
     // ~1 in 6 buildings is "stained" with the real elevation-gradient
-    // texture instead of a flat facade color — trench-dark at the base
+    // texture instead of a flat facade color -- trench-dark at the base
     // climbing toward summit-pale near the roofline.
     const useStain = rng() < 0.16;
     const material = useStain
         ? new THREE.MeshStandardMaterial({ map: makeTopologyStainTexture(), roughness: CONFIG.buildings.roughness })
         : new THREE.MeshStandardMaterial({ color, roughness: CONFIG.buildings.roughness });
 
+    // every building has a walkable ground floor now: real solid walls
+    // (they actually block), one real doorway toward an open neighbor if
+    // it has one, a floor, light, dressing, and -- ~30% of the time -- a
+    // raised mezzanine reached by real steps. The tower/archetype above
+    // starts from the roof of this shell, not from the ground.
+    const openDirs = [{ dx: 0, dz: -1 }, { dx: 0, dz: 1 }, { dx: -1, dz: 0 }, { dx: 1, dz: 0 }]
+        .filter(d => grid[row + d.dz]?.[col + d.dx] === false);
+    const door = openDirs.length ? pick(openDirs) : null;
+    const groundFloorHeight = Math.min(3.2, height * 0.35);
+    const shellMat = new THREE.MeshStandardMaterial({ color, roughness: 0.9, side: THREE.DoubleSide });
+    const segments = buildGroundFloorShell(x, z, hw, groundFloorHeight, door, shellMat);
+    buildingWallSegments.set(`${row},${col}`, segments);
+    maybeAddMezzanine(x, z, hw, groundFloorHeight, door);
+    // denser interior dressing -- guaranteed pieces plus situational junk
+    addCrate(x - hw * 0.4, z + hw * 0.3);
+    addPottedPlant(x + hw * 0.5, z - hw * 0.4);
+    scatterJunk('indoor', x, z, 2 + Math.floor(rng() * 3), hw * 0.55);
+
+    const upperHeight = height - groundFloorHeight;
+
     // ~30% of buildings are two-stage setback towers instead of a single
-    // prism — a wider base with a narrower tower rising off it, like a
+    // prism -- a wider base with a narrower tower rising off it, like a
     // real setback skyscraper. Reuses the same organic-tower builder
     // twice rather than a whole new geometry function; the base tower's
     // own top cap doubles as the roof deck the upper stage stands on,
@@ -1129,46 +1293,46 @@ function addBuilding(col, row) {
     const archetype = isWarehouse ? 'warehouse' : weightedPick({ single: 5, setback: 3, clustered: 2 });
 
     if (archetype === 'setback') {
-        const baseHeight = height * randRange(0.4, 0.7);
-        const upperHeight = height - baseHeight;
-        const upperHw = (footprint / 2) * randRange(0.5, 0.8);
-        const base = new THREE.Mesh(buildOrganicTowerGeometry(footprint / 2, baseHeight), material);
-        base.position.set(x, 0, z);
+        const baseHeight = upperHeight * randRange(0.4, 0.7);
+        const topHeight = upperHeight - baseHeight;
+        const upperHw = hw * randRange(0.5, 0.8);
+        const base = new THREE.Mesh(buildOrganicTowerGeometry(hw, baseHeight), material);
+        base.position.set(x, groundFloorHeight, z);
         scene.add(base);
-        const upper = new THREE.Mesh(buildOrganicTowerGeometry(upperHw, upperHeight), material);
-        upper.position.set(x, baseHeight, z);
+        const upper = new THREE.Mesh(buildOrganicTowerGeometry(upperHw, topHeight), material);
+        upper.position.set(x, groundFloorHeight + baseHeight, z);
         scene.add(upper);
     } else if (archetype === 'clustered') {
         // 2-3 independent thin towers sharing one footprint and a shared
-        // low base block, instead of one solid mass — a multi-spire
+        // low base block, instead of one solid mass -- a multi-spire
         // silhouette. The base block still fills the collision footprint.
-        const baseHeight = height * randRange(0.15, 0.3);
-        const base = new THREE.Mesh(buildOrganicTowerGeometry(footprint / 2, baseHeight), material);
-        base.position.set(x, 0, z);
+        const baseHeight = upperHeight * randRange(0.15, 0.3);
+        const base = new THREE.Mesh(buildOrganicTowerGeometry(hw, baseHeight), material);
+        base.position.set(x, groundFloorHeight, z);
         scene.add(base);
         const spireCount = 2 + Math.floor(rng() * 2);
         for (let i = 0; i < spireCount; i++) {
-            const spireHw = (footprint / 2) * randRange(0.28, 0.42);
-            const spireHeight = baseHeight + (height - baseHeight) * randRange(0.6, 1.0);
+            const spireHw = hw * randRange(0.28, 0.42);
+            const spireHeight = baseHeight + (upperHeight - baseHeight) * randRange(0.6, 1.0);
             const ox = randRange(-footprint / 4, footprint / 4);
             const oz = randRange(-footprint / 4, footprint / 4);
             const spireTower = new THREE.Mesh(buildOrganicTowerGeometry(spireHw, spireHeight - baseHeight), material);
-            spireTower.position.set(x + ox, baseHeight, z + oz);
+            spireTower.position.set(x + ox, groundFloorHeight + baseHeight, z + oz);
             scene.add(spireTower);
         }
     } else {
-        const building = new THREE.Mesh(buildOrganicTowerGeometry(footprint / 2, height), material);
-        building.position.set(x, 0, z); // organic geometry already spans y=0..height
+        const building = new THREE.Mesh(buildOrganicTowerGeometry(hw, upperHeight), material);
+        building.position.set(x, groundFloorHeight, z);
         scene.add(building);
 
-        // roof toppers — a fifth/sixth flavor of building silhouette,
+        // roof toppers -- a fifth/sixth flavor of building silhouette,
         // skipped on warehouses (too short to read) and setbacks (already
         // have their own upper mass).
         if (!isWarehouse) {
             const topper = weightedPick({ none: 6, dome: 2, spire: 2 });
             if (topper === 'dome') {
                 const dome = new THREE.Mesh(
-                    new THREE.SphereGeometry(footprint / 2 * 0.85, 8, 6, 0, Math.PI * 2, 0, Math.PI / 2),
+                    new THREE.SphereGeometry(hw * 0.85, 8, 6, 0, Math.PI * 2, 0, Math.PI / 2),
                     material
                 );
                 dome.position.set(x, height, z);
@@ -1215,7 +1379,9 @@ function addBuilding(col, row) {
 
         const content = pickSignContent();
         const neon = pickNeonForRow(row);
-        const signHeight = randRange(2.2, Math.min(height - 2, 6));
+        // never below the shell's roofline -- otherwise a sign could end
+        // up floating in an open doorway gap on whichever face has one
+        const signHeight = randRange(Math.max(2.2, groundFloorHeight + 0.3), Math.max(groundFloorHeight + 1, Math.min(height - 2, 6)));
         addSign(
             x + face.ox, signHeight, z + face.oz,
             face.rotY, content.title, content.subtitle, neon, content.flicker
@@ -1472,7 +1638,10 @@ function mountContentCards() {
         if (fi >= faces.length) break;
         const face = faces[fi++];
         const y = randRange(2.2, Math.min(face.height - 2, 6));
-        if (job.kind === 'poster') {
+        const photoKey = PHOTO_BY_TITLE[job.title];
+        if (photoKey) {
+            placePhotoPoster(photoKey, face.x, y, face.z, face.rotY, job.title, job.subtitle);
+        } else if (job.kind === 'poster') {
             addWallPoster(face.x, y, face.z, face.rotY, job.title, job.subtitle);
         } else {
             addTerminalPlaque(face.x, y, face.z, face.rotY, job.title, job.subtitle);
@@ -2023,17 +2192,17 @@ const JUNK_BASE_KINDS = [
     { name: 'rebar bundle', shape: 'cylinder', contexts: ['construction'], size: [0.15, 1.4, 0.15], colors: [0x6a5a48] },
     { name: 'cable spool', shape: 'cylinder', contexts: ['construction', 'alley'], size: [0.6, 0.45, 0.6], colors: [0x5a4228, 0x6a4e30] },
     { name: 'shopping cart', shape: 'box', contexts: ['alley', 'street'], size: [0.55, 0.9, 0.9], colors: [0x9aa0a0] },
-    { name: 'milk crate', shape: 'box', contexts: ['alley', 'street'], size: [0.35, 0.3, 0.35], colors: [0xc8d0e0, 0xd0c8a0, 0xc0e0c8] },
-    { name: 'broken chair', shape: 'box', contexts: ['alley'], size: [0.45, 0.75, 0.45], colors: [0x4a3a28, 0x2a2a2a] },
-    { name: 'broken table', shape: 'box', contexts: ['alley'], size: [0.9, 0.5, 0.6], colors: [0x5a4228] },
-    { name: 'mattress roll', shape: 'cylinder', contexts: ['alley'], size: [0.35, 1.2, 0.35], colors: [0xd8d0c0, 0xc0c8d0] },
-    { name: 'rolled carpet', shape: 'cylinder', contexts: ['alley'], size: [0.2, 1.5, 0.2], colors: [0x8a3838, 0x38588a] },
-    { name: 'cardboard box stack', shape: 'box', contexts: ['alley', 'street'], size: [0.5, 0.8, 0.5], colors: [0xc0a878, 0xb89868] },
+    { name: 'milk crate', shape: 'box', contexts: ['alley', 'street', 'indoor'], size: [0.35, 0.3, 0.35], colors: [0xc8d0e0, 0xd0c8a0, 0xc0e0c8] },
+    { name: 'broken chair', shape: 'box', contexts: ['alley', 'indoor'], size: [0.45, 0.75, 0.45], colors: [0x4a3a28, 0x2a2a2a] },
+    { name: 'broken table', shape: 'box', contexts: ['alley', 'indoor'], size: [0.9, 0.5, 0.6], colors: [0x5a4228] },
+    { name: 'mattress roll', shape: 'cylinder', contexts: ['alley', 'indoor'], size: [0.35, 1.2, 0.35], colors: [0xd8d0c0, 0xc0c8d0] },
+    { name: 'rolled carpet', shape: 'cylinder', contexts: ['alley', 'indoor'], size: [0.2, 1.5, 0.2], colors: [0x8a3838, 0x38588a] },
+    { name: 'cardboard box stack', shape: 'box', contexts: ['alley', 'street', 'indoor'], size: [0.5, 0.8, 0.5], colors: [0xc0a878, 0xb89868] },
     { name: 'trash bag pile', shape: 'sphere', contexts: ['alley'], size: [0.5, 0.35, 0.5], colors: [0x1c1c1c, 0x2a3a2a] },
     { name: 'dumpster lid', shape: 'box', contexts: ['alley'], size: [1.1, 0.08, 0.8], colors: [0x2a3a2a, 0x3a2a2a] },
     { name: 'wheelbarrow', shape: 'box', contexts: ['construction'], size: [0.6, 0.35, 0.9], colors: [0x8a3a2a, 0x6a6a6a] },
     { name: 'folded ladder', shape: 'box', contexts: ['construction', 'alley'], size: [0.15, 1.8, 0.35], colors: [0xc8c8c0, 0x8a6a3a] },
-    { name: 'toolbox', shape: 'box', contexts: ['construction'], size: [0.45, 0.3, 0.25], colors: [0xc82020, 0x2050c8, 0x505050] },
+    { name: 'toolbox', shape: 'box', contexts: ['construction', 'indoor'], size: [0.45, 0.3, 0.25], colors: [0xc82020, 0x2050c8, 0x505050] },
     { name: 'generator unit', shape: 'box', contexts: ['construction'], size: [0.65, 0.5, 0.45], colors: [0xd8c020, 0x505050] },
     { name: 'road cone stack', shape: 'cone', contexts: ['street', 'construction'], size: [0.22, 0.55, 0.22], colors: [0xff5f1f] },
     { name: 'fire hydrant', shape: 'cylinder', contexts: ['street'], size: [0.22, 0.65, 0.22], colors: [0xc82020, 0xd8d020] },
@@ -2177,7 +2346,7 @@ function addConstructionZone(x, z) {
     }
     addTrafficCone(x - 1.2, z + 0.6);
     addTrafficCone(x + 1.2, z - 0.6);
-    scatterJunk('construction', x, z, 3, 1.7);
+    scatterJunk('construction', x, z, 5, 1.9);
     return 1.1;
 }
 
@@ -2350,7 +2519,7 @@ function addCrimeScene(x, z) {
         marker.position.set(x + randRange(-1, 1), 0.09, z + randRange(-1, 1));
         scene.add(marker);
     }
-    scatterJunk('crimeScene', x, z, 2, 1.3);
+    scatterJunk('crimeScene', x, z, 3, 1.4);
     return 1.4;
 }
 
@@ -2377,30 +2546,13 @@ const PROP_BUILDERS = {
 
 const propColliders = []; // {x, z, radius} — soft obstacles, blended into collision pass
 
-// pick a small number of buildings to get a walkable ground floor
-// instead of being a solid mass — needs at least one open neighbor to
-// hang a door on.
-const interiorCandidates = [];
-for (let r = 1; r < GRID_ROWS - 1; r++) {
-    for (let c = 1; c < GRID_COLS - 1; c++) {
-        if (!grid[r][c]) continue;
-        const opens = [[0, -1], [0, 1], [-1, 0], [1, 0]].filter(([dc, dr]) => grid[r + dr]?.[c + dc] === false);
-        if (opens.length) interiorCandidates.push({ c, r, dir: pick(opens) });
-    }
-}
-const interiorPicks = new Set(
-    [...interiorCandidates].sort(() => rng() - 0.5).slice(0, 4).map(p => `${p.r},${p.c}`)
-);
-
+// every building cell gets a real building now -- addBuilding itself
+// gives each one a walkable ground floor (door toward an open neighbor
+// if it has one, real per-wall collision, interior dressing) plus the
+// tower/archetype above it.
 for (let r = 0; r < GRID_ROWS; r++) {
     for (let c = 0; c < GRID_COLS; c++) {
-        if (!grid[r][c]) continue;
-        const picked = interiorCandidates.find(p => p.r === r && p.c === c && interiorPicks.has(`${r},${c}`));
-        if (picked) {
-            addInteriorBuilding(c, r, { dx: picked.dir[0], dz: picked.dir[1] });
-        } else {
-            addBuilding(c, r);
-        }
+        if (grid[r][c]) addBuilding(c, r);
     }
 }
 
@@ -2452,7 +2604,15 @@ mountContentCards(); // real site content claims leftover wall faces
             // face pointing FROM the building back toward the dead end
             const face = buildingFaceDefs(footprint).find(f => f.dc === -dc && f.dr === -dr);
             if (!face) continue;
-            addSign(x + face.ox, 2.4, z + face.oz, face.rotY, content.title, content.subtitle, content.color);
+            if (i === 0) {
+                // the one true signal carries his actual photo -- the
+                // near-miss decoys stay text-only, since they're
+                // specifically NOT him and showing a real photo there
+                // would give the game away.
+                placePhotoPoster('portrait', x + face.ox, 2.6, z + face.oz, face.rotY, content.title, content.subtitle, { width: 1.8, frameColor: '#ffffff' });
+            } else {
+                addSign(x + face.ox, 2.4, z + face.oz, face.rotY, content.title, content.subtitle, content.color);
+            }
             break;
         }
     });
@@ -2521,7 +2681,7 @@ for (let i = 0; i < CONFIG.props.maxSpecialFeatures.parks; i++) {
 for (const [pc, pr] of plazaCells) {
     const { x, z } = cellToWorld(pc, pr);
     addPlazaGlow(x, z);
-    if (rng() < 0.4 * QUALITY.propDensity) scatterJunk('plaza', x, z, 1, CELL * 0.4);
+    if (rng() < 0.7 * QUALITY.propDensity) scatterJunk('plaza', x, z, 1 + Math.floor(rng() * 2), CELL * 0.4);
 }
 
 // props that realistically sit against a wall rather than floating in
@@ -2623,7 +2783,7 @@ function addPark(x, z) {
     }
     const benchAngle = randRange(0, Math.PI * 2);
     addBench(x + Math.cos(benchAngle) * 1.4, z + Math.sin(benchAngle) * 1.4, benchAngle + Math.PI / 2);
-    scatterJunk('park', x, z, 2, CELL * 0.36);
+    scatterJunk('park', x, z, 4, CELL * 0.4);
     return CELL * 0.5;
 }
 
@@ -2669,9 +2829,9 @@ for (let r = 1; r < GRID_ROWS - 1; r++) {
         const onStreet = isStreetCell(c, r);
         if (onStreet) {
             addStreetSurface(c, r, x, z);
-            if (rng() < 0.12 * QUALITY.propDensity) scatterJunk('street', x, z, 1, CELL * 0.34);
-        } else if (rng() < 0.22 * QUALITY.propDensity) {
-            scatterJunk('alley', x, z, 1, CELL * 0.3);
+            if (rng() < 0.3 * QUALITY.propDensity) scatterJunk('street', x, z, 1 + Math.floor(rng() * 2), CELL * 0.34);
+        } else if (rng() < 0.55 * QUALITY.propDensity) {
+            scatterJunk('alley', x, z, 1 + Math.floor(rng() * 2), CELL * 0.3);
         }
         // real scanned props are NOT instanced (each is its own draw
         // call) -- sparse by design, and doubly gated on quality tier.
@@ -2754,27 +2914,32 @@ function worldToCell(x, z) {
 function resolveCollisions(position) {
     const { col, row } = worldToCell(position.x, position.z);
 
+    // real per-wall collision: every building has registered wall
+    // segments (buildGroundFloorShell) -- only the actual solid walls
+    // block, the door gap genuinely doesn't. Replaces the old whole-
+    // footprint-square check entirely, for every building, not just a
+    // special-cased few.
     for (let dr = -1; dr <= 1; dr++) {
         for (let dc = -1; dc <= 1; dc++) {
             const c = col + dc, r = row + dr;
             if (!grid[r]?.[c]) continue; // out of bounds or open cell — nothing solid
-            if (interiorCells.has(`${r},${c}`)) continue; // walkable ground floor, see addInteriorBuilding
-
-            const { x: cx, z: cz } = cellToWorld(c, r);
-            const footprint = footprintOf[r]?.[c] ?? (CELL - CONFIG.maze.buildingMarginMin);
-            const half = footprint / 2 + PLAYER_RADIUS;
-            const dx = position.x - cx;
-            const dz = position.z - cz;
-
-            if (Math.abs(dx) > half || Math.abs(dz) > half) continue;
-
-            // push out along the axis of least penetration
-            const penX = half - Math.abs(dx);
-            const penZ = half - Math.abs(dz);
-            if (penX < penZ) {
-                position.x = cx + Math.sign(dx || 1) * half;
-            } else {
-                position.z = cz + Math.sign(dz || 1) * half;
+            const segments = buildingWallSegments.get(`${r},${c}`);
+            if (!segments) continue;
+            for (const seg of segments) {
+                const sdx = seg.x2 - seg.x1, sdz = seg.z2 - seg.z1;
+                const len2 = sdx * sdx + sdz * sdz;
+                let t = len2 > 1e-9 ? ((position.x - seg.x1) * sdx + (position.z - seg.z1) * sdz) / len2 : 0;
+                t = Math.max(0, Math.min(1, t));
+                const cx = seg.x1 + sdx * t, cz = seg.z1 + sdz * t;
+                const dx = position.x - cx, dz = position.z - cz;
+                const distSq = dx * dx + dz * dz;
+                const minDist = PLAYER_RADIUS + WALL_THICKNESS;
+                if (distSq < minDist * minDist) {
+                    const dist = Math.sqrt(distSq) || 0.0001;
+                    const push = (minDist - dist) / dist;
+                    position.x += dx * push;
+                    position.z += dz * push;
+                }
             }
         }
     }
@@ -2973,7 +3138,9 @@ function animate() {
     for (let i = 0; i < CONFIG.movement.collisionIterations; i++) {
         resolveCollisions(camera.position);
     }
-    camera.position.y = CONFIG.camera.eyeHeight;
+    // real elevation: standing on a mezzanine or climbing its stairs
+    // actually changes eye height now, not just X/Z collision.
+    camera.position.y = groundHeightAt(camera.position.x, camera.position.z) + CONFIG.camera.eyeHeight;
     updateWebGradient(camera.position.z);
     updateRain(delta);
 

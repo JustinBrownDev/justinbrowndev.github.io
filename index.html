@@ -110,6 +110,51 @@
             z-index: 12;
             pointer-events: none;
         }
+
+        /* boot diagnostics -- visible from the very first paint, before
+           main.js has even started fetching, so "the page is just blank"
+           is never the whole story again. Fades out on a real ready()
+           call; stays put (and turns red) on fail() so an error is
+           something to screenshot, not something invisible in devtools. */
+        #bootStatus {
+            position: fixed;
+            inset: 0;
+            z-index: 50;
+            background: #0a0305;
+            color: #e8c9c9;
+            font-family: 'Courier New', monospace;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 24px;
+            transition: opacity 0.5s;
+        }
+        #bootStatusLine {
+            font-size: 1.1rem;
+            letter-spacing: 0.04em;
+            margin-bottom: 14px;
+            text-align: center;
+        }
+        #bootStatusLog {
+            font-size: 0.68rem;
+            line-height: 1.5;
+            color: #a89090;
+            max-width: 640px;
+            max-height: 40vh;
+            overflow-y: auto;
+            text-align: left;
+        }
+        #bootStatus.bootDone {
+            opacity: 0;
+            pointer-events: none;
+        }
+        #bootStatus.bootFailed {
+            background: #1a0505;
+        }
+        #bootStatus.bootFailed #bootStatusLine {
+            color: #ff5f5f;
+        }
     </style>
 </head>
 
@@ -124,6 +169,55 @@
     <div id="joystickBase"></div>
     <div id="joystickKnob"></div>
 
+    <div id="bootStatus">
+        <div id="bootStatusLine">booting…</div>
+        <div id="bootStatusLog"></div>
+    </div>
+
+    <script>
+        // Plain classic script, runs immediately (before the module script
+        // below even starts fetching) -- this is diagnostic scaffolding so
+        // "the page is just blank" turns into "here's exactly which phase
+        // it got stuck on, or the exact error," instead of nothing at all.
+        // window.__boot is the API main.js calls into as it progresses.
+        (function () {
+            const line = document.getElementById('bootStatusLine');
+            const log = document.getElementById('bootStatusLog');
+            const t0 = performance.now();
+            const rows = [];
+            function stamp() { return ((performance.now() - t0) / 1000).toFixed(2) + 's'; }
+            function push(text, isError) {
+                const row = document.createElement('div');
+                row.textContent = `[${stamp()}] ${text}`;
+                if (isError) row.style.color = '#ff5f5f';
+                log.appendChild(row);
+                rows.push(text);
+                while (log.childNodes.length > 40) log.removeChild(log.firstChild);
+            }
+            window.__boot = {
+                elapsed() { return (performance.now() - t0) / 1000; }, // seconds since THIS script ran -- before main.js has even started fetching, so this covers the corpus download+parse time main.js's own clock can't see
+                status(text) { line.textContent = text; push(text); console.log('[boot]', stamp(), text); },
+                ready() {
+                    line.textContent = 'ready';
+                    document.getElementById('bootStatus').classList.add('bootDone');
+                    console.log('[boot]', stamp(), 'ready -- overlay fading');
+                },
+                fail(text) {
+                    line.textContent = 'FAILED: ' + text;
+                    document.getElementById('bootStatus').classList.add('bootFailed');
+                    push(text, true);
+                },
+            };
+            window.addEventListener('error', (e) => {
+                window.__boot.fail((e.error && e.error.stack) ? e.error.stack : e.message + ' (' + e.filename + ':' + e.lineno + ')');
+            });
+            window.addEventListener('unhandledrejection', (e) => {
+                window.__boot.fail('unhandled promise rejection: ' + (e.reason && e.reason.stack ? e.reason.stack : e.reason));
+            });
+            window.__boot.status('fetching three.js + noise corpus (large files, first load only -- this can take a while on a slow connection)…');
+        })();
+    </script>
+
     <script type="importmap">
     {
         "imports": {
@@ -131,7 +225,7 @@
         }
     }
     </script>
-    <script type="module" src="./main.js"></script>
+    <script type="module" src="./main.js" onerror="window.__boot?.fail('main.js failed to load as a module -- check the network tab for a 404/CORS/MIME-type error on main.js or one of its imports')"></script>
 </body>
 
 </html>

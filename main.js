@@ -23,6 +23,19 @@ import {
     REMOTE_NOISE_META,
 } from './noise-data-remote.js';
 
+// ---------- boot diagnostics ----------
+// window.__boot (defined inline in index.html, before this module even
+// starts fetching) turns "the page is just blank" into a visible,
+// timestamped phase log -- what's actually running, how long each phase
+// took, and (via the global error handlers registered there) the exact
+// error if something throws. Every call is optional-chained: this must
+// never be the thing that breaks the page if index.html's markup for it
+// is ever missing/stale.
+function bootStatus(text) { window.__boot?.status(text); }
+function bootElapsed() { return window.__boot ? window.__boot.elapsed().toFixed(2) + 's' : '?s (no __boot -- index.html out of sync with main.js)'; }
+console.log('[perf] imports resolved (three.js + full noise corpus fetched+parsed) at', bootElapsed(), 'since page start');
+bootStatus(`imports resolved at ${bootElapsed()} -- starting maze/city generation…`);
+
 // =====================================================================
 // CONCEPT
 // This is the information superhighway rendered as a walkable back alley,
@@ -880,6 +893,16 @@ function randomizeConfig() {
 }
 randomizeConfig();
 console.log('[testing] config randomized from seed -- reload for a new mood, or pin ?seed= to freeze it too.');
+// full randomized knob dump -- if a particular reload's mood/density/feel
+// is a keeper, this (plus the ?seed= in the very first log line) is
+// everything needed to narrow the jitter ranges toward it. Logged as a
+// real object (not just a JSON string) so devtools can expand it.
+console.log('[config] full randomized CONFIG:', CONFIG);
+console.log('[config] key tunables -- propDensity(desktop/mobile/potato):', CONFIG.quality.desktop.propDensity.toFixed(2), CONFIG.quality.mobile.propDensity.toFixed(2), CONFIG.quality.potato.propDensity.toFixed(2),
+    '| skyJunkCount:', CONFIG.quality.desktop.skyJunkCount, CONFIG.quality.mobile.skyJunkCount, CONFIG.quality.potato.skyJunkCount,
+    '| buildingMargin:', CONFIG.maze.buildingMarginMin.toFixed(2), '-', CONFIG.maze.buildingMarginMax.toFixed(2),
+    '| loopChance:', CONFIG.maze.loopChance.toFixed(2),
+    '| moveSpeed/sprint:', CONFIG.movement.speed.toFixed(2), CONFIG.movement.sprintMultiplier.toFixed(2));
 
 // ---------- device detection & active quality profile ----------
 
@@ -1722,6 +1745,8 @@ for (let r = 1; r < GRID_ROWS - 1; r++) {
 // startRow) stays fixed as the DFS anchor, but where *you* start is not
 // the same place twice. The "farthest signal" search below runs from here.
 const [spawnCol, spawnRow] = allOpenCells[Math.floor(rng() * allOpenCells.length)];
+console.log(`[gen] maze grid ready at ${bootElapsed()}: ${GRID_COLS}x${GRID_ROWS} cells, ${allOpenCells.length} open, ${plazaCells.length} plazas, spawn=(${spawnCol},${spawnRow})`);
+bootStatus(`maze carved (${allOpenCells.length} open cells) -- building the city…`);
 
 // ---------- reusable geometry/materials ----------
 
@@ -5022,13 +5047,19 @@ const propColliders = []; // {x, z, radius, height} — soft obstacles, blended 
 // gives each one a walkable ground floor (door toward an open neighbor
 // if it has one, real per-wall collision, interior dressing) plus the
 // tower/archetype above it.
-for (let r = 0; r < GRID_ROWS; r++) {
-    for (let c = 0; c < GRID_COLS; c++) {
-        if (grid[r][c]) addBuilding(c, r);
+{
+    const buildStart = performance.now();
+    let buildingCount = 0;
+    for (let r = 0; r < GRID_ROWS; r++) {
+        for (let c = 0; c < GRID_COLS; c++) {
+            if (grid[r][c]) { addBuilding(c, r); buildingCount++; }
+        }
     }
+    console.log(`[perf] ${buildingCount} buildings generated in ${(performance.now() - buildStart).toFixed(0)}ms (${bootElapsed()} total)`);
 }
 
 mountContentCards(); // real site content claims leftover wall faces
+bootStatus(`city built, ${GRID_COLS * GRID_ROWS} cells -- placing props/decoration…`);
 
 // ---------- the one true signal ----------
 // BFS out from spawn over open cells; the dead end with the greatest walk
@@ -5514,6 +5545,7 @@ fetchRandomWikiArticles(15); // live random articles start swapping into the sta
 
 // the sky, filled last so it can spawn straight through anything already
 // placed -- see CONFIG.quality.*.skyJunkCount for the per-tier amount.
+bootStatus(`props placed -- filling the sky (${QUALITY.skyJunkCount} junk + noise-corpus text shards)…`);
 spawnSkyJunk(QUALITY.skyJunkCount);
 
 // ---------- airborne information layer ----------
@@ -6063,6 +6095,24 @@ function animate() {
     updateRain(delta);
 
     composer.render();
-}
 
+    // lightweight FPS sampling -- logged every ~3s, not per-frame (per-
+    // frame console.log would itself tank performance and spam devtools).
+    // Purely diagnostic: if the city feels sluggish, this says whether
+    // it's actually the frame rate or something else (input, load).
+    fpsFrameCount++;
+    const nowMs = performance.now();
+    if (nowMs - fpsLastLogMs > 3000) {
+        const fps = (fpsFrameCount * 1000) / (nowMs - fpsLastLogMs);
+        console.log(`[perf] ~${fps.toFixed(1)} fps (quality=${QUALITY === CONFIG.quality.desktop ? 'desktop' : QUALITY === CONFIG.quality.mobile ? 'mobile' : 'potato'})`);
+        fpsFrameCount = 0;
+        fpsLastLogMs = nowMs;
+    }
+}
+let fpsFrameCount = 0;
+let fpsLastLogMs = performance.now();
+
+console.log(`[perf] generation complete at ${bootElapsed()} since page start -- starting render loop`);
+bootStatus(`ready (generation took ${bootElapsed()})`);
+window.__boot?.ready();
 animate();

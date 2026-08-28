@@ -122,6 +122,7 @@ const CONFIG = {
             drawDistance: 380,
             maxDynamicLights: 40,
             propDensity: 1.7,
+            skyJunkCount: 2600, // airborne clutter -- pure overdraw, so this is the dial that's safe to push hardest
         },
         mobile: {
             maxPixelRatio: 1.5,
@@ -130,11 +131,12 @@ const CONFIG = {
             drawDistance: 260,
             maxDynamicLights: 18,
             propDensity: 1.05,
+            skyJunkCount: 650,
         },
-        // auto-selected on low core-count/low-memory touch devices, or
-        // forced with ?quality=low. Bloom pass is skipped entirely here,
-        // not just turned down -- the blur passes have a real GPU cost
-        // even at low strength.
+        // auto-selected on low core-count/low-memory machines (touch or
+        // not -- see detectWeakGPU below), or forced with ?quality=low.
+        // Bloom pass is skipped entirely here, not just turned down --
+        // the blur passes have a real GPU cost even at low strength.
         potato: {
             maxPixelRatio: 1,
             antialias: false,
@@ -142,6 +144,7 @@ const CONFIG = {
             drawDistance: 180,
             maxDynamicLights: 6,
             propDensity: 0.3,
+            skyJunkCount: 100, // token amount -- the "buried in noise" read still needs to exist, just barely
         },
     },
 
@@ -491,6 +494,26 @@ const CONFIG = {
             parks: 5,
             megaBillboards: 4,
         },
+    },
+
+    // ---------------- airborne junk: fills the sky, ignores gravity ----------------
+    // the ground-level junk system above is deliberately grounded and
+    // situational (tagged to a real feature, placed with a collider).
+    // This is the same "poorly made, spawned by the hundreds" idea with
+    // every rule dropped except "you can still walk": no footprint check,
+    // no collision, no precomputed shapes -- it's the maze's own
+    // information-glut premise made physical, drifting through and
+    // between the towers instead of sitting on a shelf. Pure extra draw
+    // calls, so counts (CONFIG.quality.*.skyJunkCount) scale hard per tier.
+    skyJunk: {
+        heightMin: 2.2,       // never at your literal feet
+        heightMax: 260,       // past even hero-tower rooflines
+        heightBias: 1.7,      // >1 skews the range toward the low/mid band -- reads as "thick between the buildings," not a thin haze way up top
+        streetClearance: 3.0, // courtesy headroom over open/walkable cells so it isn't spawning directly in your face mid-step -- none of this collides regardless of where it lands
+        stretchMin: 0.35,
+        stretchMax: 2.4,      // each axis scaled independently and separately from the others -- nothing here should read as a "real object" with a normal silhouette
+        sizeMin: 0.2,
+        sizeMax: 2.2,
     },
 
     // every 4th row/col that's actually open becomes a through-street
@@ -2657,6 +2680,171 @@ function scatterJunk(context, x, z, count, spread) {
     }
 }
 
+// ---------- airborne junk: fills the sky, ignores gravity ----------
+// everything above this line is grounded and situational -- tagged to a
+// real feature, given a collider, placed with intent. This is the
+// opposite: pure noise, spawned across the whole map footprint and the
+// whole height range with no relationship to buildings, features, or
+// each other. No precomputed shape catalog either (unlike JUNK_BASE_KINDS
+// above) -- every piece is a randomly, independently stretched primitive,
+// textured with a gradient/noise map (never a flat solid fill) and tinted
+// with the same warm/cool split as everything else in the maze. None of
+// it has a collider, which is what makes the density safe: there is no
+// amount of this that can trap you, so there's no reason to hold back.
+const SKY_SHAPES = ['shard', 'chunk', 'pipe', 'spike', 'blob', 'loop'];
+const SKY_JUNK_CAPACITY = 900; // per shape -- generous headroom above any single tier's actual skyJunkCount
+const skyJunkMeshes = {};
+const skyJunkCounts = {};
+const _skyMatrix = new THREE.Matrix4();
+const _skyPos = new THREE.Vector3();
+const _skyQuat = new THREE.Quaternion();
+const _skyEuler = new THREE.Euler();
+const _skyScale = new THREE.Vector3();
+const _skyColor = new THREE.Color();
+
+// one small gradient/noise texture per shape -- a "look" (torn signage,
+// rust, cable, static, smog, tangled wire), never a solid fill. instance
+// color (below) only tints this on top, it never replaces it.
+function makeSkyJunkTexture(kind) {
+    return makePixelTexture((ctx, w, h) => {
+        switch (kind) {
+            case 'shard': { // torn ad/signage fragment
+                const g = ctx.createLinearGradient(0, 0, w, h);
+                g.addColorStop(0, '#0a0a0a');
+                g.addColorStop(0.5, hexToCss(pick(CONFIG.neonPalette)));
+                g.addColorStop(1, '#0a0a0a');
+                ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
+                ctx.globalAlpha = 0.3;
+                for (let i = 0; i < 40; i++) {
+                    ctx.fillStyle = rng() < 0.5 ? '#000000' : '#ffffff';
+                    ctx.fillRect(Math.floor(rng() * w), Math.floor(rng() * h), 1, 1);
+                }
+                ctx.globalAlpha = 1;
+                break;
+            }
+            case 'chunk': { // rust / concrete debris
+                const g = ctx.createLinearGradient(0, 0, 0, h);
+                g.addColorStop(0, '#3a2c20'); g.addColorStop(1, '#141210');
+                ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
+                for (let i = 0; i < 30; i++) {
+                    ctx.fillStyle = `rgba(0,0,0,${rng() * 0.4})`;
+                    ctx.fillRect(Math.floor(rng() * w), Math.floor(rng() * h), 2, 1);
+                }
+                break;
+            }
+            case 'pipe': { // scrap metal / cable
+                const g = ctx.createLinearGradient(0, 0, w, 0);
+                g.addColorStop(0, '#1c1c1c'); g.addColorStop(0.5, '#4a4438'); g.addColorStop(1, '#1c1c1c');
+                ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
+                ctx.strokeStyle = 'rgba(255,255,255,0.15)'; ctx.lineWidth = 1;
+                for (let i = 0; i < 4; i++) {
+                    const y = rng() * h;
+                    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
+                }
+                break;
+            }
+            case 'spike': { // static / glitch shard
+                for (let y = 0; y < h; y++) {
+                    ctx.fillStyle = rng() < 0.15 ? hexToCss(pick(CONFIG.neonPalette)) : `rgb(${10 + y},${10 + y},${14 + y})`;
+                    ctx.fillRect(0, y, w, 1);
+                }
+                break;
+            }
+            case 'blob': { // smog / particulate wisp -- paired with a transparent material below
+                const g = ctx.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, w / 2);
+                g.addColorStop(0, 'rgba(210,210,210,0.9)'); g.addColorStop(1, 'rgba(210,210,210,0)');
+                ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
+                break;
+            }
+            case 'loop': { // tangled wire
+                const g = ctx.createLinearGradient(0, 0, w, h);
+                g.addColorStop(0, '#0c0c0c'); g.addColorStop(1, '#241c14');
+                ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
+                ctx.strokeStyle = 'rgba(255,220,120,0.3)'; ctx.lineWidth = 1;
+                for (let i = 0; i < 3; i++) {
+                    ctx.beginPath(); ctx.moveTo(rng() * w, 0); ctx.lineTo(rng() * w, h); ctx.stroke();
+                }
+                break;
+            }
+        }
+    }, 24, 24);
+}
+
+for (const shape of SKY_SHAPES) {
+    let geo;
+    switch (shape) {
+        case 'shard': geo = new THREE.PlaneGeometry(1, 1); break;
+        case 'chunk': geo = jitterGeometry(new THREE.BoxGeometry(1, 1, 1), 0.08); break;
+        case 'pipe': geo = jitterGeometry(new THREE.CylinderGeometry(0.5, 0.5, 1, 6), 0.06); break;
+        case 'spike': geo = jitterGeometry(new THREE.ConeGeometry(0.5, 1, 6), 0.06); break;
+        case 'blob': geo = new THREE.SphereGeometry(0.5, 6, 5); break;
+        case 'loop': geo = new THREE.TorusGeometry(0.4, 0.13, 4, 8); break;
+    }
+    const isBlob = shape === 'blob';
+    const mesh = new THREE.InstancedMesh(geo, new THREE.MeshStandardMaterial({
+        map: makeSkyJunkTexture(shape),
+        roughness: 0.95,
+        side: THREE.DoubleSide, // flat shards tumble to face-on with the camera constantly -- backface culling would just make them flicker invisible
+        transparent: isBlob,
+        opacity: isBlob ? 0.55 : 1,
+        depthWrite: !isBlob,
+    }), SKY_JUNK_CAPACITY);
+    mesh.count = 0;
+    // instances are spread across the entire map at every height -- a
+    // single bounding-sphere frustum cull would either always pass
+    // (wasting nothing) or, worse, cull the whole mesh from certain
+    // angles even though most instances are still on-screen.
+    mesh.frustumCulled = false;
+    scene.add(mesh);
+    skyJunkMeshes[shape] = mesh;
+    skyJunkCounts[shape] = 0;
+}
+
+// spawns `count` pieces of pure airborne noise across the whole map
+// footprint and the whole height range. The only concession to "normal"
+// is a courtesy clearance kept over open/walkable cells near ground
+// level, purely so it isn't spawning directly in your face mid-step --
+// cosmetic, not physical, since nothing here can ever block movement
+// regardless of where it lands.
+function spawnSkyJunk(count) {
+    const cfg = CONFIG.skyJunk;
+    for (let i = 0; i < count; i++) {
+        const x = randRange(-GRID_W / 2, GRID_W / 2);
+        const z = randRange(-GRID_H / 2, GRID_H / 2);
+        let y = cfg.heightMin + (cfg.heightMax - cfg.heightMin) * (rng() ** cfg.heightBias);
+
+        const { col, row } = worldToCell(x, z);
+        if (grid[row]?.[col] === false && y < cfg.streetClearance) y = cfg.streetClearance + rng() * 2;
+
+        const shape = pick(SKY_SHAPES);
+        const idx = skyJunkCounts[shape];
+        if (idx >= SKY_JUNK_CAPACITY) continue;
+        skyJunkCounts[shape] = idx + 1;
+
+        const s = randRange(cfg.sizeMin, cfg.sizeMax);
+        _skyScale.set(
+            s * randRange(cfg.stretchMin, cfg.stretchMax),
+            s * randRange(cfg.stretchMin, cfg.stretchMax),
+            s * randRange(cfg.stretchMin, cfg.stretchMax)
+        );
+        _skyPos.set(x, y, z);
+        // tumbles freely on all 3 axes -- gravity doesn't get a vote
+        _skyEuler.set(randRange(0, Math.PI * 2), randRange(0, Math.PI * 2), randRange(0, Math.PI * 2));
+        _skyQuat.setFromEuler(_skyEuler);
+        _skyMatrix.compose(_skyPos, _skyQuat, _skyScale);
+
+        const mesh = skyJunkMeshes[shape];
+        mesh.setMatrixAt(idx, _skyMatrix);
+        const t = webAlignment(z); // same warm/cool split every other signal in the maze rides
+        mesh.setColorAt(idx, _skyColor.set(rng() < t ? pick(CONFIG.neonWarm) : pick(CONFIG.neonCool)));
+        mesh.count = idx + 1;
+    }
+    for (const shape of SKY_SHAPES) {
+        skyJunkMeshes[shape].instanceMatrix.needsUpdate = true;
+        if (skyJunkMeshes[shape].instanceColor) skyJunkMeshes[shape].instanceColor.needsUpdate = true;
+    }
+}
+
 function addConstructionZone(x, z) {
     // barrier
     const barrierTex = makePixelTexture((ctx, w, h) => {
@@ -3317,6 +3505,10 @@ for (let r = 1; r < GRID_ROWS - 1; r++) {
 }
 
 fetchRandomWikiArticles(15); // live random articles start swapping into the static wanted posters
+
+// the sky, filled last so it can spawn straight through anything already
+// placed -- see CONFIG.quality.*.skyJunkCount for the per-tier amount.
+spawnSkyJunk(QUALITY.skyJunkCount);
 
 // ---------- player collision ----------
 

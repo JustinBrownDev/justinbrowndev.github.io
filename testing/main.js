@@ -3717,12 +3717,29 @@ function isStreetCell(c, r) {
 function addStreetSurface(c, r, x, z) {
     const horizontal = grid[r]?.[c - 1] === false || grid[r]?.[c + 1] === false;
     const vertical = grid[r - 1]?.[c] === false || grid[r + 1]?.[c] === false;
+    const intersection = horizontal && vertical; // a real 4-way crossing -- gets marked crosswalks + stop bars, not just through-lane dashes
     const tex = makePixelTexture((ctx, w, h) => {
         ctx.fillStyle = '#1e1e1e'; // asphalt — darker/cleaner than alley pavement
         ctx.fillRect(0, 0, w, h);
         ctx.fillStyle = '#c8c840';
         if (horizontal) for (let i = 6; i < w; i += 16) ctx.fillRect(i, h / 2 - 1, 8, 2);
         if (vertical) for (let i = 6; i < h; i += 16) ctx.fillRect(w / 2 - 1, i, 2, 8);
+
+        if (intersection) {
+            // real zebra crosswalk stripes across both approaches, plus a
+            // stop bar just inside each of the 4 sides -- the one piece
+            // of real traffic-control marking this street grid was still
+            // missing entirely.
+            ctx.fillStyle = '#e8e8dc';
+            const band = 12; // stripe-zone width, centered on the intersection
+            for (let i = 4; i < w; i += 9) ctx.fillRect(i, h / 2 - band / 2, 5, band); // crossing the horizontal street -- stripes run along z
+            for (let i = 4; i < h; i += 9) ctx.fillRect(w / 2 - band / 2, i, band, 5); // crossing the vertical street -- stripes run along x
+            const barLen = 14, barThick = 3, inset = 18;
+            ctx.fillRect(inset, h / 2 - barThick / 2, barLen, barThick); // west approach
+            ctx.fillRect(w - inset - barLen, h / 2 - barThick / 2, barLen, barThick); // east
+            ctx.fillRect(w / 2 - barThick / 2, inset, barThick, barLen); // north
+            ctx.fillRect(w / 2 - barThick / 2, h - inset - barLen, barThick, barLen); // south
+        }
     }, 64, 64);
     const road = new THREE.Mesh(
         new THREE.PlaneGeometry(CELL * 0.94, CELL * 0.94),

@@ -4381,7 +4381,14 @@ const GRAVITY = -16;
 // riser, a curb, a continuous ramp) still snap immediately; only a drop
 // bigger than this counts as walking off a real ledge.
 const STEP_DOWN_TOLERANCE = 0.5;
-let lastGroundedFloorY = null; // previous frame's floorY while grounded, for ledge detection
+// tracked every frame regardless of grounded/airborne state -- the ledge-
+// fall smoothing below used to only apply while wasGrounded, which meant
+// crossing a ledge's edge WHILE already airborne (mid-jump, or via
+// coyote time/jump buffering right at the edge) skipped it entirely and
+// let floorY -- and therefore camera.position.y -- snap straight down
+// the instant the platform stopped matching. Tracking unconditionally
+// catches that case too.
+let prevFloorY = null;
 
 // ---- parkour physics: coyote time, jump buffering, real auto-step ----
 // MAX_STEP_HEIGHT is the one number both resolveCollisions and
@@ -4654,12 +4661,17 @@ function animate() {
     let floorY = groundHeightAt(camera.position.x, camera.position.z, feetY) + CONFIG.camera.eyeHeight;
     const wasGrounded = heightAboveFloor <= 0.001;
     coyoteTimer = wasGrounded ? COYOTE_TIME : Math.max(0, coyoteTimer - delta);
-    if (wasGrounded && lastGroundedFloorY !== null && floorY < lastGroundedFloorY - STEP_DOWN_TOLERANCE) {
-        // stepped off a real ledge -- don't snap down to the new (lower)
-        // floor, fall to it instead. Reframe the gap as airborne offset
-        // above the new floor so this frame renders at the same height
-        // it already was, then gravity below carries it down naturally.
-        heightAboveFloor = lastGroundedFloorY - floorY;
+    if (prevFloorY !== null && floorY < prevFloorY - STEP_DOWN_TOLERANCE) {
+        // the floor under our current x/z just dropped a lot -- walked
+        // off a real ledge, OR drifted past its edge mid-jump (this used
+        // to only catch the walking case, gated on wasGrounded; crossing
+        // an edge while already airborne skipped it and let
+        // camera.position.y snap straight down the instant the ledge
+        // stopped matching). Either way: don't snap to the new floor,
+        // add the drop to whatever airborne offset already exists so
+        // this frame renders unchanged, then gravity carries it down
+        // for real.
+        heightAboveFloor += prevFloorY - floorY;
     }
     jumpBufferTimer = Math.max(0, jumpBufferTimer - delta);
     if (jumpBufferTimer > 0 && (heightAboveFloor <= 0.001 || coyoteTimer > 0)) {
@@ -4684,7 +4696,7 @@ function animate() {
         const maxEyeY = c.y - HEAD_CLEARANCE;
         if (camera.position.y > maxEyeY) {
             camera.position.y = maxEyeY;
-            heightAboveFloor = camera.position.y - floorY;
+            heightAboveFloor = Math.max(0, camera.position.y - floorY); // never negative -- a negative value here would read as "grounded" next frame and corrupt prevFloorY
             if (verticalVelocity > 0) verticalVelocity = 0;
         }
     }
@@ -4694,11 +4706,11 @@ function animate() {
         const maxEyeY = c.y - HEAD_CLEARANCE;
         if (camera.position.y > maxEyeY) {
             camera.position.y = maxEyeY;
-            heightAboveFloor = camera.position.y - floorY;
+            heightAboveFloor = Math.max(0, camera.position.y - floorY); // never negative -- a negative value here would read as "grounded" next frame and corrupt prevFloorY
             if (verticalVelocity > 0) verticalVelocity = 0;
         }
     }
-    if (heightAboveFloor <= 0.001) lastGroundedFloorY = floorY; // only tracked while actually grounded
+    prevFloorY = floorY; // tracked every frame now, not just while grounded -- see the comment on its declaration
     updateWebGradient(camera.position.z, camera.position.y, elapsedTime);
     updateRain(delta);
 

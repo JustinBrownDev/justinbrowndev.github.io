@@ -524,14 +524,36 @@ const CONFIG = {
 
 const IS_TOUCH = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
 
-// auto-detect weak hardware (low core count or low device memory on a
-// touch device -- the profile most likely to actually be "shitty
-// hardware" in practice) and drop to the potato tier. ?quality=low|high
-// overrides the auto-detect either direction for testing.
+// auto-detect weak hardware and drop to the potato tier. This USED to be
+// gated on IS_TOUCH ("the profile most likely to actually be shitty
+// hardware") which was wrong -- a low-core/low-RAM laptop with a mouse is
+// exactly as weak as a low-core/low-RAM phone, and was silently getting
+// full desktop settings it can't run. Two independent signals now, either
+// one is enough: reported cores/memory (works whenever the browser
+// exposes it), and the actual GL renderer string (catches integrated/
+// software rasterizers regardless of what navigator.hardwareConcurrency
+// claims -- a laptop can report 8 cores and still have a GPU that can't
+// hold 60fps). ?quality=low|high overrides the auto-detect either
+// direction for testing.
 const forcedQuality = new URLSearchParams(location.search).get('quality');
 const cores = navigator.hardwareConcurrency || 4;
 const mem = navigator.deviceMemory || 4; // not supported in all browsers; defaults optimistic
-const looksLikePotato = IS_TOUCH && (cores <= 4 || mem <= 2);
+
+function detectWeakGPU() {
+    try {
+        const probe = document.createElement('canvas');
+        const gl = probe.getContext('webgl') || probe.getContext('experimental-webgl');
+        if (!gl) return true; // no WebGL at all is as weak as it gets
+        const info = gl.getExtension('WEBGL_debug_renderer_info');
+        const rendererStr = String(info ? gl.getParameter(info.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER)).toLowerCase();
+        // integrated/software rasterizers -- common on "shitty laptop",
+        // rare on anything with a real discrete GPU (gaming desktop/laptop)
+        return /intel|swiftshader|llvmpipe|software|basic render|mali-4|adreno [23]0/.test(rendererStr);
+    } catch {
+        return false; // detection failing shouldn't itself downgrade a fine machine
+    }
+}
+const looksLikePotato = cores <= 4 || mem <= 2 || detectWeakGPU();
 
 const QUALITY = forcedQuality === 'high' ? CONFIG.quality.desktop
     : forcedQuality === 'low' ? CONFIG.quality.potato
@@ -573,7 +595,10 @@ const camera = new THREE.PerspectiveCamera(
 );
 camera.rotation.order = 'YXZ';
 
-const renderer = new THREE.WebGLRenderer({ antialias: QUALITY.antialias });
+// powerPreference nudges laptops with switchable graphics (integrated +
+// discrete) toward the discrete GPU instead of whatever the browser
+// defaults to -- free to ask for, no downside on single-GPU machines.
+const renderer = new THREE.WebGLRenderer({ antialias: QUALITY.antialias, powerPreference: 'high-performance' });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, QUALITY.maxPixelRatio));
 renderer.setSize(window.innerWidth, window.innerHeight);
 document.body.appendChild(renderer.domElement);
@@ -3501,6 +3526,37 @@ if (IS_TOUCH) {
     });
 }
 
+// ---------- adaptive runtime downgrade ----------
+// static sniffing up top (cores/mem/GPU string) catches most weak
+// machines before a single triangle is drawn, but not all of them --
+// thermal throttling, a driver this doesn't recognize, background load.
+// This is the safety net: watch real sustained frame time and step real
+// settings down for real, instead of only trusting what the machine
+// claimed to have. Only steps down, never back up mid-session (a
+// recovering machine isn't the problem this solves), and only as many
+// steps as the starting tier has headroom to give -- potato already has
+// nothing left to cut.
+let perfStepsLeft = QUALITY === CONFIG.quality.potato ? 0 : QUALITY === CONFIG.quality.mobile ? 1 : 2;
+let perfWarmup = 3; // seconds before the first check -- let load-in stutter settle
+let perfWindow = 0, perfFrames = 0;
+
+function maybeStepDownQuality(delta) {
+    if (perfStepsLeft <= 0) return;
+    if (perfWarmup > 0) { perfWarmup -= delta; return; }
+    perfWindow += delta; perfFrames++;
+    if (perfWindow < 4) return; // needs 4s of sustained data per check, not one bad frame
+    const avgFps = perfFrames / perfWindow;
+    perfWindow = 0; perfFrames = 0;
+    if (avgFps >= 40) { perfStepsLeft = 0; return; } // running fine -- stop watching for good
+
+    perfStepsLeft--;
+    console.log(`[testing] sustained ~${avgFps.toFixed(0)}fps -- stepping render quality down (${perfStepsLeft} steps left)`);
+    renderer.setPixelRatio(Math.max(1, renderer.getPixelRatio() - 0.5));
+    if (bloomPass) { composer.removePass(bloomPass); bloomPass = null; }
+    for (const shape in junkMeshes) junkMeshes[shape].count = Math.floor(junkMeshes[shape].count * 0.6);
+    for (const shape in skyJunkMeshes) skyJunkMeshes[shape].count = Math.floor(skyJunkMeshes[shape].count * 0.4);
+}
+
 // ---------- render loop ----------
 
 const clock = new THREE.Clock();
@@ -3512,6 +3568,7 @@ function animate() {
     requestAnimationFrame(animate);
     const delta = Math.min(CONFIG.movement.maxDeltaSeconds, clock.getDelta());
     elapsedTime += delta;
+    maybeStepDownQuality(delta);
 
     for (const f of flickerLights) {
         f.light.intensity = f.mode === 'blink'

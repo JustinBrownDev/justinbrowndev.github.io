@@ -1685,6 +1685,73 @@ function maybeAddMezzanine(x, z, hw, groundFloorHeight, door) {
     });
 }
 
+// a decorative elevator bank -- doors, a lit floor-indicator readout, a
+// call button -- as an alternate flavor of vertical circulation
+// alongside the mezzanine stairs. Deliberately not a functional ride (a
+// simulated, timed moving platform is a whole different system); this
+// reads as "this building also has an elevator," the same way a real
+// lobby does, without pretending to carry you somewhere the stairs
+// don't already reach. Independent of maybeAddMezzanine -- a building
+// can have neither, either, or both.
+function maybeAddElevator(x, z, hw, groundFloorHeight, door) {
+    if (rng() > 0.18) return;
+    const wallDirs = [{ dx: 0, dz: -1 }, { dx: 0, dz: 1 }, { dx: -1, dz: 0 }, { dx: 1, dz: 0 }]
+        .filter(d => !door || d.dx !== door.dx || d.dz !== door.dz); // any wall but the one with the actual doorway
+    const w = pick(wallDirs);
+    const cabW = 1.1, cabH = Math.min(2.4, groundFloorHeight - 0.3);
+    if (cabH < 1.2) return; // too short a room for this to read as anything but a closet
+
+    const g = new THREE.Group();
+    const frameMat = new THREE.MeshStandardMaterial({ color: 0x3a3a3a, roughness: 0.5, metalness: 0.6 });
+    const frame = new THREE.Mesh(jitterGeometry(new THREE.BoxGeometry(cabW + 0.2, cabH + 0.2, 0.12), 0.01), frameMat);
+    frame.position.set(0, cabH / 2, 0.06);
+    g.add(frame);
+
+    const doorMat = new THREE.MeshStandardMaterial({ color: 0x8a8068, roughness: 0.4, metalness: 0.7 });
+    for (const side of [-1, 1]) {
+        const cabDoor = new THREE.Mesh(jitterGeometry(new THREE.BoxGeometry(cabW / 2 - 0.02, cabH - 0.1, 0.06), 0.008), doorMat);
+        cabDoor.position.set(side * (cabW / 4), (cabH - 0.1) / 2, 0.1);
+        g.add(cabDoor);
+    }
+
+    // floor-indicator readout above the doors -- static, like the doors
+    // themselves; this elevator isn't going anywhere, it's furniture
+    const floorNum = 1 + Math.floor(rng() * 12);
+    const indicatorTex = makePixelTexture((ctx, iw, ih) => {
+        ctx.fillStyle = '#0a0a0a';
+        ctx.fillRect(0, 0, iw, ih);
+        ctx.fillStyle = '#ff3a1e';
+        ctx.textAlign = 'center';
+        ctx.font = 'bold 20px monospace';
+        ctx.fillText(String(floorNum), iw / 2, ih / 2 + 7);
+    }, 28, 28);
+    const indicator = new THREE.Mesh(
+        new THREE.PlaneGeometry(0.16, 0.16),
+        new THREE.MeshBasicMaterial({ map: indicatorTex })
+    );
+    indicator.position.set(0, cabH + 0.05, 0.13);
+    g.add(indicator);
+
+    const buttonMat = new THREE.MeshStandardMaterial({ color: 0xd8b820, emissive: 0x5a4200, roughness: 0.4 });
+    const button = new THREE.Mesh(jitterGeometry(new THREE.CylinderGeometry(0.025, 0.025, 0.02, 8), 0.004), buttonMat);
+    button.rotation.x = Math.PI / 2;
+    button.position.set(cabW / 2 + 0.12, 1.1, 0.1);
+    g.add(button);
+
+    if (dynamicLightsRemaining > 0) {
+        dynamicLightsRemaining--;
+        const light = new THREE.PointLight(0xff3a1e, 0.5, 1, 2);
+        light.position.set(0, cabH + 0.05, 0.2);
+        g.add(light);
+    }
+
+    // face away from the wall it's mounted on, same convention
+    // buildingFaceDefs/wall-hugging props use elsewhere
+    g.rotation.y = Math.atan2(-w.dx, w.dz);
+    g.position.set(x + w.dx * (hw - 0.05), 0, z + w.dz * (hw - 0.05));
+    scene.add(g);
+}
+
 // ---------- generalized climbable stairs ----------
 // the exact same primitive maybeAddMezzanine uses above (push a rampRun,
 // groundHeightAt does the rest every frame) pulled out into a reusable
@@ -1806,6 +1873,7 @@ function addBuilding(col, row) {
     buildingWallSegments.set(`${row},${col}`, segments);
     overheadCeilings.push({ x, z, hx: hw, hz: hw, y: groundFloorHeight }); // its own roof cap is a real ceiling now -- can't jump through it from inside
     maybeAddMezzanine(x, z, hw, groundFloorHeight, door);
+    maybeAddElevator(x, z, hw, groundFloorHeight, door);
     // denser interior dressing -- guaranteed pieces plus situational junk
     addCrate(x - hw * 0.4, z + hw * 0.3);
     addPottedPlant(x + hw * 0.5, z - hw * 0.4);

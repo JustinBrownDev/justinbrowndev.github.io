@@ -2191,7 +2191,16 @@ for (let r = 0; r < GRID_ROWS; r++) footprintOf.push(new Array(GRID_COLS).fill(n
 // yMax means this building can't block you horizontally at all -- out
 // over the roof/skyline, same as before.
 const buildingWallSegments = new Map();
-const WALL_THICKNESS = 0.12; // nominal -- the visual walls are flat planes with no real thickness
+const WALL_THICKNESS = 0.12;
+
+// diagnostic only -- counts real exterior walls created because a
+// same-site neighbor stops at a lower floor (see floorMax gaps in
+// addBuildingModule). A nonzero count on a map with any multi-floor site
+// is the regression signal for the "internal edges ignored floor count"
+// bug: before the fix this was structurally always 0 (baseGaps had no
+// floor concept at all), even on the exact A=5/B=3-floor same-site
+// adjacency the bug report describes.
+let totalExposedSetbackWalls = 0;
 
 // elevation: mezzanines inside ~30% of building interiors, reached by a
 // straight (always axis-aligned, never an arbitrary angle) run of steps.
@@ -3470,7 +3479,7 @@ function addSiteDebugOverlay(cells, builtModules, voidCell) {
 // real per-side edge classification (see computeCellRect). Returns its
 // own {cx,cz,hwx,hwz} (debug overlay only).
 function addBuildingModule(cell, opts) {
-    const { isPrimary, isWarehouse, floorCount, floorHeight, height, color, material, buildingContext, streetSetbackX, streetSetbackZ, partySetback, voidCell } = opts;
+    const { isPrimary, isWarehouse, floorCount, floorHeight, height, color, material, buildingContext, streetSetbackX, streetSetbackZ, partySetback, voidCell, siteFloorCounts } = opts;
     const { row, col } = cell;
     const { x, z } = cellToWorld(col, row);
 
@@ -3485,16 +3494,31 @@ function addBuildingModule(cell, opts) {
     const streetSides = CELL_SIDE_DEFS.filter(s => kinds[s.key] === 'street');
     const door = streetSides.length ? pick(streetSides) : null;
 
-    // base gaps -- present on EVERY floor: full-width open connections to
-    // same-site neighbors ('internal'), doorway-width openings into a
-    // courtyard void ('courtyard'). 'party' sides get a real, gap-free
-    // wall; 'street' sides get a real wall too, with the primary door
-    // (floor 0 only, handled separately below with the usual lintel).
+    // base gaps -- present on qualifying floors: full-width open
+    // connections to same-site neighbors ('internal'), doorway-width
+    // openings into a courtyard void ('courtyard'). 'party' sides get a
+    // real, gap-free wall; 'street' sides get a real wall too, with the
+    // primary door (floor 0 only, handled separately below with the usual
+    // lintel).
+    //
+    // 'internal' is NOT simply "no wall, ever" -- adjacent modules of the
+    // SAME site can have different floor counts (real setbacks, see
+    // addBuildingSite's floorCountByCellKey). The shared interior
+    // connection is only real on the floors BOTH modules actually have --
+    // above whichever one is shorter, this floor's edge is a genuine
+    // exterior wall, not a hole into open air. `floorMax` on the gap
+    // (checked below, same mechanism `floorOnly` already used for the
+    // fire-escape opening) is exactly that cutoff: the gap only applies
+    // while fl < floorMax, i.e. while the neighbor still has this floor.
     const baseGaps = [];
     for (const s of CELL_SIDE_DEFS) {
         const kind = kinds[s.key];
         if (kind === 'internal') {
-            baseGaps.push(s.dx !== 0 ? { dx: s.dx, dz: 0, lo: cz - hwz, hi: cz + hwz } : { dx: 0, dz: s.dz, lo: cx - hwx, hi: cx + hwx });
+            const neighborKey = `${row + s.dz},${col + s.dx}`;
+            const neighborFloorCount = siteFloorCounts?.get(neighborKey) ?? floorCount;
+            baseGaps.push(s.dx !== 0
+                ? { dx: s.dx, dz: 0, lo: cz - hwz, hi: cz + hwz, floorMax: neighborFloorCount }
+                : { dx: 0, dz: s.dz, lo: cx - hwx, hi: cx + hwx, floorMax: neighborFloorCount });
         } else if (kind === 'courtyard') {
             baseGaps.push(s.dx !== 0 ? { dx: s.dx, dz: 0, lo: cz - 0.8, hi: cz + 0.8 } : { dx: 0, dz: s.dz, lo: cx - 0.8, hi: cx + 0.8 });
         }
@@ -3538,9 +3562,23 @@ function addBuildingModule(cell, opts) {
             : { dx: 0, dz: fireEscapeSide.dz, lo: cx - 0.8, hi: cx + 0.8, floorOnly: 1 });
     }
 
+    // exterior sides exposed on THIS floor specifically because a
+    // same-site neighbor stops below it (floorMax gaps above no longer
+    // apply) -- these are genuine setback walls, not the module's normal
+    // street/party perimeter, and get folded into the facade pass below
+    // (see exposedSetbackSidesByFloor) so they still become real,
+    // decoratable facades instead of a blank untextured box side.
+    const exposedSetbackSidesByFloor = [];
+
     const floors = [];
     for (let fl = 0; fl < floorCount; fl++) {
-        const gaps = baseGaps.filter(g => g.floorOnly === undefined || g.floorOnly === fl);
+        const gaps = baseGaps.filter(g => (g.floorOnly === undefined || g.floorOnly === fl) && (g.floorMax === undefined || fl < g.floorMax));
+        const exposedThisFloor = CELL_SIDE_DEFS.filter(s => {
+            const g = baseGaps.find(bg => bg.dx === s.dx && bg.dz === s.dz && bg.floorMax !== undefined);
+            return g && fl >= g.floorMax;
+        });
+        exposedSetbackSidesByFloor.push(exposedThisFloor);
+        totalExposedSetbackWalls += exposedThisFloor.length;
         const coreDoor = fl === 0 ? door : null;
         const extMat = fl === 0 ? shellMat : material;
         const segments = buildCoreFloor(rect, fl, floorCount, floorHeight, coreDoor, extMat, shellMat, gaps, stairwell);
@@ -3747,6 +3785,26 @@ function addBuildingSite(site) {
         }
     }
 
+    // module plan -- EVERY cell's floor count is decided now, before any
+    // geometry exists, not rolled module-by-module as each one is built.
+    // Two same-site cells can (and often do) end up with different floor
+    // counts -- real setbacks -- and a module needs to know a same-site
+    // NEIGHBOR's actual floor count while building its OWN walls: an
+    // 'internal' edge (see edgeKindForSite) is only a full-width open
+    // connection on the floors BOTH modules actually have. Above whichever
+    // one is shorter, the taller module needs a genuine exterior wall on
+    // that side instead of an opening into empty air (see floorMax on
+    // baseGaps in addBuildingModule below). Iterated in the same `cells`
+    // order the old inline version used, so the rng() sequence -- and
+    // therefore every other seeded roll after this -- is unchanged.
+    const floorCountByCellKey = new Map(); // "row,col" -> floorCount; courtyard void excluded
+    for (const cell of cells) {
+        if (voidCell && cell.row === voidCell.row && cell.col === voidCell.col) continue;
+        const isPrimaryCell = cell.row === primary.row && cell.col === primary.col;
+        const floorCount = isPrimaryCell ? primaryFloorCount : Math.max(1, primaryFloorCount - Math.floor(rng() * 3));
+        floorCountByCellKey.set(`${cell.row},${cell.col}`, floorCount);
+    }
+
     const builtModules = [];
     for (const cell of cells) {
         if (voidCell && cell.row === voidCell.row && cell.col === voidCell.col) {
@@ -3754,10 +3812,11 @@ function addBuildingSite(site) {
             continue;
         }
         const isPrimary = cell.row === primary.row && cell.col === primary.col;
-        const floorCount = isPrimary ? primaryFloorCount : Math.max(1, primaryFloorCount - Math.floor(rng() * 3));
+        const floorCount = floorCountByCellKey.get(`${cell.row},${cell.col}`);
         const rect = addBuildingModule(cell, {
             isPrimary, isWarehouse, floorCount, floorHeight, height: floorCount * floorHeight,
             color, material, buildingContext, streetSetbackX, streetSetbackZ, partySetback, voidCell,
+            siteFloorCounts: floorCountByCellKey,
         });
         builtModules.push(rect);
     }
@@ -5863,6 +5922,7 @@ const propColliders = []; // {x, z, radius, height} — soft obstacles, blended 
     const buildStart = performance.now();
     for (const site of buildingSites) addBuildingSite(site);
     console.log(`[perf] ${buildingSites.length} building sites (${buildingSites.reduce((s, x) => s + x.cells.length, 0)} cells) generated in ${(performance.now() - buildStart).toFixed(0)}ms (${bootElapsed()} total)`);
+    console.log(`[testing] same-site height mismatches: ${totalExposedSetbackWalls} exterior setback wall-floors generated where a same-site neighbor stopped short (floor-aware internal-edge fix -- was structurally always 0 before)`);
 }
 
 mountContentCards(); // real site content claims leftover wall faces
@@ -7257,4 +7317,17 @@ validateTraversal();
 console.log(`[perf] generation complete at ${bootElapsed()} since page start -- starting render loop`);
 bootStatus(`ready (generation took ${bootElapsed()})`);
 window.__boot?.ready();
+
+// generation-inspection hooks -- read-only introspection into the just-
+// generated world for external tooling (headless QA screenshots, the
+// ?debugFacades=1/?debugWalls=1 overlays) plus one setter (freecam is a
+// module-local `let`, so it needs a real setter rather than exposing the
+// primitive) to reposition the camera for that tooling without fighting
+// gravity/collision. Never referenced by any in-game code path.
+window.__debug = {
+    scene, camera, THREE,
+    setFreecam: (v) => { freecamEnabled = v; },
+    buildingWallSegments, buildingSites, footprintOf, siteIdOf, grid,
+};
+
 animate();

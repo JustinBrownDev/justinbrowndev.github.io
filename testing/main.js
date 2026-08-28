@@ -1139,7 +1139,7 @@ function makeTopologyStainTexture() {
 // show an identical grid -- lit/dark is independent per pane, with an
 // occasional AC-unit blotch under the sill, both seeded off the same
 // rng() everything else in the maze draws from.
-function makeWindowGridTexture(height, baseColorHex) {
+function makeWindowGridTexture(height, baseColorHex, litRatio = 0.22) {
     const floorH = randRange(2.4, 3.2);
     const rows = Math.max(3, Math.min(48, Math.round(height / floorH)));
     const cols = 3 + Math.floor(rng() * 3); // 3-5 panes per facet
@@ -1152,7 +1152,7 @@ function makeWindowGridTexture(height, baseColorHex) {
             const py = h - (r + 1) * cellH; // ground floor sits at v=0 (bottom)
             for (let c = 0; c < cols; c++) {
                 const px = c * cellW;
-                const lit = rng() < 0.22;
+                const lit = rng() < litRatio;
                 ctx.fillStyle = lit ? '#ffdf8c' : (rng() < 0.5 ? '#232c38' : '#171d26');
                 ctx.fillRect(px + 2, py + 3, cellW - 4, cellH - 6);
                 if (rng() < 0.08) { // window AC unit -- sits under the sill
@@ -1843,20 +1843,41 @@ function addBuilding(col, row) {
             : randRange(CONFIG.buildings.heightMin, CONFIG.buildings.heightMax);
     const color = pick(CONFIG.buildings.palette);
 
+    // a small per-building seeded context, derived once, that the rest of
+    // this function can actually correlate against instead of every
+    // downstream decision drawing its own independent coin flip. Real
+    // buildings don't roll their upkeep separately per feature -- a
+    // neglected block is neglected everywhere at once (grimier facade,
+    // more indoor junk, more rooftop clutter); a well-off one reads
+    // consistently well-off (more lit windows, more likely to have real
+    // furniture instead of debris). Not threaded out to the surrounding
+    // alley's props -- an alley cell can border more than one building,
+    // so there's no single owner to correlate it against without a
+    // bigger change than this pass is scoped for.
+    const buildingContext = {
+        wealth: rng(), // 0 = poor, 1 = rich
+        maintenance: rng(), // 0 = neglected, 1 = well-kept
+    };
+
     // ~1 in 6 buildings is "stained" with the real elevation-gradient
     // texture instead of a flat facade color -- trench-dark at the base
-    // climbing toward summit-pale near the roofline. Warehouses are too
+    // climbing toward summit-pale near the roofline, more likely the more
+    // neglected this particular building rolled. Warehouses are too
     // short/squat for either treatment to read, so they stay flat-color
     // (matches the existing roof-topper skip below). Everything else
     // defaults to a real per-floor window grid now instead of a bare
     // flat prism -- facades finally have depth at a glance, not just in
     // silhouette.
-    const useStain = !isWarehouse && rng() < 0.16;
+    const useStain = !isWarehouse && rng() < 0.08 + (1 - buildingContext.maintenance) * 0.28;
     const useWindows = !isWarehouse && !useStain;
+    // lit-window ratio: richer buildings read as more occupied/lit at
+    // night, neglected ones darker -- the same window grid, just a
+    // different fraction of its panes glowing.
+    const litRatio = Math.max(0.05, Math.min(0.4, 0.15 + buildingContext.wealth * 0.2 - (1 - buildingContext.maintenance) * 0.08));
     const material = useStain
         ? new THREE.MeshStandardMaterial({ map: makeTopologyStainTexture(), roughness: CONFIG.buildings.roughness })
         : useWindows
-            ? new THREE.MeshStandardMaterial({ map: makeWindowGridTexture(height, color), roughness: CONFIG.buildings.roughness })
+            ? new THREE.MeshStandardMaterial({ map: makeWindowGridTexture(height, color, litRatio), roughness: CONFIG.buildings.roughness })
             : new THREE.MeshStandardMaterial({ color, roughness: CONFIG.buildings.roughness });
 
     // every building has a walkable ground floor now: real solid walls
@@ -1874,14 +1895,19 @@ function addBuilding(col, row) {
     overheadCeilings.push({ x, z, hx: hw, hz: hw, y: groundFloorHeight }); // its own roof cap is a real ceiling now -- can't jump through it from inside
     maybeAddMezzanine(x, z, hw, groundFloorHeight, door);
     maybeAddElevator(x, z, hw, groundFloorHeight, door);
-    // denser interior dressing -- guaranteed pieces plus situational junk
+    // denser interior dressing -- guaranteed pieces plus situational junk,
+    // scaled by this building's own maintenance instead of a flat range:
+    // a neglected building accumulates real debris, a well-kept one
+    // doesn't.
     addCrate(x - hw * 0.4, z + hw * 0.3);
     addPottedPlant(x + hw * 0.5, z - hw * 0.4);
-    scatterJunk('indoor', x, z, 2 + Math.floor(rng() * 3), hw * 0.55);
-    // ~40% of interiors get the one real container -> contents ->
-    // contents-of-contents chain in the whole maze: a table carrying a
-    // bowl carrying fruit, occasionally carrying one more thing still.
-    if (rng() < 0.4) addTableWithClutter(x + randRange(-hw * 0.35, hw * 0.35), z + randRange(-hw * 0.35, hw * 0.35));
+    const indoorJunkCount = 1 + Math.floor((1 - buildingContext.maintenance) * 4 + rng() * 2);
+    scatterJunk('indoor', x, z, indoorJunkCount, hw * 0.55);
+    // real furniture is more likely the better-kept this building rolled
+    // -- the one real container -> contents -> contents-of-contents
+    // chain in the whole maze: a table carrying a bowl carrying fruit,
+    // occasionally carrying one more thing still.
+    if (rng() < 0.2 + buildingContext.maintenance * 0.35) addTableWithClutter(x + randRange(-hw * 0.35, hw * 0.35), z + randRange(-hw * 0.35, hw * 0.35));
 
     const upperHeight = height - groundFloorHeight;
 
@@ -2025,7 +2051,7 @@ function addBuilding(col, row) {
         }
     }
 
-    addRooftopClutter(x, z, footprint, height);
+    addRooftopClutter(x, z, footprint, height, buildingContext.maintenance);
 }
 
 const candidateFaces = []; // faces that skipped a random sign — free for content cards
@@ -2162,15 +2188,20 @@ function addSecurityCamera(x, z, rotY, buildingHeight) {
 
 // rooftop silhouette clutter — antennas, water tanks, AC units — so the
 // skyline reads as inhabited when glimpsed between buildings, not blank.
-function addRooftopClutter(x, z, footprint, height) {
+function addRooftopClutter(x, z, footprint, height, maintenance = 0.5) {
     const metalMat = new THREE.MeshStandardMaterial({ color: 0x2c2c2c, roughness: 0.7, metalness: 0.4 });
+    // a neglected roof accumulates more of all of this over time than a
+    // well-kept one -- one multiplier on every independent roll below,
+    // rather than a separate correlated decision per fixture.
+    const clutterMul = 1 + (1 - maintenance) * 0.7;
+    const chance = (p) => Math.min(0.9, p * clutterMul);
 
-    if (rng() < 0.35) { // antenna
+    if (rng() < chance(0.35)) { // antenna
         const antenna = new THREE.Mesh(jitterGeometry(new THREE.CylinderGeometry(0.03, 0.03, randRange(1.5, 4), 5), 0.01), metalMat);
         antenna.position.set(x + randRange(-footprint / 3, footprint / 3), height + antenna.geometry.parameters.height / 2, z + randRange(-footprint / 3, footprint / 3));
         scene.add(antenna);
     }
-    if (rng() < 0.25) { // water tank
+    if (rng() < chance(0.25)) { // water tank
         const tank = new THREE.Mesh(
             jitterGeometry(new THREE.CylinderGeometry(0.6, 0.6, 1.1, 10), 0.08),
             new THREE.MeshStandardMaterial({ color: 0x3a2c1c, roughness: 0.8 })
@@ -2178,7 +2209,7 @@ function addRooftopClutter(x, z, footprint, height) {
         tank.position.set(x + randRange(-footprint / 4, footprint / 4), height + 0.55, z + randRange(-footprint / 4, footprint / 4));
         scene.add(tank);
     }
-    if (rng() < 0.3) { // AC/HVAC unit
+    if (rng() < chance(0.3)) { // AC/HVAC unit
         const ac = new THREE.Mesh(jitterGeometry(new THREE.BoxGeometry(0.7, 0.4, 0.5), 0.03), metalMat);
         ac.position.set(x + randRange(-footprint / 3, footprint / 3), height + 0.2, z + randRange(-footprint / 3, footprint / 3));
         scene.add(ac);
@@ -2187,7 +2218,7 @@ function addRooftopClutter(x, z, footprint, height) {
     // unit -- a duct run, a mushroom-cap exhaust vent, a standpipe riser,
     // a utility disconnect box. Every real flat roof has some of these;
     // this game's roofs had none of them.
-    if (rng() < 0.3) { // sheet-metal duct run, on short legs
+    if (rng() < chance(0.3)) { // sheet-metal duct run, on short legs
         const ductLen = randRange(1.2, 2.4);
         const duct = new THREE.Mesh(jitterGeometry(new THREE.BoxGeometry(ductLen, 0.35, 0.35), 0.02), metalMat);
         const dx = x + randRange(-footprint / 3, footprint / 3), dz = z + randRange(-footprint / 3, footprint / 3);
@@ -2203,7 +2234,7 @@ function addRooftopClutter(x, z, footprint, height) {
             scene.add(leg);
         }
     }
-    if (rng() < 0.4) { // mushroom-cap exhaust vent
+    if (rng() < chance(0.4)) { // mushroom-cap exhaust vent
         const vent = new THREE.Mesh(jitterGeometry(new THREE.CylinderGeometry(0.14, 0.14, 0.4, 8), 0.01), metalMat);
         const cap = new THREE.Mesh(jitterGeometry(new THREE.ConeGeometry(0.2, 0.12, 8), 0.008), metalMat);
         const vx = x + randRange(-footprint / 3, footprint / 3), vz = z + randRange(-footprint / 3, footprint / 3);
@@ -2211,7 +2242,7 @@ function addRooftopClutter(x, z, footprint, height) {
         cap.position.set(vx, height + 0.46, vz);
         scene.add(vent, cap);
     }
-    if (rng() < 0.2) { // standpipe/sprinkler riser -- a capped pipe with a valve wheel near the base
+    if (rng() < chance(0.2)) { // standpipe/sprinkler riser -- a capped pipe with a valve wheel near the base
         const pipe = new THREE.Mesh(jitterGeometry(new THREE.CylinderGeometry(0.05, 0.05, 0.9, 6), 0.006), metalMat);
         const px = x + randRange(-footprint / 3, footprint / 3), pz = z + randRange(-footprint / 3, footprint / 3);
         pipe.position.set(px, height + 0.45, pz);
@@ -2219,7 +2250,7 @@ function addRooftopClutter(x, z, footprint, height) {
         wheel.position.set(px, height + 0.25, pz);
         scene.add(pipe, wheel);
     }
-    if (rng() < 0.25) { // electrical/utility disconnect box on a short post
+    if (rng() < chance(0.25)) { // electrical/utility disconnect box on a short post
         const post = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.5, 5), metalMat);
         const box = new THREE.Mesh(jitterGeometry(new THREE.BoxGeometry(0.3, 0.4, 0.15), 0.015), new THREE.MeshStandardMaterial({ color: 0x8a8a3a, roughness: 0.6, metalness: 0.3 }));
         const ux = x + randRange(-footprint / 3, footprint / 3), uz = z + randRange(-footprint / 3, footprint / 3);

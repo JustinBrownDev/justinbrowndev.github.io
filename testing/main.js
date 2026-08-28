@@ -901,6 +901,108 @@ function buildOrganicTowerGeometry(hw, height) {
 const footprintOf = [];
 for (let r = 0; r < GRID_ROWS; r++) footprintOf.push(new Array(GRID_COLS).fill(null));
 
+// cells with a walkable interior — excluded from solid collision in
+// resolveCollisions. Simplification, disclosed: the whole cell is
+// walkable rather than true per-wall collision, since the 3-sided shell
+// (built below) only has one real door. A player who deliberately walks
+// at a visually-solid side wall could clip through it; normal play never
+// finds a reason to.
+const interiorCells = new Set();
+
+// a small handful of buildings get a real walkable ground floor instead
+// of being a solid mass all the way down: 3 solid walls + one open
+// doorway + a floor + interior light + a little dressing, with a normal
+// organic tower continuing upward from the roof of this shell. Built
+// from simple double-sided planes rather than the tower loft — cheap,
+// and immune to the winding-order bug that hit the main towers, since
+// side:THREE.DoubleSide renders regardless of triangle winding.
+function addInteriorBuilding(col, row, door) {
+    interiorCells.add(`${row},${col}`);
+    const { x, z } = cellToWorld(col, row);
+    const hw = (CELL - CONFIG.maze.buildingMarginMin) / 2; // fixed, roomier footprint for these
+    footprintOf[row][col] = hw * 2;
+    const groundFloorHeight = 3.2;
+    const totalHeight = randRange(CONFIG.buildings.heightMin, CONFIG.buildings.heightMax);
+    const shellMat = new THREE.MeshStandardMaterial({ color: pick(CONFIG.buildings.palette), roughness: 0.9, side: THREE.DoubleSide });
+
+    const doorWidth = 1.5, doorHeight = 2.3;
+    const faces = [
+        { dx: 0, dz: -1, rotY: 0 }, { dx: 0, dz: 1, rotY: Math.PI },
+        { dx: -1, dz: 0, rotY: -Math.PI / 2 }, { dx: 1, dz: 0, rotY: Math.PI / 2 },
+    ];
+    for (const f of faces) {
+        const isDoorWall = f.dx === door.dx && f.dz === door.dz;
+        const wallLen = hw * 2;
+        const cx = x + f.dx * hw, cz = z + f.dz * hw;
+        if (!isDoorWall) {
+            const wall = new THREE.Mesh(new THREE.PlaneGeometry(wallLen, groundFloorHeight), shellMat);
+            wall.position.set(cx, groundFloorHeight / 2, cz);
+            wall.rotation.y = f.rotY;
+            scene.add(wall);
+        } else {
+            const jambWidth = (wallLen - doorWidth) / 2;
+            for (const side of [-1, 1]) {
+                const jamb = new THREE.Mesh(new THREE.PlaneGeometry(jambWidth, groundFloorHeight), shellMat);
+                const along = side * (doorWidth / 2 + jambWidth / 2);
+                jamb.position.set(
+                    cx + (f.dz !== 0 ? along : 0),
+                    groundFloorHeight / 2,
+                    cz + (f.dx !== 0 ? along : 0)
+                );
+                jamb.rotation.y = f.rotY;
+                scene.add(jamb);
+            }
+            const lintel = new THREE.Mesh(new THREE.PlaneGeometry(doorWidth, groundFloorHeight - doorHeight), shellMat);
+            lintel.position.set(cx, doorHeight + (groundFloorHeight - doorHeight) / 2, cz);
+            lintel.rotation.y = f.rotY;
+            scene.add(lintel);
+        }
+    }
+
+    // roof deck for the tower above to stand on, plus the tower itself
+    const roofCap = new THREE.Mesh(new THREE.PlaneGeometry(hw * 2, hw * 2), shellMat);
+    roofCap.rotation.x = -Math.PI / 2;
+    roofCap.position.set(x, groundFloorHeight, z);
+    scene.add(roofCap);
+    const tower = new THREE.Mesh(buildOrganicTowerGeometry(hw, totalHeight - groundFloorHeight), shellMat);
+    tower.position.set(x, groundFloorHeight, z);
+    scene.add(tower);
+
+    // interior: distinct floor, warm light, a little dressing
+    const floorTex = makePixelTexture((ctx, w, h) => {
+        ctx.fillStyle = '#6a5030';
+        ctx.fillRect(0, 0, w, h);
+        ctx.strokeStyle = '#4a3520';
+        for (let i = 0; i < w; i += 10) { ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, h); ctx.stroke(); }
+    }, 64, 64);
+    const floor = new THREE.Mesh(
+        new THREE.PlaneGeometry(hw * 1.9, hw * 1.9),
+        new THREE.MeshStandardMaterial({ map: floorTex, roughness: 0.8 })
+    );
+    floor.rotation.x = -Math.PI / 2;
+    floor.position.set(x, 0.02, z);
+    scene.add(floor);
+
+    if (dynamicLightsRemaining > 0) {
+        dynamicLightsRemaining--;
+        const light = new THREE.PointLight(0xffe9b0, 3, groundFloorHeight * 2.2, 2);
+        light.position.set(x, groundFloorHeight * 0.7, z);
+        scene.add(light);
+    }
+    addCrate(x - hw * 0.4, z + hw * 0.3);
+    addPottedPlant(x + hw * 0.5, z - hw * 0.4);
+
+    // curb skirt, same as every other building
+    const curb = CONFIG.buildings.curb;
+    const skirt = new THREE.Mesh(
+        skirtBoxGeo,
+        new THREE.MeshStandardMaterial({ color: curb.color, roughness: 1 })
+    );
+    skirt.scale.set(hw * 2 + curb.overhang, curb.height, hw * 2 + curb.overhang);
+    skirt.position.set(x, curb.height / 2, z);
+    scene.add(skirt);
+}
+
 function addBuilding(col, row) {
     const { x, z } = cellToWorld(col, row);
     const margin = randRange(CONFIG.maze.buildingMarginMin, CONFIG.maze.buildingMarginMax);
@@ -1986,9 +2088,30 @@ const PROP_BUILDERS = {
 
 const propColliders = []; // {x, z, radius} — soft obstacles, blended into collision pass
 
+// pick a small number of buildings to get a walkable ground floor
+// instead of being a solid mass — needs at least one open neighbor to
+// hang a door on.
+const interiorCandidates = [];
+for (let r = 1; r < GRID_ROWS - 1; r++) {
+    for (let c = 1; c < GRID_COLS - 1; c++) {
+        if (!grid[r][c]) continue;
+        const opens = [[0, -1], [0, 1], [-1, 0], [1, 0]].filter(([dc, dr]) => grid[r + dr]?.[c + dc] === false);
+        if (opens.length) interiorCandidates.push({ c, r, dir: pick(opens) });
+    }
+}
+const interiorPicks = new Set(
+    [...interiorCandidates].sort(() => rng() - 0.5).slice(0, 4).map(p => `${p.r},${p.c}`)
+);
+
 for (let r = 0; r < GRID_ROWS; r++) {
     for (let c = 0; c < GRID_COLS; c++) {
-        if (grid[r][c]) addBuilding(c, r);
+        if (!grid[r][c]) continue;
+        const picked = interiorCandidates.find(p => p.r === r && p.c === c && interiorPicks.has(`${r},${c}`));
+        if (picked) {
+            addInteriorBuilding(c, r, { dx: picked.dir[0], dz: picked.dir[1] });
+        } else {
+            addBuilding(c, r);
+        }
     }
 }
 
@@ -2329,6 +2452,7 @@ function resolveCollisions(position) {
         for (let dc = -1; dc <= 1; dc++) {
             const c = col + dc, r = row + dr;
             if (!grid[r]?.[c]) continue; // out of bounds or open cell — nothing solid
+            if (interiorCells.has(`${r},${c}`)) continue; // walkable ground floor, see addInteriorBuilding
 
             const { x: cx, z: cz } = cellToWorld(c, r);
             const footprint = footprintOf[r]?.[c] ?? (CELL - CONFIG.maze.buildingMarginMin);

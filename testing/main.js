@@ -136,6 +136,7 @@ const CONFIG = {
             propDensity: 2.3, // turned up another notch -- "way more everything" pass
             skyJunkCount: 5200, // airborne clutter -- pure overdraw, so this is the dial that's safe to push hardest
             floatingPlatformClusters: 34, // real colliders + individual meshes, unlike sky junk -- kept modest on purpose
+            maxEnterableFloors: 4, // real, walkable floors per building before the decorative tower takes over
         },
         mobile: {
             maxPixelRatio: 1.5,
@@ -146,6 +147,7 @@ const CONFIG = {
             propDensity: 1.35,
             skyJunkCount: 1300,
             floatingPlatformClusters: 16,
+            maxEnterableFloors: 3,
         },
         // auto-selected on low core-count/low-memory machines (touch or
         // not -- see detectWeakGPU below), or forced with ?quality=low.
@@ -160,6 +162,7 @@ const CONFIG = {
             propDensity: 0.3,
             skyJunkCount: 140, // token amount -- the "buried in noise" read still needs to exist, just barely
             floatingPlatformClusters: 4,
+            maxEnterableFloors: 2,
         },
     },
 
@@ -1607,13 +1610,19 @@ function groundHeightAt(x, z, feetY = Infinity) {
 }
 
 // a single interior partition wall with one doorway gap -- the building
-// block buildGroundFloorShell's room-layout pass below uses to carve a
-// single room into several. axis='x' means a wall of constant x (its
-// normal points along x), spanning z across [spanA, spanB]; axis='z' is
-// the same thing rotated 90 degrees. Returns collision segments the same
-// shape buildingWallSegments already expects, so no other code needs to
-// know interior walls exist at all.
-function addInteriorWall(axis, fixedCoord, spanA, spanB, doorFrac, height, mat, doorWidth) {
+// block the room-layout pass below uses to carve a single floor into
+// several rooms. axis='x' means a wall of constant x (its normal points
+// along x), spanning z across [spanA, spanB]; axis='z' is the same thing
+// rotated 90 degrees. yBase lets the same wall (same XZ layout) be redrawn
+// at a different floor's height -- every floor in a building shares one
+// layout (see buildFloorLayout) so the collision segments below stay
+// correct no matter which floor's Y the player is actually at (collision
+// is Y-independent -- see resolveCollisions -- so every floor MUST agree
+// on where the walls are, or an upper floor's wall would silently block
+// movement on a lower floor with a different layout). Returns collision
+// segments the same shape buildingWallSegments already expects, so no
+// other code needs to know interior walls exist at all.
+function addInteriorWall(axis, fixedCoord, spanA, spanB, doorFrac, height, mat, doorWidth, yBase = 0) {
     const spanLen = spanB - spanA;
     const doorCenter = spanA + spanLen * doorFrac;
     const doorLo = doorCenter - doorWidth / 2, doorHi = doorCenter + doorWidth / 2;
@@ -1623,11 +1632,11 @@ function addInteriorWall(axis, fixedCoord, spanA, spanB, doorFrac, height, mat, 
         const len = a1 - a0, mid = (a0 + a1) / 2;
         const wall = new THREE.Mesh(new THREE.PlaneGeometry(len, height), mat);
         if (axis === 'x') {
-            wall.position.set(fixedCoord, height / 2, mid);
+            wall.position.set(fixedCoord, yBase + height / 2, mid);
             wall.rotation.y = Math.PI / 2;
             segs.push({ x1: fixedCoord, z1: a0, x2: fixedCoord, z2: a1 });
         } else {
-            wall.position.set(mid, height / 2, fixedCoord);
+            wall.position.set(mid, yBase + height / 2, fixedCoord);
             segs.push({ x1: a0, z1: fixedCoord, x2: a1, z2: fixedCoord });
         }
         scene.add(wall);
@@ -1637,11 +1646,14 @@ function addInteriorWall(axis, fixedCoord, spanA, spanB, doorFrac, height, mat, 
     return segs;
 }
 
-// builds a walkable ground-floor shell: solid walls with exactly one
-// real doorway (fully solid on all 4 sides if this cell happens to have
-// no open neighbor to put a door toward -- rare, and correctly means
-// "unreachable, so no door needed"). Returns wall segments for collision.
-function buildGroundFloorShell(x, z, hw, groundFloorHeight, door, shellMat) {
+// the 4 exterior walls of one floor -- solid on all sides, or one real
+// doorway toward `door` (fully solid if door is null: either this cell
+// has no open neighbor to put a door toward, or this is an upper floor,
+// which never gets an exterior door at all -- only the interior stairwell
+// reaches it). Parameterized by y0/floorHeight so the exact same call
+// builds any floor of a multi-floor building. Returns wall segments for
+// collision.
+function buildExteriorPerimeter(x, z, hw, y0, floorHeight, door, mat) {
     const doorWidth = 1.5, doorHeight = 2.3;
     const faces = [
         { dx: 0, dz: -1, rotY: 0 }, { dx: 0, dz: 1, rotY: Math.PI },
@@ -1655,8 +1667,8 @@ function buildGroundFloorShell(x, z, hw, groundFloorHeight, door, shellMat) {
         const ex = f.dz !== 0 ? hw : 0, ez = f.dx !== 0 ? hw : 0; // tangent half-extent
 
         if (!isDoorWall) {
-            const wall = new THREE.Mesh(new THREE.PlaneGeometry(wallLen, groundFloorHeight), shellMat);
-            wall.position.set(cx, groundFloorHeight / 2, cz);
+            const wall = new THREE.Mesh(new THREE.PlaneGeometry(wallLen, floorHeight), mat);
+            wall.position.set(cx, y0 + floorHeight / 2, cz);
             wall.rotation.y = f.rotY;
             scene.add(wall);
             segments.push({ x1: cx - ex, z1: cz - ez, x2: cx + ex, z2: cz + ez });
@@ -1664,30 +1676,33 @@ function buildGroundFloorShell(x, z, hw, groundFloorHeight, door, shellMat) {
             const jambWidth = (wallLen - doorWidth) / 2;
             const jex = f.dz !== 0 ? jambWidth / 2 : 0, jez = f.dx !== 0 ? jambWidth / 2 : 0;
             for (const side of [-1, 1]) {
-                const jamb = new THREE.Mesh(new THREE.PlaneGeometry(jambWidth, groundFloorHeight), shellMat);
+                const jamb = new THREE.Mesh(new THREE.PlaneGeometry(jambWidth, floorHeight), mat);
                 const along = side * (doorWidth / 2 + jambWidth / 2);
                 const jx = cx + (f.dz !== 0 ? along : 0);
                 const jz = cz + (f.dx !== 0 ? along : 0);
-                jamb.position.set(jx, groundFloorHeight / 2, jz);
+                jamb.position.set(jx, y0 + floorHeight / 2, jz);
                 jamb.rotation.y = f.rotY;
                 scene.add(jamb);
                 segments.push({ x1: jx - jex, z1: jz - jez, x2: jx + jex, z2: jz + jez });
             }
-            const lintel = new THREE.Mesh(new THREE.PlaneGeometry(doorWidth, groundFloorHeight - doorHeight), shellMat);
-            lintel.position.set(cx, doorHeight + (groundFloorHeight - doorHeight) / 2, cz);
+            const lintel = new THREE.Mesh(new THREE.PlaneGeometry(doorWidth, floorHeight - doorHeight), mat);
+            lintel.position.set(cx, y0 + doorHeight + (floorHeight - doorHeight) / 2, cz);
             lintel.rotation.y = f.rotY;
             scene.add(lintel);
             // lintel sits above head height -- the gap below it stays open, no segment there
         }
     }
+    return segments;
+}
 
-    // ---- interior floor plan: subdivide the one room into 2-4 real,
-    // interconnected rooms instead of a single flat rectangle. Every
-    // partition's doorway is carved to open onto whatever's already
-    // reachable from the exterior door, so connectivity falls out of how
-    // each wall is built rather than needing a separate reachability
-    // check -- fine if the resulting rooms come out oddly shaped or
-    // shallow, real floor plans aren't clean rectangles either.
+// computes (but doesn't draw) the interior partition-wall layout for one
+// floor -- 2-4 rooms, every doorway carved to open onto whatever's
+// already reachable from the exterior door, so connectivity falls out of
+// construction order instead of needing a graph search. Every floor in a
+// building reuses the exact same layout (see the big comment on
+// addInteriorWall for why that's load-bearing, not just convenient) --
+// this is computed once per building and handed to every floor.
+function buildFloorLayout(x, z, hw, door) {
     const awayX = door ? -door.dx : 0;
     const awayZ = door ? -door.dz : -1;
     const depthAxis = awayX !== 0 ? 'x' : 'z';
@@ -1697,50 +1712,113 @@ function buildGroundFloorShell(x, z, hw, groundFloorHeight, door, shellMat) {
     // world coordinate along the depth axis at fraction f, from the door
     // wall (f=0) to the far wall (f=1)
     const depthAt = (f) => depthCenter + depthAway * hw * (2 * f - 1);
-    const doorInteriorWidth = 1.3;
 
     // 'single' (no interior walls at all) used to be in this pool -- at
     // 20% odds, it read as "most buildings are still just one room."
-    // Dropped entirely: every building's ground floor is now guaranteed
-    // to be subdivided.
+    // Dropped entirely: every floor is now guaranteed to be subdivided.
     const layout = weightedPick({ twoRoom: 5, threeRow: 4, lshape: 3 });
+    const walls = []; // {axis, fixedCoord, spanA, spanB, doorFrac}
     if (layout === 'twoRoom') {
         const f1 = randRange(0.38, 0.6);
-        segments.push(...addInteriorWall(
-            depthAxis, depthAt(f1), widthCenter - hw, widthCenter + hw,
-            randRange(0.25, 0.75), groundFloorHeight, shellMat, doorInteriorWidth
-        ));
+        walls.push({ axis: depthAxis, fixedCoord: depthAt(f1), spanA: widthCenter - hw, spanB: widthCenter + hw, doorFrac: randRange(0.25, 0.75) });
     } else if (layout === 'threeRow') {
         const f1 = randRange(0.28, 0.4), f2 = randRange(0.62, 0.75);
-        segments.push(...addInteriorWall(depthAxis, depthAt(f1), widthCenter - hw, widthCenter + hw, randRange(0.2, 0.45), groundFloorHeight, shellMat, doorInteriorWidth));
-        segments.push(...addInteriorWall(depthAxis, depthAt(f2), widthCenter - hw, widthCenter + hw, randRange(0.55, 0.8), groundFloorHeight, shellMat, doorInteriorWidth));
+        walls.push({ axis: depthAxis, fixedCoord: depthAt(f1), spanA: widthCenter - hw, spanB: widthCenter + hw, doorFrac: randRange(0.2, 0.45) });
+        walls.push({ axis: depthAxis, fixedCoord: depthAt(f2), spanA: widthCenter - hw, spanB: widthCenter + hw, doorFrac: randRange(0.55, 0.8) });
     } else if (layout === 'lshape') {
         const f1 = randRange(0.42, 0.58);
         // front/back divider -- doorway forced to the low-width side so
         // the room it opens into is always the same one the 2nd wall
         // (below) also opens into, chaining front -> side A -> side B
         // instead of risking a room only reachable through a wall.
-        segments.push(...addInteriorWall(depthAxis, depthAt(f1), widthCenter - hw, widthCenter + hw, randRange(0.18, 0.38), groundFloorHeight, shellMat, doorInteriorWidth));
-        // splits the back region across the width axis
+        walls.push({ axis: depthAxis, fixedCoord: depthAt(f1), spanA: widthCenter - hw, spanB: widthCenter + hw, doorFrac: randRange(0.18, 0.38) });
         const widthAxis = depthAxis === 'x' ? 'z' : 'x';
         const backLo = Math.min(depthAt(f1), depthAt(1)), backHi = Math.max(depthAt(f1), depthAt(1));
-        segments.push(...addInteriorWall(widthAxis, widthCenter, backLo, backHi, randRange(0.3, 0.7), groundFloorHeight, shellMat, doorInteriorWidth));
+        walls.push({ axis: widthAxis, fixedCoord: widthCenter, spanA: backLo, spanB: backHi, doorFrac: randRange(0.3, 0.7) });
     }
+    return { walls, depthAxis, depthAt, widthCenter };
+}
+
+// draws buildFloorLayout's partition walls at one floor's height. Pushes
+// collision segments only when pushSegments is true -- every floor draws
+// the same walls (visually), but since collision is Y-independent they
+// only need to be registered once (see addInteriorWall's comment).
+function drawFloorLayout(layoutWalls, floorHeight, mat, yBase, pushSegments, outSegments) {
+    const doorInteriorWidth = 1.3;
+    for (const w of layoutWalls) {
+        const segs = addInteriorWall(w.axis, w.fixedCoord, w.spanA, w.spanB, w.doorFrac, floorHeight, mat, doorInteriorWidth, yBase);
+        if (pushSegments) outSegments.push(...segs);
+    }
+}
+
+// the footprint minus a swSize x swSize corner square, as an exact L
+// shape (2 axis-aligned rects) -- used for both a floor's ceiling (the
+// hole a stair rises through) and the floor above it (the hole that
+// stair rises INTO). {x,z,hx,hz} matches what overheadCeilings and
+// elevatedPlatforms already expect.
+function computeNotchedRects(x, z, hw, swX, swZ, swHalf, cornerSignX, cornerSignZ) {
+    const ax0 = cornerSignX === 1 ? x - hw : swX + swHalf;
+    const ax1 = cornerSignX === 1 ? swX - swHalf : x + hw;
+    const rectA = { x: (ax0 + ax1) / 2, z, hx: (ax1 - ax0) / 2, hz: hw };
+    const bz0 = cornerSignZ === 1 ? z - hw : swZ + swHalf;
+    const bz1 = cornerSignZ === 1 ? swZ - swHalf : z + hw;
+    const rectB = { x: swX, z: (bz0 + bz1) / 2, hx: swHalf, hz: (bz1 - bz0) / 2 };
+    return [rectA, rectB];
+}
+
+function addHorizontalPlane(rect, y, mat) {
+    if (rect.hx < 0.05 || rect.hz < 0.05) return;
+    const plane = new THREE.Mesh(new THREE.PlaneGeometry(rect.hx * 2, rect.hz * 2), mat);
+    plane.rotation.x = -Math.PI / 2;
+    plane.position.set(rect.x, y, rect.z);
+    scene.add(plane);
+}
+
+// builds a walkable ground floor: solid walls with exactly one real
+// doorway (see buildExteriorPerimeter), the shared room layout, and --
+// if this building has more than one enterable floor -- a stairwell shaft
+// in a fixed corner that every floor above reuses. Returns everything the
+// caller needs to keep building the floors above: wall segments (for
+// collision), the room layout (so upper floors repeat it), and the
+// stairwell's position (so upper floors know where to leave the hole).
+function buildGroundFloorShell(x, z, hw, floorHeight, door, shellMat, hasUpperFloors) {
+    const segments = buildExteriorPerimeter(x, z, hw, 0, floorHeight, door, shellMat);
+    const { walls } = buildFloorLayout(x, z, hw, door);
+    drawFloorLayout(walls, floorHeight, shellMat, 0, true, segments);
+
     // a 2nd light for anything past a single room -- one central light
     // used to leave a back room dark once there was a wall in the way.
-    if (layout !== 'single' && dynamicLightsRemaining > 0) {
+    if (dynamicLightsRemaining > 0) {
         dynamicLightsRemaining--;
-        const backX = depthAxis === 'x' ? depthAt(0.82) : widthCenter;
-        const backZ = depthAxis === 'x' ? widthCenter : depthAt(0.82);
-        const light2 = new THREE.PointLight(0xffe9b0, 2.2, groundFloorHeight * 2, 2);
-        light2.position.set(backX, groundFloorHeight * 0.7, backZ);
+        const light2 = new THREE.PointLight(0xffe9b0, 2.2, floorHeight * 2, 2);
+        light2.position.set(x + randRange(-hw * 0.3, hw * 0.3), floorHeight * 0.7, z + randRange(-hw * 0.3, hw * 0.3));
         scene.add(light2);
     }
 
-    const roofCap = new THREE.Mesh(new THREE.PlaneGeometry(hw * 2, hw * 2), shellMat);
-    roofCap.rotation.x = -Math.PI / 2;
-    roofCap.position.set(x, groundFloorHeight, z);
-    scene.add(roofCap);
+    // the stairwell: a fixed corner of the footprint, reused by every
+    // floor above so the vertical shaft actually lines up. Two short
+    // walls close off the corner (the other two sides are already the
+    // real exterior walls); one of them gets a doorway.
+    let stairwell = null;
+    if (hasUpperFloors) {
+        const swHalf = 0.9;
+        const cornerSignX = rng() < 0.5 ? -1 : 1, cornerSignZ = rng() < 0.5 ? -1 : 1;
+        const swX = x + cornerSignX * (hw - swHalf - 0.15);
+        const swZ = z + cornerSignZ * (hw - swHalf - 0.15);
+        stairwell = { swX, swZ, swHalf, cornerSignX, cornerSignZ };
+        segments.push(...addInteriorWall('x', swX - cornerSignX * swHalf, swZ - swHalf, swZ + swHalf, 0.5, floorHeight, shellMat, 1.0, 0));
+        segments.push(...addInteriorWall('z', swZ - cornerSignZ * swHalf, swX - swHalf, swX + swHalf, 0, floorHeight, shellMat, 0, 0));
+        // the flight from ground up to floor 1, inside the shaft
+        addStairFlight('x', swX - cornerSignX * swHalf, swX + cornerSignX * swHalf, swZ, 0, floorHeight, { width: swHalf * 1.3 });
+
+        const [rectA, rectB] = computeNotchedRects(x, z, hw, swX, swZ, swHalf, cornerSignX, cornerSignZ);
+        overheadCeilings.push({ ...rectA, y: floorHeight }, { ...rectB, y: floorHeight });
+        addHorizontalPlane(rectA, floorHeight, shellMat);
+        addHorizontalPlane(rectB, floorHeight, shellMat);
+    } else {
+        overheadCeilings.push({ x, z, hx: hw, hz: hw, y: floorHeight });
+        addHorizontalPlane({ x, z, hx: hw, hz: hw }, floorHeight, shellMat);
+    }
 
     const floorTex = makePixelTexture((ctx, w, h) => {
         ctx.fillStyle = '#6a5030';
@@ -1758,11 +1836,57 @@ function buildGroundFloorShell(x, z, hw, groundFloorHeight, door, shellMat) {
 
     if (dynamicLightsRemaining > 0) {
         dynamicLightsRemaining--;
-        const light = new THREE.PointLight(0xffe9b0, 3, groundFloorHeight * 2.2, 2);
-        light.position.set(x, groundFloorHeight * 0.7, z);
+        const light = new THREE.PointLight(0xffe9b0, 3, floorHeight * 2.2, 2);
+        light.position.set(x, floorHeight * 0.7, z);
         scene.add(light);
     }
-    return segments;
+    return { segments, walls, stairwell };
+}
+
+// one real floor above ground level: a fully solid exterior (textured to
+// match the tower's own facade material -- no exterior door, the
+// stairwell is the only way up here), the same room layout as every other
+// floor in this building, and -- if there's a floor above this one -- the
+// same stairwell shaft continuing up through a notched ceiling, or a
+// full, solid ceiling if this is the top enterable floor. Either way this
+// floor's own floor surface is notched where the stair below rises into
+// it (every upper floor is reached that way, never through its own
+// exterior wall).
+function buildUpperFloor(x, z, hw, y0, floorHeight, extMaterial, shellMat, layoutWalls, stairwell, hasStairUp) {
+    buildExteriorPerimeter(x, z, hw, y0, floorHeight, null, extMaterial);
+    drawFloorLayout(layoutWalls, floorHeight, shellMat, y0, false, []);
+
+    if (!stairwell) return; // defensive -- addBuilding never calls this without one
+    const { swX, swZ, swHalf, cornerSignX, cornerSignZ } = stairwell;
+    const [rectA, rectB] = computeNotchedRects(x, z, hw, swX, swZ, swHalf, cornerSignX, cornerSignZ);
+
+    // this floor's own walkable surface -- notched, since it's reached
+    // through the hole in the floor below rather than any wall.
+    elevatedPlatforms.push({ ...rectA, y: y0 }, { ...rectB, y: y0 });
+    addHorizontalPlane(rectA, y0 + 0.02, shellMat);
+    addHorizontalPlane(rectB, y0 + 0.02, shellMat);
+
+    // stairwell framing, redrawn at this floor's height (visual only --
+    // the collision segments were already registered on the ground floor)
+    addInteriorWall('x', swX - cornerSignX * swHalf, swZ - swHalf, swZ + swHalf, 0.5, floorHeight, shellMat, 1.0, y0);
+    addInteriorWall('z', swZ - cornerSignZ * swHalf, swX - swHalf, swX + swHalf, 0, floorHeight, shellMat, 0, y0);
+
+    if (hasStairUp) {
+        addStairFlight('x', swX - cornerSignX * swHalf, swX + cornerSignX * swHalf, swZ, y0, y0 + floorHeight, { width: swHalf * 1.3 });
+        overheadCeilings.push({ ...rectA, y: y0 + floorHeight }, { ...rectB, y: y0 + floorHeight });
+        addHorizontalPlane(rectA, y0 + floorHeight, shellMat);
+        addHorizontalPlane(rectB, y0 + floorHeight, shellMat);
+    } else {
+        overheadCeilings.push({ x, z, hx: hw, hz: hw, y: y0 + floorHeight });
+        addHorizontalPlane({ x, z, hx: hw, hz: hw }, y0 + floorHeight, shellMat);
+    }
+
+    if (dynamicLightsRemaining > 0) {
+        dynamicLightsRemaining--;
+        const light = new THREE.PointLight(0xffe9b0, 2.4, floorHeight * 2.2, 2);
+        light.position.set(x + randRange(-hw * 0.25, hw * 0.25), y0 + floorHeight * 0.6, z + randRange(-hw * 0.25, hw * 0.25));
+        scene.add(light);
+    }
 }
 
 // ~30% of interiors get a raised mezzanine + a straight run of steps --
@@ -2154,25 +2278,36 @@ function addBuilding(col, row) {
             ? new THREE.MeshStandardMaterial({ map: makeWindowGridTexture(height, color, litRatio), roughness: CONFIG.buildings.roughness })
             : new THREE.MeshStandardMaterial({ color, roughness: CONFIG.buildings.roughness });
 
-    // every building has a walkable ground floor now: real solid walls
-    // (they actually block), one real doorway toward an open neighbor if
-    // it has one, a floor, light, dressing, and -- ~30% of the time -- a
-    // raised mezzanine reached by real steps. The tower/archetype above
-    // starts from the roof of this shell, not from the ground.
+    // every building is now a real, multi-floor structure: K stacked
+    // floors (K from QUALITY.maxEnterableFloors, clamped to what the
+    // building's actual height can fit), each with real solid exterior
+    // walls, the same interconnected room layout repeated floor to floor,
+    // and a fixed-corner stairwell shaft connecting all of them -- doors
+    // between rooms on a floor, a real stair between floors. This is what
+    // constructs the building's lower mass now, not a separate decorative
+    // shell wrapped around one ground-floor room; the tapered/twisted
+    // tower below only picks up above the topmost enterable floor, purely
+    // for skyline silhouette. (That split also fixes wall props sinking
+    // into/clipping through the facade -- they anchor to this constant-hw
+    // flat wall, which the tapered tower above no longer pretends to be.)
     const openDirs = [{ dx: 0, dz: -1 }, { dx: 0, dz: 1 }, { dx: -1, dz: 0 }, { dx: 1, dz: 0 }]
         .filter(d => grid[row + d.dz]?.[col + d.dx] === false);
     const door = openDirs.length ? pick(openDirs) : null;
-    const groundFloorHeight = Math.min(3.2, height * 0.35);
+    const floorHeight = 3.0;
+    const maxEnterableFloors = isWarehouse ? Math.min(QUALITY.maxEnterableFloors, 2) : QUALITY.maxEnterableFloors;
+    const floorCount = Math.max(1, Math.min(maxEnterableFloors, Math.floor(height / floorHeight)));
+    const enterHeight = floorCount * floorHeight;
     const shellMat = new THREE.MeshStandardMaterial({ color, roughness: 0.9, side: THREE.DoubleSide });
-    const segments = buildGroundFloorShell(x, z, hw, groundFloorHeight, door, shellMat);
-    buildingWallSegments.set(`${row},${col}`, segments);
-    overheadCeilings.push({ x, z, hx: hw, hz: hw, y: groundFloorHeight }); // its own roof cap is a real ceiling now -- can't jump through it from inside
-    maybeAddMezzanine(x, z, hw, groundFloorHeight, door);
-    maybeAddElevator(x, z, hw, groundFloorHeight, door);
+    const ground = buildGroundFloorShell(x, z, hw, floorHeight, door, shellMat, floorCount > 1);
+    buildingWallSegments.set(`${row},${col}`, ground.segments);
+    maybeAddMezzanine(x, z, hw, floorHeight, door);
+    maybeAddElevator(x, z, hw, floorHeight, door);
     // denser interior dressing -- guaranteed pieces plus situational junk,
     // scaled by this building's own maintenance instead of a flat range:
     // a neglected building accumulates real debris, a well-kept one
-    // doesn't.
+    // doesn't. Ground floor only -- upper floors' prop-placement helpers
+    // all assume a ground-level (y=0) baseline, so furniture up there is
+    // a follow-up rather than part of this pass.
     addCrate(x - hw * 0.4, z + hw * 0.3);
     addPottedPlant(x + hw * 0.5, z - hw * 0.4);
     const indoorJunkCount = 2 + Math.floor((1 - buildingContext.maintenance) * 5 + rng() * 3);
@@ -2183,7 +2318,18 @@ function addBuilding(col, row) {
     // occasionally carrying one more thing still.
     if (rng() < 0.2 + buildingContext.maintenance * 0.35) addTableWithClutter(x + randRange(-hw * 0.35, hw * 0.35), z + randRange(-hw * 0.35, hw * 0.35));
 
-    const upperHeight = height - groundFloorHeight;
+    // real material on upper floors' exterior -- same window/stain/flat
+    // facade the tower above uses, so the two read as one continuous
+    // building rather than a seam where the "real" part stops.
+    for (let fl = 1; fl < floorCount; fl++) {
+        buildUpperFloor(x, z, hw, fl * floorHeight, floorHeight, material, shellMat, ground.walls, ground.stairwell, fl < floorCount - 1);
+    }
+
+    // whatever height is left above the topmost enterable floor -- for a
+    // normal tower this is still nearly the whole building (enterHeight
+    // tops out around 9-12), purely decorative skyline exactly like
+    // before. For a warehouse it's a short cap, occasionally ~0.
+    const upperHeight = Math.max(0, height - enterHeight);
 
     // ~30% of buildings are two-stage setback towers instead of a single
     // prism -- a wider base with a narrower tower rising off it, like a
@@ -2192,17 +2338,22 @@ function addBuilding(col, row) {
     // own top cap doubles as the roof deck the upper stage stands on,
     // and the upper stage's un-capped bottom is never seen from ground
     // level. Keeps the whole scene from reading as one repeated formula.
-    const archetype = isWarehouse ? 'warehouse' : weightedPick({ single: 5, setback: 3, clustered: 2 });
+    const archetype = upperHeight < 0.5 ? 'none' : isWarehouse ? 'warehouse' : weightedPick({ single: 5, setback: 3, clustered: 2 });
 
-    if (archetype === 'setback') {
+    if (archetype === 'none') {
+        // nothing left above the real floors -- the topmost floor's own
+        // ceiling IS the roof, so it needs to be a real walkable surface
+        // from above too, the same way a warehouse roof always was.
+        elevatedPlatforms.push({ x, z, hx: hw, hz: hw, y: enterHeight });
+    } else if (archetype === 'setback') {
         const baseHeight = upperHeight * randRange(0.4, 0.7);
         const topHeight = upperHeight - baseHeight;
         const upperHw = hw * randRange(0.5, 0.8);
         const base = new THREE.Mesh(buildOrganicTowerGeometry(hw, baseHeight), material);
-        base.position.set(x, groundFloorHeight, z);
+        base.position.set(x, enterHeight, z);
         scene.add(base);
         const upper = new THREE.Mesh(buildOrganicTowerGeometry(upperHw, topHeight), material);
-        upper.position.set(x, groundFloorHeight + baseHeight, z);
+        upper.position.set(x, enterHeight + baseHeight, z);
         scene.add(upper);
     } else if (archetype === 'clustered') {
         // 2-3 independent thin towers sharing one footprint and a shared
@@ -2210,7 +2361,7 @@ function addBuilding(col, row) {
         // silhouette. The base block still fills the collision footprint.
         const baseHeight = upperHeight * randRange(0.15, 0.3);
         const base = new THREE.Mesh(buildOrganicTowerGeometry(hw, baseHeight), material);
-        base.position.set(x, groundFloorHeight, z);
+        base.position.set(x, enterHeight, z);
         scene.add(base);
         const spireCount = 2 + Math.floor(rng() * 2);
         for (let i = 0; i < spireCount; i++) {
@@ -2219,12 +2370,12 @@ function addBuilding(col, row) {
             const ox = randRange(-footprint / 4, footprint / 4);
             const oz = randRange(-footprint / 4, footprint / 4);
             const spireTower = new THREE.Mesh(buildOrganicTowerGeometry(spireHw, spireHeight - baseHeight), material);
-            spireTower.position.set(x + ox, groundFloorHeight + baseHeight, z + oz);
+            spireTower.position.set(x + ox, enterHeight + baseHeight, z + oz);
             scene.add(spireTower);
         }
     } else {
         const building = new THREE.Mesh(buildOrganicTowerGeometry(hw, upperHeight), material);
-        building.position.set(x, groundFloorHeight, z);
+        building.position.set(x, enterHeight, z);
         scene.add(building);
 
         // warehouses are short enough (6-12 total) to actually reach and
@@ -2301,7 +2452,10 @@ function addBuilding(col, row) {
             // end up floating in an open doorway gap on whichever face has one
             let signHeight, tries = 0;
             do {
-                signHeight = randRange(Math.max(2.2, groundFloorHeight + 0.3), Math.max(groundFloorHeight + 1, Math.min(height - 2, 6)));
+                // capped to enterHeight -- above that the wall is the
+                // tapered/twisted decorative tower, not the flat real
+                // wall a sign is actually mounted flush against.
+                signHeight = randRange(Math.max(2.2, floorHeight + 0.3), Math.max(floorHeight + 1, Math.min(enterHeight - 0.3, height - 2, 6)));
                 tries++;
             } while (usedSignHeights.some(h => Math.abs(h - signHeight) < 0.7) && tries < 6);
             usedSignHeights.push(signHeight);
@@ -2345,21 +2499,21 @@ function addBuilding(col, row) {
         // low chance of a security camera watching the alley — everything
         // queryable is also everything watched.
         if (rng() < 0.14) {
-            addSecurityCamera(x + face.ox * 0.97, z + face.oz * 0.97, face.rotY, height);
+            addSecurityCamera(x + face.ox * 0.97, z + face.oz * 0.97, face.rotY, Math.min(height, enterHeight));
         }
         // ivy/dead-vine patch, independent of everything else on this wall
         if (rng() < 0.3) {
-            addIvyPatch(x + face.ox * 0.98, randRange(0.6, Math.min(height - 1, 4)), z + face.oz * 0.98, face.rotY);
+            addIvyPatch(x + face.ox * 0.98, randRange(0.6, Math.min(height - 1, enterHeight - 0.5, 4)), z + face.oz * 0.98, face.rotY);
         }
         // shop awning, roughly shopfront height -- above the shell's door
         // gap so it never looks like it's hanging in an open doorway
         if (rng() < 0.42) {
-            addAwning(x + face.ox, Math.max(2.4, groundFloorHeight + 0.2), z + face.oz, face.rotY, randRange(1.6, 2.4));
+            addAwning(x + face.ox, Math.max(2.4, floorHeight + 0.2), z + face.oz, face.rotY, randRange(1.6, 2.4));
         }
         // exterior plumbing -- a downspout run climbing the wall, more
         // likely (and rustier) the more neglected this building rolled.
         if (rng() < 0.3) {
-            addPipeCluster(x + face.ox * 0.98, z + face.oz * 0.98, face.rotY, height, buildingContext.maintenance);
+            addPipeCluster(x + face.ox * 0.98, z + face.oz * 0.98, face.rotY, Math.min(height, enterHeight), buildingContext.maintenance);
         }
         // a real fire escape zigzagging up the alley-facing wall -- the
         // single most back-alley-defining architectural feature there is.
@@ -2392,7 +2546,7 @@ function addBuilding(col, row) {
             // buildings without a fire escape on this face still
             // occasionally get a balcony -- purely decorative up here,
             // the same way a tower's own peak already is.
-            const by = randRange(groundFloorHeight + 1.5, Math.min(height - 1.5, groundFloorHeight + 10));
+            const by = randRange(floorHeight + 1.5, Math.min(height - 1.5, enterHeight - 0.5));
             addBalcony(x + face.ox, by, z + face.oz, face.rotY, buildingContext.maintenance);
         }
     }

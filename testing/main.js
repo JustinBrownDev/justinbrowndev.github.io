@@ -2183,6 +2183,50 @@ function addRooftopClutter(x, z, footprint, height) {
         ac.position.set(x + randRange(-footprint / 3, footprint / 3), height + 0.2, z + randRange(-footprint / 3, footprint / 3));
         scene.add(ac);
     }
+    // real building-services (MEP) detail beyond just an antenna/tank/AC
+    // unit -- a duct run, a mushroom-cap exhaust vent, a standpipe riser,
+    // a utility disconnect box. Every real flat roof has some of these;
+    // this game's roofs had none of them.
+    if (rng() < 0.3) { // sheet-metal duct run, on short legs
+        const ductLen = randRange(1.2, 2.4);
+        const duct = new THREE.Mesh(jitterGeometry(new THREE.BoxGeometry(ductLen, 0.35, 0.35), 0.02), metalMat);
+        const dx = x + randRange(-footprint / 3, footprint / 3), dz = z + randRange(-footprint / 3, footprint / 3);
+        duct.rotation.y = randRange(0, Math.PI * 2);
+        duct.position.set(dx, height + 0.35, dz);
+        scene.add(duct);
+        for (const side of [-1, 1]) {
+            const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.2, 5), metalMat);
+            leg.position.set(
+                dx + Math.cos(duct.rotation.y) * side * (ductLen / 2 - 0.15), height + 0.1,
+                dz - Math.sin(duct.rotation.y) * side * (ductLen / 2 - 0.15)
+            );
+            scene.add(leg);
+        }
+    }
+    if (rng() < 0.4) { // mushroom-cap exhaust vent
+        const vent = new THREE.Mesh(jitterGeometry(new THREE.CylinderGeometry(0.14, 0.14, 0.4, 8), 0.01), metalMat);
+        const cap = new THREE.Mesh(jitterGeometry(new THREE.ConeGeometry(0.2, 0.12, 8), 0.008), metalMat);
+        const vx = x + randRange(-footprint / 3, footprint / 3), vz = z + randRange(-footprint / 3, footprint / 3);
+        vent.position.set(vx, height + 0.2, vz);
+        cap.position.set(vx, height + 0.46, vz);
+        scene.add(vent, cap);
+    }
+    if (rng() < 0.2) { // standpipe/sprinkler riser -- a capped pipe with a valve wheel near the base
+        const pipe = new THREE.Mesh(jitterGeometry(new THREE.CylinderGeometry(0.05, 0.05, 0.9, 6), 0.006), metalMat);
+        const px = x + randRange(-footprint / 3, footprint / 3), pz = z + randRange(-footprint / 3, footprint / 3);
+        pipe.position.set(px, height + 0.45, pz);
+        const wheel = new THREE.Mesh(new THREE.TorusGeometry(0.06, 0.015, 6, 10), new THREE.MeshStandardMaterial({ color: 0xc82020, roughness: 0.6 }));
+        wheel.position.set(px, height + 0.25, pz);
+        scene.add(pipe, wheel);
+    }
+    if (rng() < 0.25) { // electrical/utility disconnect box on a short post
+        const post = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.5, 5), metalMat);
+        const box = new THREE.Mesh(jitterGeometry(new THREE.BoxGeometry(0.3, 0.4, 0.15), 0.015), new THREE.MeshStandardMaterial({ color: 0x8a8a3a, roughness: 0.6, metalness: 0.3 }));
+        const ux = x + randRange(-footprint / 3, footprint / 3), uz = z + randRange(-footprint / 3, footprint / 3);
+        post.position.set(ux, height + 0.25, uz);
+        box.position.set(ux, height + 0.55, uz);
+        scene.add(post, box);
+    }
 }
 
 // framed wall poster — client/design work and art pieces. Warm paper tone,

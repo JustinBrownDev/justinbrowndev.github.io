@@ -1916,6 +1916,11 @@ const WALL_THICKNESS = 0.12; // nominal -- the visual walls are flat planes with
 // straight (always axis-aligned, never an arbitrary angle) run of steps.
 // groundHeightAt() below is what actually moves the camera up/down.
 const elevatedPlatforms = []; // {x,z,hx,hz,y}
+// building rooftops specifically, a subset of elevatedPlatforms tagged
+// with which building they belong to -- lets a post-generation pass
+// (buildRooftopCatwalks) find genuine nearby-rooftop pairs to bridge
+// without trawling every mezzanine/ladder-rung/wing-floor entry too.
+const rooftopDecks = []; // {x,z,hx,hz,y,buildingKey}
 const rampRuns = []; // {axis, from, to, fixedCoord, halfWidth, y0, y1}
 // every building's ground-floor roof cap is a hard ceiling for whoever's
 // jumping around inside that room -- separate from elevatedPlatforms
@@ -2194,16 +2199,22 @@ function addHorizontalPlane(rect, y, mat) {
 // tell floors apart (see buildingWallSegments below). Now a building is
 // assembled from independent rectangular volumes: the core (the same
 // square footprint as before, unchanged -- signage/content-card mounting
-// still assumes it) plus an optional wing, a genuinely separate volume
-// attached to one side, its own width/depth, and -- critically -- its own
-// floor RANGE (it can stop short of the core's full height), which is
-// what actually produces an asymmetric/stepped silhouette instead of a
-// bigger square. The wing is fully open to the core everywhere they
-// coexist (an archway, not a doorway) -- connectivity by construction,
-// same philosophy buildFloorLayout already uses for its own rooms.
+// still assumes it) plus 0-2 wings, each a genuinely separate volume on
+// its own side, its own width/depth, and -- critically -- its own floor
+// RANGE, which is what actually produces an asymmetric/stepped silhouette
+// instead of a bigger square. Two flavors of wing, differentiated by
+// floor range and size rather than separate code paths:
+//   - 'annex' (a real room wing): ground-up, can run partway or all the
+//     way to the core's own height, reads as a stepped addition.
+//   - 'bay' (a projecting bay): upper-floor-only, small and shallow, 1-2
+//     floors -- a bay window/small balcony-room jutting out partway up
+//     the tower, never touching the ground.
+// Every wing is fully open to the core everywhere they coexist (an
+// archway, not a doorway) -- connectivity by construction, same
+// philosophy buildFloorLayout already uses for its own rooms.
 function buildBuildingPlan(x, z, hw, isWarehouse, floorCount) {
     const core = { cx: x, cz: z, hwx: hw, hwz: hw };
-    let wing = null;
+    const wings = [];
     // clearance measured against the actual cell half-width, not the
     // core's own (already-tight, post-density-pass) margin gap -- the
     // maze topology seal (see mazeSealWalls) is the real hard boundary
@@ -2211,34 +2222,63 @@ function buildBuildingPlan(x, z, hw, isWarehouse, floorCount) {
     // it, the same way a real building's bay window/storefront often
     // sits closer to the property line than the main massing does.
     const wingRoom = (CELL / 2 - 0.15) - hw;
-    if (!isWarehouse && wingRoom > 0.25 && rng() < 0.5) {
-        const side = pick([{ dx: 0, dz: -1 }, { dx: 0, dz: 1 }, { dx: -1, dz: 0 }, { dx: 1, dz: 0 }]);
-        const axisIsX = side.dx !== 0; // wing projects outward along x
-        // `depth` is the TOTAL extra footprint beyond the core's own edge
-        // (bounded by wingRoom, the real clearance out to the maze seal)
-        // -- the wing's own half-extent in that direction is half of it,
-        // and its center sits half of it further out again. Conflating
-        // "how far the wing's center sits from the core" with "the
-        // wing's own half-width" here double-counts depth and can push
-        // the wing's outer face past the cell boundary; keep them separate.
-        const depth = randRange(0.25, Math.min(1.3, wingRoom));
-        const halfDepth = depth / 2;
-        const width = randRange(hw * 0.55, hw * 1.15);
-        const maxOffset = Math.max(0, hw - width * 0.4); // how far the wing's center can drift along the shared face before it barely overlaps the core at all
-        const offset = randRange(-maxOffset, maxOffset);
-        const wcx = axisIsX ? x + side.dx * (hw + halfDepth) : x + offset;
-        const wcz = axisIsX ? z + offset : z + side.dz * (hw + halfDepth);
-        // annex-style: only a fraction of buildings get a wing that
-        // matches the core's full height -- most stop short, reading as
-        // a genuine stepped addition instead of a wider tower.
-        const floorMax = rng() < 0.4 ? floorCount : Math.max(1, Math.min(floorCount, 1 + Math.floor(rng() * floorCount)));
-        wing = { side, cx: wcx, cz: wcz, hwx: axisIsX ? halfDepth : width, hwz: axisIsX ? width : halfDepth, floorMax };
+    if (!isWarehouse && wingRoom > 0.25) {
+        const allSides = [{ dx: 0, dz: -1 }, { dx: 0, dz: 1 }, { dx: -1, dz: 0 }, { dx: 1, dz: 0 }];
+        const usedSides = new Set();
+        // a 2nd wing needs real room and is rarer than the 1st -- most
+        // buildings that get anything at all get exactly one.
+        const rolls = [0.5, wingRoom > 0.4 ? 0.28 : 0];
+        for (const rollChance of rolls) {
+            if (rng() > rollChance) continue;
+            const candidates = allSides.filter(s => !usedSides.has(`${s.dx},${s.dz}`));
+            if (!candidates.length) break;
+            const side = pick(candidates);
+            usedSides.add(`${side.dx},${side.dz}`);
+            const axisIsX = side.dx !== 0; // wing projects outward along x
+
+            // bays need at least one upper floor to attach to -- most
+            // massing variety still comes from full annexes, bays are
+            // the occasional smaller accent higher up the tower.
+            const isBay = floorCount >= 2 && rng() < 0.35;
+            let floorMin, floorMax, depth, width;
+            if (isBay) {
+                floorMin = 1 + Math.floor(rng() * (floorCount - 1));
+                floorMax = Math.min(floorCount, floorMin + 1 + Math.floor(rng() * 2));
+                depth = randRange(0.2, Math.min(0.7, wingRoom));
+                width = randRange(hw * 0.35, hw * 0.7);
+            } else {
+                floorMin = 0;
+                // annex-style: only a fraction match the core's full
+                // height -- most stop short, reading as a genuine
+                // stepped addition instead of a wider tower.
+                floorMax = rng() < 0.4 ? floorCount : Math.max(1, Math.min(floorCount, 1 + Math.floor(rng() * floorCount)));
+                depth = randRange(0.25, Math.min(1.3, wingRoom));
+                width = randRange(hw * 0.55, hw * 1.15);
+            }
+            // `depth` is the TOTAL extra footprint beyond the core's own
+            // edge (bounded by wingRoom) -- the wing's own half-extent in
+            // that direction is half of it, and its center sits half of
+            // it further out again. Conflating "how far the wing's
+            // center sits from the core" with "the wing's own half-
+            // width" here double-counts depth and can push the wing's
+            // outer face past the cell boundary; keep them separate.
+            const halfDepth = depth / 2;
+            const maxOffset = Math.max(0, hw - width * 0.4); // how far the wing's center can drift along the shared face before it barely overlaps the core at all
+            const offset = randRange(-maxOffset, maxOffset);
+            const wcx = axisIsX ? x + side.dx * (hw + halfDepth) : x + offset;
+            const wcz = axisIsX ? z + offset : z + side.dz * (hw + halfDepth);
+            wings.push({
+                side, cx: wcx, cz: wcz,
+                hwx: axisIsX ? halfDepth : width, hwz: axisIsX ? width : halfDepth,
+                floorMin, floorMax, kind: isBay ? 'bay' : 'annex',
+            });
+        }
     }
-    return { core, wing, floorCount };
+    return { core, wings, floorCount };
 }
 
-// the world-space span of the open boundary between the core and its
-// wing, along whichever axis is tangent to the shared face -- the
+// the world-space span of the open boundary between the core and one of
+// its wings, along whichever axis is tangent to the shared face -- the
 // overlap of the two modules' own extents there, not a fixed-width
 // doorway, so the connection is exactly as wide as the two rooms
 // actually share (an alcove, not a corridor).
@@ -2253,12 +2293,11 @@ function computeArchwaySpan(side, core, wing) {
 // shared/fixed across every floor, since it's one continuous physical
 // shaft -- the stairwell in the same corner every time. Returns this
 // floor's own collision segments.
-function buildCoreFloor(core, fl, floorCount, floorHeight, door, extMat, shellMat, wingGap, stairwell) {
+function buildCoreFloor(core, fl, floorCount, floorHeight, door, extMat, shellMat, wingGaps, stairwell) {
     const { cx, cz, hwx: hw } = core; // core is always square (hwx === hwz)
     const y0 = fl * floorHeight;
     const segments = [];
-    const openGaps = wingGap ? [wingGap] : [];
-    segments.push(...buildExteriorPerimeter(cx, cz, hw, hw, y0, floorHeight, door, extMat, openGaps));
+    segments.push(...buildExteriorPerimeter(cx, cz, hw, hw, y0, floorHeight, door, extMat, wingGaps));
     const { walls } = buildFloorLayout(cx, cz, hw, hw, door);
     drawFloorLayout(walls, floorHeight, shellMat, y0, segments);
 
@@ -2332,7 +2371,12 @@ function buildWingFloor(wing, fl, floorHeight, extMat, wingGap) {
     const y0 = fl * floorHeight;
     const segments = buildExteriorPerimeter(cx, cz, hwx, hwz, y0, floorHeight, null, extMat, [wingGap]);
     const isTopFloor = fl === wing.floorMax - 1;
-    if (fl > 0) {
+    // a floor rect is only implicit (the ground plane) at true y=0 --
+    // a 'bay' wing's own bottom floor can start well above ground
+    // (floorMin > 0), and that floor needs a real registered surface
+    // the same as any other elevated floor, not just "fl > 0" (which
+    // was only ever correct for ground-up annexes).
+    if (y0 > 0.01) {
         elevatedPlatforms.push({ x: cx, z: cz, hx: hwx, hz: hwz, y: y0 });
         addHorizontalPlane({ x: cx, z: cz, hx: hwx, hz: hwz }, y0 + 0.02, extMat);
     }
@@ -2344,7 +2388,7 @@ function buildWingFloor(wing, fl, floorHeight, extMat, wingGap) {
         overheadCeilings.push({ x: cx, z: cz, hx: hwx, hz: hwz, y: y0 + floorHeight });
     }
     addHorizontalPlane({ x: cx, z: cz, hx: hwx, hz: hwz }, y0 + floorHeight, extMat);
-    if (fl === 0) scatterJunk('indoor', cx, cz, 2 + Math.floor(rng() * 3), Math.min(hwx, hwz) * 0.6);
+    if (fl === wing.floorMin) scatterJunk('indoor', cx, cz, 2 + Math.floor(rng() * 3), Math.min(hwx, hwz) * 0.6);
     if (dynamicLightsRemaining > 0 && rng() < 0.6) {
         dynamicLightsRemaining--;
         const light = new THREE.PointLight(0xffe9b0, 2, floorHeight * 2, 2);
@@ -2352,6 +2396,130 @@ function buildWingFloor(wing, fl, floorHeight, extMat, wingGap) {
         scene.add(light);
     }
     return segments;
+}
+
+// a real enterable rooftop mechanical room -- a genuine module (its own
+// walls/door/floor/ceiling, real collision), not another prop scattered
+// on top of the deck like the antenna/tank/AC clutter already there.
+// Offset from the deck's own center so it reads as a real penthouse
+// addition rather than a centerpiece. Returns its own {yMin,yMax,
+// segments} band, meant to be appended to this building's ALREADY-
+// registered buildingWallSegments entry (the main per-floor loop that
+// set it runs earlier in addBuilding, before the roof/archetype code
+// that calls this).
+function buildRooftopMechanicalRoom(cx, cz, deckHalf, roofY) {
+    const roomHw = Math.max(0.8, Math.min(deckHalf * 0.5, 1.5));
+    const roomH = 2.3;
+    const mat = new THREE.MeshStandardMaterial({ color: 0x5a5650, roughness: 0.7, metalness: 0.35, side: THREE.DoubleSide });
+    const maxOffset = Math.max(0, deckHalf - roomHw - 0.3);
+    const rcx = cx + randRange(-maxOffset, maxOffset), rcz = cz + randRange(-maxOffset, maxOffset);
+    const door = pick([{ dx: 0, dz: -1 }, { dx: 0, dz: 1 }, { dx: -1, dz: 0 }, { dx: 1, dz: 0 }]);
+    const segments = buildExteriorPerimeter(rcx, rcz, roomHw, roomHw, roofY, roomH, door, mat, []);
+    overheadCeilings.push({ x: rcx, z: rcz, hx: roomHw, hz: roomHw, y: roofY + roomH });
+    addHorizontalPlane({ x: rcx, z: rcz, hx: roomHw, hz: roomHw }, roofY + roomH, mat);
+    // real floor plate at deck level, and a couple of interior pipes/junk
+    addHorizontalPlane({ x: rcx, z: rcz, hx: roomHw, hz: roomHw }, roofY + 0.02, mat);
+    scatterJunk('indoor', rcx, rcz, 1 + Math.floor(rng() * 2), roomHw * 0.6);
+    if (dynamicLightsRemaining > 0) {
+        dynamicLightsRemaining--;
+        const light = new THREE.PointLight(0xdfe8e0, 2, roomH * 2.2, 2);
+        light.position.set(rcx, roofY + roomH * 0.6, rcz);
+        scene.add(light);
+    }
+    return { yMin: roofY, yMax: roofY + roomH, segments };
+}
+
+// a real walkable bridge/catwalk between two nearby rooftops -- an
+// intentional alternate route between buildings, not a crack in the
+// maze (see the maze-topology sealing comment near mazeSealWalls: this
+// is exactly the kind of "explicit graph connection" that's allowed).
+// Deliberately axis-aligned only (the two decks' centers line up on X or
+// Z within a small tolerance) so its footprint is a real axis-aligned
+// rect matching the walkway exactly -- elevatedPlatforms has no notion
+// of a rotated/diagonal walkable strip, and approximating one with a
+// bounding box would either leave gaps or claim walkable space where
+// there's no actual bridge deck.
+function addCatwalk(a, b) {
+    const y = (a.y + b.y) / 2;
+    const alongX = Math.abs(a.z - b.z) < 0.6; // decks line up on Z -- bridge runs along X
+    const width = 1.1;
+    const deckMat = new THREE.MeshStandardMaterial({ color: 0x3a3630, roughness: 0.8, metalness: 0.4 });
+    const railMat = new THREE.MeshStandardMaterial({ color: 0x1c1c1c, roughness: 0.55, metalness: 0.5 });
+
+    // span the actual GAP between the two decks' own edges, not their
+    // centers -- using centers here would make the "bridge" overlap deep
+    // into both rooftops instead of just crossing the open air between
+    // them (caught by a harness check: a real 8-unit center-to-center
+    // pair produced a "bridge" reaching 2.5 units into one deck and 2
+    // into the other).
+    let rect;
+    if (alongX) {
+        const left = a.x < b.x ? a : b, right = a.x < b.x ? b : a;
+        const lo = left.x + left.hx, hi = right.x - right.hx;
+        const len = hi - lo;
+        const cz = (a.z + b.z) / 2;
+        const deck = new THREE.Mesh(new THREE.BoxGeometry(len, 0.12, width), deckMat);
+        deck.position.set((lo + hi) / 2, y, cz);
+        scene.add(deck);
+        for (const side of [-1, 1]) {
+            const rail = new THREE.Mesh(new THREE.BoxGeometry(len, 0.5, 0.05), railMat);
+            rail.position.set((lo + hi) / 2, y + 0.3, cz + side * width / 2);
+            scene.add(rail);
+        }
+        rect = { x: (lo + hi) / 2, z: cz, hx: len / 2, hz: width / 2, y };
+    } else {
+        const near = a.z < b.z ? a : b, far = a.z < b.z ? b : a;
+        const lo = near.z + near.hz, hi = far.z - far.hz;
+        const len = hi - lo;
+        const cx = (a.x + b.x) / 2;
+        const deck = new THREE.Mesh(new THREE.BoxGeometry(width, 0.12, len), deckMat);
+        deck.position.set(cx, y, (lo + hi) / 2);
+        scene.add(deck);
+        for (const side of [-1, 1]) {
+            const rail = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.5, len), railMat);
+            rail.position.set(cx + side * width / 2, y + 0.3, (lo + hi) / 2);
+            scene.add(rail);
+        }
+        rect = { x: cx, z: (lo + hi) / 2, hx: width / 2, hz: len / 2, y };
+    }
+    elevatedPlatforms.push(rect);
+    if (dynamicLightsRemaining > 0 && rng() < 0.4) {
+        dynamicLightsRemaining--;
+        const light = new THREE.PointLight(0xffcf8a, 1.8, 6, 2);
+        light.position.set(rect.x, y + 0.6, rect.z);
+        scene.add(light);
+    }
+}
+
+// scans real rooftop decks (not every elevatedPlatforms entry -- ladder
+// rungs/mezzanines/wing floors would produce nonsense pairings) for ones
+// close enough, level enough, and axis-aligned enough to bridge. Rare on
+// purpose -- most rooftops stay isolated, reached by climbing that one
+// building; a catwalk is a deliberate, occasional shortcut, not a grid.
+function buildRooftopCatwalks() {
+    let built = 0;
+    for (let i = 0; i < rooftopDecks.length && built < 40; i++) {
+        for (let j = i + 1; j < rooftopDecks.length && built < 40; j++) {
+            const a = rooftopDecks[i], b = rooftopDecks[j];
+            if (a.buildingKey === b.buildingKey) continue;
+            // capped so the catwalk deck (sat at the midpoint height)
+            // never sits more than MAX_STEP_HEIGHT (0.65) off of either
+            // rooftop's own y -- otherwise stepping from the bridge onto
+            // the (slightly higher/lower) deck it's supposed to connect
+            // to would need a hop instead of a walk.
+            if (Math.abs(a.y - b.y) > 1.2) continue;
+            const alignedX = Math.abs(a.z - b.z) < 0.6;
+            const alignedZ = Math.abs(a.x - b.x) < 0.6;
+            if (!alignedX && !alignedZ) continue;
+            const centerDist = alignedX ? Math.abs(a.x - b.x) : Math.abs(a.z - b.z);
+            const gap = centerDist - ((alignedX ? a.hx : a.hz) + (alignedX ? b.hx : b.hz));
+            if (gap < 0.8 || gap > 5.5) continue; // too close (already touching/overlapping -- no bridge needed) or too far (not a believable span)
+            if (rng() > 0.15) continue;
+            addCatwalk(a, b);
+            built++;
+        }
+    }
+    console.log(`[gen] ${built} rooftop catwalks built (${rooftopDecks.length} candidate rooftop decks)`);
 }
 
 // ~30% of interiors get a raised mezzanine + a straight run of steps --
@@ -3037,26 +3205,30 @@ function addBuilding(col, row) {
     }
 
     // a modular plan -- the core (this building's original square
-    // footprint, unchanged) plus an optional wing: a genuinely separate
-    // volume, its own width/depth, that can stop at any floor. Every
-    // floor gets its OWN fresh interior layout and its OWN real,
-    // per-floor-Y-banded collision segments now (see buildingWallSegments
-    // below) -- floors no longer have to agree on one shared X/Z layout.
+    // footprint, unchanged) plus 0-2 wings, each a genuinely separate
+    // volume with its own width/depth and floor range (see
+    // buildBuildingPlan for 'annex' vs 'bay'). Every floor gets its OWN
+    // fresh interior layout and its OWN real, per-floor-Y-banded
+    // collision segments now (see buildingWallSegments below) -- floors
+    // no longer have to agree on one shared X/Z layout.
     const plan = buildBuildingPlan(x, z, hw, isWarehouse, floorCount);
     const floors = [];
     for (let fl = 0; fl < floorCount; fl++) {
         const y0 = fl * floorHeight;
-        const wingActive = plan.wing && fl < plan.wing.floorMax;
-        let coreGap = null, wingGap = null;
-        if (wingActive) {
-            const span = computeArchwaySpan(plan.wing.side, plan.core, plan.wing);
-            coreGap = { dx: plan.wing.side.dx, dz: plan.wing.side.dz, lo: span.lo, hi: span.hi };
-            wingGap = { dx: -plan.wing.side.dx, dz: -plan.wing.side.dz, lo: span.lo, hi: span.hi };
+        const coreGaps = [];
+        const activeWings = plan.wings.filter(w => fl >= w.floorMin && fl < w.floorMax);
+        for (const w of activeWings) {
+            const span = computeArchwaySpan(w.side, plan.core, w);
+            coreGaps.push({ dx: w.side.dx, dz: w.side.dz, lo: span.lo, hi: span.hi });
         }
         const coreDoor = fl === 0 ? door : null;
         const coreExtMat = fl === 0 ? shellMat : material;
-        const segments = buildCoreFloor(plan.core, fl, floorCount, floorHeight, coreDoor, coreExtMat, shellMat, coreGap, stairwell);
-        if (wingActive) segments.push(...buildWingFloor(plan.wing, fl, floorHeight, material, wingGap));
+        const segments = buildCoreFloor(plan.core, fl, floorCount, floorHeight, coreDoor, coreExtMat, shellMat, coreGaps, stairwell);
+        for (const w of activeWings) {
+            const span = computeArchwaySpan(w.side, plan.core, w);
+            const wingGap = { dx: -w.side.dx, dz: -w.side.dz, lo: span.lo, hi: span.hi };
+            segments.push(...buildWingFloor(w, fl, floorHeight, material, wingGap));
+        }
         floors.push({ yMin: y0, yMax: y0 + floorHeight, segments });
     }
     // real walls only ever exist up to enterHeight (floors.length worth)
@@ -3107,6 +3279,15 @@ function addBuilding(col, row) {
         // ceiling IS the roof, so it needs to be a real walkable surface
         // from above too, the same way a warehouse roof always was.
         elevatedPlatforms.push({ x, z, hx: hw, hz: hw, y: enterHeight });
+        rooftopDecks.push({ x, z, hx: hw, hz: hw, y: enterHeight, buildingKey: `${row},${col}` });
+        // a real rooftop mechanical room module, sometimes -- a genuine
+        // enterable penthouse, not more antenna/tank clutter. Appended to
+        // this building's already-registered buildingWallSegments entry
+        // (set further up in addBuilding, before this archetype section).
+        if (!isWarehouse && hw > 1.6 && rng() < 0.3) {
+            const room = buildRooftopMechanicalRoom(x, z, hw, enterHeight);
+            buildingWallSegments.get(`${row},${col}`).floors.push(room);
+        }
     } else if (archetype === 'setback') {
         const baseHeight = upperHeight * randRange(0.4, 0.7);
         const topHeight = upperHeight - baseHeight;
@@ -3120,6 +3301,7 @@ function addBuilding(col, row) {
         // the upper stage's own flat cap, real roof -- every archetype's
         // actual top surface is landable now, not just warehouses.
         elevatedPlatforms.push({ x, z, hx: upperHw, hz: upperHw, y: height });
+        rooftopDecks.push({ x, z, hx: upperHw, hz: upperHw, y: height, buildingKey: `${row},${col}` });
     } else if (archetype === 'clustered') {
         // 2-3 independent thin towers sharing one footprint and a shared
         // low base block, instead of one solid mass -- a multi-spire
@@ -3141,6 +3323,7 @@ function addBuilding(col, row) {
         // the shared base block's own deck, real roof (spires just stand
         // on it, same as antennas/tanks already do on every rooftop).
         elevatedPlatforms.push({ x, z, hx: hw, hz: hw, y: enterHeight + baseHeight });
+        rooftopDecks.push({ x, z, hx: hw, hz: hw, y: enterHeight + baseHeight, buildingKey: `${row},${col}` });
     } else {
         const building = new THREE.Mesh(buildOrganicTowerGeometry(hw, upperHeight), material);
         building.position.set(x, enterHeight, z);
@@ -3153,6 +3336,7 @@ function addBuilding(col, row) {
         // out of casual reach, but that's distance/no-fall-damage doing
         // the gatekeeping now, not an invisible floor that isn't there.
         elevatedPlatforms.push({ x, z, hx: hw, hz: hw, y: height });
+        rooftopDecks.push({ x, z, hx: hw, hz: hw, y: height, buildingKey: `${row},${col}` });
 
         // roof toppers -- a fifth/sixth flavor of building silhouette,
         // skipped on warehouses (too short to read) and setbacks (already
@@ -5382,6 +5566,7 @@ const propColliders = []; // {x, z, radius, height} — soft obstacles, blended 
 }
 
 mountContentCards(); // real site content claims leftover wall faces
+buildRooftopCatwalks(); // every building's rooftop deck now exists -- an occasional real bridge between nearby ones
 bootStatus(`city built, ${GRID_COLS * GRID_ROWS} cells -- placing props/decoration…`);
 
 // ---------- the one true signal ----------

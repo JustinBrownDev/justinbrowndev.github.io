@@ -121,7 +121,7 @@ const CONFIG = {
             bloom: { strength: 0.55, radius: 0.4, threshold: 0.88 },
             drawDistance: 200,
             maxDynamicLights: 40,
-            propDensity: 1.0,
+            propDensity: 1.35,
         },
         mobile: {
             maxPixelRatio: 1.5,
@@ -129,7 +129,7 @@ const CONFIG = {
             bloom: { strength: 0.4, radius: 0.35, threshold: 0.9 },
             drawDistance: 130,
             maxDynamicLights: 18,
-            propDensity: 0.6,
+            propDensity: 0.85,
         },
         // auto-selected on low core-count/low-memory touch devices, or
         // forced with ?quality=low. Bloom pass is skipped entirely here,
@@ -437,7 +437,7 @@ const CONFIG = {
             tree: 1.5,
             pottedPlant: 3,
             weeds: 3.5,
-            none: 0.5,
+            none: 0.2,
         },
         maxSpecialFeatures: {
             statues: 5,
@@ -1409,6 +1409,11 @@ function addBuilding(col, row) {
         if (rng() < 0.24) {
             addIvyPatch(x + face.ox * 0.98, randRange(0.6, Math.min(height - 1, 4)), z + face.oz * 0.98, face.rotY);
         }
+        // shop awning, roughly shopfront height -- above the shell's door
+        // gap so it never looks like it's hanging in an open doorway
+        if (rng() < 0.28) {
+            addAwning(x + face.ox, Math.max(2.4, groundFloorHeight + 0.2), z + face.oz, face.rotY, randRange(1.6, 2.4));
+        }
     }
 
     addRooftopClutter(x, z, footprint, height);
@@ -1974,6 +1979,53 @@ function addOverheadCable(xa, za, xb, zb) {
             : new THREE.MeshStandardMaterial({ color: 0x0c0c0c, roughness: 0.9 })
     );
     scene.add(tube);
+}
+
+// a fabric canopy tarp strung across an alley between two building
+// faces -- real dense market alleys are often covered like this. Always
+// axis-aligned (our grid only ever has cardinal-direction spans between
+// adjacent cells), so the plane's own width/depth are set directly in
+// world axes instead of composing rotations.
+function addCanopyTarp(xa, za, xb, zb) {
+    const spanAlongX = Math.abs(xb - xa) > Math.abs(zb - za);
+    const length = (spanAlongX ? Math.abs(xb - xa) : Math.abs(zb - za)) * 0.92;
+    const crossWidth = CELL * 0.75;
+    const tex = makePixelTexture((ctx, w, h) => {
+        const base = pick(['#8a3838', '#38588a', '#8a7838', '#3a5c2e']);
+        ctx.fillStyle = base;
+        ctx.fillRect(0, 0, w, h);
+        ctx.fillStyle = 'rgba(255,255,255,0.22)';
+        for (let i = 0; i < w; i += 12) ctx.fillRect(i, 0, 6, h);
+    }, 64, 32);
+    const tarp = new THREE.Mesh(
+        new THREE.PlaneGeometry(spanAlongX ? length : crossWidth, spanAlongX ? crossWidth : length),
+        new THREE.MeshStandardMaterial({ map: tex, roughness: 0.95, side: THREE.DoubleSide })
+    );
+    tarp.rotation.x = -Math.PI / 2; // horizontal, no second rotation needed
+    tarp.position.set((xa + xb) / 2, randRange(3.2, 4.2), (za + zb) / 2);
+    scene.add(tarp);
+}
+
+// a striped shop awning jutting out from a wall face -- reuses the exact
+// same outward-normal formula (sin/cos of rotY) that addSign already
+// uses for its point-light offset, rather than re-deriving the direction.
+function addAwning(x, y, z, rotY, width) {
+    const tex = makePixelTexture((ctx, w, h) => {
+        const stripeA = pick(['#8a3838', '#38588a', '#8a7838']);
+        for (let i = 0; i < w; i += 10) {
+            ctx.fillStyle = (i / 10) % 2 === 0 ? stripeA : '#e8ddc2';
+            ctx.fillRect(i, 0, 10, h);
+        }
+    }, 64, 24);
+    const awning = new THREE.Mesh(
+        new THREE.PlaneGeometry(width, width * 0.45),
+        new THREE.MeshStandardMaterial({ map: tex, roughness: 0.9, side: THREE.DoubleSide })
+    );
+    awning.rotation.y = rotY;
+    awning.rotation.x = -Math.PI / 5; // tilts down-and-out from the wall
+    const nx = Math.sin(rotY), nz = Math.cos(rotY);
+    awning.position.set(x + nx * (width * 0.3), y, z + nz * (width * 0.3));
+    scene.add(awning);
 }
 
 // a tree, alive or dead — never planted without the possibility of the
@@ -2915,15 +2967,17 @@ for (let r = 1; r < GRID_ROWS - 1; r++) {
         // overhead cables: strung across the alley wherever there's a
         // building directly on both sides (either axis) — the literal
         // network overhead, independent of ground clutter below it.
-        if (grid[r]?.[c - 1] && grid[r]?.[c + 1] && rng() < 0.5) {
+        if (grid[r]?.[c - 1] && grid[r]?.[c + 1]) {
             const wa = cellToWorld(c - 1, r), wb = cellToWorld(c + 1, r);
             const fa = footprintOf[r][c - 1] ?? CELL * 0.6, fb = footprintOf[r][c + 1] ?? CELL * 0.6;
-            addOverheadCable(wa.x + fa / 2, wa.z, wb.x - fb / 2, wb.z);
+            if (rng() < 0.5) addOverheadCable(wa.x + fa / 2, wa.z, wb.x - fb / 2, wb.z);
+            if (rng() < 0.3) addCanopyTarp(wa.x + fa / 2, wa.z, wb.x - fb / 2, wb.z);
         }
-        if (grid[r - 1]?.[c] && grid[r + 1]?.[c] && rng() < 0.5) {
+        if (grid[r - 1]?.[c] && grid[r + 1]?.[c]) {
             const wa = cellToWorld(c, r - 1), wb = cellToWorld(c, r + 1);
             const fa = footprintOf[r - 1][c] ?? CELL * 0.6, fb = footprintOf[r + 1][c] ?? CELL * 0.6;
-            addOverheadCable(wa.x, wa.z + fa / 2, wb.x, wb.z - fb / 2);
+            if (rng() < 0.5) addOverheadCable(wa.x, wa.z + fa / 2, wb.x, wb.z - fb / 2);
+            if (rng() < 0.3) addCanopyTarp(wa.x, wa.z + fa / 2, wb.x, wb.z - fb / 2);
         }
 
         const t = webAlignment(cellToWorld(c, r).z);

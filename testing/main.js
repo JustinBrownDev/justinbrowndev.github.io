@@ -290,6 +290,23 @@ const CONFIG = {
         // exactly one of these exists, at the farthest dead end from
         // spawn. everything else in the city is noise wearing his name.
         signal: { title: 'J. BROWN', subtitle: 'verified · you found it', color: 0xffffff },
+        // tabloid front pages for the newsstand prop — pure comic relief,
+        // still on-theme (the search-for-one-guy joke, played for laughs).
+        tabloidHeadlines: [
+            ['4,281 JUSTIN BROWNS FOUND', 'none of them him — full report pg. 6'],
+            ['LOCAL MAN STILL UNGOOGLABLE', 'experts baffled, ask him for help anyway'],
+            ['SEARCH ENGINE ADMITS DEFEAT', '"we have too many results," says spokesbot'],
+            ['NAME TOO COMMON, CLAIMS STUDY', 'try a middle initial, scientists suggest'],
+            ['PUBLIC SECRET CONFIRMED REAL', 'hidden in plain sight since birth'],
+        ],
+        // near-misses — styled close enough to the real signal to make you
+        // check twice, planted at the 2nd/3rd farthest dead ends. The
+        // public secret only works if the almost-right answers are
+        // genuinely tempting, not obviously fake.
+        nearMissSignals: [
+            { title: 'J. BROWN', subtitle: 'unverified — keep looking', color: 0xd8ded8 },
+            { title: 'J. BROWN', subtitle: 'listing expired', color: 0xffd93f },
+        ],
         // relative odds a given sign face pulls from each bucket — nav
         // pages run out fast on purpose, so decoys and noise dominate.
         contentWeights: { nav: 3, decoy: 6, noise: 3, flavor: 5 },
@@ -382,6 +399,9 @@ const CONFIG = {
             statues: 3,
             constructionZones: 3,
             crimeScenes: 2,
+            newsstands: 2,
+            phoneBooths: 2,
+            atmKiosks: 2,
         },
     },
 
@@ -1691,6 +1711,100 @@ function addConstructionZone(x, z) {
     return 1.1;
 }
 
+// a newsstand kiosk with a real (fake-news) tabloid front page — comic
+// relief landmark for plaza cells.
+function addNewsstand(x, z) {
+    const [headline, sub] = pick(CONFIG.billboards.tabloidHeadlines);
+    const booth = new THREE.Mesh(
+        jitterGeometry(new THREE.BoxGeometry(1.1, 2.0, 0.9), 0.04),
+        new THREE.MeshStandardMaterial({ color: pick([0xc8b878, 0xa8c8c8, 0xc06858]), roughness: 0.85 })
+    );
+    booth.position.y = 1.0;
+    const tex = makePixelTexture((ctx, w, h) => {
+        ctx.fillStyle = '#eee8d8';
+        ctx.fillRect(0, 0, w, h);
+        ctx.fillStyle = '#181818';
+        ctx.textAlign = 'center';
+        ctx.font = 'bold 11px "Courier New", monospace';
+        ctx.fillText(headline, w / 2, h / 2 - 6, w - 6);
+        ctx.font = '8px "Courier New", monospace';
+        ctx.fillText(sub, w / 2, h / 2 + 10, w - 6);
+    }, 120, 60);
+    const board = new THREE.Mesh(
+        new THREE.PlaneGeometry(1.0, 0.5),
+        new THREE.MeshStandardMaterial({ map: tex, roughness: 0.9 })
+    );
+    board.position.set(0, 1.7, 0.46);
+    const g = new THREE.Group();
+    g.add(booth, board);
+    g.rotation.y = randRange(0, Math.PI * 2);
+    g.position.set(x, 0, z);
+    scene.add(g);
+    return 0.6;
+}
+
+// a glass-and-frame phone booth — obsolete infrastructure, kept as a
+// landmark. Faint interior light so it reads at a distance.
+function addPhoneBooth(x, z) {
+    const frameMat = new THREE.MeshStandardMaterial({ color: 0xc06858, roughness: 0.6, metalness: 0.3 });
+    const glassMat = new THREE.MeshStandardMaterial({ color: 0xc8e8e0, roughness: 0.2, transparent: true, opacity: 0.35 });
+    const g = new THREE.Group();
+    const frame = new THREE.Mesh(jitterGeometry(new THREE.BoxGeometry(0.85, 2.1, 0.85), 0.02), frameMat);
+    frame.position.y = 1.05;
+    const glass = new THREE.Mesh(new THREE.BoxGeometry(0.7, 1.8, 0.7), glassMat);
+    glass.position.y = 1.1;
+    g.add(frame, glass);
+    g.position.set(x, 0, z);
+    scene.add(g);
+
+    if (dynamicLightsRemaining > 0) {
+        dynamicLightsRemaining--;
+        const light = new THREE.PointLight(0xfff4d0, 1.5, 3, 2);
+        light.position.set(x, 1.6, z);
+        scene.add(light);
+    }
+    return 0.45;
+}
+
+// an ATM kiosk, screen glowing with the same "system noise" humor as the
+// signage elsewhere — the machinery of finance admitting it's confused too.
+function addAtmKiosk(x, z) {
+    const [msg, sub] = pick(CONFIG.billboards.systemNoise);
+    const body = new THREE.Mesh(
+        jitterGeometry(new THREE.BoxGeometry(0.6, 1.4, 0.5), 0.03),
+        new THREE.MeshStandardMaterial({ color: 0x9adfc0, roughness: 0.4, metalness: 0.5 })
+    );
+    body.position.y = 0.7;
+    const tex = makePixelTexture((ctx, w, h) => {
+        ctx.fillStyle = '#0a1410';
+        ctx.fillRect(0, 0, w, h);
+        ctx.fillStyle = '#3aff6a';
+        ctx.textAlign = 'center';
+        ctx.font = 'bold 9px "Courier New", monospace';
+        ctx.fillText(msg, w / 2, h / 2 - 4, w - 6);
+        ctx.font = '7px "Courier New", monospace';
+        ctx.fillText(sub, w / 2, h / 2 + 8, w - 6);
+    }, 72, 48);
+    const screen = new THREE.Mesh(
+        new THREE.PlaneGeometry(0.4, 0.28),
+        new THREE.MeshBasicMaterial({ map: tex })
+    );
+    screen.position.set(0, 0.9, 0.26);
+    const g = new THREE.Group();
+    g.add(body, screen);
+    g.rotation.y = randRange(0, Math.PI * 2);
+    g.position.set(x, 0, z);
+    scene.add(g);
+
+    if (dynamicLightsRemaining > 0) {
+        dynamicLightsRemaining--;
+        const light = new THREE.PointLight(0x3aff6a, 1.2, 2, 2);
+        light.position.set(x, 0.9, z + 0.3);
+        scene.add(light);
+    }
+    return 0.4;
+}
+
 function addCrimeScene(x, z) {
     const rotY = randRange(0, Math.PI * 2);
     const tapeTex = makePixelTexture((ctx, w, h) => {
@@ -1809,14 +1923,22 @@ mountContentCards(); // real site content claims leftover wall faces
         }
     }
 
-    let signalCell = null, signalDist = -1;
+    // rank every dead end by walk distance from spawn. Rank 0 (farthest)
+    // is the one true signal; ranks 1-2 are near-miss decoys planted at
+    // the next-farthest dead ends — close enough in distance and styling
+    // to be genuinely tempting, not obviously wrong.
+    const deadEnds = [];
     for (const [k, d] of dist) {
         const [c, r] = k.split(',').map(Number);
-        if (openNeighborCount(c, r) === 1 && d > signalDist) { signalDist = d; signalCell = [c, r]; }
+        if (openNeighborCount(c, r) === 1) deadEnds.push({ c, r, d });
     }
+    deadEnds.sort((a, b) => b.d - a.d);
 
-    if (signalCell) {
-        const [sc, sr] = signalCell;
+    const placements = [CONFIG.billboards.signal, ...CONFIG.billboards.nearMissSignals];
+    placements.forEach((content, i) => {
+        const cell = deadEnds[i];
+        if (!cell) return;
+        const { c: sc, r: sr } = cell;
         for (const [dc, dr] of [[0, -1], [0, 1], [-1, 0], [1, 0]]) {
             const bc = sc + dc, br = sr + dr;
             if (!grid[br]?.[bc]) continue; // needs a solid building to mount on
@@ -1825,11 +1947,10 @@ mountContentCards(); // real site content claims leftover wall faces
             // face pointing FROM the building back toward the dead end
             const face = buildingFaceDefs(footprint).find(f => f.dc === -dc && f.dr === -dr);
             if (!face) continue;
-            const sig = CONFIG.billboards.signal;
-            addSign(x + face.ox, 2.4, z + face.oz, face.rotY, sig.title, sig.subtitle, sig.color);
+            addSign(x + face.ox, 2.4, z + face.oz, face.rotY, content.title, content.subtitle, content.color);
             break;
         }
-    }
+    });
 }
 
 // special features placed on plaza cells (wider open junctions)
@@ -1858,6 +1979,27 @@ for (let i = 0; i < CONFIG.props.maxSpecialFeatures.crimeScenes; i++) {
     if (!cell) break;
     const { x, z } = cellToWorld(cell[0], cell[1]);
     addCrimeScene(x, z); // decorative + tape, no hard collider
+}
+for (let i = 0; i < CONFIG.props.maxSpecialFeatures.newsstands; i++) {
+    const cell = nextPlazaCell();
+    if (!cell) break;
+    const { x, z } = cellToWorld(cell[0], cell[1]);
+    const r = addNewsstand(x, z);
+    propColliders.push({ x, z, radius: r });
+}
+for (let i = 0; i < CONFIG.props.maxSpecialFeatures.phoneBooths; i++) {
+    const cell = nextPlazaCell();
+    if (!cell) break;
+    const { x, z } = cellToWorld(cell[0], cell[1]);
+    const r = addPhoneBooth(x, z);
+    propColliders.push({ x, z, radius: r });
+}
+for (let i = 0; i < CONFIG.props.maxSpecialFeatures.atmKiosks; i++) {
+    const cell = nextPlazaCell();
+    if (!cell) break;
+    const { x, z } = cellToWorld(cell[0], cell[1]);
+    const r = addAtmKiosk(x, z);
+    propColliders.push({ x, z, radius: r });
 }
 
 // every plaza gets a bright pool of light, regardless of whether it also

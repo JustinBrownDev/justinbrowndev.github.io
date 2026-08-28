@@ -1959,12 +1959,14 @@ function buildFireEscapeStair(x, z, rotY, topY) {
     const modelTopY = 5.4;
     const clampedTop = Math.min(topY, modelTopY);
     let y = 0, dir = 1;
+    const landings = []; // {y} -- returned so a balcony can anchor to a real, reachable height
     while (y < clampedTop) {
         const y1 = Math.min(clampedTop, y + risePerFlight);
         const along1 = along + dir * flightLen;
         addStairFlight(axis, along, along1, cross, y, y1);
         const wx = axis === 'x' ? along1 : cross, wz = axis === 'x' ? cross : along1;
         addLandingPlatform(wx, wz, 0.65, y1);
+        landings.push({ y: y1 });
         y = y1; along = along1; dir *= -1;
     }
     // anything taller than the model itself (mainly warehouses, short
@@ -1975,6 +1977,7 @@ function buildFireEscapeStair(x, z, rotY, topY) {
     if (topY > clampedTop + 0.3) {
         addLadder(x, z, rotY, clampedTop, topY);
     }
+    return landings;
 }
 
 // a real, climbable ladder: thin rails + rungs mounted on a wall face,
@@ -2029,6 +2032,70 @@ function addLadder(x, z, rotY, y0, y1, opts = {}) {
         const y = y0 + (rise * i) / steps;
         elevatedPlatforms.push({ x: climbX, z: climbZ, hx: width * 0.6, hz: width * 0.6, y });
     }
+}
+
+// a balcony jutting off a facade -- a real floor (registered the same
+// way a fire-escape landing is), a railing on the 3 outward sides, and
+// two diagonal braces underneath reading as the reason it doesn't just
+// fall off the wall. (x, z, rotY) is a wall-anchor point same as every
+// other wall-mounted prop here; y is the platform's own height.
+function addBalcony(x, y, z, rotY, maintenance = 0.5) {
+    const depth = randRange(0.9, 1.3), width = randRange(1.6, 2.4);
+    const g = new THREE.Group();
+    const floorMat = new THREE.MeshStandardMaterial({ color: 0x3a3630, roughness: 0.85 });
+    const floor = new THREE.Mesh(jitterGeometry(new THREE.BoxGeometry(width, 0.1, depth), 0.02), floorMat);
+    floor.position.set(0, 0, depth / 2);
+    g.add(floor);
+
+    const braceMat = new THREE.MeshStandardMaterial({ color: 0x2a2a2a, roughness: 0.6, metalness: 0.6 });
+    for (const side of [-1, 1]) {
+        const brace = new THREE.Mesh(
+            jitterGeometry(new THREE.CylinderGeometry(0.025, 0.025, Math.hypot(depth, depth * 0.6), 5), 0.004),
+            braceMat
+        );
+        brace.rotation.x = Math.atan2(depth, depth * 0.6);
+        brace.position.set(side * width * 0.42, -depth * 0.28, depth / 2);
+        g.add(brace);
+    }
+
+    const railMat = new THREE.MeshStandardMaterial({ color: 0x232323, roughness: 0.6, metalness: 0.5 });
+    const railH = 0.55;
+    const railFar = new THREE.Mesh(new THREE.BoxGeometry(width, railH, 0.04), railMat);
+    railFar.position.set(0, railH / 2, depth);
+    g.add(railFar);
+    for (const side of [-1, 1]) {
+        const railSide = new THREE.Mesh(new THREE.BoxGeometry(0.04, railH, depth), railMat);
+        railSide.position.set(side * width / 2, railH / 2, depth / 2);
+        g.add(railSide);
+    }
+
+    // a planter box, more likely the better-kept this building rolled --
+    // a neglected one just gets the bare railing.
+    if (rng() < 0.25 + maintenance * 0.35) {
+        const planter = new THREE.Mesh(
+            jitterGeometry(new THREE.BoxGeometry(width * 0.5, 0.18, depth * 0.3), 0.015),
+            new THREE.MeshStandardMaterial({ color: 0x4a3a28, roughness: 0.9 })
+        );
+        planter.position.set(randRange(-width * 0.15, width * 0.15), 0.14, depth * 0.7);
+        g.add(planter);
+        const leafTex = makePixelTexture((ctx, w, h) => {
+            ctx.fillStyle = rng() < 0.6 ? '#2a5a2a' : '#5a4a20';
+            ctx.fillRect(0, 0, w, h);
+        }, 8, 8);
+        const leaves = new THREE.Mesh(
+            new THREE.SphereGeometry(width * 0.16, 6, 5),
+            new THREE.MeshStandardMaterial({ map: leafTex, roughness: 0.9 })
+        );
+        leaves.position.set(planter.position.x, 0.32, depth * 0.7);
+        g.add(leaves);
+    }
+
+    g.rotation.y = rotY;
+    g.position.set(x, y, z);
+    scene.add(g);
+
+    const wx = x + Math.sin(rotY) * (depth / 2), wz = z + Math.cos(rotY) * (depth / 2);
+    elevatedPlatforms.push({ x: wx, z: wz, hx: width / 2 * 0.9, hz: depth / 2 * 0.9, y });
 }
 
 function addBuilding(col, row) {
@@ -2303,7 +2370,26 @@ function addBuilding(col, row) {
             // to their own (now-walkable) roof; towers just get a partial
             // decorative climb near the base -- see the roof-platform
             // comment above for why the peak itself stays out of reach.
-            buildFireEscapeStair(x + face.ox * 1.02, z + face.oz * 1.02, face.rotY, isWarehouse ? height : randRange(5, 11));
+            const landings = buildFireEscapeStair(x + face.ox * 1.02, z + face.oz * 1.02, face.rotY, isWarehouse ? height : randRange(5, 11));
+            // a balcony off the same wall, anchored to a real landing
+            // height so climbing the fire escape actually gets you
+            // somewhere -- offset sideways so it doesn't sit inside the
+            // stair's own switchback footprint.
+            if (landings.length && rng() < 0.5) {
+                const landing = pick(landings);
+                // shift sideways along the wall (not into/out of it) so
+                // the balcony doesn't sit inside the stair's own footprint
+                const tangent = (rng() < 0.5 ? -1 : 1) * hw * 0.55;
+                const bx = x + face.ox + (face.oz !== 0 ? tangent : 0);
+                const bz = z + face.oz + (face.ox !== 0 ? tangent : 0);
+                addBalcony(bx, landing.y, bz, face.rotY, buildingContext.maintenance);
+            }
+        } else if (rng() < 0.12 && !isWarehouse) {
+            // buildings without a fire escape on this face still
+            // occasionally get a balcony -- purely decorative up here,
+            // the same way a tower's own peak already is.
+            const by = randRange(groundFloorHeight + 1.5, Math.min(height - 1.5, groundFloorHeight + 10));
+            addBalcony(x + face.ox, by, z + face.oz, face.rotY, buildingContext.maintenance);
         }
     }
 

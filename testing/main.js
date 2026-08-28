@@ -541,6 +541,7 @@ const CONFIG = {
 
     movement: {
         speed: 4.5, // slower than before — cramped alleys, not a sprint
+        sprintMultiplier: 1.7, // hold Shift -- covers real ground, matters for clearing a gap jump
         maxDeltaSeconds: 0.1,
         collisionIterations: 4, // was 2 -- too few passes to settle cleanly now that alley clutter is this dense; this is what "trash cans feel impossible to walk past" actually was
     },
@@ -1507,18 +1508,36 @@ const WALL_THICKNESS = 0.12; // nominal -- the visual walls are flat planes with
 const elevatedPlatforms = []; // {x,z,hx,hz,y}
 const rampRuns = []; // {axis, from, to, fixedCoord, halfWidth, y0, y1}
 
-function groundHeightAt(x, z) {
+// feetY (the player's actual current world foot height, from last frame)
+// is what makes prop-tops work as real ground rather than either always
+// blocking or always yanking you upward: a candidate only counts if
+// you're already at/above it within MAX_STEP_HEIGHT slack, the same rule
+// resolveCollisions uses to decide whether that same prop is a wall.
+// Picks the tallest valid candidate under you, not just the first match
+// -- matters now that props can overlap platforms/ramps underneath them.
+function groundHeightAt(x, z, feetY = Infinity) {
+    let best = 0; // bare ground
     for (const p of elevatedPlatforms) {
-        if (Math.abs(x - p.x) < p.hx && Math.abs(z - p.z) < p.hz) return p.y;
+        if (Math.abs(x - p.x) < p.hx && Math.abs(z - p.z) < p.hz && p.y > best) best = p.y;
     }
     for (const r of rampRuns) {
         const along = r.axis === 'x' ? x : z;
         const cross = r.axis === 'x' ? z : x;
         if (Math.abs(cross - r.fixedCoord) > r.halfWidth) continue;
         const t = (along - r.from) / (r.to - r.from);
-        if (t >= 0 && t <= 1) return r.y0 + (r.y1 - r.y0) * t;
+        if (t >= 0 && t <= 1) {
+            const y = r.y0 + (r.y1 - r.y0) * t;
+            if (y > best) best = y;
+        }
     }
-    return 0;
+    for (const p of propColliders) {
+        if (p.height === Infinity) continue; // always a wall, never a floor
+        if (p.height <= best) continue;
+        if (p.height > feetY + MAX_STEP_HEIGHT) continue; // too tall to have stepped/landed up onto yet
+        const dx = x - p.x, dz = z - p.z;
+        if (dx * dx + dz * dz <= p.radius * p.radius) best = p.height;
+    }
+    return best;
 }
 
 // builds a walkable ground-floor shell: solid walls with exactly one
@@ -3050,7 +3069,7 @@ function spawnJunkInstance(d, x, z) {
     mesh.count = junkCounts[d.shape];
     mesh.instanceMatrix.needsUpdate = true;
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-    return Math.max(sx, sz) / 2;
+    return { radius: Math.max(sx, sz) / 2, height: sy };
 }
 
 // scatter `count` junk items matching `context` around (x,z) within
@@ -3074,8 +3093,8 @@ function scatterJunk(context, x, z, count, spread, axis = null) {
             });
             if (!blocked) break;
         }
-        const radius = spawnJunkInstance(pick(pool), px, pz);
-        propColliders.push({ x: px, z: pz, radius });
+        const { radius, height } = spawnJunkInstance(pick(pool), px, pz);
+        propColliders.push({ x: px, z: pz, radius, height });
     }
 }
 
@@ -3494,9 +3513,23 @@ const PROP_BUILDERS = {
     weeds: addWeeds,
 };
 
+// hand-authored props don't measure their own real height the way
+// spawnJunkInstance does (it has the actual scaled mesh dimensions) --
+// these are reasonable real-world approximations, keyed the same as
+// PROP_BUILDERS, so resolveCollisions/groundHeightAt can tell "short
+// enough to auto-step or jump onto" from "an actual wall" for every prop,
+// not just junk. Missing keys fall back to a generic mid-height guess.
+const PROP_HEIGHTS = {
+    trashCan: 0.85, trafficCone: 0.6, trafficSign: 1.9, trafficSignal: 2.9,
+    mileMarker: 1.7, wantedPoster: 1.3, crate: 0.5, lantern: 1.6,
+    vendingMachine: 1.8, fenceSegment: 0.9, museumPlacard: 1.1,
+    stickerTag: 0.02, businessCardLitter: 0.02, manhole: 0.02, pigeon: 0.2,
+    fissureCrack: 0.02, tree: 2.5, pottedPlant: 0.4, weeds: 0.15,
+};
+
 // ---------- lay out the grid ----------
 
-const propColliders = []; // {x, z, radius} — soft obstacles, blended into collision pass
+const propColliders = []; // {x, z, radius, height} — soft obstacles, blended into collision pass. height === Infinity means "always a wall, never a valid floor to land on" (used for diffuse/non-object footprints like parks and construction zones)
 
 // every building cell gets a real building now -- addBuilding itself
 // gives each one a walkable ground floor (door toward an open neighbor
@@ -3582,14 +3615,16 @@ for (let i = 0; i < CONFIG.props.maxSpecialFeatures.statues; i++) {
     if (!cell) break;
     const { x, z } = cellToWorld(cell[0], cell[1]);
     const r = addStatue(x, z);
-    propColliders.push({ x, z, radius: r });
+    propColliders.push({ x, z, radius: r, height: 2.3 });
 }
 for (let i = 0; i < CONFIG.props.maxSpecialFeatures.constructionZones; i++) {
     const cell = nextPlazaCell();
     if (!cell) break;
     const { x, z } = cellToWorld(cell[0], cell[1]);
     const r = addConstructionZone(x, z);
-    propColliders.push({ x, z, radius: r });
+    // a diffuse scaffolding footprint, not a single solid object -- keep
+    // it an always-wall like before rather than a fake flat "roof" to land on
+    propColliders.push({ x, z, radius: r, height: Infinity });
 }
 for (let i = 0; i < CONFIG.props.maxSpecialFeatures.crimeScenes; i++) {
     const cell = nextPlazaCell();
@@ -3602,21 +3637,21 @@ for (let i = 0; i < CONFIG.props.maxSpecialFeatures.newsstands; i++) {
     if (!cell) break;
     const { x, z } = cellToWorld(cell[0], cell[1]);
     const r = addNewsstand(x, z, plazaFacingRotY(cell[0], cell[1]));
-    propColliders.push({ x, z, radius: r });
+    propColliders.push({ x, z, radius: r, height: 2.0 });
 }
 for (let i = 0; i < CONFIG.props.maxSpecialFeatures.phoneBooths; i++) {
     const cell = nextPlazaCell();
     if (!cell) break;
     const { x, z } = cellToWorld(cell[0], cell[1]);
     const r = addPhoneBooth(x, z);
-    propColliders.push({ x, z, radius: r });
+    propColliders.push({ x, z, radius: r, height: 2.2 });
 }
 for (let i = 0; i < CONFIG.props.maxSpecialFeatures.atmKiosks; i++) {
     const cell = nextPlazaCell();
     if (!cell) break;
     const { x, z } = cellToWorld(cell[0], cell[1]);
     const r = addAtmKiosk(x, z, plazaFacingRotY(cell[0], cell[1]));
-    propColliders.push({ x, z, radius: r });
+    propColliders.push({ x, z, radius: r, height: 2.0 });
 }
 const parkCells = new Set(); // parks get grass, not street asphalt or alley pavement
 for (let i = 0; i < CONFIG.props.maxSpecialFeatures.parks; i++) {
@@ -3624,7 +3659,10 @@ for (let i = 0; i < CONFIG.props.maxSpecialFeatures.parks; i++) {
     if (!cell) break;
     const { x, z } = cellToWorld(cell[0], cell[1]);
     const r = addPark(x, z);
-    propColliders.push({ x, z, radius: r });
+    // radius here is "keep other stuff clear of the whole park," not a
+    // real object -- Infinity keeps that exactly the always-wall it's
+    // always been, instead of a fake floating platform over the grass
+    propColliders.push({ x, z, radius: r, height: Infinity });
     parkCells.add(`${cell[0]},${cell[1]}`);
 }
 for (let i = 0; i < CONFIG.props.maxSpecialFeatures.megaBillboards; i++) {
@@ -3632,7 +3670,9 @@ for (let i = 0; i < CONFIG.props.maxSpecialFeatures.megaBillboards; i++) {
     if (!cell) break;
     const { x, z } = cellToWorld(cell[0], cell[1]);
     const r = addMegaBillboard(x, z);
-    propColliders.push({ x, z, radius: r });
+    // thin legs holding a sign high overhead, not a solid object at
+    // ground level -- Infinity keeps it the plain always-wall it was
+    propColliders.push({ x, z, radius: r, height: Infinity });
 }
 
 // every plaza gets a bright pool of light, regardless of whether it also
@@ -3788,7 +3828,7 @@ function addPark(x, z) {
         const px = x + randRange(-CELL * 0.38, CELL * 0.38);
         const pz = z + randRange(-CELL * 0.38, CELL * 0.38);
         addTree(px, pz);
-        propColliders.push({ x: px, z: pz, radius: 0.25 });
+        propColliders.push({ x: px, z: pz, radius: 0.25, height: PROP_HEIGHTS.tree });
     }
     const benchAngle = randRange(0, Math.PI * 2);
     addBench(x + Math.cos(benchAngle) * 1.4, z + Math.sin(benchAngle) * 1.4, benchAngle + Math.PI / 2);
@@ -3937,7 +3977,7 @@ for (let r = 1; r < GRID_ROWS - 1; r++) {
         }
 
         const radius = PROP_BUILDERS[choice](px, pz, facingRotY);
-        propColliders.push({ x: px, z: pz, radius });
+        propColliders.push({ x: px, z: pz, radius, height: PROP_HEIGHTS[choice] ?? 1.5 });
         // a tree means this pocket reads as dense/overgrown — shade it
         if (choice === 'tree') addThicketShade(x, z);
     }
@@ -3960,7 +4000,7 @@ function worldToCell(x, z) {
     };
 }
 
-function resolveCollisions(position) {
+function resolveCollisions(position, feetY = Infinity) {
     const { col, row } = worldToCell(position.x, position.z);
 
     // real per-wall collision: every building has registered wall
@@ -3993,8 +4033,15 @@ function resolveCollisions(position) {
         }
     }
 
-    // soft props: simple circle-circle push-out
+    // soft props: simple circle-circle push-out -- skipped entirely for a
+    // prop short enough to auto-step (or one you're already standing
+    // at/above the top of), the same feetY/MAX_STEP_HEIGHT rule
+    // groundHeightAt uses to decide whether that same prop counts as
+    // real floor. This is the actual "climb on top of a crate/car" half
+    // of the parkour physics -- groundHeightAt alone would just have you
+    // hovering at ground level next to it, still blocked here.
     for (const p of propColliders) {
+        if (p.height !== Infinity && p.height <= feetY + MAX_STEP_HEIGHT) continue;
         const dx = position.x - p.x;
         const dz = position.z - p.z;
         const minDist = p.radius + PLAYER_RADIUS;
@@ -4015,7 +4062,7 @@ function resolveCollisions(position) {
 
 // ---------- movement: shared state ----------
 
-const move = { forward: false, back: false, left: false, right: false };
+const move = { forward: false, back: false, left: false, right: false, sprint: false };
 let touchMoveVec = { x: 0, y: 0 }; // from joystick, x = strafe, y = forward
 const velocity = new THREE.Vector3();
 
@@ -4024,7 +4071,6 @@ const velocity = new THREE.Vector3();
 // whatever the ground/stair/platform height under you actually is (so
 // jumping mid-staircase just hops you along the same climb, it can't
 // clip you through anything).
-let jumpQueued = false;
 let verticalVelocity = 0;
 let heightAboveFloor = 0; // airborne offset above groundHeightAt; 0 = grounded
 const JUMP_SPEED = 5.5;
@@ -4033,10 +4079,31 @@ const GRAVITY = -16;
 // instant teleport straight down to whatever groundHeightAt reports under
 // your new x/z -- the table lookup has no concept of "was standing on
 // something, that something just ended". Small height changes (a stair
-// riser, a curb, a continuous ramp) should still snap immediately; only a
-// drop bigger than this counts as walking off a real ledge.
+// riser, a curb, a continuous ramp) still snap immediately; only a drop
+// bigger than this counts as walking off a real ledge.
 const STEP_DOWN_TOLERANCE = 0.5;
 let lastGroundedFloorY = null; // previous frame's floorY while grounded, for ledge detection
+
+// ---- parkour physics: coyote time, jump buffering, real auto-step ----
+// MAX_STEP_HEIGHT is the one number both resolveCollisions and
+// groundHeightAt check against propColliders' real (or estimated) height:
+// short enough to clear -> walk straight up onto it, no jump needed
+// (Minecraft's own ~0.6-block stepHeight); tall enough -> a real wall
+// until you jump, at which point the same rule lets you land on its top
+// mid-air once you're high enough, not just at ground level. This is
+// what turns crates/cars/junk piles into real jump-on-able terrain
+// instead of flat circular walls.
+const MAX_STEP_HEIGHT = 0.65;
+// jump buffering: a press slightly before landing still fires the
+// instant you touch down, instead of being silently dropped because you
+// were mid-air for one more frame than expected.
+let jumpBufferTimer = 0;
+const JUMP_BUFFER_TIME = 0.15;
+// coyote time: jump still works for a brief window after walking off a
+// ledge with no jump queued yet -- forgives the one-frame-too-late press
+// that reads as "obviously should have worked" on a real platform.
+let coyoteTimer = 0;
+const COYOTE_TIME = 0.12;
 
 const spawn = cellToWorld(spawnCol, spawnRow);
 camera.position.set(spawn.x, CONFIG.camera.eyeHeight, spawn.z);
@@ -4065,7 +4132,7 @@ if (IS_TOUCH) {
     document.addEventListener('touchstart', initAudio, { once: true });
 } else {
     crosshair.style.display = 'block';
-    showHint('click to look around · WASD to move · ESC to release');
+    showHint('click to look around · WASD to move · space to jump · shift to sprint · ESC to release');
 
     document.addEventListener('click', (e) => {
         initAudio();
@@ -4073,7 +4140,7 @@ if (IS_TOUCH) {
         if (!controls.isLocked) controls.lock();
     });
     controls.addEventListener('lock', () => fadeHint(300));
-    controls.addEventListener('unlock', () => showHint('click to look around · WASD to move'));
+    controls.addEventListener('unlock', () => showHint('click to look around · WASD to move · space to jump'));
 }
 
 document.addEventListener('keydown', (e) => {
@@ -4082,8 +4149,9 @@ document.addEventListener('keydown', (e) => {
         case 'KeyS': case 'ArrowDown': move.back = true; break;
         case 'KeyA': case 'ArrowLeft': move.left = true; break;
         case 'KeyD': case 'ArrowRight': move.right = true; break;
+        case 'ShiftLeft': case 'ShiftRight': move.sprint = true; break;
         case 'Space':
-            jumpQueued = true;
+            jumpBufferTimer = JUMP_BUFFER_TIME; // buffered, not fired directly -- animate() consumes it once actually grounded (or still in coyote time)
             e.preventDefault(); // don't let the page scroll while locked
             break;
     }
@@ -4094,6 +4162,7 @@ document.addEventListener('keyup', (e) => {
         case 'KeyS': case 'ArrowDown': move.back = false; break;
         case 'KeyA': case 'ArrowLeft': move.left = false; break;
         case 'KeyD': case 'ArrowRight': move.right = false; break;
+        case 'ShiftLeft': case 'ShiftRight': move.sprint = false; break;
     }
 });
 
@@ -4247,7 +4316,8 @@ function animate() {
 
     velocity.set(rightInput, 0, -forwardInput);
     if (velocity.lengthSq() > 1) velocity.normalize();
-    velocity.multiplyScalar(CONFIG.movement.speed * delta);
+    const speedMul = move.sprint ? CONFIG.movement.sprintMultiplier : 1; // held Shift -- full air control still applies mid-jump, this just covers more ground per second
+    velocity.multiplyScalar(CONFIG.movement.speed * speedMul * delta);
 
     if (controls.isLocked || IS_TOUCH) {
         controls.moveRight(velocity.x);
@@ -4264,16 +4334,24 @@ function animate() {
         footstepTimer = 0;
     }
 
+    // last frame's actual foot height, before this frame's ground/gravity
+    // update touches it -- both resolveCollisions and groundHeightAt use
+    // this (against MAX_STEP_HEIGHT) to decide "auto-step/landable" vs
+    // "solid wall" per prop, so both sides of that decision agree.
+    const feetY = camera.position.y - CONFIG.camera.eyeHeight;
     for (let i = 0; i < CONFIG.movement.collisionIterations; i++) {
-        resolveCollisions(camera.position);
+        resolveCollisions(camera.position, feetY);
     }
-    // real elevation: standing on a mezzanine or climbing its stairs
-    // actually changes eye height now, not just X/Z collision. Jump is
-    // layered on top as a genuine arc, not an instant hop: a launch
-    // impulse when grounded, gravity every frame after, clamped so it
-    // never carries you below the floor/stair/platform under your feet.
-    let floorY = groundHeightAt(camera.position.x, camera.position.z) + CONFIG.camera.eyeHeight;
+    // real elevation: standing on a mezzanine, climbing its stairs, or
+    // standing on top of a crate/car/junk pile all actually change eye
+    // height now, not just X/Z collision. Jump is layered on top as a
+    // genuine arc, not an instant hop: a launch impulse when grounded (or
+    // still within coyote time), gravity every frame after, clamped so it
+    // never carries you below the floor/stair/platform/prop-top under
+    // your feet.
+    let floorY = groundHeightAt(camera.position.x, camera.position.z, feetY) + CONFIG.camera.eyeHeight;
     const wasGrounded = heightAboveFloor <= 0.001;
+    coyoteTimer = wasGrounded ? COYOTE_TIME : Math.max(0, coyoteTimer - delta);
     if (wasGrounded && lastGroundedFloorY !== null && floorY < lastGroundedFloorY - STEP_DOWN_TOLERANCE) {
         // stepped off a real ledge -- don't snap down to the new (lower)
         // floor, fall to it instead. Reframe the gap as airborne offset
@@ -4281,11 +4359,11 @@ function animate() {
         // it already was, then gravity below carries it down naturally.
         heightAboveFloor = lastGroundedFloorY - floorY;
     }
-    if (jumpQueued && heightAboveFloor <= 0.001) {
+    jumpBufferTimer = Math.max(0, jumpBufferTimer - delta);
+    if (jumpBufferTimer > 0 && (heightAboveFloor <= 0.001 || coyoteTimer > 0)) {
         verticalVelocity = JUMP_SPEED;
-        jumpQueued = false;
-    } else {
-        jumpQueued = false; // can't queue a jump while airborne either
+        jumpBufferTimer = 0;
+        coyoteTimer = 0;
     }
     verticalVelocity += GRAVITY * delta;
     heightAboveFloor = Math.max(0, heightAboveFloor + verticalVelocity * delta);

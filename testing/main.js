@@ -3,6 +3,7 @@ import { PointerLockControls } from './vendor/three/addons/controls/PointerLockC
 import { EffectComposer } from './vendor/three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from './vendor/three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from './vendor/three/addons/postprocessing/UnrealBloomPass.js';
+import { GLTFLoader } from './vendor/three/addons/loaders/GLTFLoader.js';
 
 // =====================================================================
 // CONCEPT
@@ -612,6 +613,44 @@ function updateRain(delta) {
     pos.needsUpdate = true;
     rain.position.set(camera.position.x, 0, camera.position.z);
 }
+
+// ---------- real scanned/modeled props (Poly Haven, CC0) ----------
+// A handful of actual CC0 models (Poly Haven's "Hidden Alley" collection
+// — literally built for this), vendored as geometry-only glTF (the PBR
+// texture sets are tens of MB each and would both blow the load-time
+// budget and clash with the low-fi look everywhere else here; simple
+// flat-color materials were substituted when the files were prepared).
+// Loading is async, so placement is decoupled via a request queue:
+// code elsewhere calls placeRealModel() with a position any time during
+// the (synchronous) layout pass, and instances get dropped in whenever
+// each model finishes loading, in whatever order that happens.
+const gltfLoader = new GLTFLoader();
+gltfLoader.setPath('./vendor/models/');
+const pendingRealModelPlacements = { tyre: [], trashbag: [], manhole: [] };
+
+function placeRealModel(name, x, z, rotY) {
+    pendingRealModelPlacements[name].push({ x, z, rotY });
+}
+
+function loadRealModel(name, file, scale) {
+    gltfLoader.load(file, (gltf) => {
+        const template = gltf.scene;
+        template.scale.setScalar(scale);
+        for (const req of pendingRealModelPlacements[name]) {
+            const inst = template.clone();
+            inst.position.set(req.x, 0, req.z);
+            inst.rotation.y = req.rotY;
+            scene.add(inst);
+        }
+    }, undefined, (err) => {
+        // fails soft — a visitor on a flaky connection just doesn't get
+        // this specific prop rather than the whole page breaking.
+        console.warn(`[testing] real model "${name}" didn't load, skipping`, err);
+    });
+}
+loadRealModel('tyre', 'old_tyre.gltf', 1);
+loadRealModel('trashbag', 'trashbag.gltf', 1);
+loadRealModel('manhole', 'water_manhole_cover.gltf', 1.4);
 
 // ---------- small helpers ----------
 
@@ -2590,6 +2629,11 @@ for (let r = 1; r < GRID_ROWS - 1; r++) {
         } else if (rng() < 0.22) {
             scatterJunk('alley', x, z, 1, CELL * 0.3);
         }
+        // a real scanned prop, occasionally, alongside the procedural
+        // junk — sparse on purpose (a handful per city, not mass-instanced)
+        if (rng() < 0.05) placeRealModel('tyre', x + randRange(-1.5, 1.5), z + randRange(-1.5, 1.5), randRange(0, Math.PI * 2));
+        if (rng() < 0.05) placeRealModel('trashbag', x + randRange(-1.5, 1.5), z + randRange(-1.5, 1.5), randRange(0, Math.PI * 2));
+        if (rng() < 0.06) placeRealModel('manhole', x + randRange(-0.6, 0.6), z + randRange(-0.6, 0.6), randRange(0, Math.PI * 2));
 
         // overhead cables: strung across the alley wherever there's a
         // building directly on both sides (either axis) — the literal

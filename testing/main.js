@@ -468,7 +468,7 @@ const CONFIG = {
             trafficCone: 3,
             trafficSign: 2,
             mileMarker: 2,
-            wantedPoster: 3.5,
+            wantedPoster: 5, // bumped -- 1 in 5 of these now carries a real personal fact, not just a wiki rabbit hole
             crate: 4,
             lantern: 4,
             vendingMachine: 2.5,
@@ -1079,9 +1079,27 @@ const WIKI_FALLBACK = [
     ['BALL LIGHTNING', 'unexplained atmospheric'],
     ['THE DYATLOV PASS', 'nine hikers, 1959'],
 ];
+
+// real biographical fragments, styled and shuffled into the exact same
+// pool as the Wikipedia rabbit holes above -- on purpose. The whole maze
+// runs on the idea that the one true signal shouldn't structurally stand
+// out from the noise around it, so these don't get a special frame, a
+// special mount, or a special anything: just another wanted poster
+// somebody happened to also be right about, indistinguishable from a
+// hundred that aren't. Never pushed into wantedPosterMeshes below (see
+// addWantedPoster) -- these are real, so they don't get overwritten by
+// the live Wikipedia swap the way the fallback fodder does.
+const PERSONAL_WANTED_FACTS = [
+    ['NEVER FIT IN', 'hippie, skater, gay, freak, hacker'],
+    ['MOSTLY STRAIGHT EDGE NOW', 'reformed, allegedly'],
+    ['RAN TRACK', 'high school, distance events'],
+    ['@BRUCEFALLITM', 'instagram -- unconfirmed sightings'],
+    ['@SMALLPLANTENTHUSIAST', 'instagram -- succulents, mostly'],
+    ['ARMED WITH OPINIONS', 'approach with snacks'],
+];
 const wantedPosterMeshes = [];
 
-function makeWantedTexture(title, subtitle) {
+function makeWantedTexture(title, subtitle, tagline1 = 'KNOWLEDGE OF THIS TOPIC', tagline2 = 'REWARD: PEACE OF MIND') {
     return makePixelTexture((ctx, w, h) => {
         ctx.fillStyle = '#e8dfc0';
         ctx.fillRect(0, 0, w, h);
@@ -1097,21 +1115,29 @@ function makeWantedTexture(title, subtitle) {
         ctx.font = '8px "Courier New", monospace';
         ctx.fillText(subtitle, w / 2, h / 2 + 16, w - 12);
         ctx.font = '7px "Courier New", monospace';
-        ctx.fillText('KNOWLEDGE OF THIS TOPIC', w / 2, h - 20);
-        ctx.fillText('REWARD: PEACE OF MIND', w / 2, h - 10);
+        ctx.fillText(tagline1, w / 2, h - 20);
+        ctx.fillText(tagline2, w / 2, h - 10);
     }, 96, 128);
 }
 
 function addWantedPoster(x, z, rotY) {
-    const [title, subtitle] = pick(WIKI_FALLBACK);
+    // ~1 in 5 -- scarce enough that finding one still feels like a find,
+    // same logic as everything else in this maze that's actually real.
+    const isPersonal = rng() < 0.2;
+    const [title, subtitle] = pick(isPersonal ? PERSONAL_WANTED_FACTS : WIKI_FALLBACK);
+    const tex = isPersonal
+        ? makeWantedTexture(title, subtitle, 'ON FILE, ALLEGEDLY', "REWARD: NONE, HE'S FINE")
+        : makeWantedTexture(title, subtitle);
     const plane = new THREE.Mesh(
         new THREE.PlaneGeometry(randRange(0.55, 0.8), randRange(0.75, 1.1)),
-        new THREE.MeshStandardMaterial({ map: makeWantedTexture(title, subtitle), roughness: 0.9 })
+        new THREE.MeshStandardMaterial({ map: tex, roughness: 0.9 })
     );
     plane.position.set(x, randRange(1.3, 2.0), z);
     plane.rotation.y = rotY;
     scene.add(plane);
-    wantedPosterMeshes.push(plane);
+    // only the wiki fallback fodder is swap-eligible for the live random
+    // article fetch below -- the personal facts are real and stay put.
+    if (!isPersonal) wantedPosterMeshes.push(plane);
     return 0.05;
 }
 

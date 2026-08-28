@@ -680,7 +680,7 @@ function updateRain(delta) {
 // each model finishes loading, in whatever order that happens.
 const gltfLoader = new GLTFLoader();
 gltfLoader.setPath('./vendor/models/');
-const pendingRealModelPlacements = { tyre: [], trashbag: [], manhole: [], sprayCans: [], trashCanReal: [], streetLamp: [] };
+const pendingRealModelPlacements = { tyre: [], trashbag: [], manhole: [], sprayCans: [], trashCanReal: [], streetLamp: [], barrelStove: [], ironGate: [] };
 
 function placeRealModel(name, x, z, rotY) {
     pendingRealModelPlacements[name].push({ x, z, rotY });
@@ -708,6 +708,8 @@ loadRealModel('manhole', 'water_manhole_cover.gltf', 1.4);
 loadRealModel('sprayCans', 'spray_paint_bottles.gltf', 1);
 loadRealModel('trashCanReal', 'metal_trash_can.gltf', 1);
 loadRealModel('streetLamp', 'street_lamp_02.gltf', 1);
+loadRealModel('barrelStove', 'barrel_stove.gltf', 1);
+loadRealModel('ironGate', 'large_iron_gate.gltf', 1);
 
 // ---------- real photos ----------
 // his actual site images, resized/recompressed for a texture instead of
@@ -2576,6 +2578,7 @@ function addConstructionZone(x, z) {
     addTrafficCone(x - 1.2, z + 0.6);
     addTrafficCone(x + 1.2, z - 0.6);
     scatterJunk('construction', x, z, 5, 1.9);
+    if (rng() < 0.5) placeRealModel('barrelStove', x + randRange(-1.3, 1.3), z + randRange(-1.3, 1.3), randRange(0, Math.PI * 2));
     return 1.1;
 }
 
@@ -3072,6 +3075,7 @@ function addPark(x, z) {
     const benchAngle = randRange(0, Math.PI * 2);
     addBench(x + Math.cos(benchAngle) * 1.4, z + Math.sin(benchAngle) * 1.4, benchAngle + Math.PI / 2);
     scatterJunk('park', x, z, 4, CELL * 0.4);
+    if (rng() < 0.4) placeRealModel('ironGate', x, z - CELL * 0.42, 0); // a real wrought-iron entrance gate on the park's north edge
     return CELL * 0.5;
 }
 

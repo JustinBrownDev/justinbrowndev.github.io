@@ -25,7 +25,7 @@ import { GLTFLoader } from './vendor/three/addons/loaders/GLTFLoader.js';
 //
 // Built as one system, not separate set pieces: real streets (with
 // sidewalks) cut through the same grid as grimier back alleys; parks
-// and a handful of walkable building interiors punctuate it; ~240
+// and a handful of walkable building interiors punctuate it; ~500
 // instanced junk props and a few real CC0-scanned objects (Poly Haven)
 // dress it in situationally, tied to whatever real feature (a
 // construction zone, a crime scene, a park) is already there rather than
@@ -33,6 +33,18 @@ import { GLTFLoader } from './vendor/three/addons/loaders/GLTFLoader.js';
 // Pacific Crest Trail elevation transect, the "3,529 estimated living
 // Justin Browns" figure — is real, sourced, and cited inline where it's
 // used, not invented to look real.
+//
+// The ground is only half of it. Above the alleys, the same info-glut
+// premise repeats with every rule except walkability dropped: thousands
+// of small, ungrounded, gravity-ignoring shapes (see "airborne junk"
+// below) drift between and through the towers at every height, dense
+// enough that open sky is the exception, not the view. It's the same
+// noise-hides-the-signal idea, just made literally hard to see past.
+// Woven into the noise on the ground: real wanted posters that are
+// actually about him (socials, a track season, the identities he's
+// worn) shuffled into the exact same pool as the joke ones, styled
+// identically on purpose — the signal was never supposed to look
+// different from the noise around it.
 // =====================================================================
 
 // =====================================================================
@@ -122,7 +134,7 @@ const CONFIG = {
             drawDistance: 380,
             maxDynamicLights: 40,
             propDensity: 1.7,
-            skyJunkCount: 2600, // airborne clutter -- pure overdraw, so this is the dial that's safe to push hardest
+            skyJunkCount: 3800, // airborne clutter -- pure overdraw, so this is the dial that's safe to push hardest
         },
         mobile: {
             maxPixelRatio: 1.5,
@@ -131,7 +143,7 @@ const CONFIG = {
             drawDistance: 260,
             maxDynamicLights: 18,
             propDensity: 1.05,
-            skyJunkCount: 650,
+            skyJunkCount: 950,
         },
         // auto-selected on low core-count/low-memory machines (touch or
         // not -- see detectWeakGPU below), or forced with ?quality=low.
@@ -144,7 +156,7 @@ const CONFIG = {
             drawDistance: 180,
             maxDynamicLights: 6,
             propDensity: 0.3,
-            skyJunkCount: 100, // token amount -- the "buried in noise" read still needs to exist, just barely
+            skyJunkCount: 140, // token amount -- the "buried in noise" read still needs to exist, just barely
         },
     },
 
@@ -482,7 +494,7 @@ const CONFIG = {
             tree: 1.5,
             pottedPlant: 3,
             weeds: 3.5,
-            none: 0.08,
+            none: 0.03, // turned down further -- almost nothing gets to be empty
         },
         maxSpecialFeatures: {
             statues: 5,
@@ -2646,7 +2658,7 @@ for (const kind of JUNK_BASE_KINDS) {
     }
 }
 
-const JUNK_CAPACITY = 320;
+const JUNK_CAPACITY = 520; // raised alongside the density bump below -- headroom so instances don't silently start getting dropped at cap
 const junkMeshes = {};
 const junkCounts = {};
 const _junkMatrix = new THREE.Matrix4();
@@ -2837,6 +2849,14 @@ function spawnSkyJunk(count) {
     for (let i = 0; i < count; i++) {
         const x = randRange(-GRID_W / 2, GRID_W / 2);
         const z = randRange(-GRID_H / 2, GRID_H / 2);
+
+        // rides the same light-web/dark-web density gradient every
+        // ground-level system already does -- thicker air toward the
+        // loud south pole, thinner (never clear) toward the quiet north.
+        const t = webAlignment(z);
+        const gradientMul = THREE.MathUtils.lerp(CONFIG.narrative.darkWeb.propDensityMul, CONFIG.narrative.lightWeb.propDensityMul, t);
+        if (rng() > gradientMul) continue;
+
         let y = cfg.heightMin + (cfg.heightMax - cfg.heightMin) * (rng() ** cfg.heightBias);
 
         const { col, row } = worldToCell(x, z);
@@ -3251,7 +3271,7 @@ for (let i = 0; i < CONFIG.props.maxSpecialFeatures.megaBillboards; i++) {
 for (const [pc, pr] of plazaCells) {
     const { x, z } = cellToWorld(pc, pr);
     addPlazaGlow(x, z);
-    if (rng() < 0.7 * QUALITY.propDensity) scatterJunk('plaza', x, z, 1 + Math.floor(rng() * 2), CELL * 0.4);
+    if (rng() < 0.85 * QUALITY.propDensity) scatterJunk('plaza', x, z, 1 + Math.floor(rng() * 3), CELL * 0.4);
 }
 
 // props that realistically sit against a wall rather than floating in
@@ -3450,7 +3470,7 @@ for (let r = 1; r < GRID_ROWS - 1; r++) {
         const onStreet = isStreetCell(c, r);
         if (onStreet) {
             addStreetSurface(c, r, x, z);
-            if (rng() < 0.3 * QUALITY.propDensity) scatterJunk('street', x, z, 1 + Math.floor(rng() * 2), CELL * 0.34);
+            if (rng() < 0.45 * QUALITY.propDensity) scatterJunk('street', x, z, 1 + Math.floor(rng() * 3), CELL * 0.34);
             if (rng() < 0.15 * QUALITY.propDensity) {
                 const w = wallDirections(c, r);
                 if (w.length) {
@@ -3458,8 +3478,8 @@ for (let r = 1; r < GRID_ROWS - 1; r++) {
                     placeRealModel('streetLamp', x + dir.dx * (CELL * 0.4), z + dir.dz * (CELL * 0.4), randRange(0, Math.PI * 2));
                 }
             }
-        } else if (rng() < 0.55 * QUALITY.propDensity) {
-            scatterJunk('alley', x, z, 1 + Math.floor(rng() * 2), CELL * 0.3);
+        } else if (rng() < 0.75 * QUALITY.propDensity) {
+            scatterJunk('alley', x, z, 1 + Math.floor(rng() * 3), CELL * 0.3);
         }
         // real scanned props are NOT instanced (each is its own draw
         // call) -- sparse by design, and doubly gated on quality tier.

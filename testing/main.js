@@ -1046,10 +1046,14 @@ function addInteriorBuilding(col, row, door) {
 
 function addBuilding(col, row) {
     const { x, z } = cellToWorld(col, row);
-    const margin = randRange(CONFIG.maze.buildingMarginMin, CONFIG.maze.buildingMarginMax);
+    // ~12% of buildings are squat warehouses instead of towers: near-full
+    // cell width, a fraction of the usual height. A fourth building
+    // archetype alongside single-tower/setback-tower/interior.
+    const isWarehouse = rng() < 0.12;
+    const margin = isWarehouse ? CONFIG.maze.buildingMarginMin : randRange(CONFIG.maze.buildingMarginMin, CONFIG.maze.buildingMarginMax);
     const footprint = CELL - margin;
     footprintOf[row][col] = footprint;
-    const height = randRange(CONFIG.buildings.heightMin, CONFIG.buildings.heightMax);
+    const height = isWarehouse ? randRange(6, 12) : randRange(CONFIG.buildings.heightMin, CONFIG.buildings.heightMax);
     const color = pick(CONFIG.buildings.palette);
 
     // ~1 in 6 buildings is "stained" with the real elevation-gradient
@@ -1067,7 +1071,7 @@ function addBuilding(col, row) {
     // own top cap doubles as the roof deck the upper stage stands on,
     // and the upper stage's un-capped bottom is never seen from ground
     // level. Keeps the whole scene from reading as one repeated formula.
-    if (rng() < 0.3) {
+    if (!isWarehouse && rng() < 0.3) {
         const baseHeight = height * randRange(0.4, 0.7);
         const upperHeight = height - baseHeight;
         const upperHw = (footprint / 2) * randRange(0.5, 0.8);
@@ -1081,6 +1085,29 @@ function addBuilding(col, row) {
         const building = new THREE.Mesh(buildOrganicTowerGeometry(footprint / 2, height), material);
         building.position.set(x, 0, z); // organic geometry already spans y=0..height
         scene.add(building);
+
+        // roof toppers — a fifth/sixth flavor of building silhouette,
+        // skipped on warehouses (too short to read) and setbacks (already
+        // have their own upper mass).
+        if (!isWarehouse) {
+            const topper = weightedPick({ none: 6, dome: 2, spire: 2 });
+            if (topper === 'dome') {
+                const dome = new THREE.Mesh(
+                    new THREE.SphereGeometry(footprint / 2 * 0.85, 8, 6, 0, Math.PI * 2, 0, Math.PI / 2),
+                    material
+                );
+                dome.position.set(x, height, z);
+                scene.add(dome);
+            } else if (topper === 'spire') {
+                const spireH = randRange(3, 7);
+                const spire = new THREE.Mesh(
+                    jitterGeometry(new THREE.ConeGeometry(0.15, spireH, 6), 0.02),
+                    new THREE.MeshStandardMaterial({ color: 0x8a8a8a, roughness: 0.5, metalness: 0.6 })
+                );
+                spire.position.set(x, height + spireH / 2, z);
+                scene.add(spire);
+            }
+        }
     }
 
     // curb/base skirt so the building reads as sitting on something, not floating

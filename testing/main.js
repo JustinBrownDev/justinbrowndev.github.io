@@ -18,7 +18,21 @@ import { GLTFLoader } from './vendor/three/addons/loaders/GLTFLoader.js';
 // dwarf the 1.65-unit eye height on purpose) but still walks it unbound,
 // tracing a corridor between the oversaturated, over-indexed "light web"
 // and the sparse, half-abandoned "dark web" — in corporeal form, at
-// street level, between the two.
+// street level, between the two. Set in daylight on purpose: the
+// gradient is blinding-noon-glare vs. cooler-overcast-shade, never an
+// actual light switch, because none of this is a threat at night — it's
+// ordinary, everyday, hiding in the open the way a public secret does.
+//
+// Built as one system, not separate set pieces: real streets (with
+// sidewalks) cut through the same grid as grimier back alleys; parks
+// and a handful of walkable building interiors punctuate it; ~240
+// instanced junk props and a few real CC0-scanned objects (Poly Haven)
+// dress it in situationally, tied to whatever real feature (a
+// construction zone, a crime scene, a park) is already there rather than
+// scattered at random. Every dataset baked in — the DJIA crash line, the
+// Pacific Crest Trail elevation transect, the "3,529 estimated living
+// Justin Browns" figure — is real, sourced, and cited inline where it's
+// used, not invented to look real.
 // =====================================================================
 
 // =====================================================================
@@ -2481,7 +2495,7 @@ for (let i = 0; i < CONFIG.props.maxSpecialFeatures.parks; i++) {
 for (const [pc, pr] of plazaCells) {
     const { x, z } = cellToWorld(pc, pr);
     addPlazaGlow(x, z);
-    if (rng() < 0.4) scatterJunk('plaza', x, z, 1, CELL * 0.4);
+    if (rng() < 0.4 * QUALITY.propDensity) scatterJunk('plaza', x, z, 1, CELL * 0.4);
 }
 
 // props that realistically sit against a wall rather than floating in
@@ -2622,18 +2636,22 @@ for (let r = 1; r < GRID_ROWS - 1; r++) {
         if (parkCells.has(`${c},${r}`)) continue; // already laid down as grass
 
         const { x, z } = cellToWorld(c, r);
+        // scatterJunk itself is cheap (instanced — a handful of draw
+        // calls total regardless of count), but propColliders growth and
+        // the real-model clones below aren't free, so all of this still
+        // scales with QUALITY.propDensity like everything else does.
         const onStreet = isStreetCell(c, r);
         if (onStreet) {
             addStreetSurface(c, r, x, z);
-            if (rng() < 0.12) scatterJunk('street', x, z, 1, CELL * 0.34);
-        } else if (rng() < 0.22) {
+            if (rng() < 0.12 * QUALITY.propDensity) scatterJunk('street', x, z, 1, CELL * 0.34);
+        } else if (rng() < 0.22 * QUALITY.propDensity) {
             scatterJunk('alley', x, z, 1, CELL * 0.3);
         }
-        // a real scanned prop, occasionally, alongside the procedural
-        // junk — sparse on purpose (a handful per city, not mass-instanced)
-        if (rng() < 0.05) placeRealModel('tyre', x + randRange(-1.5, 1.5), z + randRange(-1.5, 1.5), randRange(0, Math.PI * 2));
-        if (rng() < 0.05) placeRealModel('trashbag', x + randRange(-1.5, 1.5), z + randRange(-1.5, 1.5), randRange(0, Math.PI * 2));
-        if (rng() < 0.06) placeRealModel('manhole', x + randRange(-0.6, 0.6), z + randRange(-0.6, 0.6), randRange(0, Math.PI * 2));
+        // real scanned props are NOT instanced (each is its own draw
+        // call) -- sparse by design, and doubly gated on quality tier.
+        if (rng() < 0.05 * QUALITY.propDensity) placeRealModel('tyre', x + randRange(-1.5, 1.5), z + randRange(-1.5, 1.5), randRange(0, Math.PI * 2));
+        if (rng() < 0.05 * QUALITY.propDensity) placeRealModel('trashbag', x + randRange(-1.5, 1.5), z + randRange(-1.5, 1.5), randRange(0, Math.PI * 2));
+        if (rng() < 0.06 * QUALITY.propDensity) placeRealModel('manhole', x + randRange(-0.6, 0.6), z + randRange(-0.6, 0.6), randRange(0, Math.PI * 2));
 
         // overhead cables: strung across the alley wherever there's a
         // building directly on both sides (either axis) — the literal

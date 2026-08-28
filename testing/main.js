@@ -359,6 +359,29 @@ const CONFIG = {
             ['PAWN & LOAN', 'gold · guns · gear'], ['24HR DINER', 'always open'], ['CHECK CASHING', 'no ID needed'],
             ['SMOKE SHOP', 'papers · lighters'], ['NAIL SALON', 'walk-ins ok'], ['PHONE REPAIR', 'screens fixed'],
             ['KEY CUTTING', 'while you wait'], ['PSYCHIC READINGS', 'first one free'], ['USED ELECTRONICS', 'cash paid'],
+            // the curated list above is hand-picked; everything past this
+            // point is a deterministic cross-join of shop noun x tagline
+            // (no RNG involved, so it can't shift the maze's seeded layout)
+            // -- same back-alley voice, just a lot more of it.
+            ...(() => {
+                const nouns = [
+                    'RAMEN STAND', 'UDON HOUSE', 'DUMPLING BAR', 'TEA HOUSE', 'VINYL SHOP',
+                    'CAMERA REPAIR', 'CAPSULE HOTEL', 'INTERNET CAFE', 'BATHHOUSE', 'FLORIST',
+                    'STATIONERY', 'ANTIQUES', 'RECORD SHOP', 'COMIC SHOP', 'THRIFT STORE',
+                    'JEWELRY', 'SHOE REPAIR', 'UMBRELLA REPAIR', 'FISH MARKET', 'BUTCHER',
+                    'GREENGROCER', 'YAKITORI', 'TEMPURA', 'SOBA HOUSE', 'CRAFT BEER',
+                    'WINE BAR', 'COFFEE STAND', 'LAUNDROMAT', 'SHRINE GOODS', 'INCENSE SHOP',
+                    'KNIFE SHOP', 'RAMEN 2ND FLOOR', 'NOODLE CART', 'CIGAR LOUNGE', 'VAPE SHOP',
+                ];
+                const tags = [
+                    'open late', 'cash only', 'no photos', 'members only', 'ask inside',
+                    'closed mondays', '24 hrs', 'walk-ins welcome', 'family owned', 'since forever',
+                    'back alley only', 'ring twice', 'basement level', 'second floor', 'no english menu',
+                ];
+                const out = [];
+                for (const n of nouns) for (const t of tags) out.push([n, t]);
+                return out;
+            })(),
         ],
         // the whole reason this is a maze: real Census (2020, surname
         // "Brown" = rank 4, 1,386,083 people) and SSA (first name
@@ -386,6 +409,23 @@ const CONFIG = {
             ['DELETED', 'profile unavailable'], ['AMBIGUOUS', 'too common a name'],
             ['LOADING', '...'], ['PAYWALL', 'subscribe to continue'],
             ['UNVERIFIED', 'take with salt'], ['INDEXING', 'come back later'],
+            // deterministic cross-join, same reasoning as flavorWords above
+            ...(() => {
+                const statuses = [
+                    'TIMEOUT', 'STALE CACHE', 'PARTIAL MATCH', 'QUERY TOO BROAD', 'SESSION EXPIRED',
+                    'CAPTCHA REQUIRED', 'THROTTLED', 'MIRROR UNAVAILABLE', 'ARCHIVE ONLY', 'REDACTED',
+                    'SYNONYM EXPANDED', 'SPELL-CHECKED', 'RESULTS HIDDEN', 'REGION LOCKED', 'LOGIN REQUIRED',
+                    'BOT TRAFFIC DETECTED', 'CRAWLER BLOCKED', 'FLAGGED', 'INDEX REBUILDING', 'FORWARDING',
+                ];
+                const subs = [
+                    'try narrowing your search', 'insufficient signal', 'servers under load',
+                    'see terms of service', 'automated response', 'no further information',
+                    'check spelling', 'try again later', 'escalated, no ETA', 'ask a human instead',
+                ];
+                const out = [];
+                for (const s of statuses) for (const sub of subs) out.push([s, sub]);
+                return out;
+            })(),
         ],
         // exactly one of these exists, at the farthest dead end from
         // spawn. everything else in the city is noise wearing his name.
@@ -1222,6 +1262,17 @@ const PERSONAL_WANTED_FACTS = [
     ['NO USER-SERVICEABLE PARTS', 'disputed, opened anyway'],
 ];
 const wantedPosterMeshes = [];
+// tagline pairs for the generic (non-personal) wanted poster -- picked per
+// poster instead of one fixed pair everywhere, so the wall of them doesn't
+// read as a single photocopy repeated over and over.
+const WANTED_TAGLINES = [
+    ['KNOWLEDGE OF THIS TOPIC', 'REWARD: PEACE OF MIND'],
+    ['ANY FURTHER DETAIL', 'REWARD: A GOOD STORY'],
+    ['A CREDIBLE SOURCE', 'REWARD: DISBELIEF, EARNED'],
+    ['ONE STRAIGHT ANSWER', 'REWARD: NONE OFFERED'],
+    ['THE ORIGINAL CITATION', 'REWARD: GOOD LUCK'],
+    ['A SECOND WITNESS', 'REWARD: STILL LOOKING'],
+];
 
 function makeWantedTexture(title, subtitle, tagline1 = 'KNOWLEDGE OF THIS TOPIC', tagline2 = 'REWARD: PEACE OF MIND') {
     return makePixelTexture((ctx, w, h) => {
@@ -1249,9 +1300,10 @@ function addWantedPoster(x, z, rotY) {
     // same logic as everything else in this maze that's actually real.
     const isPersonal = rng() < 0.2;
     const [title, subtitle] = pick(isPersonal ? PERSONAL_WANTED_FACTS : WIKI_FALLBACK);
+    const [tagline1, tagline2] = pick(WANTED_TAGLINES);
     const tex = isPersonal
         ? makeWantedTexture(title, subtitle, 'ON FILE, ALLEGEDLY', "REWARD: NONE, HE'S FINE")
-        : makeWantedTexture(title, subtitle);
+        : makeWantedTexture(title, subtitle, tagline1, tagline2);
     const plane = new THREE.Mesh(
         new THREE.PlaneGeometry(randRange(0.55, 0.8), randRange(0.75, 1.1)),
         new THREE.MeshStandardMaterial({ map: tex, roughness: 0.9 })
@@ -2204,6 +2256,26 @@ const GRAFFITI_TAGS = [
     // personal mythology that names the codeProjects wall plaques below.
     'NO 5TH BUTTON', 'OPEN THE CASE', 'THE CYCLE KNOWS', 'JTHEWAY',
     'HEAT SHALL MOVE', 'WHO LEFT THIS OPEN', 'YES BUT HOW', 'REMOVE THE COVER',
+    // the curated lines above are hand-written; everything below is a
+    // deterministic cross-join (subject x predicate, no RNG -- can't
+    // shift the maze's seeded layout) drawn straight from the same
+    // mythology (The Great Book of 8gH) — a lot more scrawl, same voice.
+    ...(() => {
+        const subjects = [
+            'THE CYCLE', 'THE FIFTH BUTTON', 'THE VISE', 'THE WORKBENCH', 'THE OPEN CASE',
+            'THE COMPRESSOR', 'THE MAGNETRON', 'JTHEWAY', '8gH', 'THE SEALED BLACK BOX',
+            'THE REVERSING VALVE', 'THE SIGNAL',
+        ];
+        const predicates = [
+            'KNOWS', 'REMEMBERS', 'WAS HERE', 'NEVER SLEEPS', 'IS WATCHING',
+            "WON'T ROTATE", 'REMAINS SEALED', 'ADMITS NOTHING', 'STILL COMPRESSING',
+            'HAS NO FIFTH BUTTON', 'ASKS WHAT IT DOES', 'NEVER PLUGGED IN',
+            'KEEPS NO RECORD', 'OPENED ANYWAY',
+        ];
+        const out = [];
+        for (const s of subjects) for (const p of predicates) out.push(`${s} ${p}`);
+        return out;
+    })(),
 ];
 function addGraffitiTag(x, y, z, rotY) {
     const text = pick(GRAFFITI_TAGS);
@@ -2768,6 +2840,31 @@ const MYTHOLOGY_FRAGMENTS = [
     ['THE VISE-GRIP REVELATION', 'the moment gripping acquired state'],
     ['8gH', 'a signature attached to opened structures'],
     ['TAKE IT APART', 'to see how it works'],
+    // curated above; deterministic title x domain cross-join below (real
+    // honorifics pulled from the actual text -- "KEEPER OF THE SUCTION
+    // LINE," "PROTECTOR OF THE COMPRESSOR," etc.), subtitle cycled from a
+    // small pool rather than RNG-picked so this stays seed-safe.
+    ...(() => {
+        const titles = [
+            'KEEPER', 'PROTECTOR', 'DEFENDER', 'WARDEN', 'MASTER', 'PATRIARCH',
+            'LORD', 'SOVEREIGN', 'FATHER', 'JUDGE', 'WITNESS', 'FIRST ENGINEER',
+        ];
+        const domains = [
+            'THE COMPRESSOR', 'THE SUCTION LINE', 'THE DISCHARGE LINE', 'THE EVAPORATOR',
+            'THE CONDENSER', 'THE REVERSING VALVE', 'THE CYCLE', 'THE FIFTH BUTTON',
+            'THE VISE', 'THE OPEN CASE', 'THE FOUR BUTTONS', 'THE SMALL PLANT DEPARTMENT',
+            'THE RIGHT LAYER', 'THE SEALED BLACK BOX',
+        ];
+        const subs = [
+            'not disputed, allegedly', 'ruled unnecessary', 'convened once, never again',
+            'sealed since installation', 'opened anyway', 'still rotating', 'never plugged in',
+            'compress -- condense -- expand -- evaporate', 'a title, not a job', 'self-appointed',
+        ];
+        const out = [];
+        let i = 0;
+        for (const t of titles) for (const d of domains) out.push([`${t} OF ${d}`, subs[i++ % subs.length]]);
+        return out;
+    })(),
 ];
 
 // a flyer dropped flat on the pavement — skills & rhetoric fragments.

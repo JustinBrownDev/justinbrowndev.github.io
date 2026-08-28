@@ -898,9 +898,28 @@ function addBuilding(col, row) {
         ? new THREE.MeshStandardMaterial({ map: makeTopologyStainTexture(), roughness: CONFIG.buildings.roughness })
         : new THREE.MeshStandardMaterial({ color, roughness: CONFIG.buildings.roughness });
 
-    const building = new THREE.Mesh(buildOrganicTowerGeometry(footprint / 2, height), material);
-    building.position.set(x, 0, z); // organic geometry already spans y=0..height
-    scene.add(building);
+    // ~30% of buildings are two-stage setback towers instead of a single
+    // prism — a wider base with a narrower tower rising off it, like a
+    // real setback skyscraper. Reuses the same organic-tower builder
+    // twice rather than a whole new geometry function; the base tower's
+    // own top cap doubles as the roof deck the upper stage stands on,
+    // and the upper stage's un-capped bottom is never seen from ground
+    // level. Keeps the whole scene from reading as one repeated formula.
+    if (rng() < 0.3) {
+        const baseHeight = height * randRange(0.4, 0.7);
+        const upperHeight = height - baseHeight;
+        const upperHw = (footprint / 2) * randRange(0.5, 0.8);
+        const base = new THREE.Mesh(buildOrganicTowerGeometry(footprint / 2, baseHeight), material);
+        base.position.set(x, 0, z);
+        scene.add(base);
+        const upper = new THREE.Mesh(buildOrganicTowerGeometry(upperHw, upperHeight), material);
+        upper.position.set(x, baseHeight, z);
+        scene.add(upper);
+    } else {
+        const building = new THREE.Mesh(buildOrganicTowerGeometry(footprint / 2, height), material);
+        building.position.set(x, 0, z); // organic geometry already spans y=0..height
+        scene.add(building);
+    }
 
     // curb/base skirt so the building reads as sitting on something, not floating
     const curb = CONFIG.buildings.curb;

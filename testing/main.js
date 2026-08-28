@@ -640,7 +640,7 @@ function updateRain(delta) {
 // each model finishes loading, in whatever order that happens.
 const gltfLoader = new GLTFLoader();
 gltfLoader.setPath('./vendor/models/');
-const pendingRealModelPlacements = { tyre: [], trashbag: [], manhole: [] };
+const pendingRealModelPlacements = { tyre: [], trashbag: [], manhole: [], sprayCans: [], trashCanReal: [] };
 
 function placeRealModel(name, x, z, rotY) {
     pendingRealModelPlacements[name].push({ x, z, rotY });
@@ -665,6 +665,8 @@ function loadRealModel(name, file, scale) {
 loadRealModel('tyre', 'old_tyre.gltf', 1);
 loadRealModel('trashbag', 'trashbag.gltf', 1);
 loadRealModel('manhole', 'water_manhole_cover.gltf', 1.4);
+loadRealModel('sprayCans', 'spray_paint_bottles.gltf', 1);
+loadRealModel('trashCanReal', 'metal_trash_can.gltf', 1);
 
 // ---------- small helpers ----------
 
@@ -1124,7 +1126,9 @@ function addBuilding(col, row) {
     // own top cap doubles as the roof deck the upper stage stands on,
     // and the upper stage's un-capped bottom is never seen from ground
     // level. Keeps the whole scene from reading as one repeated formula.
-    if (!isWarehouse && rng() < 0.3) {
+    const archetype = isWarehouse ? 'warehouse' : weightedPick({ single: 5, setback: 3, clustered: 2 });
+
+    if (archetype === 'setback') {
         const baseHeight = height * randRange(0.4, 0.7);
         const upperHeight = height - baseHeight;
         const upperHw = (footprint / 2) * randRange(0.5, 0.8);
@@ -1134,6 +1138,24 @@ function addBuilding(col, row) {
         const upper = new THREE.Mesh(buildOrganicTowerGeometry(upperHw, upperHeight), material);
         upper.position.set(x, baseHeight, z);
         scene.add(upper);
+    } else if (archetype === 'clustered') {
+        // 2-3 independent thin towers sharing one footprint and a shared
+        // low base block, instead of one solid mass — a multi-spire
+        // silhouette. The base block still fills the collision footprint.
+        const baseHeight = height * randRange(0.15, 0.3);
+        const base = new THREE.Mesh(buildOrganicTowerGeometry(footprint / 2, baseHeight), material);
+        base.position.set(x, 0, z);
+        scene.add(base);
+        const spireCount = 2 + Math.floor(rng() * 2);
+        for (let i = 0; i < spireCount; i++) {
+            const spireHw = (footprint / 2) * randRange(0.28, 0.42);
+            const spireHeight = baseHeight + (height - baseHeight) * randRange(0.6, 1.0);
+            const ox = randRange(-footprint / 4, footprint / 4);
+            const oz = randRange(-footprint / 4, footprint / 4);
+            const spireTower = new THREE.Mesh(buildOrganicTowerGeometry(spireHw, spireHeight - baseHeight), material);
+            spireTower.position.set(x + ox, baseHeight, z + oz);
+            scene.add(spireTower);
+        }
     } else {
         const building = new THREE.Mesh(buildOrganicTowerGeometry(footprint / 2, height), material);
         building.position.set(x, 0, z); // organic geometry already spans y=0..height
@@ -1203,6 +1225,10 @@ function addBuilding(col, row) {
         // independent of whether a sign landed above it.
         if (rng() < 0.16) {
             addGraffitiTag(x + face.ox * 0.99, randRange(0.6, 1.6), z + face.oz * 0.99, face.rotY);
+            // the tagger's supplies, left at the base of their own work
+            if (rng() < 0.3 * QUALITY.propDensity) {
+                placeRealModel('sprayCans', x + face.ox * 0.85, z + face.oz * 0.85, randRange(0, Math.PI * 2));
+            }
         }
         // low chance of a security camera watching the alley — everything
         // queryable is also everything watched.
@@ -2652,6 +2678,7 @@ for (let r = 1; r < GRID_ROWS - 1; r++) {
         if (rng() < 0.05 * QUALITY.propDensity) placeRealModel('tyre', x + randRange(-1.5, 1.5), z + randRange(-1.5, 1.5), randRange(0, Math.PI * 2));
         if (rng() < 0.05 * QUALITY.propDensity) placeRealModel('trashbag', x + randRange(-1.5, 1.5), z + randRange(-1.5, 1.5), randRange(0, Math.PI * 2));
         if (rng() < 0.06 * QUALITY.propDensity) placeRealModel('manhole', x + randRange(-0.6, 0.6), z + randRange(-0.6, 0.6), randRange(0, Math.PI * 2));
+        if (rng() < 0.04 * QUALITY.propDensity) placeRealModel('trashCanReal', x + randRange(-1.4, 1.4), z + randRange(-1.4, 1.4), randRange(0, Math.PI * 2));
 
         // overhead cables: strung across the alley wherever there's a
         // building directly on both sides (either axis) — the literal

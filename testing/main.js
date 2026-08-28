@@ -1129,6 +1129,39 @@ function makeTopologyStainTexture() {
     }, 24, 128);
 }
 
+// per-building window-grid facade texture. buildOrganicTowerGeometry now
+// maps u=0..1 across each of its 8 facets and v=0..1 across the full
+// height, so this reads as a real floor-by-floor, facet-by-facet grid
+// of panes instead of the flat single-color prisms every tower used to
+// be. Painted fresh per building (never shared/cached) so no two towers
+// show an identical grid -- lit/dark is independent per pane, with an
+// occasional AC-unit blotch under the sill, both seeded off the same
+// rng() everything else in the maze draws from.
+function makeWindowGridTexture(height, baseColorHex) {
+    const floorH = randRange(2.4, 3.2);
+    const rows = Math.max(3, Math.min(48, Math.round(height / floorH)));
+    const cols = 3 + Math.floor(rng() * 3); // 3-5 panes per facet
+    const cellW = 14, cellH = 18;
+    const base = hexToCss(baseColorHex);
+    return makePixelTexture((ctx, w, h) => {
+        ctx.fillStyle = base;
+        ctx.fillRect(0, 0, w, h);
+        for (let r = 0; r < rows; r++) {
+            const py = h - (r + 1) * cellH; // ground floor sits at v=0 (bottom)
+            for (let c = 0; c < cols; c++) {
+                const px = c * cellW;
+                const lit = rng() < 0.22;
+                ctx.fillStyle = lit ? '#ffdf8c' : (rng() < 0.5 ? '#232c38' : '#171d26');
+                ctx.fillRect(px + 2, py + 3, cellW - 4, cellH - 6);
+                if (rng() < 0.08) { // window AC unit -- sits under the sill
+                    ctx.fillStyle = '#7d8288';
+                    ctx.fillRect(px + 2, py + cellH - 6, cellW - 4, 3);
+                }
+            }
+        }
+    }, cols * cellW, rows * cellH);
+}
+
 // a real fissure in the pavement, dropped as ground clutter — pulls
 // straight from makeCrackTexture rather than a synthetic crack pattern.
 // "wanted" posters for random Wikipedia rabbit holes -- a real 3am-
@@ -1419,7 +1452,6 @@ function buildOrganicTowerGeometry(hw, height) {
     const positions = [];
     const uvs = [];
     const pushTri = (a, b, c) => { positions.push(...a, ...b, ...c); };
-    const pushUV = (y0, y1, y2) => { uvs.push(0.5, y0 / height, 0.5, y1 / height, 0.5, y2 / height); };
 
     for (let i = 0; i < n; i++) {
         const j = (i + 1) % n;
@@ -1431,14 +1463,17 @@ function buildOrganicTowerGeometry(hw, height) {
         // convention) -- (b0,b1,t1)/(b0,t1,t0) was backwards, which
         // culled the visible face entirely and left the wall invisible
         // from the alley side while still solid from inside.
-        pushTri(b0, t1, b1); pushUV(0, 1, 0);
-        pushTri(b0, t0, t1); pushUV(0, 1, 1);
+        // u now runs 0->1 across each facet (used to be hardcoded 0.5
+        // everywhere) so a window-grid texture reads as a real per-floor,
+        // per-facet grid instead of one stretched vertical sliver.
+        pushTri(b0, t1, b1); uvs.push(0, 0, 1, 1, 1, 0);
+        pushTri(b0, t0, t1); uvs.push(0, 0, 0, 1, 1, 1);
     }
     for (let i = 1; i < n - 1; i++) { // top cap fan (footprint is convex)
         const t0 = [topPts[0][0], height, topPts[0][1]];
         const ti = [topPts[i][0], height, topPts[i][1]];
         const tj = [topPts[i + 1][0], height, topPts[i + 1][1]];
-        pushTri(t0, tj, ti); pushUV(1, 1, 1); // same fix, normal was pointing down into the roof
+        pushTri(t0, tj, ti); uvs.push(0.5, 1, 0.5, 1, 0.5, 1); // same fix, normal was pointing down into the roof
     }
 
     const geo = new THREE.BufferGeometry();
@@ -1711,11 +1746,19 @@ function addBuilding(col, row) {
 
     // ~1 in 6 buildings is "stained" with the real elevation-gradient
     // texture instead of a flat facade color -- trench-dark at the base
-    // climbing toward summit-pale near the roofline.
-    const useStain = rng() < 0.16;
+    // climbing toward summit-pale near the roofline. Warehouses are too
+    // short/squat for either treatment to read, so they stay flat-color
+    // (matches the existing roof-topper skip below). Everything else
+    // defaults to a real per-floor window grid now instead of a bare
+    // flat prism -- facades finally have depth at a glance, not just in
+    // silhouette.
+    const useStain = !isWarehouse && rng() < 0.16;
+    const useWindows = !isWarehouse && !useStain;
     const material = useStain
         ? new THREE.MeshStandardMaterial({ map: makeTopologyStainTexture(), roughness: CONFIG.buildings.roughness })
-        : new THREE.MeshStandardMaterial({ color, roughness: CONFIG.buildings.roughness });
+        : useWindows
+            ? new THREE.MeshStandardMaterial({ map: makeWindowGridTexture(height, color), roughness: CONFIG.buildings.roughness })
+            : new THREE.MeshStandardMaterial({ color, roughness: CONFIG.buildings.roughness });
 
     // every building has a walkable ground floor now: real solid walls
     // (they actually block), one real doorway toward an open neighbor if

@@ -635,6 +635,81 @@ function updateWebGradient(worldZ) {
     // (north), bone dry toward light-web (south) — never both, never
     // neither, the contrast is continuous just like everything else here.
     rainMat.opacity = (1 - t) * 0.5;
+    updateAudioGradient(t);
+}
+
+// ---------- ambient audio ----------
+// a procedural city-hum drone, synthesized rather than sourced from
+// audio files -- costs nothing to ship, and rides the same light-web/
+// dark-web gradient as everything else: busier/louder toward light-web,
+// quieter/emptier toward dark-web. Starts on first user gesture (the
+// same click/touch that locks the pointer or reveals touch controls --
+// browsers require a real gesture before any audio plays, so this
+// piggybacks on gestures that already exist rather than adding a new one).
+let audioCtx = null;
+let droneGain = null;
+let hissGain = null;
+
+function initAudio() {
+    if (audioCtx) return;
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+    // two barely-detuned low oscillators through a lowpass filter -- a
+    // distant city hum, not a musical note
+    const osc1 = audioCtx.createOscillator();
+    const osc2 = audioCtx.createOscillator();
+    osc1.type = 'sawtooth'; osc1.frequency.value = 55;
+    osc2.type = 'sawtooth'; osc2.frequency.value = 55 * 1.006;
+    const droneFilter = audioCtx.createBiquadFilter();
+    droneFilter.type = 'lowpass';
+    droneFilter.frequency.value = 220;
+    droneGain = audioCtx.createGain();
+    droneGain.gain.value = 0.03;
+    osc1.connect(droneFilter); osc2.connect(droneFilter);
+    droneFilter.connect(droneGain).connect(audioCtx.destination);
+    osc1.start(); osc2.start();
+
+    // filtered noise loop -- distant traffic/crowd hiss
+    const bufferSize = audioCtx.sampleRate * 2;
+    const noiseBuffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+    const data = noiseBuffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
+    const noise = audioCtx.createBufferSource();
+    noise.buffer = noiseBuffer;
+    noise.loop = true;
+    const hissFilter = audioCtx.createBiquadFilter();
+    hissFilter.type = 'bandpass';
+    hissFilter.frequency.value = 800;
+    hissFilter.Q.value = 0.5;
+    hissGain = audioCtx.createGain();
+    hissGain.gain.value = 0.005;
+    noise.connect(hissFilter).connect(hissGain).connect(audioCtx.destination);
+    noise.start();
+}
+
+function updateAudioGradient(t) {
+    if (!audioCtx) return;
+    // t: 0 = dark web (quiet, empty), 1 = light web (busy, loud)
+    droneGain.gain.setTargetAtTime(0.02 + t * 0.05, audioCtx.currentTime, 0.6);
+    hissGain.gain.setTargetAtTime(0.003 + t * 0.03, audioCtx.currentTime, 0.6);
+}
+
+// short filtered noise burst -- a footstep, triggered while moving
+function playFootstep() {
+    if (!audioCtx) return;
+    const dur = 0.08;
+    const buffer = audioCtx.createBuffer(1, Math.floor(audioCtx.sampleRate * dur), audioCtx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / data.length);
+    const src = audioCtx.createBufferSource();
+    src.buffer = buffer;
+    const filter = audioCtx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.value = 400 + Math.random() * 200;
+    const gain = audioCtx.createGain();
+    gain.gain.value = 0.15;
+    src.connect(filter).connect(gain).connect(audioCtx.destination);
+    src.start();
 }
 
 // ---------- weather (gradient-driven, not a toggle) ----------
@@ -3297,11 +3372,13 @@ if (IS_TOUCH) {
     document.getElementById('lookZone').style.display = 'block';
     showHint('left half: move · right half: drag to look');
     fadeHint(4500);
+    document.addEventListener('touchstart', initAudio, { once: true });
 } else {
     crosshair.style.display = 'block';
     showHint('click to look around · WASD to move · ESC to release');
 
     document.addEventListener('click', (e) => {
+        initAudio();
         if (e.target.closest('#backLink')) return;
         if (!controls.isLocked) controls.lock();
     });
@@ -3414,6 +3491,7 @@ if (IS_TOUCH) {
 const clock = new THREE.Clock();
 
 let elapsedTime = 0; // hand-accumulated: clock.getElapsedTime() would double-consume delta
+let footstepTimer = 0;
 
 function animate() {
     requestAnimationFrame(animate);
@@ -3436,6 +3514,16 @@ function animate() {
     if (controls.isLocked || IS_TOUCH) {
         controls.moveRight(velocity.x);
         controls.moveForward(-velocity.z);
+    }
+
+    if ((controls.isLocked || IS_TOUCH) && velocity.lengthSq() > 0.0001) {
+        footstepTimer -= delta;
+        if (footstepTimer <= 0) {
+            playFootstep();
+            footstepTimer = 0.38; // roughly a walking cadence
+        }
+    } else {
+        footstepTimer = 0;
     }
 
     for (let i = 0; i < CONFIG.movement.collisionIterations; i++) {

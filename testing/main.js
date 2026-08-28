@@ -263,6 +263,10 @@ const CONFIG = {
             ['NOODLES', 'cheap eats'], ['CIGARETTES', 'vending'], ['PAWN', 'cash now'],
             ['FORTUNE', 'palm read'], ['BAR', 'no name'], ['MARKET', 'night stalls'],
             ['VIDEO', 'rental'], ['CURRY', 'house special'], ['GACHA', '¥200'],
+            ['HARDWARE', 'keys cut'], ['TAILOR', 'same day'], ['LOCKSMITH', '24hr'],
+            ['BIKE REPAIR', 'walk-in'], ['PRINT SHOP', 'copies · fax'], ['HERBALIST', 'loose leaf'],
+            ['BAKERY', 'fresh 6am'], ['WATCH REPAIR', 'while you wait'], ['USED BOOKS', 'buy sell trade'],
+            ['DRY CLEAN', 'next day'], ['BARBER', 'no appt'], ['HOBBY SHOP', 'model kits'],
         ],
         // the whole reason this is a maze: the internet has more Justin
         // Browns on it than one person could ever Google through. these
@@ -1073,13 +1077,13 @@ function addSecurityCamera(x, z, rotY, buildingHeight) {
     const y = randRange(2.6, Math.min(buildingHeight - 1, 5.5));
     const g = new THREE.Group();
     const bracket = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.025, 0.025, 0.3, 5),
+        jitterGeometry(new THREE.CylinderGeometry(0.025, 0.025, 0.3, 5), 0.008),
         new THREE.MeshStandardMaterial({ color: 0x1c1c1c, metalness: 0.6, roughness: 0.5 })
     );
     bracket.rotation.z = Math.PI / 2;
     bracket.position.set(0, 0, 0.15);
     const body = new THREE.Mesh(
-        new THREE.BoxGeometry(0.12, 0.12, 0.24),
+        jitterGeometry(new THREE.BoxGeometry(0.12, 0.12, 0.24), 0.015),
         new THREE.MeshStandardMaterial({ color: 0x2a2a2a, metalness: 0.5, roughness: 0.5 })
     );
     body.position.set(0, 0, 0.32);
@@ -1110,7 +1114,7 @@ function addRooftopClutter(x, z, footprint, height) {
     const metalMat = new THREE.MeshStandardMaterial({ color: 0x2c2c2c, roughness: 0.7, metalness: 0.4 });
 
     if (rng() < 0.35) { // antenna
-        const antenna = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, randRange(1.5, 4), 5), metalMat);
+        const antenna = new THREE.Mesh(jitterGeometry(new THREE.CylinderGeometry(0.03, 0.03, randRange(1.5, 4), 5), 0.01), metalMat);
         antenna.position.set(x + randRange(-footprint / 3, footprint / 3), height + antenna.geometry.parameters.height / 2, z + randRange(-footprint / 3, footprint / 3));
         scene.add(antenna);
     }
@@ -1240,7 +1244,7 @@ function addTrafficCone(x, z) {
     );
     cone.position.y = 0.32;
     const stripe = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.16, 0.19, 0.1, 8),
+        jitterGeometry(new THREE.CylinderGeometry(0.16, 0.19, 0.1, 8), 0.012),
         new THREE.MeshStandardMaterial({ color: 0xf2f2f2, roughness: 0.7 })
     );
     stripe.position.y = 0.35;
@@ -1253,7 +1257,7 @@ function addTrafficCone(x, z) {
 function addTrafficSign(x, z, rotY) {
     const g = new THREE.Group();
     const pole = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.04, 0.04, 1.9, 6),
+        jitterGeometry(new THREE.CylinderGeometry(0.04, 0.04, 1.9, 6), 0.012),
         new THREE.MeshStandardMaterial({ color: 0x2c2c2c, roughness: 0.6, metalness: 0.5 })
     );
     pole.position.y = 0.95;
@@ -1304,7 +1308,7 @@ function addLantern(x, z) {
     const colorHex = pick(CONFIG.neonPalette);
     const g = new THREE.Group();
     const pole = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.035, 0.035, 2.6, 6),
+        jitterGeometry(new THREE.CylinderGeometry(0.035, 0.035, 2.6, 6), 0.01),
         new THREE.MeshStandardMaterial({ color: 0x1c1614, roughness: 0.7 })
     );
     pole.position.y = 1.3;
@@ -1380,7 +1384,7 @@ function addMuseumPlacard(x, z) {
     const [title, subtitle] = pick([...CONFIG.siteContent.education, ...CONFIG.siteContent.employment]);
     const g = new THREE.Group();
     const post = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.04, 0.04, 1.1, 6),
+        jitterGeometry(new THREE.CylinderGeometry(0.04, 0.04, 1.1, 6), 0.008),
         new THREE.MeshStandardMaterial({ color: 0x2c2c2c, roughness: 0.6, metalness: 0.5 })
     );
     post.position.y = 0.55;
@@ -2063,6 +2067,41 @@ for (const [pc, pr] of plazaCells) {
     addPlazaGlow(x, z);
 }
 
+// props that realistically sit against a wall rather than floating in
+// the middle of a walkway — real alleys put trash cans and machines
+// against the building, not centered in the path.
+const WALL_HUGGING_PROPS = new Set([
+    'trashCan', 'vendingMachine', 'museumPlacard', 'trafficSign',
+    'fenceSegment', 'stickerTag', 'businessCardLitter',
+]);
+
+// which adjacent cells (if any) are solid walls this cell could hug —
+// returns unit direction(s) pointing FROM the open cell TOWARD each wall.
+function wallDirections(c, r) {
+    const dirs = [];
+    if (grid[r]?.[c - 1]) dirs.push({ dx: -1, dz: 0 });
+    if (grid[r]?.[c + 1]) dirs.push({ dx: 1, dz: 0 });
+    if (grid[r - 1]?.[c]) dirs.push({ dx: 0, dz: -1 });
+    if (grid[r + 1]?.[c]) dirs.push({ dx: 0, dz: 1 });
+    return dirs;
+}
+
+// reject placements that would overlap something already there — cheap
+// O(n) scan against everything placed so far. Real streets don't stack
+// a trash can through a lamp post. Gives up after a few tries rather
+// than leaving a gap (density matters more than a rare overlap).
+function findClearSpot(cx, cz, radius, tryOffsets) {
+    for (const [ox, oz] of tryOffsets) {
+        const px = cx + ox, pz = cz + oz;
+        const blocked = propColliders.some(p => {
+            const dx = px - p.x, dz = pz - p.z;
+            return dx * dx + dz * dz < (radius + p.radius + 0.1) ** 2;
+        });
+        if (!blocked) return { x: px, z: pz };
+    }
+    return { x: cx + tryOffsets[0][0], z: cz + tryOffsets[0][1] }; // give up, place anyway
+}
+
 // general clutter across all remaining open cells (skip start cell + used plazas)
 const usedPlazas = new Set(shuffledPlazas.slice(0, plazaCursor).map(([c, r]) => `${c},${r}`));
 for (let r = 1; r < GRID_ROWS - 1; r++) {
@@ -2094,9 +2133,32 @@ for (let r = 1; r < GRID_ROWS - 1; r++) {
         const choice = weightedPick(CONFIG.props.weights);
         if (choice === 'none') continue;
         const { x, z } = cellToWorld(c, r);
-        const jitter = CELL * 0.28;
-        const px = x + randRange(-jitter, jitter);
-        const pz = z + randRange(-jitter, jitter);
+
+        let px, pz;
+        if (WALL_HUGGING_PROPS.has(choice)) {
+            const walls = wallDirections(c, r);
+            if (walls.length) {
+                const w = pick(walls);
+                const hug = CELL * randRange(0.34, 0.42); // tight to the actual wall face
+                const along = randRange(-CELL * 0.25, CELL * 0.25); // slide along the wall
+                const bx = x + w.dx * hug + (w.dx === 0 ? along : 0);
+                const bz = z + w.dz * hug + (w.dz === 0 ? along : 0);
+                const spot = findClearSpot(bx, bz, 0.3, [[0, 0], [0.3, 0], [-0.3, 0], [0, 0.3], [0, -0.3]]);
+                px = spot.x; pz = spot.z;
+            } else {
+                px = x + randRange(-CELL * 0.28, CELL * 0.28);
+                pz = z + randRange(-CELL * 0.28, CELL * 0.28);
+            }
+        } else {
+            const jitter = CELL * 0.28;
+            const spot = findClearSpot(x, z, 0.35, [
+                [randRange(-jitter, jitter), randRange(-jitter, jitter)],
+                [randRange(-jitter, jitter), randRange(-jitter, jitter)],
+                [0, 0],
+            ]);
+            px = spot.x; pz = spot.z;
+        }
+
         const radius = PROP_BUILDERS[choice](px, pz);
         propColliders.push({ x: px, z: pz, radius });
         // a tree means this pocket reads as dense/overgrown — shade it

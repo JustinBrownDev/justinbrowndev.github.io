@@ -1699,7 +1699,11 @@ function buildGroundFloorShell(x, z, hw, groundFloorHeight, door, shellMat) {
     const depthAt = (f) => depthCenter + depthAway * hw * (2 * f - 1);
     const doorInteriorWidth = 1.3;
 
-    const layout = weightedPick({ single: 3, twoRoom: 5, threeRow: 4, lshape: 3 });
+    // 'single' (no interior walls at all) used to be in this pool -- at
+    // 20% odds, it read as "most buildings are still just one room."
+    // Dropped entirely: every building's ground floor is now guaranteed
+    // to be subdivided.
+    const layout = weightedPick({ twoRoom: 5, threeRow: 4, lshape: 3 });
     if (layout === 'twoRoom') {
         const f1 = randRange(0.38, 0.6);
         segments.push(...addInteriorWall(

@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Testing — Back Alley [b26: canopy+density boost]</title>
+    <title>Testing — Back Alley [b27: wiki posters+full palette+warning]</title>
     <meta name="description" content="A cramped neon back-alley maze, walkable in 3D.">
     <style>
         * { box-sizing: border-box; }
@@ -34,6 +34,21 @@
             background: #0a0305cc;
         }
         #backLink:hover { color: #ff2f4f; border-color: #ff2f4f; }
+
+        #epilepsyWarning {
+            position: fixed;
+            top: 14px;
+            right: 16px;
+            z-index: 30;
+            max-width: 220px;
+            color: #ffd93f;
+            font-size: 0.68rem;
+            letter-spacing: 0.03em;
+            line-height: 1.4;
+            border: 1px solid #ffd93f66;
+            padding: 6px 10px;
+            background: #0a0305cc;
+        }
 
         #hint {
             position: fixed;
@@ -100,6 +115,7 @@
 
 <body>
     <a id="backLink" href="../index.html">&larr; back to site</a>
+    <div id="epilepsyWarning">⚠ Contains flashing/flickering lights. If you're photosensitive, proceed with caution.</div>
 
     <div id="crosshair"></div>
     <div id="hint"></div>

@@ -121,7 +121,7 @@ const CONFIG = {
             bloom: { strength: 0.55, radius: 0.4, threshold: 0.88 },
             drawDistance: 200,
             maxDynamicLights: 40,
-            propDensity: 1.35,
+            propDensity: 1.7,
         },
         mobile: {
             maxPixelRatio: 1.5,
@@ -129,7 +129,7 @@ const CONFIG = {
             bloom: { strength: 0.4, radius: 0.35, threshold: 0.9 },
             drawDistance: 130,
             maxDynamicLights: 18,
-            propDensity: 0.85,
+            propDensity: 1.05,
         },
         // auto-selected on low core-count/low-memory touch devices, or
         // forced with ?quality=low. Bloom pass is skipped entirely here,
@@ -188,23 +188,40 @@ const CONFIG = {
     // signage rather than glowing neon, which is fine — the color logic
     // (warm toward light-web, cool toward dark-web) still carries the
     // gradient regardless of what time of day it's rendered as.
+    // every commonly-nameable color, not a restricted subset -- signage
+    // is neon, and real neon comes in every hue there is.
     neonPalette: [
         0xffffff, // white
+        0xd8d8d8, // silver
+        0x808080, // gray
+        0x1a1a1a, // black (bare-bulb-off look, reads on a lit sign frame)
         0xfff02f, // yellow
-        0xffd93f, // gold-yellow
+        0xffd93f, // gold
+        0xc8a028, // amber/brass
         0x3aff6a, // green
-        0x5eff8a, // light green
-        0xff8a2f, // orange
-        0xffa64d, // light orange
-        0xff3b3b, // red
-        0xff5555, // light red
+        0x5eff8a, // lime
+        0x1a5c2e, // dark green
         0x2fe8ff, // cyan
         0x5ff0ff, // light cyan
+        0x1a7a8a, // teal
+        0x2f6aff, // blue
+        0x1a3a8a, // navy
+        0xa02fff, // purple
+        0x6a1a8a, // indigo
+        0xd82fff, // magenta
+        0xff2fd6, // pink
+        0xff8ac0, // light pink
+        0xff8a2f, // orange
+        0xffa64d, // light orange
+        0x8a4a1a, // brown
+        0xff3b3b, // red
+        0xff5555, // light red
+        0x8a1a1a, // maroon
     ],
     // same colors, split by temperature so signage can lean warm toward
     // the light-web pole and cool toward the dark-web pole.
-    neonWarm: [0xffffff, 0xfff02f, 0xffd93f, 0xff8a2f, 0xffa64d, 0xff3b3b, 0xff5555],
-    neonCool: [0xffffff, 0x3aff6a, 0x5eff8a, 0x2fe8ff, 0x5ff0ff],
+    neonWarm: [0xffffff, 0xfff02f, 0xffd93f, 0xc8a028, 0xff8a2f, 0xffa64d, 0x8a4a1a, 0xff3b3b, 0xff5555, 0x8a1a1a, 0xd82fff, 0xff2fd6, 0xff8ac0],
+    neonCool: [0xffffff, 0xd8d8d8, 0x808080, 0x1a1a1a, 0x3aff6a, 0x5eff8a, 0x1a5c2e, 0x2fe8ff, 0x5ff0ff, 0x1a7a8a, 0x2f6aff, 0x1a3a8a, 0xa02fff, 0x6a1a8a],
 
     // ---------------- real-world data ----------------
     // not synthetic noise — actual sourced numbers, fetched live and baked
@@ -268,6 +285,21 @@ const CONFIG = {
             ['Denali', 20310],
             ['K2', 28251],
             ['Mount Everest', 29032],
+        ],
+        // real Historic Route 66 itinerary, Chicago (its historic eastern
+        // terminus, Grant Park) through Illinois to the Mississippi
+        // crossing -- researched/verified public data, 2026-08-27.
+        // Transportation infrastructure, for real, drives the mile-marker
+        // signage scattered through the maze.
+        route66Illinois: [
+            [0.0, 'CHICAGO'], [39.0, 'JOLIET'], [68.0, 'WILMINGTON'],
+            [78.0, 'BRAIDWOOD'], [104.0, 'GARDNER'], [111.0, 'DWIGHT'],
+            [139.0, 'PONTIAC'], [142.0, 'CHENOA'], [150.0, 'LEXINGTON'],
+            [163.0, 'NORMAL'], [168.5, 'BLOOMINGTON'], [190.0, 'ATLANTA'],
+            [204.0, 'LINCOLN'], [227.0, 'SHERMAN'], [254.0, 'DIVERNON'],
+            [281.0, 'LITCHFIELD'], [291.0, 'MT. OLIVE'], [297.0, 'STAUNTON'],
+            [315.0, 'EDWARDSVILLE'], [330.0, 'CHAIN OF ROCKS BRIDGE'],
+            [335.0, 'MISSISSIPPI RIVER'],
         ],
     },
 
@@ -376,6 +408,8 @@ const CONFIG = {
             ['DATAANNOTATION', 'AI trainer · 2024-now'],
             ["HORTON'S LIGHTING", 'warehouse · 2021-23'],
             ['LA GRANGE THEATER', 'projectionist · 2018-20'],
+            ['ACE HARDWARE', 'former job'],
+            ['DRY CLEANERS', 'former job'],
         ],
         art: [
             ["'TEETH'", 'acrylic on canvas'],
@@ -424,6 +458,8 @@ const CONFIG = {
             trashCan: 4,
             trafficCone: 3,
             trafficSign: 2,
+            mileMarker: 2,
+            wantedPoster: 3.5,
             crate: 4,
             lantern: 4,
             vendingMachine: 2.5,
@@ -437,7 +473,7 @@ const CONFIG = {
             tree: 1.5,
             pottedPlant: 3,
             weeds: 3.5,
-            none: 0.2,
+            none: 0.08,
         },
         maxSpecialFeatures: {
             statues: 5,
@@ -879,6 +915,93 @@ function makeTopologyStainTexture() {
 
 // a real fissure in the pavement, dropped as ground clutter — pulls
 // straight from makeCrackTexture rather than a synthetic crack pattern.
+// "wanted" posters for random Wikipedia rabbit holes -- a real 3am-
+// wikipedia-spiral joke. Static fallback (real, verifiably-existing
+// article titles) placed immediately at layout time; live random
+// articles from Wikipedia's public REST API (CORS-enabled, no key
+// needed) swap into already-placed posters as they resolve -- fails
+// silently and keeps the static fallback if offline/blocked, same
+// "never hang the page on a live third-party call" principle as
+// everywhere else here, just applied to a decoration instead of core
+// content so a network hiccup costs nothing.
+const WIKI_FALLBACK = [
+    ['DANCING MANIA', 'medieval outbreak, unexplained'],
+    ['SPONTANEOUS HUMAN COMBUSTION', 'disputed phenomenon'],
+    ['THE GREAT EMU WAR', 'Australia, 1932'],
+    ["ROKO'S BASILISK", 'thought experiment'],
+    ['TUNGUSKA EVENT', '1908, Siberia'],
+    ['VOYNICH MANUSCRIPT', 'undeciphered, 15th c.'],
+    ['LIST OF UNUSUAL DEATHS', 'exactly what it sounds like'],
+    ['MOTHMAN', 'Point Pleasant, WV'],
+    ['THE BLOOP', 'unexplained ocean sound'],
+    ['WOW! SIGNAL', '1977, unexplained'],
+    ['FERMI PARADOX', 'where is everybody'],
+    ['TULIP MANIA', '1637, Dutch bubble'],
+    ['BARNUM EFFECT', 'personality feedback'],
+    ['DYATLOV PASS INCIDENT', '1959, unresolved'],
+    ['ANTIKYTHERA MECHANISM', 'ancient analog computer'],
+    ['CICADA 3301', 'internet mystery'],
+    ['KASPAR HAUSER', 'feral child mystery'],
+    ['PHANTOM TIME HYPOTHESIS', 'conspiracy theory'],
+    ['BALL LIGHTNING', 'unexplained atmospheric'],
+    ['THE DYATLOV PASS', 'nine hikers, 1959'],
+];
+const wantedPosterMeshes = [];
+
+function makeWantedTexture(title, subtitle) {
+    return makePixelTexture((ctx, w, h) => {
+        ctx.fillStyle = '#e8dfc0';
+        ctx.fillRect(0, 0, w, h);
+        ctx.strokeStyle = '#2a2420';
+        ctx.lineWidth = 3;
+        ctx.strokeRect(4, 4, w - 8, h - 8);
+        ctx.fillStyle = '#2a2420';
+        ctx.textAlign = 'center';
+        ctx.font = 'bold 15px "Courier New", monospace';
+        ctx.fillText('WANTED', w / 2, 20);
+        ctx.font = 'bold 9px "Courier New", monospace';
+        ctx.fillText(title, w / 2, h / 2, w - 12);
+        ctx.font = '8px "Courier New", monospace';
+        ctx.fillText(subtitle, w / 2, h / 2 + 16, w - 12);
+        ctx.font = '7px "Courier New", monospace';
+        ctx.fillText('KNOWLEDGE OF THIS TOPIC', w / 2, h - 20);
+        ctx.fillText('REWARD: PEACE OF MIND', w / 2, h - 10);
+    }, 96, 128);
+}
+
+function addWantedPoster(x, z, rotY) {
+    const [title, subtitle] = pick(WIKI_FALLBACK);
+    const plane = new THREE.Mesh(
+        new THREE.PlaneGeometry(randRange(0.55, 0.8), randRange(0.75, 1.1)),
+        new THREE.MeshStandardMaterial({ map: makeWantedTexture(title, subtitle), roughness: 0.9 })
+    );
+    plane.position.set(x, randRange(1.3, 2.0), z);
+    plane.rotation.y = rotY;
+    scene.add(plane);
+    wantedPosterMeshes.push(plane);
+    return 0.05;
+}
+
+// live random Wikipedia articles -- swaps into whatever posters are
+// already on the wall. Runs after layout, so wantedPosterMeshes is
+// already fully populated by the time any of these resolve.
+function fetchRandomWikiArticles(count) {
+    for (let i = 0; i < count; i++) {
+        fetch('https://en.wikipedia.org/api/rest_v1/page/random/summary')
+            .then(r => (r.ok ? r.json() : null))
+            .then(data => {
+                if (!data?.title || !wantedPosterMeshes.length) return;
+                const mesh = pick(wantedPosterMeshes);
+                mesh.material.map = makeWantedTexture(
+                    data.title.toUpperCase(),
+                    (data.description || 'wikipedia article').slice(0, 42)
+                );
+                mesh.material.needsUpdate = true;
+            })
+            .catch(() => {}); // offline/blocked -- static fallback stands, no harm done
+    }
+}
+
 function addFissureCrack(x, z) {
     const crack = new THREE.Mesh(
         new THREE.PlaneGeometry(randRange(1.2, 2.4), randRange(0.4, 0.8)),
@@ -1411,7 +1534,7 @@ function addBuilding(col, row) {
         }
         // shop awning, roughly shopfront height -- above the shell's door
         // gap so it never looks like it's hanging in an open doorway
-        if (rng() < 0.28) {
+        if (rng() < 0.42) {
             addAwning(x + face.ox, Math.max(2.4, groundFloorHeight + 0.2), z + face.oz, face.rotY, randRange(1.6, 2.4));
         }
     }
@@ -1694,6 +1817,44 @@ function addTrafficCone(x, z) {
     g.position.set(x, 0, z);
     scene.add(g);
     return 0.24;
+}
+
+// a real Historic Route 66 mile marker -- actual town + mileage from
+// Chicago, since transportation infrastructure is worth building for
+// real rather than inventing highway signage from nothing.
+function addMileMarker(x, z, rotY) {
+    const [mile, town] = pick(CONFIG.realData.route66Illinois);
+    const pole = new THREE.Mesh(
+        jitterGeometry(new THREE.CylinderGeometry(0.04, 0.04, 1.7, 6), 0.01),
+        new THREE.MeshStandardMaterial({ color: 0x2c2c2c, roughness: 0.6, metalness: 0.5 })
+    );
+    pole.position.y = 0.85;
+    const tex = makePixelTexture((ctx, w, h) => {
+        ctx.fillStyle = '#0a3a1c';
+        ctx.fillRect(0, 0, w, h);
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(3, 3, w - 6, h - 6);
+        ctx.fillStyle = '#ffffff';
+        ctx.textAlign = 'center';
+        ctx.font = 'bold 8px "Courier New", monospace';
+        ctx.fillText('HISTORIC ROUTE 66', w / 2, 12);
+        ctx.font = 'bold 13px "Courier New", monospace';
+        ctx.fillText(town, w / 2, h / 2 + 2, w - 8);
+        ctx.font = '9px "Courier New", monospace';
+        ctx.fillText(`MI ${mile.toFixed(1)} · CHICAGO`, w / 2, h - 8);
+    }, 72, 44);
+    const board = new THREE.Mesh(
+        new THREE.PlaneGeometry(0.55, 0.34),
+        new THREE.MeshStandardMaterial({ map: tex, roughness: 0.6 })
+    );
+    board.position.y = 1.55;
+    board.rotation.y = rotY;
+    const g = new THREE.Group();
+    g.add(pole, board);
+    g.position.set(x, 0, z);
+    scene.add(g);
+    return 0.06;
 }
 
 function addTrafficSign(x, z, rotY) {
@@ -2594,6 +2755,8 @@ const PROP_BUILDERS = {
     trashCan: addTrashCan,
     trafficCone: addTrafficCone,
     trafficSign: (x, z, facingRotY) => addTrafficSign(x, z, facingRotY ?? randRange(0, Math.PI * 2)),
+    mileMarker: (x, z, facingRotY) => addMileMarker(x, z, facingRotY ?? randRange(0, Math.PI * 2)),
+    wantedPoster: (x, z, facingRotY) => addWantedPoster(x, z, facingRotY ?? randRange(0, Math.PI * 2)),
     crate: addCrate,
     lantern: addLantern,
     vendingMachine: addVendingMachine,
@@ -2762,7 +2925,7 @@ for (const [pc, pr] of plazaCells) {
 // the middle of a walkway — real alleys put trash cans and machines
 // against the building, not centered in the path.
 const WALL_HUGGING_PROPS = new Set([
-    'trashCan', 'vendingMachine', 'museumPlacard', 'trafficSign',
+    'trashCan', 'vendingMachine', 'museumPlacard', 'trafficSign', 'mileMarker', 'wantedPoster',
     'fenceSegment', 'stickerTag', 'businessCardLitter',
 ]);
 
@@ -2971,13 +3134,13 @@ for (let r = 1; r < GRID_ROWS - 1; r++) {
             const wa = cellToWorld(c - 1, r), wb = cellToWorld(c + 1, r);
             const fa = footprintOf[r][c - 1] ?? CELL * 0.6, fb = footprintOf[r][c + 1] ?? CELL * 0.6;
             if (rng() < 0.5) addOverheadCable(wa.x + fa / 2, wa.z, wb.x - fb / 2, wb.z);
-            if (rng() < 0.3) addCanopyTarp(wa.x + fa / 2, wa.z, wb.x - fb / 2, wb.z);
+            if (rng() < 0.48) addCanopyTarp(wa.x + fa / 2, wa.z, wb.x - fb / 2, wb.z);
         }
         if (grid[r - 1]?.[c] && grid[r + 1]?.[c]) {
             const wa = cellToWorld(c, r - 1), wb = cellToWorld(c, r + 1);
             const fa = footprintOf[r - 1][c] ?? CELL * 0.6, fb = footprintOf[r + 1][c] ?? CELL * 0.6;
             if (rng() < 0.5) addOverheadCable(wa.x, wa.z + fa / 2, wb.x, wb.z - fb / 2);
-            if (rng() < 0.3) addCanopyTarp(wa.x, wa.z + fa / 2, wb.x, wb.z - fb / 2);
+            if (rng() < 0.48) addCanopyTarp(wa.x, wa.z + fa / 2, wb.x, wb.z - fb / 2);
         }
 
         const t = webAlignment(cellToWorld(c, r).z);
@@ -3025,6 +3188,8 @@ for (let r = 1; r < GRID_ROWS - 1; r++) {
         if (choice === 'tree') addThicketShade(x, z);
     }
 }
+
+fetchRandomWikiArticles(15); // live random articles start swapping into the static wanted posters
 
 // ---------- player collision ----------
 

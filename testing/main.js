@@ -2860,12 +2860,24 @@ function spawnJunkInstance(d, x, z) {
 // scatter `count` junk items matching `context` around (x,z) within
 // `spread` — the situational placement itself. Silently does nothing if
 // no descriptor matches the context (defensive, not expected to trigger).
-function scatterJunk(context, x, z, count, spread) {
+function scatterJunk(context, x, z, count, spread, axis = null) {
     const pool = JUNK_DESCRIPTORS.filter(d => d.contexts.includes(context));
     if (!pool.length) return;
     for (let i = 0; i < count; i++) {
-        const px = x + randRange(-spread, spread);
-        const pz = z + randRange(-spread, spread);
+        // lane-aware when an axis is given (a straight corridor -- see
+        // throughAxis/laneOffset), plus a couple of overlap-avoidance
+        // tries so junk doesn't stack directly on top of an already-
+        // placed prop and eat even more of the walkable width.
+        let px, pz;
+        for (let attempt = 0; attempt < 2; attempt++) {
+            const [ox, oz] = laneOffset(spread, axis);
+            px = x + ox; pz = z + oz;
+            const blocked = propColliders.some(p => {
+                const dx = px - p.x, dz = pz - p.z;
+                return dx * dx + dz * dz < (0.4 + p.radius) ** 2;
+            });
+            if (!blocked) break;
+        }
         const radius = spawnJunkInstance(pick(pool), px, pz);
         propColliders.push({ x: px, z: pz, radius });
     }
@@ -3011,6 +3023,11 @@ function spawnSkyJunk(count) {
         if (rng() > gradientMul) continue;
 
         let y = cfg.heightMin + (cfg.heightMax - cfg.heightMin) * (rng() ** cfg.heightBias);
+
+        // concentrated low on purpose (heightBias already skews this way),
+        // and thinned out hard above the heaven threshold -- the vistas
+        // that layer promises need actual open sightlines, not more haze.
+        if (y > LAYER_Y.heavenBase && rng() < 0.85) continue;
 
         const { col, row } = worldToCell(x, z);
         if (grid[row]?.[col] === false && y < cfg.streetClearance) y = cfg.streetClearance + rng() * 2;
@@ -3592,6 +3609,29 @@ function wallDirections(c, r) {
     return dirs;
 }
 
+// which single axis (if any) this open cell is a straight through-
+// corridor along -- open neighbors on both sides of exactly one axis.
+// null for dead ends, corners, and plaza junctions, where there's no
+// single lane to protect and the wider footprint already has more room.
+function throughAxis(c, r) {
+    const openX = grid[r]?.[c - 1] === false && grid[r]?.[c + 1] === false;
+    const openZ = grid[r - 1]?.[c] === false && grid[r + 1]?.[c] === false;
+    if (openX && !openZ) return 'x';
+    if (openZ && !openX) return 'z';
+    return null;
+}
+
+// a real carve-out, not just more collision-solver passes: clutter
+// placed in a straight corridor gets pushed off to one side instead of
+// jittered freely across the whole width, so there's always a walkable
+// lane down the middle regardless of how dense the alley gets. No axis
+// (dead end/corner/plaza) falls back to the old free 2D jitter.
+function laneOffset(spread, axis) {
+    if (!axis) return [randRange(-spread, spread), randRange(-spread, spread)];
+    const side = (rng() < 0.5 ? -1 : 1) * randRange(0.55, 0.95) * spread;
+    return axis === 'x' ? [randRange(-spread, spread), side] : [side, randRange(-spread, spread)];
+}
+
 // reject placements that would overlap something already there — cheap
 // O(n) scan against everything placed so far. Real streets don't stack
 // a trash can through a lamp post. Gives up after a few tries rather
@@ -3623,9 +3663,10 @@ for (let r = 1; r < GRID_ROWS - 1; r++) {
         // the real-model clones below aren't free, so all of this still
         // scales with QUALITY.propDensity like everything else does.
         const onStreet = isStreetCell(c, r);
+        const laneAxis = throughAxis(c, r); // null off a straight corridor -- carve-out only applies where there's a single lane to protect
         if (onStreet) {
             addStreetSurface(c, r, x, z);
-            if (rng() < 0.45 * QUALITY.propDensity) scatterJunk('street', x, z, 1 + Math.floor(rng() * 3), CELL * 0.34);
+            if (rng() < 0.45 * QUALITY.propDensity) scatterJunk('street', x, z, 1 + Math.floor(rng() * 3), CELL * 0.34, laneAxis);
             if (rng() < 0.15 * QUALITY.propDensity) {
                 const w = wallDirections(c, r);
                 if (w.length) {
@@ -3634,7 +3675,7 @@ for (let r = 1; r < GRID_ROWS - 1; r++) {
                 }
             }
         } else if (rng() < 0.75 * QUALITY.propDensity) {
-            scatterJunk('alley', x, z, 1 + Math.floor(rng() * 3), CELL * 0.3);
+            scatterJunk('alley', x, z, 1 + Math.floor(rng() * 3), CELL * 0.3, laneAxis);
         }
         // real scanned props are NOT instanced (each is its own draw
         // call) -- sparse by design, and doubly gated on quality tier.
@@ -3691,8 +3732,8 @@ for (let r = 1; r < GRID_ROWS - 1; r++) {
         } else {
             const jitter = CELL * 0.28;
             const spot = findClearSpot(x, z, 0.35, [
-                [randRange(-jitter, jitter), randRange(-jitter, jitter)],
-                [randRange(-jitter, jitter), randRange(-jitter, jitter)],
+                laneOffset(jitter, laneAxis),
+                laneOffset(jitter, laneAxis),
                 [0, 0],
             ]);
             px = spot.x; pz = spot.z;
@@ -3781,6 +3822,17 @@ const move = { forward: false, back: false, left: false, right: false };
 let touchMoveVec = { x: 0, y: 0 }; // from joystick, x = strafe, y = forward
 const velocity = new THREE.Vector3();
 
+// jump: a real arc on top of groundHeightAt, not a snap -- rises while
+// airborne, gravity pulls it back down, and it can never end up below
+// whatever the ground/stair/platform height under you actually is (so
+// jumping mid-staircase just hops you along the same climb, it can't
+// clip you through anything).
+let jumpQueued = false;
+let verticalVelocity = 0;
+let heightAboveFloor = 0; // airborne offset above groundHeightAt; 0 = grounded
+const JUMP_SPEED = 5.5;
+const GRAVITY = -16;
+
 const spawn = cellToWorld(spawnCol, spawnRow);
 camera.position.set(spawn.x, CONFIG.camera.eyeHeight, spawn.z);
 
@@ -3825,6 +3877,10 @@ document.addEventListener('keydown', (e) => {
         case 'KeyS': case 'ArrowDown': move.back = true; break;
         case 'KeyA': case 'ArrowLeft': move.left = true; break;
         case 'KeyD': case 'ArrowRight': move.right = true; break;
+        case 'Space':
+            jumpQueued = true;
+            e.preventDefault(); // don't let the page scroll while locked
+            break;
     }
 });
 document.addEventListener('keyup', (e) => {
@@ -3995,8 +4051,21 @@ function animate() {
         resolveCollisions(camera.position);
     }
     // real elevation: standing on a mezzanine or climbing its stairs
-    // actually changes eye height now, not just X/Z collision.
-    camera.position.y = groundHeightAt(camera.position.x, camera.position.z) + CONFIG.camera.eyeHeight;
+    // actually changes eye height now, not just X/Z collision. Jump is
+    // layered on top as a genuine arc, not an instant hop: a launch
+    // impulse when grounded, gravity every frame after, clamped so it
+    // never carries you below the floor/stair/platform under your feet.
+    const floorY = groundHeightAt(camera.position.x, camera.position.z) + CONFIG.camera.eyeHeight;
+    if (jumpQueued && heightAboveFloor <= 0.001) {
+        verticalVelocity = JUMP_SPEED;
+        jumpQueued = false;
+    } else {
+        jumpQueued = false; // can't queue a jump while airborne either
+    }
+    verticalVelocity += GRAVITY * delta;
+    heightAboveFloor = Math.max(0, heightAboveFloor + verticalVelocity * delta);
+    if (heightAboveFloor <= 0) verticalVelocity = 0;
+    camera.position.y = floorY + heightAboveFloor;
     updateWebGradient(camera.position.z, camera.position.y, elapsedTime);
     updateRain(delta);
 

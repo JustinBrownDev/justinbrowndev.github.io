@@ -1581,6 +1581,58 @@ function addWeeds(x, z) {
     return 0.05;
 }
 
+// a bright pool of light in an open plaza — every plaza cell gets one,
+// not just the ones that happen to host a statue/landmark. The paired
+// opposite of addThicketShade below.
+function addPlazaGlow(x, z) {
+    const glowTex = makePixelTexture((ctx, w, h) => {
+        const grad = ctx.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, w / 2);
+        grad.addColorStop(0, 'rgba(255,248,220,0.55)');
+        grad.addColorStop(1, 'rgba(255,248,220,0)');
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, w, h);
+    }, 64, 64);
+    const patch = new THREE.Mesh(
+        new THREE.PlaneGeometry(CELL * 0.9, CELL * 0.9),
+        new THREE.MeshBasicMaterial({ map: glowTex, transparent: true, depthWrite: false })
+    );
+    patch.rotation.x = -Math.PI / 2;
+    patch.position.set(x, 0.008, z);
+    scene.add(patch);
+
+    if (dynamicLightsRemaining > 0) {
+        dynamicLightsRemaining--;
+        const light = new THREE.PointLight(0xfff4d0, 3.5, CELL * 1.6, 1.8);
+        light.position.set(x, 5, z);
+        scene.add(light);
+    }
+}
+
+// a real shaded patch under dense foliage — darker ground, no added
+// light. The paired opposite of addPlazaGlow above: bright open plazas,
+// genuinely dim overgrown pockets, never uniform in between.
+function addThicketShade(x, z) {
+    const shadeTex = makePixelTexture((ctx, w, h) => {
+        const grad = ctx.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, w / 2);
+        grad.addColorStop(0, 'rgba(10,14,8,0.55)');
+        grad.addColorStop(1, 'rgba(10,14,8,0)');
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, w, h);
+    }, 64, 64);
+    const patch = new THREE.Mesh(
+        new THREE.PlaneGeometry(CELL * 0.7, CELL * 0.7),
+        new THREE.MeshBasicMaterial({ map: shadeTex, transparent: true, depthWrite: false })
+    );
+    patch.rotation.x = -Math.PI / 2;
+    patch.position.set(x, 0.009, z);
+    scene.add(patch);
+    // extra scraggle so the shaded cell actually reads as overgrown, not
+    // just dim — a couple more weeds/plants crowd in alongside the tree.
+    for (let i = 0; i < 2; i++) {
+        addWeeds(x + randRange(-1.2, 1.2), z + randRange(-1.2, 1.2));
+    }
+}
+
 function addStatue(x, z) {
     const g = new THREE.Group();
     const stoneMat = new THREE.MeshStandardMaterial({ color: 0x3a4238, roughness: 1 });
@@ -1808,6 +1860,13 @@ for (let i = 0; i < CONFIG.props.maxSpecialFeatures.crimeScenes; i++) {
     addCrimeScene(x, z); // decorative + tape, no hard collider
 }
 
+// every plaza gets a bright pool of light, regardless of whether it also
+// hosts a statue/landmark — open areas are lit, full stop.
+for (const [pc, pr] of plazaCells) {
+    const { x, z } = cellToWorld(pc, pr);
+    addPlazaGlow(x, z);
+}
+
 // general clutter across all remaining open cells (skip start cell + used plazas)
 const usedPlazas = new Set(shuffledPlazas.slice(0, plazaCursor).map(([c, r]) => `${c},${r}`));
 for (let r = 1; r < GRID_ROWS - 1; r++) {
@@ -1844,6 +1903,8 @@ for (let r = 1; r < GRID_ROWS - 1; r++) {
         const pz = z + randRange(-jitter, jitter);
         const radius = PROP_BUILDERS[choice](px, pz);
         propColliders.push({ x: px, z: pz, radius });
+        // a tree means this pocket reads as dense/overgrown — shade it
+        if (choice === 'tree') addThicketShade(x, z);
     }
 }
 

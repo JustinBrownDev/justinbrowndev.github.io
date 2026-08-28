@@ -1553,7 +1553,7 @@ for (let r = 0; r < GRID_ROWS; r++) footprintOf.push(new Array(GRID_COLS).fill(n
 // also doubles as the "does this cell have registered collision" map
 // used by resolveCollisions, replacing the old whole-footprint-square
 // check for every building cell, not just the special-cased few.
-const buildingWallSegments = new Map(); // "row,col" -> [{x1,z1,x2,z2}, ...]
+const buildingWallSegments = new Map(); // "row,col" -> { segments: [{x1,z1,x2,z2}, ...], topY }
 const WALL_THICKNESS = 0.12; // nominal -- the visual walls are flat planes with no real thickness
 
 // elevation: mezzanines inside ~30% of building interiors, reached by a
@@ -2435,7 +2435,16 @@ function addBuilding(col, row) {
     const enterHeight = floorCount * floorHeight;
     const shellMat = new THREE.MeshStandardMaterial({ color, roughness: 0.9, side: THREE.DoubleSide });
     const ground = buildGroundFloorShell(x, z, hw, floorHeight, door, shellMat, floorCount > 1);
-    buildingWallSegments.set(`${row},${col}`, ground.segments);
+    // topY: real walls only ever exist up to enterHeight -- the
+    // tapered/twisted mass above that is a solid-looking but always-
+    // collision-less visual shell (it always was, even before this
+    // building had any interior at all). resolveCollisions needs this so
+    // it can stop treating a wall as an infinite vertical plane once
+    // you're at/above the height it actually stops at -- otherwise
+    // there's no way to ever reach a rooftop from outside/above, since
+    // the walls blocked movement into the footprint at every height,
+    // roof included.
+    buildingWallSegments.set(`${row},${col}`, { segments: ground.segments, topY: enterHeight });
     maybeAddMezzanine(x, z, hw, floorHeight, door);
     maybeAddElevator(x, z, hw, floorHeight, door);
     // denser interior dressing -- guaranteed pieces plus situational junk,
@@ -5159,9 +5168,14 @@ function resolveCollisions(position, feetY = Infinity) {
         for (let dc = -1; dc <= 1; dc++) {
             const c = col + dc, r = row + dr;
             if (!grid[r]?.[c]) continue; // out of bounds or open cell — nothing solid
-            const segments = buildingWallSegments.get(`${r},${c}`);
-            if (!segments) continue;
-            for (const seg of segments) {
+            const walls = buildingWallSegments.get(`${r},${c}`);
+            if (!walls) continue;
+            // once you're at/above where the real walls actually stop
+            // (topY), this building can't block you horizontally at all
+            // -- you're above its walled structure, out over the roof/
+            // skyline, the same as if there were no building here.
+            if (feetY >= walls.topY - 0.05) continue;
+            for (const seg of walls.segments) {
                 const sdx = seg.x2 - seg.x1, sdz = seg.z2 - seg.z1;
                 const len2 = sdx * sdx + sdz * sdz;
                 let t = len2 > 1e-9 ? ((position.x - seg.x1) * sdx + (position.z - seg.z1) * sdz) / len2 : 0;

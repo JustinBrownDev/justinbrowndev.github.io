@@ -135,6 +135,7 @@ const CONFIG = {
             maxDynamicLights: 40,
             propDensity: 1.7,
             skyJunkCount: 3800, // airborne clutter -- pure overdraw, so this is the dial that's safe to push hardest
+            floatingPlatformClusters: 26, // real colliders + individual meshes, unlike sky junk -- kept modest on purpose
         },
         mobile: {
             maxPixelRatio: 1.5,
@@ -144,6 +145,7 @@ const CONFIG = {
             maxDynamicLights: 18,
             propDensity: 1.05,
             skyJunkCount: 950,
+            floatingPlatformClusters: 12,
         },
         // auto-selected on low core-count/low-memory machines (touch or
         // not -- see detectWeakGPU below), or forced with ?quality=low.
@@ -157,6 +159,7 @@ const CONFIG = {
             maxDynamicLights: 6,
             propDensity: 0.3,
             skyJunkCount: 140, // token amount -- the "buried in noise" read still needs to exist, just barely
+            floatingPlatformClusters: 4,
         },
     },
 
@@ -1514,26 +1517,36 @@ const rampRuns = []; // {axis, from, to, fixedCoord, halfWidth, y0, y1}
 const overheadCeilings = []; // {x,z,hx,hz,y} -- always blocks upward, never a floor
 
 // feetY (the player's actual current world foot height, from last frame)
-// is what makes prop-tops work as real ground rather than either always
-// blocking or always yanking you upward: a candidate only counts if
-// you're already at/above it within MAX_STEP_HEIGHT slack, the same rule
-// resolveCollisions uses to decide whether that same prop is a wall.
-// Picks the tallest valid candidate under you, not just the first match
-// -- matters now that props can overlap platforms/ramps underneath them.
+// is what makes prop-tops (and now platforms/ramps too) work as real
+// ground rather than either always blocking or always yanking you
+// upward: a candidate only counts if you're already at/above it within
+// MAX_STEP_HEIGHT slack, the same rule resolveCollisions uses to decide
+// whether that same prop is a wall. Picks the tallest valid candidate
+// under you, not just the first match.
+//
+// The platform/ramp gating matters for a real, previously-live bug: a
+// fire escape's flights reuse the exact same horizontal footprint at
+// every height (buildFireEscapeStair zigzags in place, it doesn't
+// actually move sideways), so a landing near the top and a landing near
+// the bottom can share the same (x,z). Without gating, "tallest matching
+// candidate" meant walking up to the BASE of a fire escape snapped you
+// straight to its top landing -- ungated, a match is a match regardless
+// of how far above you it actually is. Gated, only a landing/ramp height
+// you've actually climbed within reach of counts.
 function groundHeightAt(x, z, feetY = Infinity) {
     let best = 0; // bare ground
     for (const p of elevatedPlatforms) {
-        if (Math.abs(x - p.x) < p.hx && Math.abs(z - p.z) < p.hz && p.y > best) best = p.y;
+        if (p.y <= best || p.y > feetY + MAX_STEP_HEIGHT) continue;
+        if (Math.abs(x - p.x) < p.hx && Math.abs(z - p.z) < p.hz) best = p.y;
     }
     for (const r of rampRuns) {
         const along = r.axis === 'x' ? x : z;
         const cross = r.axis === 'x' ? z : x;
         if (Math.abs(cross - r.fixedCoord) > r.halfWidth) continue;
         const t = (along - r.from) / (r.to - r.from);
-        if (t >= 0 && t <= 1) {
-            const y = r.y0 + (r.y1 - r.y0) * t;
-            if (y > best) best = y;
-        }
+        if (t < 0 || t > 1) continue;
+        const y = r.y0 + (r.y1 - r.y0) * t;
+        if (y > best && y <= feetY + MAX_STEP_HEIGHT) best = y;
     }
     for (const p of propColliders) {
         if (p.height === Infinity) continue; // always a wall, never a floor
@@ -1953,6 +1966,13 @@ function addBuilding(col, row) {
         building.position.set(x, groundFloorHeight, z);
         scene.add(building);
 
+        // warehouses are short enough (6-12 total) to actually reach and
+        // stand on, unlike a 40-340-unit tower -- register the real roof
+        // cap as a walkable platform, not just a rendered surface. Towers
+        // stay unclimbable to their peak on purpose; that scale was
+        // always meant to read as skyline, not as a jump target.
+        if (isWarehouse) elevatedPlatforms.push({ x, z, hx: hw, hz: hw, y: height });
+
         // roof toppers -- a fifth/sixth flavor of building silhouette,
         // skipped on warehouses (too short to read) and setbacks (already
         // have their own upper mass).
@@ -2047,7 +2067,11 @@ function addBuilding(col, row) {
         // mezzanine stair does.
         if (rng() < 0.18) {
             placeRealModel('fireEscape', x + face.ox * 1.02, z + face.oz * 1.02, face.rotY);
-            buildFireEscapeStair(x + face.ox * 1.02, z + face.oz * 1.02, face.rotY, randRange(5, 11));
+            // warehouses are short enough to actually climb all the way
+            // to their own (now-walkable) roof; towers just get a partial
+            // decorative climb near the base -- see the roof-platform
+            // comment above for why the peak itself stays out of reach.
+            buildFireEscapeStair(x + face.ox * 1.02, z + face.oz * 1.02, face.rotY, isWarehouse ? height : randRange(5, 11));
         }
     }
 
@@ -3374,6 +3398,50 @@ for (const shape of SKY_SHAPES) {
     skyJunkCounts[shape] = 0;
 }
 
+// ---------- floating platforms: a real, climbable sky layer ----------
+// distinct from the airborne junk below on purpose: that stuff is dense,
+// tumbling, and deliberately collision-free -- pure atmosphere. This is
+// the opposite trade: sparse, always upright (so it actually has a flat
+// top), and every single one is a real elevatedPlatforms entry you can
+// stand on. Laid out as loose ascending chains -- each next platform a
+// plausible jump away from the last, never a bigger vertical rise than
+// JUMP_RISE, so climbing one chain start-to-finish is always physically
+// possible, not just visually implied. This is what makes "the city" a
+// real multi-layer thing: ground, rooftops (warehouses), and this.
+const JUMP_RISE = 0.85; // conservative under the real jump apex (~0.94 at JUMP_SPEED=5.5/GRAVITY=-16) -- margin for the horizontal hop eating some of the arc
+function spawnFloatingPlatformCluster(baseX, baseZ) {
+    let x = baseX, z = baseZ;
+    let y = randRange(LAYER_Y.caveTop - 1, LAYER_Y.caveTop + 4);
+    const count = 3 + Math.floor(rng() * 5); // 3-7 platforms per chain
+    for (let i = 0; i < count; i++) {
+        const w = randRange(1.4, 2.6), d = randRange(1.4, 2.6), h = randRange(0.3, 0.5);
+        const mat = new THREE.MeshStandardMaterial({ color: pick(CONFIG.buildings.palette), roughness: 0.85 });
+        const plat = new THREE.Mesh(jitterGeometry(new THREE.BoxGeometry(w, h, d), 0.04), mat);
+        plat.rotation.y = randRange(0, Math.PI * 2);
+        plat.position.set(x, y, z);
+        scene.add(plat);
+        // real floor -- the same elevatedPlatforms mechanism a mezzanine
+        // or a warehouse roof uses, not a cosmetic-only mesh
+        elevatedPlatforms.push({ x, z, hx: w / 2, hz: d / 2, y: y + h / 2 });
+
+        if (rng() < 0.3 && dynamicLightsRemaining > 0) {
+            dynamicLightsRemaining--;
+            const light = new THREE.PointLight(pick(CONFIG.neonPalette), 2.5, 5, 2);
+            light.position.set(x, y + h / 2 + 0.4, z);
+            scene.add(light);
+        }
+
+        // next platform: a real jump away -- short horizontal hop, rise
+        // capped at JUMP_RISE, so the chain is always climbable in
+        // sequence rather than requiring a leap of faith.
+        const angle = randRange(0, Math.PI * 2);
+        const dist = randRange(1.6, 2.6);
+        x += Math.cos(angle) * dist;
+        z += Math.sin(angle) * dist;
+        y += randRange(0.35, JUMP_RISE);
+    }
+}
+
 // spawns `count` pieces of pure airborne noise across the whole map
 // footprint and the whole height range. The only concession to "normal"
 // is a courtesy clearance kept over open/walkable cells near ground
@@ -3814,11 +3882,16 @@ for (let i = 0; i < CONFIG.props.maxSpecialFeatures.parks; i++) {
     const cell = nextPlazaCell();
     if (!cell) break;
     const { x, z } = cellToWorld(cell[0], cell[1]);
-    const r = addPark(x, z);
-    // radius here is "keep other stuff clear of the whole park," not a
-    // real object -- Infinity keeps that exactly the always-wall it's
-    // always been, instead of a fake floating platform over the grass
-    propColliders.push({ x, z, radius: r, height: Infinity });
+    // no outer collider for the park itself -- addPark's return value was
+    // "keep other stuff clear of the whole park" (CELL * 0.5, nearly the
+    // whole cell), never a real object footprint, but it was still being
+    // pushed as a real player-blocking collider: an invisible wall over
+    // most of the park, unwalkable at the exact spot it should be open
+    // grass. nextPlazaCell already assigns this cell exclusively to the
+    // park, so there was never anything for a collider here to actually
+    // keep clear of. Its real trees/bench still push their own small
+    // colliders inside addPark.
+    addPark(x, z);
     parkCells.add(`${cell[0]},${cell[1]}`);
 }
 for (let i = 0; i < CONFIG.props.maxSpecialFeatures.megaBillboards; i++) {
@@ -4161,6 +4234,21 @@ fetchRandomWikiArticles(15); // live random articles start swapping into the sta
 // the sky, filled last so it can spawn straight through anything already
 // placed -- see CONFIG.quality.*.skyJunkCount for the per-tier amount.
 spawnSkyJunk(QUALITY.skyJunkCount);
+
+// real climbable platform chains, one per pick, each starting over an
+// open (non-building) cell so the base of a chain isn't spawning inside
+// a tower's silhouette -- see CONFIG.quality.*.floatingPlatformClusters
+// for the per-tier count.
+for (let i = 0; i < QUALITY.floatingPlatformClusters; i++) {
+    let col, row, tries = 0;
+    do {
+        col = 1 + Math.floor(rng() * (GRID_COLS - 2));
+        row = 1 + Math.floor(rng() * (GRID_ROWS - 2));
+        tries++;
+    } while (grid[row][col] && tries < 20);
+    const { x, z } = cellToWorld(col, row);
+    spawnFloatingPlatformCluster(x, z);
+}
 
 // ---------- player collision ----------
 
@@ -4562,8 +4650,9 @@ function animate() {
             if (verticalVelocity > 0) verticalVelocity = 0;
         }
     }
-    for (const c of overheadCeilings) { // always a ceiling -- nobody ever stands on top of a roof cap from inside
+    for (const c of overheadCeilings) { // a ceiling for whoever's in the room below it -- not for someone standing on/above the roof itself (a warehouse's own walkable roof shares this same footprint)
         if (Math.abs(camera.position.x - c.x) >= c.hx || Math.abs(camera.position.z - c.z) >= c.hz) continue;
+        if (camera.position.y - CONFIG.camera.eyeHeight >= c.y - 0.01) continue;
         const maxEyeY = c.y - HEAD_CLEARANCE;
         if (camera.position.y > maxEyeY) {
             camera.position.y = maxEyeY;

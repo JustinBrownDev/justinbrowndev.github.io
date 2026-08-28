@@ -1330,7 +1330,7 @@ function addLantern(x, z) {
     return 0.22;
 }
 
-function addVendingMachine(x, z) {
+function addVendingMachine(x, z, facingRotY) {
     const colorHex = pick(CONFIG.neonPalette);
     const body = new THREE.Mesh(
         jitterGeometry(new THREE.BoxGeometry(0.65, 1.6, 0.55), 0.04),
@@ -1344,13 +1344,18 @@ function addVendingMachine(x, z) {
     glow.position.set(0, 0.85, 0.28);
     const g = new THREE.Group();
     g.add(body, glow);
+    // face away from whatever wall it's hugging (falls back to random
+    // if placed freestanding) -- previously this never rotated at all,
+    // so the screen could just as easily face into the wall as out.
+    const rotY = facingRotY ?? randRange(0, Math.PI * 2);
+    g.rotation.y = rotY;
     g.position.set(x, 0, z);
     scene.add(g);
 
     if (dynamicLightsRemaining > 0) {
         dynamicLightsRemaining--;
         const light = new THREE.PointLight(colorHex, 2.5, 4, 2);
-        light.position.set(x, 1, z + 0.4);
+        light.position.set(x + Math.sin(rotY) * 0.4, 1, z + Math.cos(rotY) * 0.4);
         scene.add(light);
     }
     return 0.35;
@@ -1380,7 +1385,7 @@ function addFenceSegment(x, z, rotY) {
 
 // small bronze-ish placard on a post, waist height — education & employment
 // history. The "resume, but you have to go find it" prop.
-function addMuseumPlacard(x, z) {
+function addMuseumPlacard(x, z, facingRotY) {
     const [title, subtitle] = pick([...CONFIG.siteContent.education, ...CONFIG.siteContent.employment]);
     const g = new THREE.Group();
     const post = new THREE.Mesh(
@@ -1405,7 +1410,9 @@ function addMuseumPlacard(x, z) {
     plate.rotation.x = -0.3;
     plate.position.set(0, 1.05, 0.02);
     g.add(post, plate);
-    g.rotation.y = randRange(0, Math.PI * 2);
+    // face away from the wall it's mounted near, so the readable side
+    // points into the alley rather than a coin-flip
+    g.rotation.y = facingRotY ?? randRange(0, Math.PI * 2);
     g.position.set(x, 0, z);
     scene.add(g);
     return 0.1;
@@ -1931,11 +1938,11 @@ function addCrimeScene(x, z) {
 const PROP_BUILDERS = {
     trashCan: addTrashCan,
     trafficCone: addTrafficCone,
-    trafficSign: (x, z) => addTrafficSign(x, z, randRange(0, Math.PI * 2)),
+    trafficSign: (x, z, facingRotY) => addTrafficSign(x, z, facingRotY ?? randRange(0, Math.PI * 2)),
     crate: addCrate,
     lantern: addLantern,
     vendingMachine: addVendingMachine,
-    fenceSegment: (x, z) => addFenceSegment(x, z, randRange(0, Math.PI * 2)),
+    fenceSegment: (x, z, facingRotY) => addFenceSegment(x, z, facingRotY ?? randRange(0, Math.PI * 2)),
     museumPlacard: addMuseumPlacard,
     stickerTag: addStickerTag,
     businessCardLitter: addBusinessCardLitter,
@@ -2135,6 +2142,7 @@ for (let r = 1; r < GRID_ROWS - 1; r++) {
         const { x, z } = cellToWorld(c, r);
 
         let px, pz;
+        let facingRotY; // only set for wall-hugging props against an actual wall
         if (WALL_HUGGING_PROPS.has(choice)) {
             const walls = wallDirections(c, r);
             if (walls.length) {
@@ -2145,6 +2153,10 @@ for (let r = 1; r < GRID_ROWS - 1; r++) {
                 const bz = z + w.dz * hug + (w.dz === 0 ? along : 0);
                 const spot = findClearSpot(bx, bz, 0.3, [[0, 0], [0.3, 0], [-0.3, 0], [0, 0.3], [0, -0.3]]);
                 px = spot.x; pz = spot.z;
+                // face away from the wall it's hugging, into the open alley —
+                // matches the same (dc,dr) -> rotY convention buildingFaceDefs
+                // uses, just inverted (wall direction, not facing direction).
+                facingRotY = Math.atan2(-w.dx, w.dz);
             } else {
                 px = x + randRange(-CELL * 0.28, CELL * 0.28);
                 pz = z + randRange(-CELL * 0.28, CELL * 0.28);
@@ -2159,7 +2171,7 @@ for (let r = 1; r < GRID_ROWS - 1; r++) {
             px = spot.x; pz = spot.z;
         }
 
-        const radius = PROP_BUILDERS[choice](px, pz);
+        const radius = PROP_BUILDERS[choice](px, pz, facingRotY);
         propColliders.push({ x: px, z: pz, radius });
         // a tree means this pocket reads as dense/overgrown — shade it
         if (choice === 'tree') addThicketShade(x, z);

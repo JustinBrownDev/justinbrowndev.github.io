@@ -3358,16 +3358,14 @@ function buildStairwayToHeaven(cx, cz) {
 function makeFacade(rect, dx, dz, yTop, door) {
     const axisIsX = dz !== 0; // wall runs along the x axis (a north/south face)
     const half = axisIsX ? rect.hwx : rect.hwz;
-    const rotY = dz === -1 ? 0 : dz === 1 ? Math.PI : dx === -1 ? -Math.PI / 2 : Math.PI / 2;
+    const rotY = outwardRotationY(dx, dz);
     const cx = rect.cx + dx * (rect.hwx + 0.03), cz = rect.cz + dz * (rect.hwz + 0.03);
     const isDoorWall = door && door.dx === dx && door.dz === dz;
     return {
         dx, dz, cx, cz, rotY, axisIsX, half, yTop,
+        normalX: dx, normalZ: dz, // see outwardRotationY/pointOnFacade -- the canonical outward direction
         occupied: isDoorWall ? [{ uMin: -0.85, uMax: 0.85, vMin: 0, vMax: 2.4 }] : [],
     };
-}
-function facadePoint(facade, u) {
-    return facade.axisIsX ? { x: facade.cx + u, z: facade.cz } : { x: facade.cx, z: facade.cz + u };
 }
 function facadeFits(facade, uMin, uMax, vMin, vMax, padding) {
     if (uMin < -facade.half || uMax > facade.half) return false;
@@ -3399,7 +3397,7 @@ function placeSignsOnFacade(facade, count, row, height, floorHeight) {
         }
         if (chosenU === null) continue; // correct to skip -- wall is full at this band
         facadeReserve(facade, chosenU - chosenWidth / 2, chosenU + chosenWidth / 2, vMin, vMax);
-        const p = facadePoint(facade, chosenU);
+        const p = pointOnFacade(facade, chosenU, (vMin + vMax) / 2);
         const content = pickSignContent(p.x, p.z);
         const neon = pickNeonForRow(row);
         addSign(p.x, (vMin + vMax) / 2, p.z, facade.rotY, content.title, content.subtitle, neon, content.flicker, chosenWidth);
@@ -3423,6 +3421,72 @@ const CELL_SIDE_DEFS = [
     { key: 'W', dx: -1, dz: 0 }, { key: 'E', dx: 1, dz: 0 },
 ];
 function kindForSide(kinds, dx, dz) { return kinds[CELL_SIDE_DEFS.find(s => s.dx === dx && s.dz === dz).key]; }
+
+// THE canonical wall-facing convention -- every exterior wall's outward
+// direction (nx,nz) is a unit vector (see CELL_SIDE_DEFS: it's literally
+// that side's own dx/dz) pointing FROM the building OUT into free space.
+// Every wall-mounted object (signs, cameras, ivy, pipes, awnings,
+// posters, the fire escape, ...) is built in local space with local +Z
+// as "away from the wall", then carries that to world space with a
+// single group.rotation.y -- so the rotationY that makes local +Z equal
+// world (nx,nz) is the ONLY rotation any of them should ever use.
+// Three.js's rotation.y convention maps local +Z to world
+// (sin(rotY), cos(rotY)) -- so solving sin(rotY)=nx, cos(rotY)=nz gives
+// exactly atan2(nx, nz). Before this, makeFacade/addBuildingModule's
+// per-face rotY and buildingFaceDefs each hand-maintained their own
+// north/south/east/west rotation table -- and north/south had it
+// backwards (rotY=0 for north's (0,-1) normal actually faces +Z / south),
+// so every sign, camera, ivy patch, pipe run, and awning mounted on a
+// north- or south-facing wall was built pointing back INTO the building
+// instead of out over the street. East/west happened to already match
+// this formula, which is exactly why only north/south looked wrong.
+// See the cardinal-orientation self-test right below this.
+function outwardRotationY(nx, nz) { return Math.atan2(nx, nz); }
+
+(function selfTestCardinalOrientation() {
+    // HARD TEST: for each cardinal direction, the world direction that
+    // outwardRotationY's rotY actually carries local +Z to must be that
+    // same direction's own (nx,nz), not merely "some rotation" -- this is
+    // the exact invariant every wall-mounted prop depends on to project
+    // outward instead of through the wall. Deterministic, no rng -- runs
+    // identically on every seed/page load.
+    const dirs = [{ name: 'N', nx: 0, nz: -1 }, { name: 'S', nx: 0, nz: 1 }, { name: 'W', nx: -1, nz: 0 }, { name: 'E', nx: 1, nz: 0 }];
+    let allOk = true;
+    for (const d of dirs) {
+        const rotY = outwardRotationY(d.nx, d.nz);
+        const wx = Math.sin(rotY), wz = Math.cos(rotY);
+        const dot = wx * d.nx + wz * d.nz;
+        if (dot < 0.999) {
+            allOk = false;
+            console.warn(`[testing] FAILED cardinal orientation self-test for ${d.name}: rotY=${rotY.toFixed(3)} world dir=(${wx.toFixed(3)},${wz.toFixed(3)}) expected (${d.nx},${d.nz})`);
+        }
+    }
+    console.log(`[testing] cardinal orientation self-test: ${allOk ? 'PASS' : 'FAIL'} -- all 4 wall-mounted-object rotations point outward`);
+})();
+
+// a facade's u-axis (its own "left-to-right" tangent, perpendicular to
+// its outward normal) -- an arbitrary but consistent direction (+x for a
+// north/south wall, +z for an east/west wall), not itself meaningful,
+// just shared by every anchor computed on that facade.
+function facadeTangent(facade) {
+    return facade.axisIsX ? { tx: 1, tz: 0 } : { tx: 0, tz: 1 };
+}
+
+// THE wall-anchor primitive -- every wall-mounted object should compute
+// its world position from this, not by hand-rolling
+// `cx + ox * 0.97`-style magic multipliers of the building's own
+// half-width. u is signed distance along the facade's tangent from its
+// center; outwardOffset is real distance (world units) off the wall's
+// actual outer surface along its normal -- 0 sits exactly on the wall
+// plane, WALL_THICKNESS/2 sits exactly on its physical outer face.
+function pointOnFacade(facade, u, y, outwardOffset = 0) {
+    const { tx, tz } = facadeTangent(facade);
+    return {
+        x: facade.cx + tx * u + facade.normalX * outwardOffset,
+        y,
+        z: facade.cz + tz * u + facade.normalZ * outwardOffset,
+    };
+}
 
 // the actual buildable rectangle for one cell -- independent per-side
 // setbacks (0 for a same-site neighbor, a small shared value for a
@@ -3656,7 +3720,7 @@ function addBuildingModule(cell, opts) {
     // internal/courtyard sides get no signage/street dressing.
     for (const s of streetSides) {
         const ox = s.dx * (hwx + 0.03), oz = s.dz * (hwz + 0.03);
-        const rotY = s.dz === -1 ? 0 : s.dz === 1 ? Math.PI : s.dx === -1 ? -Math.PI / 2 : Math.PI / 2;
+        const rotY = outwardRotationY(s.dx, s.dz);
         const faceX = cx + ox, faceZ = cz + oz;
         // decided up front (not just at the point it's actually placed
         // below) so its facade space can be reserved BEFORE signs are
@@ -3846,10 +3910,10 @@ const candidateFaces = []; // faces that skipped a random sign — free for cont
 // the single forced "signal" sign.
 function buildingFaceDefs(hwx, hwz) {
     return [
-        { dc: 0, dr: -1, rotY: 0, ox: 0, oz: -hwz - 0.03 },
-        { dc: 0, dr: 1, rotY: Math.PI, ox: 0, oz: hwz + 0.03 },
-        { dc: -1, dr: 0, rotY: -Math.PI / 2, ox: -hwx - 0.03, oz: 0 },
-        { dc: 1, dr: 0, rotY: Math.PI / 2, ox: hwx + 0.03, oz: 0 },
+        { dc: 0, dr: -1, rotY: outwardRotationY(0, -1), ox: 0, oz: -hwz - 0.03 },
+        { dc: 0, dr: 1, rotY: outwardRotationY(0, 1), ox: 0, oz: hwz + 0.03 },
+        { dc: -1, dr: 0, rotY: outwardRotationY(-1, 0), ox: -hwx - 0.03, oz: 0 },
+        { dc: 1, dr: 0, rotY: outwardRotationY(1, 0), ox: hwx + 0.03, oz: 0 },
     ];
 }
 
@@ -5689,17 +5753,23 @@ function addConstructionZone(x, z) {
 
 // a newsstand kiosk with a real (fake-news) tabloid front page — comic
 // relief landmark for plaza cells.
-// average open-neighbor direction for a plaza cell, in the same
-// atan2(dc,-dr) convention as buildingFaceDefs — so freestanding kiosks
-// face toward the plaza's dominant opening instead of a coin flip that
-// could just as easily point the screen at the narrowest gap.
+// average open-neighbor direction for a plaza cell, run through the same
+// canonical outwardRotationY every wall-mounted object uses (see
+// CELL_SIDE_DEFS) — so freestanding kiosks face toward the plaza's
+// dominant opening instead of a coin flip that could just as easily
+// point the screen at the narrowest gap. This used to hand-roll its own
+// atan2(dc,-dr) (a separate, independently-wrong formula that happened
+// to match the OLD, backwards north/south convention buildingFaceDefs
+// used before it was fixed) -- east/west opens were unaffected (the
+// negated z term is a no-op when sz=0), but a plaza open only to the
+// north or south faced its kiosk exactly away from the opening.
 function plazaFacingRotY(c, r) {
     const opens = [[0, -1], [0, 1], [-1, 0], [1, 0]].filter(([dc, dr]) => grid[r + dr]?.[c + dc] === false);
     if (!opens.length) return undefined;
     let sx = 0, sz = 0;
     for (const [dc, dr] of opens) { sx += dc; sz += dr; }
     if (sx === 0 && sz === 0) return undefined; // symmetric plaza, no dominant side
-    return Math.atan2(sx, -sz);
+    return outwardRotationY(sx, sz);
 }
 
 function addNewsstand(x, z, facingRotY) {

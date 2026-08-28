@@ -151,9 +151,9 @@ const CONFIG = {
             bloom: { strength: 0.55, radius: 0.4, threshold: 0.88 },
             drawDistance: 380,
             maxDynamicLights: 40,
-            propDensity: 2.3, // turned up another notch -- "way more everything" pass
-            skyJunkCount: 5200, // airborne clutter -- pure overdraw, so this is the dial that's safe to push hardest
-            floatingPlatformClusters: 34, // real colliders + individual meshes, unlike sky junk -- kept modest on purpose
+            propDensity: 2.8, // bumped alongside the smaller map -- a bit denser per cell, not just "the same stuff in less space"
+            skyJunkCount: 2000, // map area dropped to ~1/4 -- cut hard so the sky doesn't quadruple in density on its own
+            floatingPlatformClusters: 13, // real colliders + individual meshes, unlike sky junk -- kept modest on purpose
             maxEnterableFloors: 4, // real, walkable floors per building before the decorative tower takes over
         },
         mobile: {
@@ -162,9 +162,9 @@ const CONFIG = {
             bloom: { strength: 0.4, radius: 0.35, threshold: 0.9 },
             drawDistance: 260,
             maxDynamicLights: 18,
-            propDensity: 1.35,
-            skyJunkCount: 1300,
-            floatingPlatformClusters: 16,
+            propDensity: 1.6,
+            skyJunkCount: 500,
+            floatingPlatformClusters: 6,
             maxEnterableFloors: 3,
         },
         // auto-selected on low core-count/low-memory machines (touch or
@@ -177,9 +177,9 @@ const CONFIG = {
             bloom: null,
             drawDistance: 180,
             maxDynamicLights: 6,
-            propDensity: 0.3,
-            skyJunkCount: 140, // token amount -- the "buried in noise" read still needs to exist, just barely
-            floatingPlatformClusters: 4,
+            propDensity: 0.36,
+            skyJunkCount: 55, // token amount -- the "buried in noise" read still needs to exist, just barely
+            floatingPlatformClusters: 2,
             maxEnterableFloors: 2,
         },
     },
@@ -189,12 +189,17 @@ const CONFIG = {
     // either solid (a building) or open (an alley). A perimeter ring is
     // always solid so the maze is naturally walled in — no invisible clamp.
     maze: {
-        cols: 21,
-        rows: 21,
+        // ~1/4 the total footprint of the old 21x21 (11x11 is the nearest
+        // odd size -- the DFS carve below moves in steps of 2, so an odd
+        // grid is what keeps the parity/perimeter math clean) plus a
+        // slightly tighter building margin below, so it also reads denser
+        // per block, not just smaller overall.
+        cols: 11,
+        rows: 11,
         cellSize: 7,        // world units per grid cell
         loopChance: 0.14,   // chance a redundant wall opens up into a plaza/loop
-        buildingMarginMin: 0.6,  // how much smaller than the cell a building footprint is
-        buildingMarginMax: 1.8,
+        buildingMarginMin: 0.5,  // how much smaller than the cell a building footprint is
+        buildingMarginMax: 1.4,
     },
 
     buildings: {
@@ -349,12 +354,9 @@ const CONFIG = {
     },
 
     billboards: {
-        // small + nearest-filtered = chunky low-fi pixel signage
-        canvasWidth: 96,
-        canvasHeight: 56,
-        borderWidth: 3,
-        titleFont: 'bold 20px "Courier New", monospace',
-        subtitleFont: '11px "Courier New", monospace',
+        // shape/font/border/backing are rolled per-sign now (see
+        // SIGN_SHAPES etc. near addSign) instead of one fixed look
+        // shared by every sign in the city.
         navPages: [
             { title: 'PROJECTS', subtitle: 'selected work' },
             { title: 'ABOUT', subtitle: 'who\'s behind this' },
@@ -561,15 +563,20 @@ const CONFIG = {
             weeds: 3.5,
             none: 0.03, // turned down further -- almost nothing gets to be empty
         },
+        // scaled down alongside the ~1/4-size map -- these all draw from
+        // the same shrunk plazaCells pool in this fixed order, so leaving
+        // the old (21x21-tuned) counts here would let the categories
+        // early in the list (statues, constructionZones...) starve every
+        // category listed after them out of a plaza entirely.
         maxSpecialFeatures: {
-            statues: 5,
-            constructionZones: 5,
-            crimeScenes: 3,
-            newsstands: 4,
-            phoneBooths: 4,
-            atmKiosks: 4,
-            parks: 5,
-            megaBillboards: 4,
+            statues: 2,
+            constructionZones: 2,
+            crimeScenes: 1,
+            newsstands: 2,
+            phoneBooths: 2,
+            atmKiosks: 2,
+            parks: 2,
+            megaBillboards: 2,
         },
     },
 
@@ -836,8 +843,8 @@ function randomizeConfig() {
     // named colors ("white", "gold", "maroon"...) would just drift them
     // off their own labels for no visible gain.
 
-    // billboards -- visual tuning, not the copy itself
-    c.billboards.borderWidth = jitterInt(c.billboards.borderWidth, 0.3, 2, 5);
+    // billboards -- visual tuning, not the copy itself (border width etc.
+    // is rolled per-sign now, see SIGN_SHAPES/SIGN_FONTS near addSign)
     for (const k of Object.keys(c.billboards.contentWeights)) {
         c.billboards.contentWeights[k] = jitterClamped(c.billboards.contentWeights[k], 0.35, 1, 10);
     }
@@ -1318,16 +1325,22 @@ function weightedPick(weights) {
     return entries[entries.length - 1][0];
 }
 
-// low-fi pixel texture: tiny canvas, nearest-filtered, no smoothing
+// canvas texture, supersampled + linear-filtered so text actually reads
+// -- used to be a literal tiny canvas at nearest-filter (chunky low-fi
+// pixel signage on purpose), but that made every fillText illegible past
+// a couple steps away. Draw callbacks are unchanged: they still draw in
+// logical w x h coordinates and have no idea the backing store is bigger.
+const TEXTURE_SUPERSAMPLE = 3;
 function makePixelTexture(draw, w, h) {
     const canvas = document.createElement('canvas');
-    canvas.width = w; canvas.height = h;
+    canvas.width = w * TEXTURE_SUPERSAMPLE; canvas.height = h * TEXTURE_SUPERSAMPLE;
     const ctx = canvas.getContext('2d');
-    ctx.imageSmoothingEnabled = false;
+    ctx.scale(TEXTURE_SUPERSAMPLE, TEXTURE_SUPERSAMPLE);
+    ctx.imageSmoothingEnabled = true;
     draw(ctx, w, h);
     const tex = new THREE.CanvasTexture(canvas);
-    tex.magFilter = THREE.NearestFilter;
-    tex.minFilter = THREE.NearestFilter;
+    tex.magFilter = THREE.LinearFilter;
+    tex.minFilter = THREE.LinearFilter;
     tex.colorSpace = THREE.SRGBColorSpace;
     return tex;
 }
@@ -2975,25 +2988,64 @@ function buildingFaceDefs(footprint) {
     ];
 }
 
+// style axes a sign rolls independently, so no two signs in the city
+// necessarily share a look -- shape (canvas aspect), font family, border
+// treatment/width/color, and backing tone all vary sign-to-sign instead
+// of being one fixed look shared by every sign, same "push it hard"
+// treatment the noise corpus got.
+const SIGN_SHAPES = [
+    { w: 96, h: 56 }, { w: 96, h: 72 }, { w: 72, h: 96 }, { w: 120, h: 48 }, { w: 108, h: 84 }, { w: 84, h: 108 },
+];
+const SIGN_FONTS = [
+    '"Courier New", monospace', 'Consolas, monospace', '"Lucida Console", monospace',
+    'Verdana, sans-serif', '"Arial Black", sans-serif', 'Georgia, serif',
+];
+const SIGN_BACKINGS = ['#020202', '#0a0410', '#04120a', '#12040a', '#0a0a02', '#080808'];
+const SIGN_BORDER_STYLES = ['solid', 'double', 'cut', 'none'];
+
 function addSign(x, y, z, rotY, title, subtitle, colorHex, flicker = false) {
-    const b = CONFIG.billboards;
+    const shape = pick(SIGN_SHAPES);
+    const font = pick(SIGN_FONTS);
+    const backing = pick(SIGN_BACKINGS);
+    const borderStyle = pick(SIGN_BORDER_STYLES);
+    const borderWidth = randRange(1, 5);
+    // ~1 in 3 borders use a contrasting accent instead of matching the
+    // sign's own text/light color.
+    const borderColorHex = rng() < 0.3 ? pick(CONFIG.neonPalette) : colorHex;
+
     const tex = makePixelTexture((ctx, w, h) => {
         const color = hexToCss(colorHex);
-        ctx.fillStyle = '#020202';
+        ctx.fillStyle = backing;
         ctx.fillRect(0, 0, w, h);
-        ctx.strokeStyle = color;
-        ctx.lineWidth = b.borderWidth;
-        ctx.strokeRect(1, 1, w - 2, h - 2);
+        if (borderStyle !== 'none') {
+            ctx.strokeStyle = hexToCss(borderColorHex);
+            ctx.lineWidth = borderWidth;
+            if (borderStyle === 'cut') { // chamfered/cut corners instead of a plain rectangle
+                const c = Math.min(w, h) * 0.14;
+                ctx.beginPath();
+                ctx.moveTo(c, 1); ctx.lineTo(w - c, 1); ctx.lineTo(w - 1, c); ctx.lineTo(w - 1, h - c);
+                ctx.lineTo(w - c, h - 1); ctx.lineTo(c, h - 1); ctx.lineTo(1, h - c); ctx.lineTo(1, c);
+                ctx.closePath(); ctx.stroke();
+            } else {
+                ctx.strokeRect(borderWidth / 2, borderWidth / 2, w - borderWidth, h - borderWidth);
+                if (borderStyle === 'double') {
+                    ctx.lineWidth = Math.max(1, borderWidth * 0.5);
+                    ctx.strokeRect(borderWidth * 2.2, borderWidth * 2.2, w - borderWidth * 4.4, h - borderWidth * 4.4);
+                }
+            }
+        }
         ctx.fillStyle = color;
         ctx.textAlign = 'center';
-        ctx.font = b.titleFont;
-        ctx.fillText(title, w / 2, h / 2 - 4, w - 8);
-        ctx.font = b.subtitleFont;
-        ctx.fillText(subtitle, w / 2, h / 2 + 14, w - 8);
-    }, b.canvasWidth, b.canvasHeight);
+        // font size is a fraction of canvas height, not a fixed px value,
+        // so it stays proportioned across every shape in SIGN_SHAPES
+        ctx.font = `bold ${Math.round(h * 0.32)}px ${font}`;
+        ctx.fillText(title, w / 2, h / 2 - h * 0.08, w - 8);
+        ctx.font = `${Math.round(h * 0.17)}px ${font}`;
+        ctx.fillText(subtitle, w / 2, h / 2 + h * 0.24, w - 8);
+    }, shape.w, shape.h);
 
-    const width = randRange(1.6, 2.6);
-    const height = width * (b.canvasHeight / b.canvasWidth);
+    const width = randRange(1.5, 2.9);
+    const height = width * (shape.h / shape.w);
     const panelDepth = randRange(0.06, 0.1);
 
     // projecting/blade-sign mount: a wall plate, a horizontal arm, and a
@@ -3038,12 +3090,21 @@ function addSign(x, y, z, rotY, title, subtitle, colorHex, flicker = false) {
     brace.position.set(0, -braceDrop / 2, armLength / 2);
     g.add(brace);
 
+    // the sign's own "origin" is its near edge (the arm's tip, armLength
+    // out from the wall) -- the panel is anchored there and extends
+    // further outward by its own width, never the other way around. It
+    // used to be centered ON the arm tip, so half its bulk could swing
+    // back toward the wall and clip through it whenever width exceeded
+    // 2x armLength (routine at the panel's larger random sizes). Anchoring
+    // the near edge instead of the center makes "reaches past the wall,
+    // never into it" true by construction, not by the luck of the roll.
     const edgeMat = new THREE.MeshStandardMaterial({ color: 0x181818, roughness: 0.5, metalness: 0.6 });
     const faceMat = new THREE.MeshBasicMaterial({ map: tex });
     const panel = new THREE.Mesh(skirtBoxGeo, [edgeMat, edgeMat, edgeMat, edgeMat, faceMat, faceMat]);
     panel.scale.set(width, height, panelDepth);
     panel.rotation.y = Math.PI / 2; // perpendicular to the wall, not flush against it
-    panel.position.set(0, 0, armLength);
+    const panelCenterZ = armLength + width / 2;
+    panel.position.set(0, 0, panelCenterZ);
     g.add(panel);
 
     g.rotation.y = rotY;
@@ -3055,9 +3116,9 @@ function addSign(x, y, z, rotY, title, subtitle, colorHex, flicker = false) {
         const sl = CONFIG.lighting.signLight;
         const light = new THREE.PointLight(colorHex, sl.intensity, sl.distance, sl.decay);
         light.position.set(
-            x + Math.sin(rotY) * armLength,
+            x + Math.sin(rotY) * panelCenterZ,
             y,
-            z + Math.cos(rotY) * armLength
+            z + Math.cos(rotY) * panelCenterZ
         );
         scene.add(light);
         if (flicker) {
@@ -5462,7 +5523,10 @@ spawnSkyJunk(QUALITY.skyJunkCount);
 // a small cache of real textures (TEXT_SHARD_CACHE_SIZE), reused across
 // however many shard meshes get placed. None of these are colliders.
 const TEXT_SHARD_CACHE_SIZE = QUALITY === CONFIG.quality.desktop ? 512 : QUALITY === CONFIG.quality.mobile ? 160 : 48;
-const TEXT_SHARD_COUNT = QUALITY === CONFIG.quality.desktop ? 2200 : QUALITY === CONFIG.quality.mobile ? 550 : 60;
+// counts cut down alongside the ~1/4-size map -- same reasoning as
+// skyJunkCount above, so the sky doesn't end up ~4x denser just because
+// the map got smaller.
+const TEXT_SHARD_COUNT = QUALITY === CONFIG.quality.desktop ? 850 : QUALITY === CONFIG.quality.mobile ? 210 : 25;
 
 function makeNoiseShardTexture(title, subtitle) {
     const neon = hexToCss(pick(CONFIG.neonPalette));

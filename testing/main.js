@@ -677,31 +677,82 @@ let dynamicLightsRemaining = QUALITY.maxDynamicLights;
 // gradient continuously, driven entirely by world Z (north/south).
 // 0 = dark web (north), 1 = light web (south).
 
-const _fogLerp = new THREE.Color();
-const _ambLerp = new THREE.Color();
 
 function webAlignment(worldZ) {
     return THREE.MathUtils.clamp((worldZ / (GRID_H / 2) + 1) / 2, 0, 1);
 }
 
-function updateWebGradient(worldZ) {
+// ---------- vertical layer gradient: caves -> heaven ----------
+// orthogonal to the light-web/dark-web gradient above, which rides
+// world Z (horizontal, north/south). This one rides world Y (vertical,
+// up), and it's what actually owns fog/ambient COLOR now: the bottom
+// two floors of the city -- everything at or near ground level, i.e.
+// nearly the entire existing maze -- are "the caves," and the purple/
+// black nighttime palette that got cut everywhere else lives here and
+// only here. Climb a real, working stair high enough and it burns
+// through a genuinely strobing rainbow band (this is what the epilepsy
+// warning up top is actually for) into a blinding white "heaven" -- see
+// buildFireEscapeStair and the layer-deck builders below for how you
+// actually get up there.
+const CAVE_FOG = new THREE.Color(0x140a20);
+const CAVE_AMBIENT = new THREE.Color(0x2a1040);
+const HEAVEN_FOG = new THREE.Color(0xfaf8ec);
+const HEAVEN_AMBIENT = new THREE.Color(0xfffaf0);
+const _vertColor = new THREE.Color();
+const _vertAmbient = new THREE.Color();
+const LAYER_Y = { caveTop: 5, heavenBase: 20 };
+
+function verticalBandT(y) {
+    return THREE.MathUtils.clamp((y - LAYER_Y.caveTop) / (LAYER_Y.heavenBase - LAYER_Y.caveTop), 0, 1);
+}
+
+function updateVerticalGradient(y, elapsed) {
+    const vt = verticalBandT(y);
+    if (vt <= 0.02) {
+        _vertColor.copy(CAVE_FOG);
+        _vertAmbient.copy(CAVE_AMBIENT);
+    } else if (vt >= 0.98) {
+        _vertColor.copy(HEAVEN_FOG);
+        _vertAmbient.copy(HEAVEN_AMBIENT);
+    } else {
+        // the strobing middle band: hue cycles with height AND time, so
+        // standing still on a landing doesn't settle into a color either
+        // -- "all kinds of colors in between," genuinely, not a fixed tint
+        const hue = (vt * 1.4 + elapsed * 0.12) % 1;
+        _vertColor.setHSL(hue, 0.9, 0.55);
+        _vertAmbient.setHSL((hue + 0.5) % 1, 0.8, 0.6);
+    }
+    scene.fog.color.copy(_vertColor);
+    scene.background.copy(_vertColor);
+    ambientLight.color.copy(_vertAmbient);
+    return vt;
+}
+
+function updateWebGradient(worldZ, worldY, elapsed) {
     const t = webAlignment(worldZ);
     const dark = CONFIG.narrative.darkWeb;
     const light = CONFIG.narrative.lightWeb;
 
-    _fogLerp.set(dark.fogColor).lerp(new THREE.Color(light.fogColor), t);
-    scene.fog.color.copy(_fogLerp);
-    scene.fog.density = THREE.MathUtils.lerp(dark.fogDensity, light.fogDensity, t);
+    // vertical gradient owns color; horizontal keeps owning brightness/
+    // density/audio/weather -- two orthogonal reads, not one fighting
+    // over the same channel as the other.
+    const vt = updateVerticalGradient(worldY, elapsed);
 
-    _ambLerp.set(dark.ambientColor).lerp(new THREE.Color(light.ambientColor), t);
-    ambientLight.color.copy(_ambLerp);
+    const baseDensity = THREE.MathUtils.lerp(dark.fogDensity, light.fogDensity, t);
+    // "fog of war": thick and close-in down in the caves -- both the
+    // disorientation and a real performance win, since the tightened
+    // camera.far below means nothing past it costs a single triangle --
+    // opening up into the long clear sightlines heaven's vistas need.
+    scene.fog.density = baseDensity * THREE.MathUtils.lerp(2.2, 0.35, vt);
+    camera.far = THREE.MathUtils.lerp(Math.min(70, QUALITY.drawDistance), QUALITY.drawDistance, vt);
+    camera.updateProjectionMatrix();
+
     ambientLight.intensity = THREE.MathUtils.lerp(dark.ambientIntensity, light.ambientIntensity, t);
     hemiLight.intensity = THREE.MathUtils.lerp(dark.hemiIntensity, light.hemiIntensity, t);
-    // weather rides the same gradient: damp/overcast toward dark-web
-    // (north), bone dry toward light-web (south) — never both, never
-    // neither, the contrast is continuous just like everything else here.
-    rainMat.opacity = (1 - t) * 0.5;
-    updateAudioGradient(t);
+    // weather rides the horizontal gradient like before, and now fades
+    // out entirely near heaven -- storms don't reach the vista deck.
+    rainMat.opacity = (1 - t) * 0.5 * (1 - vt * 0.7);
+    updateAudioGradient(t, vt);
 }
 
 // ---------- ambient audio ----------
@@ -715,20 +766,24 @@ function updateWebGradient(worldZ) {
 let audioCtx = null;
 let droneGain = null;
 let hissGain = null;
+let droneFilter = null;
+let shimmerGain = null;
 
 function initAudio() {
     if (audioCtx) return;
     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 
     // two barely-detuned low oscillators through a lowpass filter -- a
-    // distant city hum, not a musical note
+    // distant city hum, not a musical note. Filter cutoff itself now
+    // rides the vertical gradient (see updateAudioGradient) -- muddy and
+    // closed-in down in the caves, opening up brighter as you climb.
     const osc1 = audioCtx.createOscillator();
     const osc2 = audioCtx.createOscillator();
     osc1.type = 'sawtooth'; osc1.frequency.value = 55;
     osc2.type = 'sawtooth'; osc2.frequency.value = 55 * 1.006;
-    const droneFilter = audioCtx.createBiquadFilter();
+    droneFilter = audioCtx.createBiquadFilter();
     droneFilter.type = 'lowpass';
-    droneFilter.frequency.value = 220;
+    droneFilter.frequency.value = 90;
     droneGain = audioCtx.createGain();
     droneGain.gain.value = 0.03;
     osc1.connect(droneFilter); osc2.connect(droneFilter);
@@ -751,13 +806,29 @@ function initAudio() {
     hissGain.gain.value = 0.005;
     noise.connect(hissFilter).connect(hissGain).connect(audioCtx.destination);
     noise.start();
+
+    // a high, pure sine that only ever fades in near the top -- the
+    // "heaven" layer's one audio element that doesn't exist anywhere
+    // else in the maze, so reaching it actually sounds like arriving
+    // somewhere rather than just more of the same hum getting brighter.
+    const shimmerOsc = audioCtx.createOscillator();
+    shimmerOsc.type = 'sine'; shimmerOsc.frequency.value = 880;
+    shimmerGain = audioCtx.createGain();
+    shimmerGain.gain.value = 0;
+    shimmerOsc.connect(shimmerGain).connect(audioCtx.destination);
+    shimmerOsc.start();
 }
 
-function updateAudioGradient(t) {
+function updateAudioGradient(t, vt = 0) {
     if (!audioCtx) return;
-    // t: 0 = dark web (quiet, empty), 1 = light web (busy, loud)
+    // t: 0 = dark web (quiet, empty), 1 = light web (busy, loud) -- the
+    // existing horizontal read. vt: 0 = caves, 1 = heaven -- the new
+    // vertical one. Both blend into the same handful of nodes rather
+    // than fighting over separate ones.
     droneGain.gain.setTargetAtTime(0.02 + t * 0.05, audioCtx.currentTime, 0.6);
-    hissGain.gain.setTargetAtTime(0.003 + t * 0.03, audioCtx.currentTime, 0.6);
+    hissGain.gain.setTargetAtTime(0.003 + t * 0.03 + Math.sin(vt * Math.PI) * 0.018, audioCtx.currentTime, 0.6);
+    droneFilter.frequency.setTargetAtTime(90 + vt * 700, audioCtx.currentTime, 1.2);
+    shimmerGain.gain.setTargetAtTime(vt * 0.035, audioCtx.currentTime, 1.0);
 }
 
 // short filtered noise burst -- a footstep, triggered while moving
@@ -3926,7 +3997,7 @@ function animate() {
     // real elevation: standing on a mezzanine or climbing its stairs
     // actually changes eye height now, not just X/Z collision.
     camera.position.y = groundHeightAt(camera.position.x, camera.position.z) + CONFIG.camera.eyeHeight;
-    updateWebGradient(camera.position.z);
+    updateWebGradient(camera.position.z, camera.position.y, elapsedTime);
     updateRain(delta);
 
     composer.render();

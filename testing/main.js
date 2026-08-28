@@ -3870,6 +3870,14 @@ let verticalVelocity = 0;
 let heightAboveFloor = 0; // airborne offset above groundHeightAt; 0 = grounded
 const JUMP_SPEED = 5.5;
 const GRAVITY = -16;
+// walking off the edge of a mezzanine/fire-escape/rooftop used to be an
+// instant teleport straight down to whatever groundHeightAt reports under
+// your new x/z -- the table lookup has no concept of "was standing on
+// something, that something just ended". Small height changes (a stair
+// riser, a curb, a continuous ramp) should still snap immediately; only a
+// drop bigger than this counts as walking off a real ledge.
+const STEP_DOWN_TOLERANCE = 0.5;
+let lastGroundedFloorY = null; // previous frame's floorY while grounded, for ledge detection
 
 const spawn = cellToWorld(spawnCol, spawnRow);
 camera.position.set(spawn.x, CONFIG.camera.eyeHeight, spawn.z);
@@ -4093,7 +4101,15 @@ function animate() {
     // layered on top as a genuine arc, not an instant hop: a launch
     // impulse when grounded, gravity every frame after, clamped so it
     // never carries you below the floor/stair/platform under your feet.
-    const floorY = groundHeightAt(camera.position.x, camera.position.z) + CONFIG.camera.eyeHeight;
+    let floorY = groundHeightAt(camera.position.x, camera.position.z) + CONFIG.camera.eyeHeight;
+    const wasGrounded = heightAboveFloor <= 0.001;
+    if (wasGrounded && lastGroundedFloorY !== null && floorY < lastGroundedFloorY - STEP_DOWN_TOLERANCE) {
+        // stepped off a real ledge -- don't snap down to the new (lower)
+        // floor, fall to it instead. Reframe the gap as airborne offset
+        // above the new floor so this frame renders at the same height
+        // it already was, then gravity below carries it down naturally.
+        heightAboveFloor = lastGroundedFloorY - floorY;
+    }
     if (jumpQueued && heightAboveFloor <= 0.001) {
         verticalVelocity = JUMP_SPEED;
         jumpQueued = false;
@@ -4104,6 +4120,7 @@ function animate() {
     heightAboveFloor = Math.max(0, heightAboveFloor + verticalVelocity * delta);
     if (heightAboveFloor <= 0) verticalVelocity = 0;
     camera.position.y = floorY + heightAboveFloor;
+    if (heightAboveFloor <= 0.001) lastGroundedFloorY = floorY; // only tracked while actually grounded
     updateWebGradient(camera.position.z, camera.position.y, elapsedTime);
     updateRain(delta);
 

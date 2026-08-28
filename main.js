@@ -1751,20 +1751,26 @@ bootStatus(`maze carved (${allOpenCells.length} open cells) -- building the city
 // ---------- maze topology: explicit OPEN/CLOSED edges ----------
 // grid[r][c] marks a cell solid/open, but a *rendered* building only
 // fills an inset footprint (CELL - margin) of its cell -- up to ~1.4
-// units smaller than the cell, on each side. Two adjacent "solid" cells
-// can therefore leave a real 0.5-1.4 unit gap between their facades,
-// wide enough for the player capsule to slip through what the maze
-// topology says is a sealed wall -- the rendered geometry defeats the
-// DFS topology. Enforcing the maze is now a structural system
-// independent of whatever geometry (buildings, wings, annexes, decor)
-// happens to be inset within each cell: every cell-to-cell boundary is
-// either OPEN (both cells are alley -- already-contiguous pavement, no
-// seal needed -- that's just the maze's own carved passage) or CLOSED
-// (anything else), and every CLOSED boundary gets a guaranteed
-// collision seal spanning the full cell width, regardless of what's
-// drawn nearby. Buildings can stay inset/irregular/modular without ever
-// opening an accidental shortcut, because this doesn't rely on their
-// footprint reaching the boundary at all.
+// units smaller than the cell, on each side. Two adjacent SOLID
+// (building) cells can therefore leave a real 0.5-1.4 unit gap between
+// their facades, wide enough for the player capsule to slip through
+// what the maze topology says is a sealed wall -- the rendered geometry
+// defeats the DFS topology. Enforcing the maze is now a structural
+// system independent of whatever geometry (buildings, wings, annexes,
+// decor) happens to be inset within each cell: every building/building
+// boundary gets a guaranteed collision seal spanning the full cell
+// width, regardless of what's drawn nearby.
+//
+// Deliberately does NOT touch building/open (alley) boundaries: a
+// building's own exterior wall is already the correct, complete
+// collision there -- if it has a door on that face (see addBuilding),
+// that door is a real, intentional entrance, not a topology bug to
+// close. An earlier version of this sealed every non-open-open
+// boundary indiscriminately, which silently walled up every building's
+// front door along with the actual gaps it was meant to fix -- entering
+// any building became impossible. Building-to-building is the only
+// case where a seal is actually needed (and open-to-open needs none at
+// all -- that's just the maze's own carved alley pavement).
 const mazeSealWalls = []; // {x1,z1,x2,z2,yMin,yMax} -- ground-level only, see MAZE_SEAL_HEIGHT
 // just above eye height + jump apex (~0.94) -- tall enough nothing can
 // walk or hop over it at ground level, but well under even the
@@ -1772,31 +1778,20 @@ const mazeSealWalls = []; // {x1,z1,x2,z2,yMin,yMax} -- ground-level only, see M
 // rooftop-to-rooftop traversal -- an intentional alternate route, not a
 // crack in the maze -- is never blocked by ground-level sealing.
 const MAZE_SEAL_HEIGHT = 2.2;
-function isCellOpen(c, r) { return grid[r]?.[c] === false; }
 for (let r = 0; r < GRID_ROWS; r++) {
     for (let c = 0; c < GRID_COLS; c++) {
         const { x: cx, z: cz } = cellToWorld(c, r);
-        // east boundary, (c,r)-(c+1,r)
-        if (c + 1 < GRID_COLS && !(isCellOpen(c, r) && isCellOpen(c + 1, r))) {
+        // east boundary, (c,r)-(c+1,r) -- only between two buildings
+        if (c + 1 < GRID_COLS && grid[r]?.[c] && grid[r]?.[c + 1]) {
             const bx = cx + CELL / 2;
             mazeSealWalls.push({ x1: bx, z1: cz - CELL / 2, x2: bx, z2: cz + CELL / 2, yMin: 0, yMax: MAZE_SEAL_HEIGHT });
-            // visible dressing only where BOTH cells are solid -- the
-            // riskiest case (two buildings that could otherwise read as
-            // touching but leave a real gap between their facades).
-            // Alley-facing closed edges already have a real building
-            // wall dominating the view; this seal there is a pure
-            // backstop and doesn't need its own decoration.
-            if (grid[r]?.[c] && grid[r]?.[c + 1]) {
-                for (let i = 0; i < 4; i++) addFenceSegment(bx, cz - CELL / 2 + (i + 0.5) * (CELL / 4), Math.PI / 2);
-            }
+            for (let i = 0; i < 4; i++) addFenceSegment(bx, cz - CELL / 2 + (i + 0.5) * (CELL / 4), Math.PI / 2);
         }
-        // south boundary, (c,r)-(c,r+1)
-        if (r + 1 < GRID_ROWS && !(isCellOpen(c, r) && isCellOpen(c, r + 1))) {
+        // south boundary, (c,r)-(c,r+1) -- only between two buildings
+        if (r + 1 < GRID_ROWS && grid[r]?.[c] && grid[r + 1]?.[c]) {
             const bz = cz + CELL / 2;
             mazeSealWalls.push({ x1: cx - CELL / 2, z1: bz, x2: cx + CELL / 2, z2: bz, yMin: 0, yMax: MAZE_SEAL_HEIGHT });
-            if (grid[r]?.[c] && grid[r + 1]?.[c]) {
-                for (let i = 0; i < 4; i++) addFenceSegment(cx - CELL / 2 + (i + 0.5) * (CELL / 4), bz, 0);
-            }
+            for (let i = 0; i < 4; i++) addFenceSegment(cx - CELL / 2 + (i + 0.5) * (CELL / 4), bz, 0);
         }
     }
 }

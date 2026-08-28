@@ -2276,48 +2276,72 @@ function addBalcony(x, y, z, rotY, maintenance = 0.5) {
 }
 
 // the one true vertical secret: a real, climbable staircase that just
-// keeps going, switchbacking in a square spiral around a central mast
-// all the way up into the white-fog "heaven" band (LAYER_Y.heavenBase is
-// only 20 -- this clears it by 7x and keeps climbing). One exists in the
-// entire map, planted on a reserved plaza cell (real open room on every
-// side, unlike a boxed-in dead end), with nothing marking it from a
-// distance -- it has to be stumbled onto and then actually committed to.
-// Built from the exact same primitives as every other stair here
-// (addStairFlight/addLandingPlatform), just run for 50 flights instead
-// of 2-3.
+// keeps going, all the way up into the white-fog "heaven" band
+// (LAYER_Y.heavenBase is only 20 -- this clears it by 7x and keeps
+// climbing). One exists in the entire map, planted on a reserved plaza
+// cell (real open room on every side, unlike a boxed-in dead end), with
+// nothing marking it from a distance -- it has to be stumbled onto and
+// then actually committed to. Built from the exact same primitives as
+// every other stair here (addStairFlight/addLandingPlatform), just run
+// for dozens of flights instead of 2-3.
+//
+// The path is a genuine random walk around a central mast, not a fixed
+// repeating shape -- every flight continues straight, turns left, or
+// turns right (never doubles straight back on itself), weighted to
+// wander back toward a comfortable radius band whenever it's drifted
+// too close to the mast or too far from it, so the whole thing still
+// generally wraps the mast (and whatever real buildings happen to be
+// nearby) without ever tracing the same clean square twice.
 function buildStairwayToHeaven(cx, cz) {
     const topHeight = 150;
-    const radius = 2.0;
-    const risePerSide = 3.0;
+    const minRadius = 1.5, maxRadius = 3.4;
 
     const mastMat = new THREE.MeshStandardMaterial({ color: 0x24221e, roughness: 0.5, metalness: 0.65 });
     const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.24, topHeight, 8), mastMat);
     mast.position.set(cx, topHeight / 2, cz);
     scene.add(mast);
 
-    // 4 fixed corners -- every "side" of the spiral reuses the same 4
-    // points, just at ever-increasing height, so it's a real vertical
-    // helix wrapping the mast rather than a drifting random walk.
-    const corners = [
-        [cx + radius, cz + radius],
-        [cx - radius, cz + radius],
-        [cx - radius, cz - radius],
-        [cx + radius, cz - radius],
-    ];
-    let y = 0, ci = 0;
-    let lastX = corners[0][0], lastZ = corners[0][1];
+    const dirs = [[1, 0], [0, 1], [-1, 0], [0, -1]]; // +x, +z, -x, -z
+    let dirIdx = Math.floor(rng() * 4);
+    let px = cx + dirs[dirIdx][0] * randRange(minRadius, maxRadius);
+    let pz = cz + dirs[dirIdx][1] * randRange(minRadius, maxRadius);
+    let y = 0;
+    let lastX = px, lastZ = pz;
     while (y < topHeight) {
-        const [ax, az] = corners[ci];
-        const [bx, bz] = corners[(ci + 1) % 4];
+        const segLen = randRange(1.6, 3.2);
+        const risePerSide = randRange(2.4, 3.4);
+        const [dx, dz] = dirs[dirIdx];
+        const nx = px + dx * segLen, nz = pz + dz * segLen;
         const y1 = Math.min(topHeight, y + risePerSide);
-        if (ax === bx) {
-            addStairFlight('z', az, bz, ax, y, y1, { width: 1.0, color: 0x3a3228, railColor: 0x161616 });
+        if (dx !== 0) {
+            addStairFlight('x', px, nx, pz, y, y1, { width: 1.0, color: 0x3a3228, railColor: 0x161616 });
         } else {
-            addStairFlight('x', ax, bx, az, y, y1, { width: 1.0, color: 0x3a3228, railColor: 0x161616 });
+            addStairFlight('z', pz, nz, px, y, y1, { width: 1.0, color: 0x3a3228, railColor: 0x161616 });
         }
-        addLandingPlatform(bx, bz, 0.75, y1, { color: 0x322c24 });
-        lastX = bx; lastZ = bz;
-        y = y1; ci = (ci + 1) % 4;
+        addLandingPlatform(nx, nz, 0.75, y1, { color: 0x322c24 });
+        px = nx; pz = nz; y = y1;
+        lastX = px; lastZ = pz;
+
+        // next direction: anything but reversing straight back over the
+        // flight just built, weighted toward whichever options keep the
+        // path inside the radius band -- soft, not absolute, so it still
+        // reads as a real wander instead of snapping to a perfect ring.
+        const reverseIdx = (dirIdx + 2) % 4;
+        const candidates = dirs.map((d, i) => i).filter(i => i !== reverseIdx);
+        const weights = candidates.map(i => {
+            const [cdx, cdz] = dirs[i];
+            const tx = px + cdx * segLen, tz = pz + cdz * segLen;
+            const dist = Math.hypot(tx - cx, tz - cz);
+            const penalty = dist < minRadius ? (minRadius - dist) : dist > maxRadius ? (dist - maxRadius) : 0;
+            return Math.max(0.2, 1 - penalty * 0.8);
+        });
+        const total = weights.reduce((a, b) => a + b, 0);
+        let r = rng() * total;
+        dirIdx = candidates[candidates.length - 1];
+        for (let i = 0; i < candidates.length; i++) {
+            r -= weights[i];
+            if (r <= 0) { dirIdx = candidates[i]; break; }
+        }
     }
 
     // the payoff -- a real light and a real sign, so finding this and

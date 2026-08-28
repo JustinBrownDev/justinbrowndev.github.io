@@ -1042,14 +1042,14 @@ function addRooftopClutter(x, z, footprint, height) {
     }
     if (rng() < 0.25) { // water tank
         const tank = new THREE.Mesh(
-            new THREE.CylinderGeometry(0.6, 0.6, 1.1, 10),
+            jitterGeometry(new THREE.CylinderGeometry(0.6, 0.6, 1.1, 10), 0.08),
             new THREE.MeshStandardMaterial({ color: 0x3a2c1c, roughness: 0.8 })
         );
         tank.position.set(x + randRange(-footprint / 4, footprint / 4), height + 0.55, z + randRange(-footprint / 4, footprint / 4));
         scene.add(tank);
     }
     if (rng() < 0.3) { // AC/HVAC unit
-        const ac = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.4, 0.5), metalMat);
+        const ac = new THREE.Mesh(jitterGeometry(new THREE.BoxGeometry(0.7, 0.4, 0.5), 0.03), metalMat);
         ac.position.set(x + randRange(-footprint / 3, footprint / 3), height + 0.2, z + randRange(-footprint / 3, footprint / 3));
         scene.add(ac);
     }
@@ -1161,7 +1161,7 @@ function addTrashCan(x, z) {
 function addTrafficCone(x, z) {
     const g = new THREE.Group();
     const cone = new THREE.Mesh(
-        new THREE.ConeGeometry(0.22, 0.55, 8),
+        jitterGeometry(new THREE.ConeGeometry(0.22, 0.55, 8), 0.02),
         new THREE.MeshStandardMaterial({ color: 0xff5f1f, roughness: 0.7 })
     );
     cone.position.y = 0.32;
@@ -1235,7 +1235,7 @@ function addLantern(x, z) {
     );
     pole.position.y = 1.3;
     const paper = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.22, 0.22, 0.4, 8),
+        jitterGeometry(new THREE.CylinderGeometry(0.22, 0.22, 0.4, 8), 0.025),
         new THREE.MeshBasicMaterial({ color: colorHex })
     );
     paper.position.y = 2.5;
@@ -1421,7 +1421,7 @@ function addManhole(x, z) {
 function addPigeon(x, z) {
     const bodyMat = new THREE.MeshStandardMaterial({ color: pick([0x4a4a4e, 0x5a5450, 0x3a3a3e]), roughness: 0.9 });
     const g = new THREE.Group();
-    const body = new THREE.Mesh(new THREE.SphereGeometry(0.09, 8, 6), bodyMat);
+    const body = new THREE.Mesh(jitterGeometry(new THREE.SphereGeometry(0.09, 8, 6), 0.012), bodyMat);
     body.scale.set(1, 0.85, 1.3);
     body.position.y = 0.09;
     const head = new THREE.Mesh(new THREE.SphereGeometry(0.05, 6, 6), bodyMat);
@@ -1462,7 +1462,7 @@ function addTree(x, z) {
     const trunkHeight = randRange(1.8, 4.2);
     const trunkTilt = alive ? randRange(-0.05, 0.05) : randRange(-0.3, 0.3);
     const trunk = new THREE.Mesh(
-        new THREE.CylinderGeometry(randRange(0.08, 0.14), randRange(0.12, 0.2), trunkHeight, 6),
+        jitterGeometry(new THREE.CylinderGeometry(randRange(0.08, 0.14), randRange(0.12, 0.2), trunkHeight, 6), 0.02),
         new THREE.MeshStandardMaterial({ color: alive ? 0x3a2c1c : 0x2a241c, roughness: 0.95 })
     );
     trunk.position.y = trunkHeight / 2;
@@ -1509,7 +1509,7 @@ function addTree(x, z) {
 function addPottedPlant(x, z) {
     const thriving = rng() < 0.55;
     const pot = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.16, 0.12, 0.22, 8),
+        jitterGeometry(new THREE.CylinderGeometry(0.16, 0.12, 0.22, 8), 0.015),
         new THREE.MeshStandardMaterial({ color: 0x5a4530, roughness: 0.9 })
     );
     pot.position.y = 0.11;
@@ -1584,11 +1584,11 @@ function addWeeds(x, z) {
 function addStatue(x, z) {
     const g = new THREE.Group();
     const stoneMat = new THREE.MeshStandardMaterial({ color: 0x3a4238, roughness: 1 });
-    const pedestal = new THREE.Mesh(new THREE.BoxGeometry(1, 0.6, 1), stoneMat);
+    const pedestal = new THREE.Mesh(jitterGeometry(new THREE.BoxGeometry(1, 0.6, 1), 0.05), stoneMat);
     pedestal.position.y = 0.3;
-    const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.35, 1.1, 4, 8), stoneMat);
+    const body = new THREE.Mesh(jitterGeometry(new THREE.CapsuleGeometry(0.35, 1.1, 4, 8), 0.03), stoneMat);
     body.position.y = 1.35;
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.28, 10, 10), stoneMat);
+    const head = new THREE.Mesh(jitterGeometry(new THREE.SphereGeometry(0.28, 10, 10), 0.02), stoneMat);
     head.position.y = 2.1;
     g.add(pedestal, body, head);
     g.position.set(x, 0, z);

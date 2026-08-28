@@ -78,7 +78,7 @@ const CONFIG = {
             ambientColor: 0xd0e8e8,
             ambientIntensity: 1.5,
             hemiIntensity: 0.6,
-            signChance: 0.7,
+            signChance: 0.85,
             propDensityMul: 0.85,
         },
     },
@@ -300,6 +300,9 @@ const CONFIG = {
             ['BIKE REPAIR', 'walk-in'], ['PRINT SHOP', 'copies · fax'], ['HERBALIST', 'loose leaf'],
             ['BAKERY', 'fresh 6am'], ['WATCH REPAIR', 'while you wait'], ['USED BOOKS', 'buy sell trade'],
             ['DRY CLEAN', 'next day'], ['BARBER', 'no appt'], ['HOBBY SHOP', 'model kits'],
+            ['PAWN & LOAN', 'gold · guns · gear'], ['24HR DINER', 'always open'], ['CHECK CASHING', 'no ID needed'],
+            ['SMOKE SHOP', 'papers · lighters'], ['NAIL SALON', 'walk-ins ok'], ['PHONE REPAIR', 'screens fixed'],
+            ['KEY CUTTING', 'while you wait'], ['PSYCHIC READINGS', 'first one free'], ['USED ELECTRONICS', 'cash paid'],
         ],
         // the whole reason this is a maze: real Census (2020, surname
         // "Brown" = rank 4, 1,386,083 people) and SSA (first name
@@ -2222,6 +2225,17 @@ const JUNK_BASE_KINDS = [
     { name: 'tarp-covered pile', shape: 'box', contexts: ['crimeScene', 'construction'], size: [0.8, 0.35, 0.6], colors: [0x2a3a4a, 0x4a4a3a] },
     { name: 'road flare', shape: 'cylinder', contexts: ['street', 'crimeScene'], size: [0.05, 0.3, 0.05], colors: [0xff2f1f] },
     { name: 'sawhorse', shape: 'box', contexts: ['construction', 'street'], size: [0.7, 0.6, 0.15], colors: [0xff8a2f, 0x8a6a3a] },
+    { name: 'newspaper stack', shape: 'box', contexts: ['alley', 'street', 'indoor'], size: [0.35, 0.15, 0.25], colors: [0xd8d0b8, 0xc8c0a8] },
+    { name: 'pizza box', shape: 'box', contexts: ['alley', 'indoor'], size: [0.32, 0.06, 0.32], colors: [0xc8b888, 0xb8a878] },
+    { name: 'discarded umbrella skeleton', shape: 'cone', contexts: ['alley', 'street'], size: [0.55, 0.35, 0.55], colors: [0x2a2a2a] },
+    { name: 'plastic bucket', shape: 'cylinder', contexts: ['alley', 'construction', 'indoor'], size: [0.28, 0.32, 0.28], colors: [0xff6a2a, 0x2a6aff, 0x2a2a2a] },
+    { name: 'coiled extension cord', shape: 'cylinder', contexts: ['construction', 'indoor'], size: [0.3, 0.08, 0.3], colors: [0xff8a2f, 0xd8d020] },
+    { name: 'fallen road sign', shape: 'box', contexts: ['street', 'construction'], size: [0.6, 0.06, 0.9], colors: [0xffd020, 0xffffff] },
+    { name: 'street food cart', shape: 'box', contexts: ['plaza', 'street'], size: [0.9, 1.1, 0.6], colors: [0xc82020, 0xd8d020, 0x2a6aff] },
+    { name: 'stray cardboard sheet', shape: 'box', contexts: ['alley'], size: [0.7, 0.02, 0.5], colors: [0xc0a878] },
+    { name: 'crushed can', shape: 'cylinder', contexts: ['alley', 'street', 'indoor'], size: [0.06, 0.1, 0.06], colors: [0xc82020, 0xd8d020, 0xc0c0c0] },
+    { name: 'broken skateboard', shape: 'box', contexts: ['alley', 'street'], size: [0.2, 0.04, 0.75], colors: [0x2a2a2a, 0xc82020] },
+    { name: 'shopping bag pile', shape: 'sphere', contexts: ['alley', 'street'], size: [0.3, 0.22, 0.3], colors: [0xffffff, 0xc8c8c8, 0x2a2a2a] },
 ];
 
 const JUNK_WEAR_STATES = [

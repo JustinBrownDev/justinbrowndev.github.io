@@ -1719,31 +1719,18 @@ function maybeAddMezzanine(x, z, hw, groundFloorHeight, door) {
     );
     scene.add(rail);
 
-    // straight stair run from near room-center up to the platform edge
-    const stairFrom = axis === 'x' ? x : z;
-    const stairTo = axis === 'x' ? px - awayX * platformHalf : pz - awayZ * platformHalf;
-    const steps = 6;
-    for (let i = 0; i < steps; i++) {
-        const tMid = (i + 0.5) / steps;
-        const stepPos = stairFrom + (stairTo - stairFrom) * tMid;
-        const stepY = platformY * tMid;
-        const stepDepth = Math.abs(stairTo - stairFrom) / steps;
-        const step = new THREE.Mesh(
-            new THREE.BoxGeometry(
-                axis === 'x' ? stepDepth * 1.05 : 1.1, 0.12, axis === 'x' ? 1.1 : stepDepth * 1.05
-            ),
-            new THREE.MeshStandardMaterial({ color: 0x5a4530, roughness: 0.9 })
-        );
-        step.position.set(axis === 'x' ? stepPos : x, stepY, axis === 'x' ? z : stepPos);
-        scene.add(step);
-    }
+    // a thin ladder up to the platform edge, mounted facing back toward
+    // the room -- used to be a wide box staircase spanning most of the
+    // room's width, which read as bulky and (once real step-by-step
+    // physics landed) janky to actually climb. A ladder is a fraction of
+    // the footprint and climbs through the same auto-step rule every
+    // other prop in this maze already climbs by.
+    const ladderX = axis === 'x' ? px - awayX * platformHalf : x;
+    const ladderZ = axis === 'x' ? z : pz - awayZ * platformHalf;
+    const ladderRotY = Math.atan2(-awayX, awayZ);
+    addLadder(ladderX, ladderZ, ladderRotY, 0, platformY);
 
     elevatedPlatforms.push({ x: px, z: pz, hx: platformHalf, hz: platformHalf, y: platformY });
-    rampRuns.push({
-        axis, from: stairFrom, to: stairTo,
-        fixedCoord: axis === 'x' ? z : x, halfWidth: 0.6,
-        y0: 0, y1: platformY,
-    });
 }
 
 // a decorative elevator bank -- doors, a lit floor-indicator readout, a
@@ -1878,14 +1865,86 @@ function buildFireEscapeStair(x, z, rotY, topY) {
     let along = axis === 'x' ? x + nx * 0.7 : z + nz * 0.7;
     const cross = axis === 'x' ? z + nz * 0.7 : x + nx * 0.7;
     const flightLen = 1.7, risePerFlight = 2.4;
+    // the real modular_fire_escape.gltf placed alongside this (same x/z/
+    // rotY) is one fixed unit, not an infinitely tall repeating structure
+    // -- its own platforms top out a bit above 5 units. Collision used to
+    // climb 2-3x higher than the model actually reaches, so most of a
+    // tall building's "fire escape" was an invisible ramp with no fire
+    // escape left under your feet -- exactly what made it feel broken.
+    // Capping it here means the crude switchback treads stay inside the
+    // model's real visible footprint.
+    const modelTopY = 5.4;
+    const clampedTop = Math.min(topY, modelTopY);
     let y = 0, dir = 1;
-    while (y < topY) {
-        const y1 = Math.min(topY, y + risePerFlight);
+    while (y < clampedTop) {
+        const y1 = Math.min(clampedTop, y + risePerFlight);
         const along1 = along + dir * flightLen;
         addStairFlight(axis, along, along1, cross, y, y1);
         const wx = axis === 'x' ? along1 : cross, wz = axis === 'x' ? cross : along1;
         addLandingPlatform(wx, wz, 0.65, y1);
         y = y1; along = along1; dir *= -1;
+    }
+    // anything taller than the model itself (mainly warehouses, short
+    // enough their own roof is still in reach) bridges the remaining gap
+    // with a real ladder instead of pretending the stairs keep going --
+    // also doubles as the model's own built-in drop-ladder actually doing
+    // something, not just sitting there as decoration.
+    if (topY > clampedTop + 0.3) {
+        addLadder(x, z, rotY, clampedTop, topY);
+    }
+}
+
+// a real, climbable ladder: thin rails + rungs mounted on a wall face,
+// climbed the exact same way stacked crates already are -- a tight
+// column of shallow elevatedPlatforms landings, each within auto-step
+// range of the last, so walking up to the base and holding forward
+// climbs you all the way to the top one rung at a time. No new physics
+// needed, just the existing "step up onto a short prop" rule applied
+// vertically instead of onto a single crate. (x, z, rotY) is the same
+// wall-anchor convention every other wall-mounted prop here uses.
+function addLadder(x, z, rotY, y0, y1, opts = {}) {
+    const standoff = opts.standoff ?? 0.22;
+    const width = opts.width ?? 0.42;
+    const rise = y1 - y0;
+    if (rise <= 0.05) return;
+    const g = new THREE.Group();
+    const railMat = new THREE.MeshStandardMaterial({ color: opts.color ?? 0x2a2a28, roughness: 0.6, metalness: 0.55 });
+    const railR = 0.025;
+    for (const side of [-1, 1]) {
+        const rail = new THREE.Mesh(
+            jitterGeometry(new THREE.CylinderGeometry(railR, railR, rise, 6), 0.006),
+            railMat
+        );
+        rail.position.set(side * width / 2, rise / 2, standoff);
+        g.add(rail);
+    }
+    const rungGap = 0.3;
+    const rungCount = Math.max(2, Math.round(rise / rungGap));
+    for (let i = 0; i <= rungCount; i++) {
+        const ry = (rise * i) / rungCount;
+        const rung = new THREE.Mesh(
+            jitterGeometry(new THREE.CylinderGeometry(railR * 0.8, railR * 0.8, width, 6), 0.004),
+            railMat
+        );
+        rung.rotation.z = Math.PI / 2;
+        rung.position.set(0, ry, standoff);
+        g.add(rung);
+    }
+    g.rotation.y = rotY;
+    g.position.set(x, y0, z);
+    scene.add(g);
+
+    // the actual climb: a tight stack of shallow floor candidates at the
+    // ladder's standoff point, spaced well under the auto-step limit
+    // (MAX_STEP_HEIGHT, defined later in this file as 0.65 -- kept as a
+    // literal here since this runs long before that const exists).
+    const climbX = x + Math.sin(rotY) * standoff;
+    const climbZ = z + Math.cos(rotY) * standoff;
+    const stepGap = 0.48;
+    const steps = Math.max(1, Math.ceil(rise / stepGap));
+    for (let i = 1; i <= steps; i++) {
+        const y = y0 + (rise * i) / steps;
+        elevatedPlatforms.push({ x: climbX, z: climbZ, hx: width * 0.6, hz: width * 0.6, y });
     }
 }
 
@@ -2120,6 +2179,11 @@ function addBuilding(col, row) {
         // gap so it never looks like it's hanging in an open doorway
         if (rng() < 0.42) {
             addAwning(x + face.ox, Math.max(2.4, groundFloorHeight + 0.2), z + face.oz, face.rotY, randRange(1.6, 2.4));
+        }
+        // exterior plumbing -- a downspout run climbing the wall, more
+        // likely (and rustier) the more neglected this building rolled.
+        if (rng() < 0.3) {
+            addPipeCluster(x + face.ox * 0.98, z + face.oz * 0.98, face.rotY, height, buildingContext.maintenance);
         }
         // a real fire escape zigzagging up the alley-facing wall -- the
         // single most back-alley-defining architectural feature there is.
@@ -3198,6 +3262,101 @@ function addIvyPatch(x, y, z, rotY) {
     plane.position.set(x, y, z);
     plane.rotation.y = rotY;
     scene.add(plane);
+}
+
+// exterior plumbing -- a downspout/standpipe run climbing the wall, held
+// off it by a few real pipe straps, with a hose bib near the bottom and
+// (on a neglected building) a rust stain bleeding down from a joint. Same
+// local-space convention as addSecurityCamera: everything built along
+// local +Z, the group's own rotation.y = rotY carries it to the wall's
+// real outward-facing direction. Purely decorative -- no collision, same
+// as ivy/awnings -- a real pipe run is thin enough nobody's colliding
+// with it anyway.
+function addPipeCluster(x, z, rotY, wallHeight, maintenance = 0.5) {
+    const g = new THREE.Group();
+    const pipeMat = new THREE.MeshStandardMaterial({
+        color: maintenance < 0.4 ? 0x5a3a28 : 0x3a3f42, roughness: 0.75, metalness: 0.5,
+    });
+    const strapMat = new THREE.MeshStandardMaterial({ color: 0x1c1c1c, roughness: 0.6, metalness: 0.6 });
+    const pipeR = randRange(0.045, 0.075);
+    const topY = Math.min(wallHeight - 0.4, randRange(2.5, 6));
+    // 1-2 offset elbow joints break up what would otherwise be one dead-
+    // straight run -- a real downspout rarely goes floor to roof in one pipe.
+    const jointCount = rng() < 0.4 ? 2 : 1;
+    const jointYs = [];
+    for (let i = 1; i <= jointCount; i++) jointYs.push(topY * (i / (jointCount + 1)) + randRange(-0.3, 0.3));
+    jointYs.sort((a, b) => a - b);
+    const segBounds = [0, ...jointYs, topY];
+    let ox = 0; // local tangent offset -- kicks a few cm sideways at each joint
+    for (let i = 0; i < segBounds.length - 1; i++) {
+        const y0 = segBounds[i], y1 = segBounds[i + 1];
+        const seg = new THREE.Mesh(
+            jitterGeometry(new THREE.CylinderGeometry(pipeR, pipeR, y1 - y0, 6), pipeR * 0.15),
+            pipeMat
+        );
+        seg.position.set(ox, (y0 + y1) / 2, 0.06);
+        g.add(seg);
+        // strap every ~0.9m along this segment, holding the pipe to the wall
+        for (let sy = y0 + 0.3; sy < y1; sy += 0.9) {
+            const strap = new THREE.Mesh(new THREE.BoxGeometry(pipeR * 3.2, 0.03, 0.09), strapMat);
+            strap.position.set(ox, sy, 0.035);
+            g.add(strap);
+        }
+        if (i < jointYs.length) {
+            const nextOx = ox + randRange(-0.08, 0.08);
+            const elbow = new THREE.Mesh(
+                jitterGeometry(new THREE.CylinderGeometry(pipeR * 1.1, pipeR * 1.1, 0.12, 6), pipeR * 0.1),
+                pipeMat
+            );
+            elbow.rotation.x = Math.atan2(nextOx - ox, 0.12);
+            elbow.position.set((ox + nextOx) / 2, y1, 0.06);
+            g.add(elbow);
+            ox = nextOx;
+        }
+    }
+
+    // a hose bib near the bottom -- the one part of this whole assembly
+    // that reads as "used," not just structural.
+    if (rng() < 0.6) {
+        const bib = new THREE.Mesh(
+            jitterGeometry(new THREE.CylinderGeometry(0.02, 0.02, 0.14, 6), 0.004),
+            pipeMat
+        );
+        bib.rotation.x = Math.PI / 2;
+        bib.position.set(0, randRange(0.35, 0.6), 0.13);
+        g.add(bib);
+        const wheel = new THREE.Mesh(
+            jitterGeometry(new THREE.TorusGeometry(0.035, 0.01, 5, 8), 0.004),
+            strapMat
+        );
+        wheel.position.set(0, randRange(0.35, 0.6), 0.2);
+        g.add(wheel);
+    }
+
+    // rust/drip stain bleeding down from a joint -- more likely the more
+    // neglected this building rolled.
+    if (rng() < 0.15 + (1 - maintenance) * 0.35) {
+        const stainY = pick(jointYs.length ? jointYs : [topY * 0.5]);
+        const tex = makePixelTexture((ctx, w, h) => {
+            ctx.clearRect(0, 0, w, h);
+            ctx.fillStyle = 'rgba(120,70,30,0.5)';
+            for (let i = 0; i < 14; i++) {
+                const cx = w / 2 + randRange(-3, 3);
+                const cy = (i / 14) * h;
+                ctx.fillRect(cx - randRange(1, 3), cy, randRange(2, 6), h / 14 + 1);
+            }
+        }, 16, 48);
+        const stain = new THREE.Mesh(
+            new THREE.PlaneGeometry(0.3, 0.9),
+            new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false })
+        );
+        stain.position.set(ox, Math.max(0.45, stainY - 0.45), 0.03);
+        g.add(stain);
+    }
+
+    g.rotation.y = rotY;
+    g.position.set(x, 0, z);
+    scene.add(g);
 }
 
 // weeds growing from a pavement crack — common, cheap, ground-level.

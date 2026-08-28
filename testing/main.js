@@ -863,14 +863,18 @@ function buildOrganicTowerGeometry(hw, height) {
         const b1 = [basePts[j][0], 0, basePts[j][1]];
         const t0 = [topPts[i][0], height, topPts[i][1]];
         const t1 = [topPts[j][0], height, topPts[j][1]];
-        pushTri(b0, b1, t1); pushUV(0, 0, 1);
-        pushTri(b0, t1, t0); pushUV(0, 1, 1);
+        // CCW winding when viewed from outside (three.js front-face
+        // convention) -- (b0,b1,t1)/(b0,t1,t0) was backwards, which
+        // culled the visible face entirely and left the wall invisible
+        // from the alley side while still solid from inside.
+        pushTri(b0, t1, b1); pushUV(0, 1, 0);
+        pushTri(b0, t0, t1); pushUV(0, 1, 1);
     }
     for (let i = 1; i < n - 1; i++) { // top cap fan (footprint is convex)
         const t0 = [topPts[0][0], height, topPts[0][1]];
         const ti = [topPts[i][0], height, topPts[i][1]];
         const tj = [topPts[i + 1][0], height, topPts[i + 1][1]];
-        pushTri(t0, ti, tj); pushUV(1, 1, 1);
+        pushTri(t0, tj, ti); pushUV(1, 1, 1); // same fix, normal was pointing down into the roof
     }
 
     const geo = new THREE.BufferGeometry();
@@ -1778,7 +1782,20 @@ function addConstructionZone(x, z) {
 
 // a newsstand kiosk with a real (fake-news) tabloid front page — comic
 // relief landmark for plaza cells.
-function addNewsstand(x, z) {
+// average open-neighbor direction for a plaza cell, in the same
+// atan2(dc,-dr) convention as buildingFaceDefs — so freestanding kiosks
+// face toward the plaza's dominant opening instead of a coin flip that
+// could just as easily point the screen at the narrowest gap.
+function plazaFacingRotY(c, r) {
+    const opens = [[0, -1], [0, 1], [-1, 0], [1, 0]].filter(([dc, dr]) => grid[r + dr]?.[c + dc] === false);
+    if (!opens.length) return undefined;
+    let sx = 0, sz = 0;
+    for (const [dc, dr] of opens) { sx += dc; sz += dr; }
+    if (sx === 0 && sz === 0) return undefined; // symmetric plaza, no dominant side
+    return Math.atan2(sx, -sz);
+}
+
+function addNewsstand(x, z, facingRotY) {
     const [headline, sub] = pick(CONFIG.billboards.tabloidHeadlines);
     const booth = new THREE.Mesh(
         jitterGeometry(new THREE.BoxGeometry(1.1, 2.0, 0.9), 0.04),
@@ -1802,7 +1819,7 @@ function addNewsstand(x, z) {
     board.position.set(0, 1.7, 0.46);
     const g = new THREE.Group();
     g.add(booth, board);
-    g.rotation.y = randRange(0, Math.PI * 2);
+    g.rotation.y = facingRotY ?? randRange(0, Math.PI * 2);
     g.position.set(x, 0, z);
     scene.add(g);
     return 0.6;
@@ -1833,7 +1850,7 @@ function addPhoneBooth(x, z) {
 
 // an ATM kiosk, screen glowing with the same "system noise" humor as the
 // signage elsewhere — the machinery of finance admitting it's confused too.
-function addAtmKiosk(x, z) {
+function addAtmKiosk(x, z, facingRotY) {
     const [msg, sub] = pick(CONFIG.billboards.systemNoise);
     const body = new THREE.Mesh(
         jitterGeometry(new THREE.BoxGeometry(0.6, 1.4, 0.5), 0.03),
@@ -1857,7 +1874,7 @@ function addAtmKiosk(x, z) {
     screen.position.set(0, 0.9, 0.26);
     const g = new THREE.Group();
     g.add(body, screen);
-    g.rotation.y = randRange(0, Math.PI * 2);
+    g.rotation.y = facingRotY ?? randRange(0, Math.PI * 2);
     g.position.set(x, 0, z);
     scene.add(g);
 
@@ -2049,7 +2066,7 @@ for (let i = 0; i < CONFIG.props.maxSpecialFeatures.newsstands; i++) {
     const cell = nextPlazaCell();
     if (!cell) break;
     const { x, z } = cellToWorld(cell[0], cell[1]);
-    const r = addNewsstand(x, z);
+    const r = addNewsstand(x, z, plazaFacingRotY(cell[0], cell[1]));
     propColliders.push({ x, z, radius: r });
 }
 for (let i = 0; i < CONFIG.props.maxSpecialFeatures.phoneBooths; i++) {
@@ -2063,7 +2080,7 @@ for (let i = 0; i < CONFIG.props.maxSpecialFeatures.atmKiosks; i++) {
     const cell = nextPlazaCell();
     if (!cell) break;
     const { x, z } = cellToWorld(cell[0], cell[1]);
-    const r = addAtmKiosk(x, z);
+    const r = addAtmKiosk(x, z, plazaFacingRotY(cell[0], cell[1]));
     propColliders.push({ x, z, radius: r });
 }
 

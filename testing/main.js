@@ -5151,7 +5151,11 @@ function resolveCollisions(position, feetY = Infinity) {
 
 // ---------- movement: shared state ----------
 
-const move = { forward: false, back: false, left: false, right: false, sprint: false };
+const move = { forward: false, back: false, left: false, right: false, sprint: false, flyUp: false, flyDown: false };
+// freecam: no gravity, no wall collision -- fly anywhere to look around.
+// Toggled with F. Space/C fly up/down (Space still buffers a jump too,
+// harmless since freecam ignores it).
+let freecamEnabled = false;
 let touchMoveVec = { x: 0, y: 0 }; // from joystick, x = strafe, y = forward
 const velocity = new THREE.Vector3();
 
@@ -5231,7 +5235,7 @@ if (IS_TOUCH) {
     document.addEventListener('touchstart', initAudio, { once: true });
 } else {
     crosshair.style.display = 'block';
-    showHint('click to look around · WASD to move · space to jump · shift to sprint · ESC to release');
+    showHint('click to look around · WASD to move · space to jump · shift to sprint · F freecam · ESC to release');
 
     document.addEventListener('click', (e) => {
         initAudio();
@@ -5251,7 +5255,15 @@ document.addEventListener('keydown', (e) => {
         case 'ShiftLeft': case 'ShiftRight': move.sprint = true; break;
         case 'Space':
             jumpBufferTimer = JUMP_BUFFER_TIME; // buffered, not fired directly -- animate() consumes it once actually grounded (or still in coyote time)
+            move.flyUp = true; // freecam only -- ignored otherwise
             e.preventDefault(); // don't let the page scroll while locked
+            break;
+        case 'KeyC': move.flyDown = true; break;
+        case 'KeyF':
+            freecamEnabled = !freecamEnabled;
+            verticalVelocity = 0; heightAboveFloor = 0; // clean physics state whichever way this toggled
+            showHint(freecamEnabled ? 'freecam: space up · C down · F to exit' : 'freecam off');
+            fadeHint(2000);
             break;
     }
 });
@@ -5262,6 +5274,8 @@ document.addEventListener('keyup', (e) => {
         case 'KeyA': case 'ArrowLeft': move.left = false; break;
         case 'KeyD': case 'ArrowRight': move.right = false; break;
         case 'ShiftLeft': case 'ShiftRight': move.sprint = false; break;
+        case 'Space': move.flyUp = false; break;
+        case 'KeyC': move.flyDown = false; break;
     }
 });
 
@@ -5438,6 +5452,21 @@ function animate() {
     // this (against MAX_STEP_HEIGHT) to decide "auto-step/landable" vs
     // "solid wall" per prop, so both sides of that decision agree.
     const feetY = camera.position.y - CONFIG.camera.eyeHeight;
+
+    // freecam: no wall collision, no gravity/floor-snapping -- WASD still
+    // moves horizontally (already applied above via controls.moveRight/
+    // moveForward), Space/C fly straight up/down. Skips the rest of the
+    // physics for this frame entirely rather than fighting it.
+    if (freecamEnabled) {
+        const flySpeed = CONFIG.movement.speed * (move.sprint ? CONFIG.movement.sprintMultiplier : 1) * 1.6;
+        const vertical = (move.flyUp ? 1 : 0) - (move.flyDown ? 1 : 0);
+        camera.position.y += vertical * flySpeed * delta;
+        prevFloorY = camera.position.y - CONFIG.camera.eyeHeight;
+        updateWebGradient(camera.position.z, camera.position.y, elapsedTime);
+        updateRain(delta);
+        composer.render();
+        return;
+    }
     for (let i = 0; i < CONFIG.movement.collisionIterations; i++) {
         resolveCollisions(camera.position, feetY);
     }

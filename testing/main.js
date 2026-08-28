@@ -406,7 +406,18 @@ const CONFIG = {
             newsstands: 2,
             phoneBooths: 2,
             atmKiosks: 2,
+            parks: 3,
         },
+    },
+
+    // every 4th row/col that's actually open becomes a through-street
+    // instead of a back alley -- wider-feeling, cleaner, real sidewalks
+    // along the building faces. Everything else stays alley: grimier,
+    // denser, no sidewalk distinction. Real cities have both; this
+    // shouldn't be maze-wide uniform pavement.
+    streets: {
+        gridSpacing: 4,
+        propDensityMul: 0.5, // streets are thoroughfares, not clutter bins
     },
 
     movement: {
@@ -2083,6 +2094,15 @@ for (let i = 0; i < CONFIG.props.maxSpecialFeatures.atmKiosks; i++) {
     const r = addAtmKiosk(x, z, plazaFacingRotY(cell[0], cell[1]));
     propColliders.push({ x, z, radius: r });
 }
+const parkCells = new Set(); // parks get grass, not street asphalt or alley pavement
+for (let i = 0; i < CONFIG.props.maxSpecialFeatures.parks; i++) {
+    const cell = nextPlazaCell();
+    if (!cell) break;
+    const { x, z } = cellToWorld(cell[0], cell[1]);
+    const r = addPark(x, z);
+    propColliders.push({ x, z, radius: r });
+    parkCells.add(`${cell[0]},${cell[1]}`);
+}
 
 // every plaza gets a bright pool of light, regardless of whether it also
 // hosts a statue/landmark — open areas are lit, full stop.
@@ -2101,6 +2121,98 @@ const WALL_HUGGING_PROPS = new Set([
 
 // which adjacent cells (if any) are solid walls this cell could hug —
 // returns unit direction(s) pointing FROM the open cell TOWARD each wall.
+// a through-street, not a back alley — wider-reading, asphalt with lane
+// striping, real sidewalks along any adjacent building face. Everything
+// NOT on this grid stays an alley (current grimy pavement, no sidewalk).
+function isStreetCell(c, r) {
+    const s = CONFIG.streets.gridSpacing;
+    return r % s === 0 || c % s === 0;
+}
+
+function addStreetSurface(c, r, x, z) {
+    const horizontal = grid[r]?.[c - 1] === false || grid[r]?.[c + 1] === false;
+    const vertical = grid[r - 1]?.[c] === false || grid[r + 1]?.[c] === false;
+    const tex = makePixelTexture((ctx, w, h) => {
+        ctx.fillStyle = '#1e1e1e'; // asphalt — darker/cleaner than alley pavement
+        ctx.fillRect(0, 0, w, h);
+        ctx.fillStyle = '#c8c840';
+        if (horizontal) for (let i = 6; i < w; i += 16) ctx.fillRect(i, h / 2 - 1, 8, 2);
+        if (vertical) for (let i = 6; i < h; i += 16) ctx.fillRect(w / 2 - 1, i, 2, 8);
+    }, 64, 64);
+    const road = new THREE.Mesh(
+        new THREE.PlaneGeometry(CELL * 0.94, CELL * 0.94),
+        new THREE.MeshStandardMaterial({ map: tex, roughness: 1 })
+    );
+    road.rotation.x = -Math.PI / 2;
+    road.position.set(x, 0.006, z);
+    scene.add(road);
+
+    // real sidewalk strip wherever this street cell actually borders a
+    // building — a raised, lighter concrete band with a curb lip.
+    for (const w of wallDirections(c, r)) {
+        const stripWidth = CELL * 0.18;
+        const stripLen = CELL * 0.92;
+        const strip = new THREE.Mesh(
+            new THREE.BoxGeometry(w.dx !== 0 ? stripWidth : stripLen, 0.06, w.dz !== 0 ? stripWidth : stripLen),
+            new THREE.MeshStandardMaterial({ color: 0xc8c2a8, roughness: 0.9 })
+        );
+        strip.position.set(x + w.dx * (CELL / 2 - stripWidth / 2), 0.03, z + w.dz * (CELL / 2 - stripWidth / 2));
+        scene.add(strip);
+    }
+}
+
+// a park bench — reused wherever a park needs one.
+function addBench(x, z, rotY) {
+    const mat = new THREE.MeshStandardMaterial({ color: 0x5a4530, roughness: 0.9 });
+    const g = new THREE.Group();
+    const seat = new THREE.Mesh(jitterGeometry(new THREE.BoxGeometry(1.2, 0.06, 0.4), 0.02), mat);
+    seat.position.y = 0.42;
+    const back = new THREE.Mesh(jitterGeometry(new THREE.BoxGeometry(1.2, 0.4, 0.06), 0.02), mat);
+    back.position.set(0, 0.62, -0.17);
+    g.add(seat, back);
+    for (const lx of [-0.5, 0.5]) {
+        const leg = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.42, 0.36), mat);
+        leg.position.set(lx, 0.21, 0);
+        g.add(leg);
+    }
+    g.rotation.y = rotY;
+    g.position.set(x, 0, z);
+    scene.add(g);
+    return 0.5;
+}
+
+// a real park — grass patch, a small cluster of (mostly living) trees,
+// a bench. The green counterweight to everything paved and neon.
+function addPark(x, z) {
+    const grassTex = makePixelTexture((ctx, w, h) => {
+        ctx.fillStyle = '#3a5c2e';
+        ctx.fillRect(0, 0, w, h);
+        for (let i = 0; i < 300; i++) {
+            const shade = 20 + Math.floor(rng() * 30);
+            ctx.fillStyle = `rgb(${40 + shade * 0.4},${70 + shade},${30 + shade * 0.3})`;
+            ctx.fillRect(Math.floor(rng() * w), Math.floor(rng() * h), 1, 1);
+        }
+    }, 96, 96);
+    const grass = new THREE.Mesh(
+        new THREE.PlaneGeometry(CELL * 0.95, CELL * 0.95),
+        new THREE.MeshStandardMaterial({ map: grassTex, roughness: 1 })
+    );
+    grass.rotation.x = -Math.PI / 2;
+    grass.position.set(x, 0.007, z);
+    scene.add(grass);
+
+    const clusterCount = 4 + Math.floor(rng() * 3);
+    for (let i = 0; i < clusterCount; i++) {
+        const px = x + randRange(-CELL * 0.38, CELL * 0.38);
+        const pz = z + randRange(-CELL * 0.38, CELL * 0.38);
+        addTree(px, pz);
+        propColliders.push({ x: px, z: pz, radius: 0.25 });
+    }
+    const benchAngle = randRange(0, Math.PI * 2);
+    addBench(x + Math.cos(benchAngle) * 1.4, z + Math.sin(benchAngle) * 1.4, benchAngle + Math.PI / 2);
+    return CELL * 0.5;
+}
+
 function wallDirections(c, r) {
     const dirs = [];
     if (grid[r]?.[c - 1]) dirs.push({ dx: -1, dz: 0 });
@@ -2133,6 +2245,11 @@ for (let r = 1; r < GRID_ROWS - 1; r++) {
         if (grid[r][c]) continue;
         if (c === spawnCol && r === spawnRow) continue;
         if (usedPlazas.has(`${c},${r}`)) continue;
+        if (parkCells.has(`${c},${r}`)) continue; // already laid down as grass
+
+        const { x, z } = cellToWorld(c, r);
+        const onStreet = isStreetCell(c, r);
+        if (onStreet) addStreetSurface(c, r, x, z);
 
         // overhead cables: strung across the alley wherever there's a
         // building directly on both sides (either axis) — the literal
@@ -2151,12 +2268,11 @@ for (let r = 1; r < GRID_ROWS - 1; r++) {
         const t = webAlignment(cellToWorld(c, r).z);
         const gradientMul = THREE.MathUtils.lerp(
             CONFIG.narrative.darkWeb.propDensityMul, CONFIG.narrative.lightWeb.propDensityMul, t
-        );
+        ) * (onStreet ? CONFIG.streets.propDensityMul : 1);
         if (rng() > QUALITY.propDensity * gradientMul) continue;
 
         const choice = weightedPick(CONFIG.props.weights);
         if (choice === 'none') continue;
-        const { x, z } = cellToWorld(c, r);
 
         let px, pz;
         let facingRotY; // only set for wall-hugging props against an actual wall

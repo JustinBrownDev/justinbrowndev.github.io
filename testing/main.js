@@ -86,7 +86,7 @@ const CONFIG = {
     camera: {
         fov: 78,
         near: 0.05,
-        far: 220,
+        far: 380,
         eyeHeight: 1.65,
         playerRadius: 0.32,
     },
@@ -119,7 +119,7 @@ const CONFIG = {
             maxPixelRatio: 2,
             antialias: true,
             bloom: { strength: 0.55, radius: 0.4, threshold: 0.88 },
-            drawDistance: 200,
+            drawDistance: 380,
             maxDynamicLights: 40,
             propDensity: 1.7,
         },
@@ -127,7 +127,7 @@ const CONFIG = {
             maxPixelRatio: 1.5,
             antialias: false,
             bloom: { strength: 0.4, radius: 0.35, threshold: 0.9 },
-            drawDistance: 130,
+            drawDistance: 260,
             maxDynamicLights: 18,
             propDensity: 1.05,
         },
@@ -139,7 +139,7 @@ const CONFIG = {
             maxPixelRatio: 1,
             antialias: false,
             bloom: null,
-            drawDistance: 85,
+            drawDistance: 180,
             maxDynamicLights: 6,
             propDensity: 0.3,
         },
@@ -159,8 +159,14 @@ const CONFIG = {
     },
 
     buildings: {
-        heightMin: 26,
-        heightMax: 95,
+        heightMin: 40,
+        heightMax: 140,
+        // ~8% of buildings are hero towers -- genuine full-height
+        // skyscraper scale, real landmarks looming over the rest rather
+        // than everything reading as the same mid-rise height.
+        heroTowerChance: 0.08,
+        heroHeightMin: 190,
+        heroHeightMax: 340,
         roughness: 0.92,
         // daylight facades — light concrete/sandstone/brick tones with
         // green/orange/red/cyan casts. NO black, NO purple, anywhere.
@@ -755,7 +761,7 @@ function updateRain(delta) {
 // each model finishes loading, in whatever order that happens.
 const gltfLoader = new GLTFLoader();
 gltfLoader.setPath('./vendor/models/');
-const pendingRealModelPlacements = { tyre: [], trashbag: [], manhole: [], sprayCans: [], trashCanReal: [], streetLamp: [], barrelStove: [], ironGate: [] };
+const pendingRealModelPlacements = { tyre: [], trashbag: [], manhole: [], sprayCans: [], trashCanReal: [], streetLamp: [], barrelStove: [], ironGate: [], fireEscape: [] };
 
 function placeRealModel(name, x, z, rotY) {
     pendingRealModelPlacements[name].push({ x, z, rotY });
@@ -785,6 +791,7 @@ loadRealModel('trashCanReal', 'metal_trash_can.gltf', 1);
 loadRealModel('streetLamp', 'street_lamp_02.gltf', 1);
 loadRealModel('barrelStove', 'barrel_stove.gltf', 1);
 loadRealModel('ironGate', 'large_iron_gate.gltf', 1);
+loadRealModel('fireEscape', 'modular_fire_escape.gltf', 1.3);
 
 // ---------- real photos ----------
 // his actual site images, resized/recompressed for a texture instead of
@@ -1457,7 +1464,10 @@ function addBuilding(col, row) {
     const footprint = CELL - margin;
     const hw = footprint / 2;
     footprintOf[row][col] = footprint;
-    const height = isWarehouse ? randRange(6, 12) : randRange(CONFIG.buildings.heightMin, CONFIG.buildings.heightMax);
+    const isHeroTower = !isWarehouse && rng() < CONFIG.buildings.heroTowerChance;
+    const height = isWarehouse ? randRange(6, 12)
+        : isHeroTower ? randRange(CONFIG.buildings.heroHeightMin, CONFIG.buildings.heroHeightMax)
+            : randRange(CONFIG.buildings.heightMin, CONFIG.buildings.heightMax);
     const color = pick(CONFIG.buildings.palette);
 
     // ~1 in 6 buildings is "stained" with the real elevation-gradient
@@ -1614,6 +1624,11 @@ function addBuilding(col, row) {
         // gap so it never looks like it's hanging in an open doorway
         if (rng() < 0.42) {
             addAwning(x + face.ox, Math.max(2.4, groundFloorHeight + 0.2), z + face.oz, face.rotY, randRange(1.6, 2.4));
+        }
+        // a real fire escape zigzagging up the alley-facing wall -- the
+        // single most back-alley-defining architectural feature there is
+        if (rng() < 0.18) {
+            placeRealModel('fireEscape', x + face.ox * 1.02, z + face.oz * 1.02, face.rotY);
         }
     }
 

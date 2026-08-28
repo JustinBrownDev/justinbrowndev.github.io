@@ -969,13 +969,10 @@ function buildPhotoPosterMesh(img, req) {
     const tex = new THREE.CanvasTexture(canvas);
     tex.colorSpace = THREE.SRGBColorSpace;
     const width = req.width || randRange(1.4, 2.0);
-    const plane = new THREE.Mesh(
-        new THREE.PlaneGeometry(width, width * (168 / 128)),
+    mountStandoffPanel(
+        req.x, req.y, req.z, req.rotY, width, width * (168 / 128),
         new THREE.MeshStandardMaterial({ map: tex, roughness: 0.85 })
     );
-    plane.position.set(req.x, req.y, req.z);
-    plane.rotation.y = req.rotY;
-    scene.add(plane);
 }
 
 // placement is decoupled the same way real models are (loading is async,
@@ -2350,6 +2347,46 @@ function addRooftopClutter(x, z, footprint, height, maintenance = 0.5) {
 
 // framed wall poster — client/design work and art pieces. Warm paper tone,
 // thin border, two-line caption. Visually distinct from the neon signs.
+// a small standoff mount: a dark backing board flush to the wall, 4 short
+// pegs, and the actual panel held out in front of them, parallel to the
+// wall rather than pressed against it -- the same physical idea as a real
+// framed plaque hung on standoffs, so posters/plaques/photos finally read
+// as *mounted* instead of a decal painted straight onto the brick. Shared
+// by addWallPoster/addTerminalPlaque/buildPhotoPosterMesh below; addSign's
+// own blade-sign bracket (perpendicular arm + brace) is a different,
+// heavier fixture and stays as-is.
+const STANDOFF_DEPTH = 0.05;
+function mountStandoffPanel(x, y, z, rotY, width, height, panelMat, opts = {}) {
+    const g = new THREE.Group();
+    const backMat = new THREE.MeshStandardMaterial({ color: opts.backColor ?? 0x18140f, roughness: 0.7, metalness: 0.3 });
+    const back = new THREE.Mesh(new THREE.BoxGeometry(width * 0.92, height * 0.92, 0.015), backMat);
+    back.position.set(0, 0, 0.008);
+    g.add(back);
+
+    const pegMat = new THREE.MeshStandardMaterial({ color: 0x2a2a2a, roughness: 0.5, metalness: 0.7 });
+    const pegR = Math.min(width, height) * 0.03;
+    for (const sx of [-1, 1]) {
+        for (const sy of [-1, 1]) {
+            const peg = new THREE.Mesh(
+                jitterGeometry(new THREE.CylinderGeometry(pegR, pegR, STANDOFF_DEPTH, 6), 0.003),
+                pegMat
+            );
+            peg.rotation.x = Math.PI / 2;
+            peg.position.set(sx * width * 0.38, sy * height * 0.38, STANDOFF_DEPTH / 2);
+            g.add(peg);
+        }
+    }
+
+    const panel = new THREE.Mesh(new THREE.PlaneGeometry(width, height), panelMat);
+    panel.position.set(0, 0, STANDOFF_DEPTH + 0.008);
+    g.add(panel);
+
+    g.rotation.y = rotY;
+    g.position.set(x, y, z);
+    scene.add(g);
+    return g;
+}
+
 function addWallPoster(x, y, z, rotY, title, subtitle) {
     const tex = makePixelTexture((ctx, w, h) => {
         ctx.fillStyle = '#e8ddc2';
@@ -2365,13 +2402,7 @@ function addWallPoster(x, y, z, rotY, title, subtitle) {
         ctx.fillText(subtitle, w / 2, h / 2 + 14, w - 12);
     }, 96, 72);
     const width = randRange(1.4, 2.0);
-    const plane = new THREE.Mesh(
-        new THREE.PlaneGeometry(width, width * 0.75),
-        new THREE.MeshStandardMaterial({ map: tex, roughness: 0.9 })
-    );
-    plane.position.set(x, y, z);
-    plane.rotation.y = rotY;
-    scene.add(plane);
+    mountStandoffPanel(x, y, z, rotY, width, width * 0.75, new THREE.MeshStandardMaterial({ map: tex, roughness: 0.9 }));
 }
 
 // glowing CRT/terminal plaque — the code projects. Green monospace on
@@ -2392,13 +2423,7 @@ function addTerminalPlaque(x, y, z, rotY, title, subtitle) {
         }
     }, 108, 40);
     const width = randRange(1.3, 1.9);
-    const plane = new THREE.Mesh(
-        new THREE.PlaneGeometry(width, width * (40 / 108)),
-        new THREE.MeshBasicMaterial({ map: tex })
-    );
-    plane.position.set(x, y, z);
-    plane.rotation.y = rotY;
-    scene.add(plane);
+    mountStandoffPanel(x, y, z, rotY, width, width * (40 / 108), new THREE.MeshBasicMaterial({ map: tex }), { backColor: 0x0a120a });
 
     if (dynamicLightsRemaining > 0) {
         dynamicLightsRemaining--;

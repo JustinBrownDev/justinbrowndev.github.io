@@ -2881,7 +2881,7 @@ function spawnSkyJunk(count) {
 
         const mesh = skyJunkMeshes[shape];
         mesh.setMatrixAt(idx, _skyMatrix);
-        const t = webAlignment(z); // same warm/cool split every other signal in the maze rides
+        // same warm/cool split every other signal in the maze rides (t computed above)
         mesh.setColorAt(idx, _skyColor.set(rng() < t ? pick(CONFIG.neonWarm) : pick(CONFIG.neonCool)));
         mesh.count = idx + 1;
     }
@@ -2889,6 +2889,8 @@ function spawnSkyJunk(count) {
         skyJunkMeshes[shape].instanceMatrix.needsUpdate = true;
         if (skyJunkMeshes[shape].instanceColor) skyJunkMeshes[shape].instanceColor.needsUpdate = true;
     }
+    const total = SKY_SHAPES.reduce((sum, shape) => sum + skyJunkCounts[shape], 0);
+    console.log(`[testing] sky junk: ${total} instances spawned (requested ${count})`);
 }
 
 function addConstructionZone(x, z) {

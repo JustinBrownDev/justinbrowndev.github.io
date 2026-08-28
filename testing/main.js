@@ -1507,6 +1507,11 @@ const WALL_THICKNESS = 0.12; // nominal -- the visual walls are flat planes with
 // groundHeightAt() below is what actually moves the camera up/down.
 const elevatedPlatforms = []; // {x,z,hx,hz,y}
 const rampRuns = []; // {axis, from, to, fixedCoord, halfWidth, y0, y1}
+// every building's ground-floor roof cap is a hard ceiling for whoever's
+// jumping around inside that room -- separate from elevatedPlatforms
+// (which are ALSO a ceiling when approached from below, just one that's
+// also a legitimate floor once you're standing on top of it instead).
+const overheadCeilings = []; // {x,z,hx,hz,y} -- always blocks upward, never a floor
 
 // feetY (the player's actual current world foot height, from last frame)
 // is what makes prop-tops work as real ground rather than either always
@@ -1618,10 +1623,17 @@ function buildGroundFloorShell(x, z, hw, groundFloorHeight, door, shellMat) {
 // so there's no rotation/tilt math to get wrong.
 function maybeAddMezzanine(x, z, hw, groundFloorHeight, door) {
     if (rng() > 0.3) return;
+    // the room's own roof cap is a real ceiling now (see overheadCeilings
+    // in animate()) -- the platform has to leave standing headroom above
+    // it or a player up there bumps their head on their own building.
+    // Not enough vertical room for that means no mezzanine at all here,
+    // rather than one nobody can stand up straight on.
+    const maxPlatformY = groundFloorHeight - CONFIG.camera.eyeHeight - 0.3;
+    if (maxPlatformY < 0.4) return;
     const awayX = door ? -door.dx : 0;
     const awayZ = door ? -door.dz : -1;
     const axis = awayX !== 0 ? 'x' : 'z';
-    const platformY = Math.min(1.6, groundFloorHeight * 0.5);
+    const platformY = Math.min(maxPlatformY, groundFloorHeight * 0.5);
     const platformHalf = hw * 0.4;
 
     const px = x + awayX * (hw - platformHalf - 0.2);
@@ -1792,6 +1804,7 @@ function addBuilding(col, row) {
     const shellMat = new THREE.MeshStandardMaterial({ color, roughness: 0.9, side: THREE.DoubleSide });
     const segments = buildGroundFloorShell(x, z, hw, groundFloorHeight, door, shellMat);
     buildingWallSegments.set(`${row},${col}`, segments);
+    overheadCeilings.push({ x, z, hx: hw, hz: hw, y: groundFloorHeight }); // its own roof cap is a real ceiling now -- can't jump through it from inside
     maybeAddMezzanine(x, z, hw, groundFloorHeight, door);
     // denser interior dressing -- guaranteed pieces plus situational junk
     addCrate(x - hw * 0.4, z + hw * 0.3);
@@ -4104,6 +4117,9 @@ const JUMP_BUFFER_TIME = 0.15;
 // that reads as "obviously should have worked" on a real platform.
 let coyoteTimer = 0;
 const COYOTE_TIME = 0.12;
+// head-bonk clearance: how far below a mezzanine underside/roof cap the
+// camera stops, so it reads as bumping your head, not clipping into the mesh.
+const HEAD_CLEARANCE = 0.15;
 
 const spawn = cellToWorld(spawnCol, spawnRow);
 camera.position.set(spawn.x, CONFIG.camera.eyeHeight, spawn.z);
@@ -4369,6 +4385,32 @@ function animate() {
     heightAboveFloor = Math.max(0, heightAboveFloor + verticalVelocity * delta);
     if (heightAboveFloor <= 0) verticalVelocity = 0;
     camera.position.y = floorY + heightAboveFloor;
+
+    // ceiling clamp: a mezzanine's underside (approached from below) and
+    // every building's own ground-floor roof cap both block upward
+    // movement the same way a floor blocks downward movement -- a real
+    // head-bonk, not a clip-through. elevatedPlatforms double as floors
+    // once you're standing at/above them, so those are only a ceiling
+    // while you're genuinely still underneath.
+    for (const c of elevatedPlatforms) {
+        if (Math.abs(camera.position.x - c.x) >= c.hx || Math.abs(camera.position.z - c.z) >= c.hz) continue;
+        if (camera.position.y - CONFIG.camera.eyeHeight >= c.y - 0.01) continue; // at/above it -- that's the floor, not a ceiling, from here
+        const maxEyeY = c.y - HEAD_CLEARANCE;
+        if (camera.position.y > maxEyeY) {
+            camera.position.y = maxEyeY;
+            heightAboveFloor = camera.position.y - floorY;
+            if (verticalVelocity > 0) verticalVelocity = 0;
+        }
+    }
+    for (const c of overheadCeilings) { // always a ceiling -- nobody ever stands on top of a roof cap from inside
+        if (Math.abs(camera.position.x - c.x) >= c.hx || Math.abs(camera.position.z - c.z) >= c.hz) continue;
+        const maxEyeY = c.y - HEAD_CLEARANCE;
+        if (camera.position.y > maxEyeY) {
+            camera.position.y = maxEyeY;
+            heightAboveFloor = camera.position.y - floorY;
+            if (verticalVelocity > 0) verticalVelocity = 0;
+        }
+    }
     if (heightAboveFloor <= 0.001) lastGroundedFloorY = floorY; // only tracked while actually grounded
     updateWebGradient(camera.position.z, camera.position.y, elapsedTime);
     updateRain(delta);

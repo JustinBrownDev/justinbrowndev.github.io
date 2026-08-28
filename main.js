@@ -3539,6 +3539,11 @@ function addBuildingModule(cell, opts) {
         const ox = s.dx * (hwx + 0.03), oz = s.dz * (hwz + 0.03);
         const rotY = s.dz === -1 ? 0 : s.dz === 1 ? Math.PI : s.dx === -1 ? -Math.PI / 2 : Math.PI / 2;
         const faceX = cx + ox, faceZ = cz + oz;
+        // decided up front (not just at the point it's actually placed
+        // below) so its facade space can be reserved BEFORE signs are
+        // placed on this same wall -- an architectural feature blocks a
+        // sign spot, not the other way around.
+        const isFireEscapeFace = fireEscapeSide && fireEscapeSide.dx === s.dx && fireEscapeSide.dz === s.dz;
 
         // sign faces: every qualifying face is recorded in
         // candidateFaces regardless of whether a random sign lands on it
@@ -3557,6 +3562,11 @@ function addBuildingModule(cell, opts) {
             let signCount = 0;
             for (const p of signRolls) { if (rng() < p) signCount++; else break; }
             const facade = makeFacade(rect, s.dx, s.dz, height, door);
+            // the fire escape is a permanent vertical fixture on this
+            // wall -- reserve its real footprint (its own tangential
+            // width, full height) before any sign gets a chance to land
+            // on top of it.
+            if (isFireEscapeFace) facadeReserve(facade, -0.7, 0.7, 0, height);
             placeSignsOnFacade(facade, signCount, row, height, floorHeight);
         }
 
@@ -3590,8 +3600,8 @@ function addBuildingModule(cell, opts) {
         if (rng() < 0.3) addPipeCluster(cx + ox * 0.98, cz + oz * 0.98, rotY, height, buildingContext.maintenance);
 
         // the real fire escape -- only on the one side (if any) actually
-        // wired to a floor-1 interior opening above (fireEscapeSide).
-        const isFireEscapeFace = fireEscapeSide && fireEscapeSide.dx === s.dx && fireEscapeSide.dz === s.dz;
+        // wired to a floor-1 interior opening above (fireEscapeSide, see
+        // isFireEscapeFace above).
         if (isFireEscapeFace) {
             placeRealModel('fireEscape', cx + ox * 1.02, cz + oz * 1.02, rotY);
             const landings = buildFireEscapeStair(cx + ox * 1.02, cz + oz * 1.02, rotY, isWarehouse ? height : randRange(5, 11));

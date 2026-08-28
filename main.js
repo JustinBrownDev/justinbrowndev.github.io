@@ -4,6 +4,7 @@ import { EffectComposer } from './vendor/three/addons/postprocessing/EffectCompo
 import { RenderPass } from './vendor/three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from './vendor/three/addons/postprocessing/UnrealBloomPass.js';
 import { GLTFLoader } from './vendor/three/addons/loaders/GLTFLoader.js';
+import { CLAUDE_CITY_ASSETS } from './vendor/city-pack/asset-catalog.js';
 // ~14 MB local corpus (Unicode/MIME/services/protocols/timezones, concrete
 // + a ~17.9B-combination virtual address space) and a ~48 MB corpus of
 // real public-data rows fetched at build time (IANA/RFC/OurAirports/
@@ -541,6 +542,17 @@ const CONFIG = {
             ['UNBOUND', 'not afraid of the machine'],
             ['THEY ASK ME', "for the advice"],
             ['PUBLIC SECRET', 'hidden by numbers, not by hiding'],
+        ],
+        // real photos, not renders/paintings -- rendered the same way as
+        // art/webProjects (see mountContentCards + PHOTO_BY_TITLE), just
+        // kept in their own category since they're personal snapshots,
+        // not finished pieces or client work.
+        lifePhotos: [
+            ['GRADUATION', 'SIU Carbondale'],
+            ['FOUNDRY DAY', 'iron casting'],
+            ['SERVER RACK', 'cable management, in progress'],
+            ['DISK ARRAY', 'reclaimed hardware'],
+            ['MIRROR, 2AM', 'a photo, for once'],
         ],
         // dropped on the ground like litter — real contact info, decoyed
         // among all the fake ones from billboards.decoyIdentities
@@ -1261,6 +1273,69 @@ loadRealModel('barrelStove', 'barrel_stove.gltf', 1);
 loadRealModel('ironGate', 'large_iron_gate.gltf', 1);
 loadRealModel('fireEscape', 'modular_fire_escape.gltf', 1.3);
 
+// ---------- generated city-pack model catalog (340 GLBs) ----------
+// a real, ID-keyed vocabulary (vendor/city-pack/asset-catalog.js, see
+// CLAUDE_INGEST.md alongside it) -- separate from the small hand-picked
+// roster above. Lazy and cached: nothing here is fetched until something
+// actually calls placeCityAsset for that id, and each id is only ever
+// fetched once (cached template, cloned per placement) -- 340 eager
+// loads at startup would be wasted work when a given seed only ever
+// touches a fraction of the catalog. art_gallery/as400_archive/
+// systems_workshop are reserved for those signature buildings and
+// deliberately unused until those landmarks exist -- see README.md in
+// the pack for why ("props and modules, not complete buildings").
+const CITY_ASSET_BY_ID = new Map(CLAUDE_CITY_ASSETS.map(a => [a.id, a]));
+const cityAssetTemplates = new Map(); // id -> loaded THREE.Object3D template
+const cityAssetPending = new Map();   // id -> queued placement requests, while its GLB is still in flight
+
+function instantiateCityAsset(template, req) {
+    const inst = template.clone(true);
+    inst.position.set(req.x, req.y, req.z);
+    inst.rotation.y = req.rotY;
+    if (req.scale !== undefined) {
+        if (typeof req.scale === 'number') inst.scale.setScalar(req.scale);
+        else inst.scale.set(req.scale.x ?? 1, req.scale.y ?? 1, req.scale.z ?? 1);
+    }
+    scene.add(inst);
+    return inst;
+}
+
+// places catalog id `id` (e.g. 'street/bench_02') with its origin at
+// (x,z). y defaults to 0 (every 'ground'-mount asset's real use case);
+// pass opts.y for roof/wall/desk-mounted pieces, opts.scale for a
+// uniform number or a per-axis {x,y,z} (used to fit a fixed-size asset
+// to a caller-chosen target size, e.g. a corner-pile tier's height).
+// Async-safe the same way placeRealModel/loadPhoto are: call any time
+// during the synchronous layout pass, the mesh drops in whenever its
+// GLB finishes loading, in whatever order that happens.
+function placeCityAsset(id, x, z, rotY = 0, opts = {}) {
+    const def = CITY_ASSET_BY_ID.get(id);
+    if (!def) { console.warn(`[testing] unknown city-pack asset "${id}"`); return; }
+    const req = { x, y: opts.y ?? 0, z, rotY, scale: opts.scale };
+    if (cityAssetTemplates.has(id)) { instantiateCityAsset(cityAssetTemplates.get(id), req); return; }
+    if (cityAssetPending.has(id)) { cityAssetPending.get(id).push(req); return; }
+    cityAssetPending.set(id, [req]);
+    gltfLoader.load('./vendor/city-pack/' + def.file, (gltf) => {
+        cityAssetTemplates.set(id, gltf.scene);
+        for (const r of cityAssetPending.get(id)) instantiateCityAsset(gltf.scene, r);
+        cityAssetPending.delete(id);
+    }, undefined, (err) => {
+        console.warn(`[testing] city-pack asset "${id}" didn't load, skipping`, err);
+        cityAssetPending.delete(id);
+    });
+}
+
+// every asset in one category (e.g. 'street', 'trash_climbable',
+// 'rooftop', 'vegetation') -- pick() over this instead of hand-typing an
+// id when any variant of a kind will do.
+const cityAssetCategoryCache = new Map();
+function cityAssetsByCategory(category) {
+    if (!cityAssetCategoryCache.has(category)) {
+        cityAssetCategoryCache.set(category, CLAUDE_CITY_ASSETS.filter(a => a.category === category));
+    }
+    return cityAssetCategoryCache.get(category);
+}
+
 // ---------- real photos ----------
 // his actual site images, resized/recompressed for a texture instead of
 // print resolution (originals ran 20KB-3.5MB; these are 8-50KB) — the
@@ -1326,6 +1401,16 @@ loadPhoto('vitalsage', 'vitalsage.jpg');
 loadPhoto('brandyou', 'brandyou.jpg');
 loadPhoto('bibitinator', 'bibitinator.jpg');
 loadPhoto('slidingTiles', 'sliding_tiles.jpg');
+// a fresh batch of real photos of him -- foundry/server-rack/hard-drive
+// shots slot naturally into the "take it apart" bio material this site
+// already leans on; the graduation and mirror shots are personal rather
+// than project photos, so they ride along with CONFIG.siteContent.about
+// instead of art/webProjects (see PHOTO_BY_TITLE + mountContentCards).
+loadPhoto('graduation', 'graduation.jpg');
+loadPhoto('foundry', 'foundry.jpg');
+loadPhoto('serverRack', 'server_rack.jpg');
+loadPhoto('hardDrives', 'hard_drives.jpg');
+loadPhoto('mirrorPortrait', 'mirror_portrait.jpg');
 
 // maps CONFIG.siteContent titles to the real photo that goes with them
 const PHOTO_BY_TITLE = {
@@ -1338,6 +1423,11 @@ const PHOTO_BY_TITLE = {
     'BRANDYOUPROMO': 'brandyou',
     'BIBITINATOR': 'bibitinator',
     'SLIDING TILES': 'slidingTiles',
+    'GRADUATION': 'graduation',
+    'FOUNDRY DAY': 'foundry',
+    'SERVER RACK': 'serverRack',
+    'DISK ARRAY': 'hardDrives',
+    'MIRROR, 2AM': 'mirrorPortrait',
 };
 
 // ---------- small helpers ----------
@@ -4142,6 +4232,7 @@ function mountContentCards() {
     for (const [title, subtitle] of CONFIG.siteContent.art) jobs.push({ title, subtitle, kind: 'poster' });
     for (const [title, subtitle] of CONFIG.siteContent.webProjects) jobs.push({ title, subtitle, kind: 'poster' });
     for (const [title, subtitle] of CONFIG.siteContent.codeProjects) jobs.push({ title, subtitle, kind: 'terminal' });
+    for (const [title, subtitle] of CONFIG.siteContent.lifePhotos) jobs.push({ title, subtitle, kind: 'poster' });
 
     const faces = [...candidateFaces].sort(() => rng() - 0.5);
     let fi = 0;
@@ -6205,6 +6296,22 @@ function addPileCrate(x, z, targetTop) {
 // Each tier is 2-3 independent crates (independent colliders/walkable
 // tops), not one wide box, so the pile's silhouette is irregular and it
 // still reads as accumulated junk up close.
+// same visual/collision contract as addPileCrate ({radius, height}, a
+// real GLB instead of a primitive box) -- scaled non-uniformly on Y so
+// its actual height always lands exactly on targetTop regardless of the
+// source asset's natural size, same "no daylight between geometry and
+// collision" rule addPileCrate follows.
+function addPileAsset(def, x, z, targetTop) {
+    const [bx0, by0, bz0] = def.boundsMin, [bx1, , bz1] = def.boundsMax;
+    const naturalH = Math.max(0.05, def.boundsMax[1] - by0);
+    const scaleY = targetTop / naturalH;
+    const halfX = Math.max(Math.abs(bx0), Math.abs(bx1));
+    const halfZ = Math.max(Math.abs(bz0), Math.abs(bz1));
+    placeCityAsset(def.id, x, z, randRange(0, Math.PI * 2), { y: -by0 * scaleY, scale: { x: 1, y: scaleY, z: 1 } });
+    return { radius: Math.max(halfX, halfZ), height: targetTop };
+}
+const cornerPileAssetPool = cityAssetsByCategory('trash_climbable');
+
 function buildCornerPile(x, z, intoX, intoZ, tierCount) {
     let height = 0, px = x, pz = z;
     for (let i = 0; i < tierCount; i++) {
@@ -6212,6 +6319,17 @@ function buildCornerPile(x, z, intoX, intoZ, tierCount) {
         height += rise;
         px += intoX * randRange(0.3, 0.5);
         pz += intoZ * randRange(0.3, 0.5);
+        // ~35% of tiers use one real trash_climbable GLB (an actual
+        // authored pile/stack shape from the city model pack) instead of
+        // 2-3 primitive crates -- both read as "junk pile", the real
+        // assets add silhouette variety boxes can't.
+        if (cornerPileAssetPool.length && rng() < 0.35) {
+            const def = pick(cornerPileAssetPool);
+            const jx = px + randRange(-0.25, 0.25), jz = pz + randRange(-0.25, 0.25);
+            const { radius, height: realHeight } = addPileAsset(def, jx, jz, height);
+            propColliders.push({ x: jx, z: jz, radius, height: realHeight });
+            continue;
+        }
         const itemCount = 2 + Math.floor(rng() * 2);
         for (let j = 0; j < itemCount; j++) {
             const jx = px + randRange(-0.45, 0.45), jz = pz + randRange(-0.45, 0.45);

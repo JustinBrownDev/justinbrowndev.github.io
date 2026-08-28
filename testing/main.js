@@ -520,6 +520,41 @@ function updateWebGradient(worldZ) {
     ambientLight.color.copy(_ambLerp);
     ambientLight.intensity = THREE.MathUtils.lerp(dark.ambientIntensity, light.ambientIntensity, t);
     hemiLight.intensity = THREE.MathUtils.lerp(dark.hemiIntensity, light.hemiIntensity, t);
+    // weather rides the same gradient: damp/overcast toward dark-web
+    // (north), bone dry toward light-web (south) — never both, never
+    // neither, the contrast is continuous just like everything else here.
+    rainMat.opacity = (1 - t) * 0.5;
+}
+
+// ---------- weather (gradient-driven, not a toggle) ----------
+
+const RAIN_COUNT = IS_TOUCH ? 220 : 500;
+const RAIN_SPAN = 46, RAIN_HEIGHT = 26;
+const rainPositions = new Float32Array(RAIN_COUNT * 3);
+const rainSpeeds = new Float32Array(RAIN_COUNT);
+for (let i = 0; i < RAIN_COUNT; i++) {
+    rainPositions[i * 3] = randRange(-RAIN_SPAN / 2, RAIN_SPAN / 2);
+    rainPositions[i * 3 + 1] = randRange(0, RAIN_HEIGHT);
+    rainPositions[i * 3 + 2] = randRange(-RAIN_SPAN / 2, RAIN_SPAN / 2);
+    rainSpeeds[i] = randRange(13, 21);
+}
+const rainGeo = new THREE.BufferGeometry();
+rainGeo.setAttribute('position', new THREE.BufferAttribute(rainPositions, 3));
+const rainMat = new THREE.PointsMaterial({
+    color: 0xd8e8e8, size: 0.05, transparent: true, opacity: 0, depthWrite: false,
+});
+const rain = new THREE.Points(rainGeo, rainMat);
+scene.add(rain);
+
+function updateRain(delta) {
+    const pos = rainGeo.attributes.position;
+    for (let i = 0; i < RAIN_COUNT; i++) {
+        let y = pos.array[i * 3 + 1] - rainSpeeds[i] * delta;
+        if (y < 0) y = RAIN_HEIGHT;
+        pos.array[i * 3 + 1] = y;
+    }
+    pos.needsUpdate = true;
+    rain.position.set(camera.position.x, 0, camera.position.z);
 }
 
 // ---------- small helpers ----------
@@ -2284,6 +2319,7 @@ function animate() {
     }
     camera.position.y = CONFIG.camera.eyeHeight;
     updateWebGradient(camera.position.z);
+    updateRain(delta);
 
     composer.render();
 }

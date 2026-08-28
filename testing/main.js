@@ -680,7 +680,7 @@ function updateRain(delta) {
 // each model finishes loading, in whatever order that happens.
 const gltfLoader = new GLTFLoader();
 gltfLoader.setPath('./vendor/models/');
-const pendingRealModelPlacements = { tyre: [], trashbag: [], manhole: [], sprayCans: [], trashCanReal: [] };
+const pendingRealModelPlacements = { tyre: [], trashbag: [], manhole: [], sprayCans: [], trashCanReal: [], streetLamp: [] };
 
 function placeRealModel(name, x, z, rotY) {
     pendingRealModelPlacements[name].push({ x, z, rotY });
@@ -707,6 +707,7 @@ loadRealModel('trashbag', 'trashbag.gltf', 1);
 loadRealModel('manhole', 'water_manhole_cover.gltf', 1.4);
 loadRealModel('sprayCans', 'spray_paint_bottles.gltf', 1);
 loadRealModel('trashCanReal', 'metal_trash_can.gltf', 1);
+loadRealModel('streetLamp', 'street_lamp_02.gltf', 1);
 
 // ---------- real photos ----------
 // his actual site images, resized/recompressed for a texture instead of
@@ -3117,6 +3118,13 @@ for (let r = 1; r < GRID_ROWS - 1; r++) {
         if (onStreet) {
             addStreetSurface(c, r, x, z);
             if (rng() < 0.3 * QUALITY.propDensity) scatterJunk('street', x, z, 1 + Math.floor(rng() * 2), CELL * 0.34);
+            if (rng() < 0.15 * QUALITY.propDensity) {
+                const w = wallDirections(c, r);
+                if (w.length) {
+                    const dir = pick(w);
+                    placeRealModel('streetLamp', x + dir.dx * (CELL * 0.4), z + dir.dz * (CELL * 0.4), randRange(0, Math.PI * 2));
+                }
+            }
         } else if (rng() < 0.55 * QUALITY.propDensity) {
             scatterJunk('alley', x, z, 1 + Math.floor(rng() * 2), CELL * 0.3);
         }

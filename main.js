@@ -2329,13 +2329,23 @@ function findLandingSurface(x, z, feetY, predictedFeetY, verticalVelocity) {
 function buildWallWithGaps(axis, fixedCoord, spanA, spanB, gaps, height, mat, yBase = 0) {
     const sorted = gaps.slice().sort((a, b) => a.lo - b.lo);
     const segs = [];
+    // real volume, not a zero-thickness plane -- WALL_THICKNESS matches
+    // collision exactly (see resolveCollisions), so what you see is what
+    // you bump into. At a grazing angle an infinitely thin PlaneGeometry
+    // all but disappears; a real box always has a visible edge, an
+    // interior face, an exterior face, and real jamb thickness at every
+    // door/gap. Built axis-aligned directly (thickness on whichever axis
+    // is fixed) instead of a plane + a 90-degree rotation hack -- a box's
+    // dimensions can just BE the wall's real footprint.
     const addSolid = (a0, a1) => {
         if (a1 - a0 < 0.05) return;
         const len = a1 - a0, mid = (a0 + a1) / 2;
-        const wall = new THREE.Mesh(new THREE.PlaneGeometry(len, height), mat);
+        const wall = new THREE.Mesh(
+            axis === 'x' ? new THREE.BoxGeometry(WALL_THICKNESS, height, len) : new THREE.BoxGeometry(len, height, WALL_THICKNESS),
+            mat
+        );
         if (axis === 'x') {
             wall.position.set(fixedCoord, yBase + height / 2, mid);
-            wall.rotation.y = Math.PI / 2;
             segs.push({ x1: fixedCoord, z1: a0, x2: fixedCoord, z2: a1 });
         } else {
             wall.position.set(mid, yBase + height / 2, fixedCoord);
@@ -2366,10 +2376,10 @@ function buildWallWithGaps(axis, fixedCoord, spanA, spanB, gaps, height, mat, yB
 function buildExteriorPerimeter(x, z, hwx, hwz, y0, floorHeight, door, mat, openGaps = []) {
     const doorWidth = 1.5, doorHeight = 2.3;
     const faces = [
-        { dx: 0, dz: -1, rotY: 0, axis: 'z', fixedCoord: z - hwz, spanA: x - hwx, spanB: x + hwx, along: x },
-        { dx: 0, dz: 1, rotY: Math.PI, axis: 'z', fixedCoord: z + hwz, spanA: x - hwx, spanB: x + hwx, along: x },
-        { dx: -1, dz: 0, rotY: -Math.PI / 2, axis: 'x', fixedCoord: x - hwx, spanA: z - hwz, spanB: z + hwz, along: z },
-        { dx: 1, dz: 0, rotY: Math.PI / 2, axis: 'x', fixedCoord: x + hwx, spanA: z - hwz, spanB: z + hwz, along: z },
+        { dx: 0, dz: -1, axis: 'z', fixedCoord: z - hwz, spanA: x - hwx, spanB: x + hwx, along: x },
+        { dx: 0, dz: 1, axis: 'z', fixedCoord: z + hwz, spanA: x - hwx, spanB: x + hwx, along: x },
+        { dx: -1, dz: 0, axis: 'x', fixedCoord: x - hwx, spanA: z - hwz, spanB: z + hwz, along: z },
+        { dx: 1, dz: 0, axis: 'x', fixedCoord: x + hwx, spanA: z - hwz, spanB: z + hwz, along: z },
     ];
     const segments = [];
     for (const f of faces) {
@@ -2382,11 +2392,17 @@ function buildExteriorPerimeter(x, z, hwx, hwz, y0, floorHeight, door, mat, open
             // header above the doorway, floor-to-ceiling minus doorHeight
             // -- the gap below it is real open space, no segment there.
             // Archway gaps (into a wing) skip this on purpose: those read
-            // as one open room, not a doorway.
-            const lintel = new THREE.Mesh(new THREE.PlaneGeometry(doorWidth, floorHeight - doorHeight), mat);
-            if (f.axis === 'x') lintel.position.set(f.fixedCoord, y0 + doorHeight + (floorHeight - doorHeight) / 2, f.along);
-            else lintel.position.set(f.along, y0 + doorHeight + (floorHeight - doorHeight) / 2, f.fixedCoord);
-            lintel.rotation.y = f.rotY;
+            // as one open room, not a doorway. Same real-thickness box as
+            // buildWallWithGaps, axis-aligned directly -- no rotation
+            // needed, and no seam/z-fight against the real wall it sits
+            // flush on top of.
+            const lintelH = floorHeight - doorHeight;
+            const lintel = new THREE.Mesh(
+                f.axis === 'x' ? new THREE.BoxGeometry(WALL_THICKNESS, lintelH, doorWidth) : new THREE.BoxGeometry(doorWidth, lintelH, WALL_THICKNESS),
+                mat
+            );
+            if (f.axis === 'x') lintel.position.set(f.fixedCoord, y0 + doorHeight + lintelH / 2, f.along);
+            else lintel.position.set(f.along, y0 + doorHeight + lintelH / 2, f.fixedCoord);
             scene.add(lintel);
         }
     }

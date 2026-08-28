@@ -603,6 +603,166 @@ const CONFIG = {
     },
 };
 
+// ---------- seeded RNG ----------
+// every bit of generation (maze, buildings, signs, props, spawn point)
+// runs through this one seeded generator instead of raw Math.random().
+// Default: a fresh random seed every load — the city is different each
+// time you visit, same as before. Pin ?seed=12345 in the URL to freeze
+// a specific layout for bug reports/comparisons — paste the console-
+// logged seed back and that exact city (bugs included) comes back.
+function mulberry32(seed) {
+    return function () {
+        seed |= 0; seed = (seed + 0x6D2B79F5) | 0;
+        let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+}
+const urlSeed = new URLSearchParams(location.search).get('seed');
+const SEED = urlSeed !== null ? Number(urlSeed) : Math.floor(Math.random() * 2 ** 31);
+const rng = mulberry32(SEED);
+console.log(`[testing] maze seed = ${SEED}  (reload with ?seed=${SEED} to get this exact layout)`);
+
+// ---------- config randomization ----------
+// the seed above only ever touched geometry (maze layout, spawn point).
+// Everything tunable in CONFIG -- colors, fog, intensities, chances,
+// densities, movement feel -- now rides the same seeded RNG, so a plain
+// reload gives you a different mood, not just a different floor plan.
+// ?seed=X freezes the exact layout AND the exact tuning that came with
+// it, same guarantee as before. Content (word lists, real sourced data,
+// nav copy) and stability-critical numbers (collision radii, clip
+// planes, the potato-tier perf floor) are deliberately left alone --
+// this only touches the knobs that are purely look-and-feel.
+function jitter(base, pct) {
+    return base * (1 + (rng() * 2 - 1) * pct);
+}
+function jitterClamped(base, pct, lo, hi) {
+    return Math.min(hi, Math.max(lo, jitter(base, pct)));
+}
+function jitterInt(base, pct, lo, hi) {
+    return Math.round(jitterClamped(base, pct, lo, hi));
+}
+const _hsl = { h: 0, s: 0, l: 0 };
+function shiftHue(hex, degRange, satPct = 0.15, lightPct = 0.12) {
+    const c = new THREE.Color(hex);
+    c.getHSL(_hsl);
+    let h = _hsl.h + (rng() * 2 - 1) * (degRange / 360);
+    h = ((h % 1) + 1) % 1;
+    const s = Math.min(1, Math.max(0, jitter(_hsl.s, satPct)));
+    const l = Math.min(1, Math.max(0, jitter(_hsl.l, lightPct)));
+    c.setHSL(h, s, l);
+    return c.getHex();
+}
+function randomizeConfig() {
+    const c = CONFIG;
+
+    // scene mood
+    c.scene.backgroundColor = shiftHue(c.scene.backgroundColor, 30);
+    c.scene.fogColor = shiftHue(c.scene.fogColor, 30);
+    c.scene.fogDensity = jitterClamped(c.scene.fogDensity, 0.4, 0.008, 0.035);
+
+    // light-web / dark-web poles
+    for (const pole of [c.narrative.lightWeb, c.narrative.darkWeb]) {
+        pole.fogColor = shiftHue(pole.fogColor, 25);
+        pole.ambientColor = shiftHue(pole.ambientColor, 25);
+        pole.fogDensity = jitterClamped(pole.fogDensity, 0.35, 0.01, 0.04);
+        pole.ambientIntensity = jitterClamped(pole.ambientIntensity, 0.3, 0.6, 3.2);
+        pole.hemiIntensity = jitterClamped(pole.hemiIntensity, 0.3, 0.3, 1.6);
+        pole.signChance = jitterClamped(pole.signChance, 0.15, 0.55, 1);
+        pole.propDensityMul = jitterClamped(pole.propDensityMul, 0.3, 0.5, 1.8);
+    }
+
+    // camera feel (near/far/eyeHeight/playerRadius stay put -- collision code assumes them)
+    c.camera.fov = jitterInt(c.camera.fov, 0.12, 62, 92);
+
+    // lighting
+    c.lighting.ambientColor = shiftHue(c.lighting.ambientColor, 20);
+    c.lighting.ambientIntensity = jitterClamped(c.lighting.ambientIntensity, 0.3, 0.9, 3);
+    c.lighting.moonColor = shiftHue(c.lighting.moonColor, 20);
+    c.lighting.moonIntensity = jitterClamped(c.lighting.moonIntensity, 0.3, 0.6, 2);
+    c.lighting.fillColor = shiftHue(c.lighting.fillColor, 20);
+    c.lighting.fillIntensity = jitterClamped(c.lighting.fillIntensity, 0.35, 0.2, 1.2);
+    c.lighting.moonPosition.x = jitter(c.lighting.moonPosition.x, 0.6);
+    c.lighting.moonPosition.y = jitterClamped(c.lighting.moonPosition.y, 0.3, 40, 110);
+    c.lighting.moonPosition.z = jitter(c.lighting.moonPosition.z, 0.6);
+    c.lighting.signLight.intensity = jitterClamped(c.lighting.signLight.intensity, 0.3, 2.5, 9);
+    c.lighting.signLight.distance = jitterClamped(c.lighting.signLight.distance, 0.3, 5, 14);
+
+    // quality knobs -- mild jitter only, and never the structural bits
+    // (antialias on/off, bloom present/null, pixel ratio, draw distance,
+    // light count, enterable-floor count) that the perf tiers exist to
+    // guarantee.
+    for (const tier of [c.quality.desktop, c.quality.mobile, c.quality.potato]) {
+        if (tier.bloom) {
+            tier.bloom.strength = jitterClamped(tier.bloom.strength, 0.25, 0.2, 1.1);
+            tier.bloom.radius = jitterClamped(tier.bloom.radius, 0.25, 0.2, 0.7);
+            tier.bloom.threshold = jitterClamped(tier.bloom.threshold, 0.08, 0.75, 0.97);
+        }
+        tier.propDensity = jitterClamped(tier.propDensity, 0.25, tier.propDensity * 0.5, tier.propDensity * 1.6);
+        tier.skyJunkCount = jitterInt(tier.skyJunkCount, 0.3, Math.round(tier.skyJunkCount * 0.5), Math.round(tier.skyJunkCount * 1.6));
+        tier.floatingPlatformClusters = jitterInt(tier.floatingPlatformClusters, 0.3, Math.round(tier.floatingPlatformClusters * 0.5), Math.round(tier.floatingPlatformClusters * 1.6));
+    }
+
+    // maze shape (cols/rows/cellSize left alone -- they size the whole grid, incl. the perimeter wall math)
+    c.maze.loopChance = jitterClamped(c.maze.loopChance, 0.4, 0.05, 0.28);
+    c.maze.buildingMarginMin = jitterClamped(c.maze.buildingMarginMin, 0.3, 0.3, 0.9);
+    c.maze.buildingMarginMax = jitterClamped(c.maze.buildingMarginMax, 0.3, 1.3, 2.4);
+
+    // buildings
+    c.buildings.heightMin = jitterClamped(c.buildings.heightMin, 0.3, 25, 55);
+    c.buildings.heightMax = jitterClamped(c.buildings.heightMax, 0.25, 110, 170);
+    c.buildings.heroTowerChance = jitterClamped(c.buildings.heroTowerChance, 0.4, 0.03, 0.16);
+    c.buildings.heroHeightMin = jitterClamped(c.buildings.heroHeightMin, 0.2, 160, 220);
+    c.buildings.heroHeightMax = jitterClamped(c.buildings.heroHeightMax, 0.2, 300, 380);
+    c.buildings.roughness = jitterClamped(c.buildings.roughness, 0.1, 0.75, 1);
+    c.buildings.palette = c.buildings.palette.map(hex => shiftHue(hex, 15, 0.1, 0.08));
+    c.buildings.curb.height = jitterClamped(c.buildings.curb.height, 0.3, 0.06, 0.2);
+    c.buildings.curb.overhang = jitterClamped(c.buildings.curb.overhang, 0.3, 0.2, 0.55);
+    c.buildings.curb.color = shiftHue(c.buildings.curb.color, 15);
+
+    // signage palettes (neonPalette/neonWarm/neonCool) are left untouched --
+    // every use is a random pick() already, and hue-shifting curated,
+    // named colors ("white", "gold", "maroon"...) would just drift them
+    // off their own labels for no visible gain.
+
+    // billboards -- visual tuning, not the copy itself
+    c.billboards.borderWidth = jitterInt(c.billboards.borderWidth, 0.3, 2, 5);
+    for (const k of Object.keys(c.billboards.contentWeights)) {
+        c.billboards.contentWeights[k] = jitterClamped(c.billboards.contentWeights[k], 0.35, 1, 10);
+    }
+
+    // prop spawn weights & feature caps
+    for (const k of Object.keys(c.props.weights)) {
+        c.props.weights[k] = jitterClamped(c.props.weights[k], 0.4, 0.01, c.props.weights[k] * 2 + 1);
+    }
+    for (const k of Object.keys(c.props.maxSpecialFeatures)) {
+        c.props.maxSpecialFeatures[k] = jitterInt(c.props.maxSpecialFeatures[k], 0.3, 1, c.props.maxSpecialFeatures[k] * 2);
+    }
+
+    // airborne junk
+    c.skyJunk.heightMin = jitterClamped(c.skyJunk.heightMin, 0.3, 1, 4);
+    c.skyJunk.heightMax = jitterClamped(c.skyJunk.heightMax, 0.2, 200, 320);
+    c.skyJunk.heightBias = jitterClamped(c.skyJunk.heightBias, 0.3, 1.1, 2.4);
+    c.skyJunk.streetClearance = jitterClamped(c.skyJunk.streetClearance, 0.3, 2, 4.5);
+    c.skyJunk.stretchMin = jitterClamped(c.skyJunk.stretchMin, 0.3, 0.15, 0.6);
+    c.skyJunk.stretchMax = jitterClamped(c.skyJunk.stretchMax, 0.3, 1.6, 3.2);
+    c.skyJunk.sizeMin = jitterClamped(c.skyJunk.sizeMin, 0.3, 0.1, 0.4);
+    c.skyJunk.sizeMax = jitterClamped(c.skyJunk.sizeMax, 0.3, 1.4, 3);
+
+    // streets
+    c.streets.propDensityMul = jitterClamped(c.streets.propDensityMul, 0.35, 0.25, 0.85);
+
+    // movement feel (maxDeltaSeconds/collisionIterations left alone -- correctness knobs, not feel)
+    c.movement.speed = jitterClamped(c.movement.speed, 0.2, 3.4, 5.8);
+    c.movement.sprintMultiplier = jitterClamped(c.movement.sprintMultiplier, 0.2, 1.3, 2.2);
+
+    // controls
+    c.desktopControls.pointerSpeed = jitterClamped(c.desktopControls.pointerSpeed, 0.25, 2.2, 4.4);
+    c.touchControls.lookSensitivity = jitterClamped(c.touchControls.lookSensitivity, 0.25, 0.0022, 0.0055);
+}
+randomizeConfig();
+console.log('[testing] config randomized from seed -- reload for a new mood, or pin ?seed= to freeze it too.');
+
 // ---------- device detection & active quality profile ----------
 
 const IS_TOUCH = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
@@ -643,26 +803,6 @@ const QUALITY = forcedQuality === 'high' ? CONFIG.quality.desktop
     : looksLikePotato ? CONFIG.quality.potato
     : IS_TOUCH ? CONFIG.quality.mobile
     : CONFIG.quality.desktop;
-
-// ---------- seeded RNG ----------
-// every bit of generation (maze, buildings, signs, props, spawn point)
-// runs through this one seeded generator instead of raw Math.random().
-// Default: a fresh random seed every load — the city is different each
-// time you visit, same as before. Pin ?seed=12345 in the URL to freeze
-// a specific layout for bug reports/comparisons — paste the console-
-// logged seed back and that exact city (bugs included) comes back.
-function mulberry32(seed) {
-    return function () {
-        seed |= 0; seed = (seed + 0x6D2B79F5) | 0;
-        let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
-        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-    };
-}
-const urlSeed = new URLSearchParams(location.search).get('seed');
-const SEED = urlSeed !== null ? Number(urlSeed) : Math.floor(Math.random() * 2 ** 31);
-const rng = mulberry32(SEED);
-console.log(`[testing] maze seed = ${SEED}  (reload with ?seed=${SEED} to get this exact layout)`);
 
 // ---------- basic setup ----------
 

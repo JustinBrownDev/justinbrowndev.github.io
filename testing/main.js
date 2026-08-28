@@ -479,6 +479,7 @@ const CONFIG = {
             trashCan: 4,
             trafficCone: 3,
             trafficSign: 2,
+            trafficSignal: 0.8, // rarer -- a real per-frame update, not free like a static sign
             mileMarker: 2,
             wantedPoster: 5, // bumped -- 1 in 5 of these now carries a real personal fact, not just a wiki rabbit hole
             crate: 4,
@@ -2289,6 +2290,49 @@ function addTrafficSign(x, z, rotY) {
     return 0.06;
 }
 
+// a real 3-phase signal, mast-mounted -- reuses the flickerLights idea
+// (a plain array ticked once per frame in animate()) but for phase-
+// cycling instead of blink/sine, since a signal is "which lamp is lit
+// right now," not one lamp's intensity. rarer than a static sign
+// (weighted low): every one of these is a real per-frame update, not
+// free like the instanced junk.
+const trafficSignals = []; // {redMat, yellowMat, greenMat, light, phase}
+function addTrafficSignal(x, z, rotY) {
+    const g = new THREE.Group();
+    const pole = new THREE.Mesh(
+        jitterGeometry(new THREE.CylinderGeometry(0.05, 0.05, 2.6, 6), 0.012),
+        new THREE.MeshStandardMaterial({ color: 0x2c2c2c, roughness: 0.6, metalness: 0.5 })
+    );
+    pole.position.y = 1.3;
+    const box = new THREE.Mesh(
+        jitterGeometry(new THREE.BoxGeometry(0.28, 0.72, 0.22), 0.01),
+        new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.7 })
+    );
+    box.position.y = 2.7;
+    const lampGeo = new THREE.SphereGeometry(0.09, 8, 8);
+    const redMat = new THREE.MeshBasicMaterial({ color: 0x3a0808 });
+    const yellowMat = new THREE.MeshBasicMaterial({ color: 0x3a2000 });
+    const greenMat = new THREE.MeshBasicMaterial({ color: 0x123010 });
+    const red = new THREE.Mesh(lampGeo, redMat); red.position.set(0, 0.25, 0.13);
+    const yellow = new THREE.Mesh(lampGeo, yellowMat); yellow.position.set(0, 0, 0.13);
+    const green = new THREE.Mesh(lampGeo, greenMat); green.position.set(0, -0.25, 0.13);
+    box.add(red, yellow, green);
+    g.add(pole, box);
+    g.rotation.y = rotY;
+    g.position.set(x, 0, z);
+    scene.add(g);
+
+    let light = null;
+    if (dynamicLightsRemaining > 0) {
+        dynamicLightsRemaining--;
+        light = new THREE.PointLight(0xff2020, 1, 2.5, 2);
+        light.position.set(x + Math.sin(rotY) * 0.13, 2.7, z + Math.cos(rotY) * 0.13);
+        scene.add(light);
+    }
+    trafficSignals.push({ redMat, yellowMat, greenMat, light, phase: rng() * 6 });
+    return 0.18;
+}
+
 function addCrate(x, z) {
     const g = new THREE.Group();
     const count = 1 + Math.floor(rng() * 3);
@@ -2839,6 +2883,14 @@ const JUNK_BASE_KINDS = [
     { name: 'parking meter', shape: 'cylinder', contexts: ['street'], size: [0.1, 1.1, 0.1], colors: [0x505050, 0x3a3a3a] },
     { name: 'bike rack', shape: 'box', contexts: ['street'], size: [0.06, 0.7, 0.9], colors: [0x3a3a3a] },
     { name: 'bollard', shape: 'cylinder', contexts: ['street'], size: [0.12, 0.75, 0.12], colors: [0x3a3a3a, 0xc82020] },
+    // parked/abandoned vehicles -- crude single-box silhouettes, same
+    // "one shared primitive, scaled and colored" rule as everything else
+    // here. Long boxes give a wide circle collider (radius = half the
+    // longer side), a known simplification already accepted for carts
+    // and pallets, not a new one.
+    { name: 'parked car', shape: 'box', contexts: ['street'], size: [1.8, 1.3, 4.2], colors: [0xc0c4c8, 0x8a1818, 0x18305a, 0x2a2a2a, 0xd8d0b0] },
+    { name: 'delivery van', shape: 'box', contexts: ['street'], size: [1.9, 2.1, 4.6], colors: [0xd8d8d0, 0xc8a020] },
+    { name: 'abandoned bike', shape: 'box', contexts: ['street', 'alley'], size: [0.5, 0.9, 1.6], colors: [0x2a2a2a, 0xc82020, 0x2a6aff] },
     { name: 'utility box', shape: 'box', contexts: ['street', 'alley'], size: [0.5, 0.9, 0.4], colors: [0x5a6a5a, 0x6a5a4a] },
     { name: 'vent cap', shape: 'cylinder', contexts: ['alley'], size: [0.3, 0.25, 0.3], colors: [0x5a5a5a] },
     { name: 'satellite dish scrap', shape: 'cone', contexts: ['alley'], size: [0.6, 0.15, 0.6], colors: [0xc8c8c8, 0xa0a0a0] },
@@ -3361,6 +3413,7 @@ const PROP_BUILDERS = {
     trashCan: addTrashCan,
     trafficCone: addTrafficCone,
     trafficSign: (x, z, facingRotY) => addTrafficSign(x, z, facingRotY ?? randRange(0, Math.PI * 2)),
+    trafficSignal: (x, z, facingRotY) => addTrafficSignal(x, z, facingRotY ?? randRange(0, Math.PI * 2)),
     mileMarker: (x, z, facingRotY) => addMileMarker(x, z, facingRotY ?? randRange(0, Math.PI * 2)),
     wantedPoster: (x, z, facingRotY) => addWantedPoster(x, z, facingRotY ?? randRange(0, Math.PI * 2)),
     crate: addCrate,
@@ -4112,6 +4165,18 @@ function animate() {
         f.light.intensity = f.mode === 'blink'
             ? (Math.floor(elapsedTime * f.speed + f.phase) % 2 === 0 ? f.base : 0)
             : f.base * (0.55 + 0.45 * Math.sin(elapsedTime * f.speed + f.phase));
+    }
+
+    // real 3-phase traffic signals -- rough real-world ratio (3s red,
+    // 2s green, 1s yellow), each instance offset by its own phase so a
+    // street full of them doesn't switch in lockstep.
+    for (const s of trafficSignals) {
+        const cyclePos = (elapsedTime + s.phase) % 6;
+        const on = cyclePos < 3 ? 'red' : cyclePos < 5 ? 'green' : 'yellow';
+        s.redMat.color.set(on === 'red' ? 0xff2020 : 0x3a0808);
+        s.greenMat.color.set(on === 'green' ? 0x30ff50 : 0x123010);
+        s.yellowMat.color.set(on === 'yellow' ? 0xffcc20 : 0x3a2000);
+        if (s.light) s.light.color.set(on === 'red' ? 0xff2020 : on === 'green' ? 0x30ff50 : 0xffcc20);
     }
 
     const forwardInput = (move.forward ? 1 : 0) - (move.back ? 1 : 0) - touchMoveVec.y;

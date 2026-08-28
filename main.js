@@ -168,7 +168,8 @@ const CONFIG = {
             propDensity: 2.8, // bumped alongside the smaller map -- a bit denser per cell, not just "the same stuff in less space"
             skyJunkCount: 2000, // map area dropped to ~1/4 -- cut hard so the sky doesn't quadruple in density on its own
             floatingPlatformClusters: 13, // real colliders + individual meshes, unlike sky junk -- kept modest on purpose
-            maxEnterableFloors: 4, // real, walkable floors per building before the decorative tower takes over
+            maxEnterableFloors: 10, // every floor is real/walkable now -- no decorative tower above this cap, just a shorter real building
+            maxHeroFloors: 16,
         },
         mobile: {
             maxPixelRatio: 1.5,
@@ -179,7 +180,8 @@ const CONFIG = {
             propDensity: 1.6,
             skyJunkCount: 500,
             floatingPlatformClusters: 6,
-            maxEnterableFloors: 3,
+            maxEnterableFloors: 7,
+            maxHeroFloors: 11,
         },
         // auto-selected on low core-count/low-memory machines (touch or
         // not -- see detectWeakGPU below), or forced with ?quality=low.
@@ -194,7 +196,8 @@ const CONFIG = {
             propDensity: 0.36,
             skyJunkCount: 55, // token amount -- the "buried in noise" read still needs to exist, just barely
             floatingPlatformClusters: 2,
-            maxEnterableFloors: 2,
+            maxEnterableFloors: 4,
+            maxHeroFloors: 6,
         },
     },
 
@@ -217,14 +220,18 @@ const CONFIG = {
     },
 
     buildings: {
-        heightMin: 40,
-        heightMax: 140,
-        // ~8% of buildings are hero towers -- genuine full-height
-        // skyscraper scale, real landmarks looming over the rest rather
-        // than everything reading as the same mid-rise height.
+        // floor count IS the height now -- there is no more separate
+        // world-unit height rolled first with a decorative, walk-through
+        // tower filling in whatever didn't fit a "real" floor. Every unit
+        // of visible height corresponds to a real, walkable, stair-
+        // connected floor (see addBuildingModule/buildCoreFloor's
+        // continuous stair core). height = floorCount * floorHeight,
+        // always, exactly.
+        floorCountWeights: { 1: 10, 2: 16, 3: 17, 4: 15, 5: 13, 6: 10, 7: 7, 8: 5, 9: 3 },
+        // ~8% of buildings are hero buildings -- genuinely more floors
+        // (real ones, all the way up), not a taller fake extrusion.
         heroTowerChance: 0.08,
-        heroHeightMin: 190,
-        heroHeightMax: 340,
+        heroFloorCountWeights: { 8: 5, 9: 5, 10: 4, 11: 3, 12: 3, 13: 2, 14: 1, 15: 1, 16: 1 },
         roughness: 0.92,
         // daylight facades — light concrete/sandstone/brick tones with
         // green/orange/red/cyan casts. NO black, NO purple, anywhere.
@@ -851,12 +858,11 @@ function randomizeConfig() {
     c.maze.buildingMarginMin = jitterClamped(c.maze.buildingMarginMin, 0.3, 0.3, 0.9);
     c.maze.buildingMarginMax = jitterClamped(c.maze.buildingMarginMax, 0.3, 1.3, 2.4);
 
-    // buildings
-    c.buildings.heightMin = jitterClamped(c.buildings.heightMin, 0.3, 25, 55);
-    c.buildings.heightMax = jitterClamped(c.buildings.heightMax, 0.25, 110, 170);
+    // buildings -- floorCountWeights/heroFloorCountWeights are left as
+    // fixed distributions (jittering individual bucket weights isn't
+    // worth the complexity; per-building variety already comes from
+    // weightedPick + rng against them every reload).
     c.buildings.heroTowerChance = jitterClamped(c.buildings.heroTowerChance, 0.4, 0.03, 0.16);
-    c.buildings.heroHeightMin = jitterClamped(c.buildings.heroHeightMin, 0.2, 160, 220);
-    c.buildings.heroHeightMax = jitterClamped(c.buildings.heroHeightMax, 0.2, 300, 380);
     c.buildings.roughness = jitterClamped(c.buildings.roughness, 0.1, 0.75, 1);
     c.buildings.palette = c.buildings.palette.map(hex => shiftHue(hex, 15, 0.1, 0.08));
     c.buildings.curb.height = jitterClamped(c.buildings.curb.height, 0.3, 0.06, 0.2);
@@ -1846,6 +1852,112 @@ const [spawnCol, spawnRow] = allOpenCells[Math.floor(rng() * allOpenCells.length
 console.log(`[gen] maze grid ready at ${bootElapsed()}: ${GRID_COLS}x${GRID_ROWS} cells, ${allOpenCells.length} open, ${plazaCells.length} plazas, spawn=(${spawnCol},${spawnRow})`);
 bootStatus(`maze carved (${allOpenCells.length} open cells) -- building the city…`);
 
+// ---------- building sites: real, possibly multi-cell parcels ----------
+// A maze cell is topology, not architecture. Up through the previous
+// pass, "one solid cell -> one building" was still the hard rule --
+// even an "L-shaped" building was really one big rectangular core with
+// a token wing bolted on, because the core was always sized to fill
+// nearly all of ONE cell first. That's the actual bug, not the wing
+// weights.
+//
+// A BuildingSite is a connected group of 1-N solid cells that becomes
+// ONE building. Because every cell in the group gets its own full-scale
+// module (see addBuildingSite below), a site shaped like an L, T, U, or
+// long bar produces a building that's GENUINELY that shape at full
+// architectural scale -- each arm is a full cell wide/deep, not a
+// small appendage on a dominant rectangle.
+const SITE_SIZE_WEIGHTS = { 1: 22, 2: 25, 3: 20, 4: 15, 5: 9, 6: 6, 7: 3 };
+const siteIdOf = [];
+for (let r = 0; r < GRID_ROWS; r++) siteIdOf.push(new Array(GRID_COLS).fill(-1));
+const buildingSites = [];
+
+function assembleBuildingSites() {
+    // this maze's perimeter ring is always solid and touches most of the
+    // interior's solid cells too -- the "natural" contiguous solid mass
+    // this carves sites out of is often 15-70+ cells, not small isolated
+    // blobs. Seeding new sites in pure random order left oddly-shaped
+    // single-cell remainders scattered through that mass (measured: over
+    // 40% single-cell sites against the real maze algorithm) -- whichever
+    // cells happened to be processed last were simply whatever nearby
+    // sites hadn't already claimed, often just one boxed-in leftover.
+    const unclaimedSet = new Set();
+    for (let r = 0; r < GRID_ROWS; r++)
+        for (let c = 0; c < GRID_COLS; c++)
+            if (grid[r][c]) unclaimedSet.add(`${c},${r}`);
+    const availableDegree = (c, r) => [[0, -1], [0, 1], [-1, 0], [1, 0]]
+        .filter(([dc, dr]) => grid[r + dr]?.[c + dc] && siteIdOf[r + dr][c + dc] === -1).length;
+
+    while (unclaimedSet.size) {
+        // seed the next site at whichever unclaimed cell is CURRENTLY the
+        // most constrained (fewest still-unclaimed solid neighbors) --
+        // a "most-constrained-first" pass, not a random one. Already-
+        // boxed-in cells get first pick at growing into whatever room is
+        // still around them, instead of getting left for last after
+        // everything around them is already claimed.
+        let best = null, bestDegree = Infinity;
+        for (const key of unclaimedSet) {
+            const [c, r] = key.split(',').map(Number);
+            const d = availableDegree(c, r);
+            if (d < bestDegree) { bestDegree = d; best = [c, r]; if (d === 0) break; }
+        }
+        const [c0, r0] = best;
+        unclaimedSet.delete(`${c0},${r0}`);
+        const id = buildingSites.length;
+        const cells = [{ row: r0, col: c0 }];
+        siteIdOf[r0][c0] = id;
+        const target = Number(weightedPick(SITE_SIZE_WEIGHTS));
+        // grow by repeatedly claiming a random unclaimed solid cell
+        // adjacent to ANY cell already in the site (not just the most
+        // recent one) -- candidates are gathered from every member each
+        // round, which naturally favors compact/chunky growth over long
+        // snaking lines, and is what occasionally produces a cell fully
+        // enclosed by its own site (a real courtyard candidate, see
+        // addBuildingSite). Duplicate candidates (adjacent to 2+ members
+        // at once) are fine -- picking one just biases toward the more
+        // "enclosed" growth direction, which is desirable here.
+        while (cells.length < target) {
+            const candidates = [];
+            for (const cell of cells) {
+                for (const [dc, dr] of [[0, -1], [0, 1], [-1, 0], [1, 0]]) {
+                    const nc = cell.col + dc, nr = cell.row + dr;
+                    if (grid[nr]?.[nc] && siteIdOf[nr][nc] === -1) candidates.push([nc, nr]);
+                }
+            }
+            if (!candidates.length) break; // boxed in by other sites/open cells -- stop short of target, single/small site is a valid outcome
+            const [nc, nr] = pick(candidates);
+            siteIdOf[nr][nc] = id;
+            unclaimedSet.delete(`${nc},${nr}`);
+            cells.push({ row: nr, col: nc });
+        }
+        buildingSites.push({ id, cells });
+    }
+}
+assembleBuildingSites();
+{
+    const totalCells = buildingSites.reduce((s, x) => s + x.cells.length, 0);
+    const bySize = {};
+    for (const s of buildingSites) bySize[s.cells.length] = (bySize[s.cells.length] || 0) + 1;
+    console.log(`[gen] ${buildingSites.length} building sites over ${totalCells} solid cells (mean ${(totalCells / buildingSites.length).toFixed(2)} cells/site) -- size histogram:`, bySize);
+}
+
+// which relationship a cell's given side has to whatever is on the
+// other side of it -- this (not the old single "margin from cell edge"
+// idea) is what actually decides whether that side gets a real wall:
+//   'internal'  -- another cell of the SAME site: no wall at all, a
+//                  full-width open connection (two modules merge into
+//                  one interior)
+//   'party'     -- a solid cell belonging to a DIFFERENT site: a real,
+//                  near-flush wall, no door (an attached-row party wall,
+//                  not a connection between buildings)
+//   'street'    -- an open (alley) cell, or the map's outer edge: a
+//                  real wall with the usual door/setback treatment
+function cellEdgeKind(r, c, dr, dc) {
+    const nr = r + dr, nc = c + dc;
+    if (grid[nr]?.[nc] === undefined) return 'street'; // out of grid bounds
+    if (grid[nr][nc] === false) return 'street';
+    return siteIdOf[nr][nc] === siteIdOf[r][c] ? 'internal' : 'party';
+}
+
 // ---------- maze topology: explicit OPEN/CLOSED edges ----------
 // grid[r][c] marks a cell solid/open, but a *rendered* building only
 // fills an inset footprint (CELL - margin) of its cell -- up to ~1.4
@@ -1869,6 +1981,14 @@ bootStatus(`maze carved (${allOpenCells.length} open cells) -- building the city
 // any building became impossible. Building-to-building is the only
 // case where a seal is actually needed (and open-to-open needs none at
 // all -- that's just the maze's own carved alley pavement).
+//
+// One more exception now that a building can span multiple cells: two
+// SOLID cells belonging to the SAME site are an intentional, fully open
+// interior connection (see cellEdgeKind's 'internal' case) -- sealing
+// that boundary would erect an invisible wall through the middle of a
+// real room. Only building/building edges where the two cells belong to
+// DIFFERENT sites (a genuine party wall between two separate buildings)
+// still get sealed.
 const mazeSealWalls = []; // {x1,z1,x2,z2,yMin,yMax} -- ground-level only, see MAZE_SEAL_HEIGHT
 // just above eye height + jump apex (~0.94) -- tall enough nothing can
 // walk or hop over it at ground level, but well under even the
@@ -1879,21 +1999,21 @@ const MAZE_SEAL_HEIGHT = 2.2;
 for (let r = 0; r < GRID_ROWS; r++) {
     for (let c = 0; c < GRID_COLS; c++) {
         const { x: cx, z: cz } = cellToWorld(c, r);
-        // east boundary, (c,r)-(c+1,r) -- only between two buildings
-        if (c + 1 < GRID_COLS && grid[r]?.[c] && grid[r]?.[c + 1]) {
+        // east boundary, (c,r)-(c+1,r) -- only between two DIFFERENT buildings
+        if (c + 1 < GRID_COLS && grid[r]?.[c] && grid[r]?.[c + 1] && siteIdOf[r][c] !== siteIdOf[r][c + 1]) {
             const bx = cx + CELL / 2;
             mazeSealWalls.push({ x1: bx, z1: cz - CELL / 2, x2: bx, z2: cz + CELL / 2, yMin: 0, yMax: MAZE_SEAL_HEIGHT });
             for (let i = 0; i < 4; i++) addFenceSegment(bx, cz - CELL / 2 + (i + 0.5) * (CELL / 4), Math.PI / 2);
         }
-        // south boundary, (c,r)-(c,r+1) -- only between two buildings
-        if (r + 1 < GRID_ROWS && grid[r]?.[c] && grid[r + 1]?.[c]) {
+        // south boundary, (c,r)-(c,r+1) -- only between two DIFFERENT buildings
+        if (r + 1 < GRID_ROWS && grid[r]?.[c] && grid[r + 1]?.[c] && siteIdOf[r][c] !== siteIdOf[r + 1][c]) {
             const bz = cz + CELL / 2;
             mazeSealWalls.push({ x1: cx - CELL / 2, z1: bz, x2: cx + CELL / 2, z2: bz, yMin: 0, yMax: MAZE_SEAL_HEIGHT });
             for (let i = 0; i < 4; i++) addFenceSegment(cx - CELL / 2 + (i + 0.5) * (CELL / 4), bz, 0);
         }
     }
 }
-console.log(`[testing] maze topology: ${mazeSealWalls.length} cell boundaries sealed -- squeezing between adjacent buildings is no longer physically possible`);
+console.log(`[testing] maze topology: ${mazeSealWalls.length} cell boundaries sealed -- squeezing between adjacent buildings is no longer physically possible (same-site internal edges correctly excluded)`);
 
 // ---------- reusable geometry/materials ----------
 
@@ -2288,172 +2408,20 @@ function addHorizontalPlane(rect, y, mat) {
     scene.add(plane);
 }
 
-// ---------- footprint families ----------
-// a building's ground-level SILHOUETTE used to always be one square
-// (optionally with 1-2 small accent wings) -- with all textures/signs/
-// windows disabled and the camera straight overhead, nearly every
-// building in the city read as the exact same box. That's the thing
-// this replaces: `family` decides how many modules a building is built
-// from and how they're proportioned RELATIVE TO EACH OTHER, so the
-// actual footprint polygon changes, not just decoration on top of one.
-// Every family still assembles from the same core+wings primitives
-// (buildCoreFloor/buildWingFloor/buildExteriorPerimeter/
-// computeArchwaySpan) -- only the shape decision changes.
-const FOOTPRINT_FAMILIES_NORMAL = { rect: 4, rowhouse: 2, L: 3, T: 2, U: 2, step: 2, cluster: 2 };
-const FOOTPRINT_FAMILIES_WAREHOUSE = { rect: 3, cluster: 2 };
-const FOOTPRINT_CARDINALS = [{ dx: 0, dz: -1 }, { dx: 0, dz: 1 }, { dx: -1, dz: 0 }, { dx: 1, dz: 0 }];
+// ---------- building sites -> cell modules ----------
+// see assembleBuildingSites above: a site is a connected group of 1-N
+// solid grid cells, and every cell in it becomes its own full-scale
+// module (see addBuildingModule below) -- an L/T/U/bar/cluster-shaped
+// SITE therefore produces a genuinely that-shaped BUILDING, each arm a
+// real full cell wide/deep, not a small wing bolted onto one dominant
+// rectangle. addBuildingSite (further down) is what replaces the old
+// per-cell addBuilding entry point.
 
-// one wing attached to `core` on `side`, extending outward from that
-// face by `depth` (total extra footprint past the core's own edge --
-// the wing's own half-extent in that direction is half of it, and its
-// center sits half of it further out again; conflating "how far the
-// wing's center sits from the core" with "the wing's own half-width"
-// double-counts depth and can push the wing's outer face past the
-// parcel boundary, so they're kept separate here). `offset` slides the
-// wing along the axis TANGENT to `side` -- 0 is centered on that face,
-// +-tangentHalf is pinned to one corner of it (what 'step' and the 'U'
-// arms both use instead of the default random-anywhere-on-the-face
-// placement 'L'/'T'/'cluster' use).
-function makeWing(side, core, wingRoomX, wingRoomZ, opts = {}) {
-    const axisIsX = side.dx !== 0; // wing projects outward along x
-    const wingRoom = axisIsX ? wingRoomX : wingRoomZ;
-    const coreHalfOnAxis = axisIsX ? core.hwx : core.hwz;
-    const tangentHalf = axisIsX ? core.hwz : core.hwx;
-    // upper bound is never allowed to exceed the room actually available
-    // on this side -- the old `Math.max(0.3, ...)` floor could force the
-    // range's ceiling ABOVE wingRoom whenever wingRoom fell between 0.25
-    // and 0.3, letting the wing's outer face poke past the parcel
-    // envelope (caught by a harness sweep: ~1.2% of sampled wings did
-    // exactly this).
-    const maxDepth = Math.min(1.3, wingRoom);
-    const minDepth = Math.min(0.25, maxDepth * 0.8);
-    const depth = opts.depth ?? randRange(minDepth, maxDepth);
-    const halfDepth = Math.max(0.1, depth) / 2;
-    const width = opts.width ?? randRange(tangentHalf * 0.55, tangentHalf * 1.15);
-    const maxOffset = Math.max(0, tangentHalf - width * 0.4); // how far the wing's center can drift along the shared face before it barely overlaps the core at all
-    const offset = opts.offset !== undefined ? Math.max(-maxOffset, Math.min(maxOffset, opts.offset)) : randRange(-maxOffset, maxOffset);
-    const wcx = axisIsX ? core.cx + side.dx * (coreHalfOnAxis + halfDepth) : core.cx + offset;
-    const wcz = axisIsX ? core.cz + offset : core.cz + side.dz * (coreHalfOnAxis + halfDepth);
-    return {
-        side, cx: wcx, cz: wcz,
-        hwx: axisIsX ? halfDepth : width, hwz: axisIsX ? width : halfDepth,
-        floorMin: opts.floorMin ?? 0, floorMax: opts.floorMax ?? 1, kind: opts.kind ?? 'annex',
-    };
-}
-
-// `parcel` is the full buildable envelope {cx,cz,hwx,hwz} -- for an
-// ordinary building this is one grid cell's own usable bounds; for a
-// multi-cell building (see assembleParcels) it's the merged bounds of
-// several. Either way buildBuildingPlan doesn't know or care which --
-// it just picks a family and fits a core (+ wings, per family) inside
-// whatever envelope it's handed.
-function buildBuildingPlan(parcel, isWarehouse, floorCount) {
-    const { cx: x, cz: z, hwx: envHwx, hwz: envHwz } = parcel;
-    const family = weightedPick(isWarehouse ? FOOTPRINT_FAMILIES_WAREHOUSE : FOOTPRINT_FAMILIES_NORMAL);
-
-    // independent per-axis core proportions -- never forced square. This
-    // alone is most of the "plain rectangle" diversity: a long/narrow
-    // building and a deep/narrow one no longer both round off to the
-    // same box.
-    let coreHwx = envHwx * randRange(0.72, 0.94);
-    let coreHwz = envHwz * randRange(0.72, 0.94);
-    if (family === 'rowhouse') {
-        // extreme narrow/deep (or wide/shallow) -- one axis stays close
-        // to the full envelope, the other gets cut down hard.
-        if (rng() < 0.5) { coreHwx = envHwx * randRange(0.85, 0.97); coreHwz = envHwz * randRange(0.3, 0.48); }
-        else { coreHwz = envHwz * randRange(0.85, 0.97); coreHwx = envHwx * randRange(0.3, 0.48); }
-    }
-    const core = { cx: x, cz: z, hwx: coreHwx, hwz: coreHwz };
-    const wings = [];
-    const wingRoomX = Math.max(0, envHwx - coreHwx);
-    const wingRoomZ = Math.max(0, envHwz - coreHwz);
-    const roomOnSide = (side) => (side.dx !== 0 ? wingRoomX : wingRoomZ);
-    const sidesWithRoom = (minRoom) => FOOTPRINT_CARDINALS.filter(s => roomOnSide(s) > minRoom);
-
-    if (family === 'L') {
-        const candidates = sidesWithRoom(0.3);
-        if (candidates.length) {
-            const side = pick(candidates);
-            const tangentHalf = side.dx !== 0 ? core.hwz : core.hwx;
-            wings.push(makeWing(side, core, wingRoomX, wingRoomZ, {
-                width: tangentHalf * randRange(0.5, 0.85), // a real, comparably-sized arm -- not a small accent
-                depth: roomOnSide(side) * randRange(0.6, 0.95),
-                floorMax: rng() < 0.6 ? floorCount : Math.max(1, Math.floor(floorCount * randRange(0.4, 0.85))),
-            }));
-        }
-    } else if (family === 'T') {
-        const candidates = sidesWithRoom(0.3);
-        if (candidates.length) {
-            const side = pick(candidates);
-            const tangentHalf = side.dx !== 0 ? core.hwz : core.hwx;
-            wings.push(makeWing(side, core, wingRoomX, wingRoomZ, {
-                width: tangentHalf * randRange(0.8, 1.0), // nearly full-width -- a T-junction, not an L-corner
-                offset: 0,
-                depth: roomOnSide(side) * randRange(0.6, 0.95),
-                floorMax: rng() < 0.6 ? floorCount : Math.max(1, Math.floor(floorCount * randRange(0.4, 0.85))),
-            }));
-        }
-    } else if (family === 'U') {
-        // 2 arms on the SAME side, pinned to opposite ends of it -- the
-        // core reads as the back wall, the arms reach forward, and the
-        // space between them (in front of the core, between the arms)
-        // is a real open courtyard, not just decoration.
-        const side = pick(FOOTPRINT_CARDINALS);
-        const tangentHalf = side.dx !== 0 ? core.hwz : core.hwx;
-        const room = roomOnSide(side);
-        if (room > 0.3) {
-            const armWidth = tangentHalf * randRange(0.22, 0.34);
-            const maxOffset = Math.max(0, tangentHalf - armWidth * 0.5);
-            for (const sign of [-1, 1]) {
-                wings.push(makeWing(side, core, wingRoomX, wingRoomZ, {
-                    width: armWidth,
-                    depth: room * randRange(0.65, 0.95),
-                    offset: sign * maxOffset,
-                    floorMax: floorCount,
-                }));
-            }
-        }
-    } else if (family === 'step') {
-        const candidates = sidesWithRoom(0.25);
-        if (candidates.length) {
-            const side = pick(candidates);
-            const tangentHalf = side.dx !== 0 ? core.hwz : core.hwx;
-            wings.push(makeWing(side, core, wingRoomX, wingRoomZ, {
-                width: tangentHalf * randRange(0.45, 0.7),
-                depth: roomOnSide(side) * randRange(0.5, 0.9),
-                offset: (rng() < 0.5 ? -1 : 1) * tangentHalf * randRange(0.35, 0.65), // pinned toward one corner -- the actual "offset step" read, not centered
-                floorMax: rng() < 0.5 ? floorCount : Math.max(1, Math.floor(floorCount * randRange(0.35, 0.75))),
-            }));
-        }
-    } else if (family === 'cluster') {
-        const count = isWarehouse ? 1 + Math.floor(rng() * 2) : 2 + Math.floor(rng() * 2);
-        const usedSides = new Set();
-        for (let i = 0; i < count; i++) {
-            const candidates = sidesWithRoom(0.25).filter(s => !usedSides.has(`${s.dx},${s.dz}`));
-            if (!candidates.length) break;
-            const side = pick(candidates);
-            usedSides.add(`${side.dx},${side.dz}`);
-            // bays need at least one upper floor to attach to -- most
-            // massing variety here still comes from ground-up annexes.
-            const isBay = floorCount >= 2 && rng() < 0.35;
-            const floorMin = isBay ? 1 + Math.floor(rng() * (floorCount - 1)) : 0;
-            wings.push(makeWing(side, core, wingRoomX, wingRoomZ, {
-                floorMin,
-                floorMax: isBay ? Math.min(floorCount, floorMin + 1 + Math.floor(rng() * 2)) : Math.max(1, Math.min(floorCount, 1 + Math.floor(rng() * floorCount))),
-                kind: isBay ? 'bay' : 'annex',
-            }));
-        }
-    }
-    // 'rect'/'rowhouse': no wings -- the varied core proportions above ARE the point.
-
-    return { core, wings, floorCount, family };
-}
-
-// ?debugFootprints=1 -- one dim rectangle for the full parcel envelope
-// this building was allotted, one bright rectangle per generated volume
-// (core + each wing). Flown over from directly above (freecam, F), the
-// bright shapes are the actual "gray box" top-down test: a plain
-// centered square on most buildings means the generator has regressed.
+// ?debugFootprints=1 -- one dim rectangle per site cell's full envelope,
+// one bright rectangle per actual built module, a distinct color for
+// void/courtyard cells. Flown over with freecam (F), this is the literal
+// "gray box overhead" test: if the bright shapes still look like a plain
+// grid of centered squares, the generator has regressed.
 function addDebugRectOutline(cx, cz, hwx, hwz, y, color) {
     const pts = [
         new THREE.Vector3(cx - hwx, y, cz - hwz),
@@ -2465,24 +2433,6 @@ function addDebugRectOutline(cx, cz, hwx, hwz, y, color) {
     const loop = new THREE.LineLoop(geo, new THREE.LineBasicMaterial({ color }));
     scene.add(loop);
 }
-function addFootprintDebugOverlay(envelope, plan, baseY) {
-    if (!DEBUG_FOOTPRINTS) return;
-    addDebugRectOutline(envelope.cx, envelope.cz, envelope.hwx, envelope.hwz, baseY + 0.15, 0x3355aa); // dim blue: full parcel
-    addDebugRectOutline(plan.core.cx, plan.core.cz, plan.core.hwx, plan.core.hwz, baseY + 0.16, 0x00ff88); // bright green: generated core
-    for (const w of plan.wings) {
-        addDebugRectOutline(w.cx, w.cz, w.hwx, w.hwz, baseY + 0.16, 0xffaa00); // bright orange: each generated wing
-    }
-}
-
-// the world-space span of the open boundary between the core and one of
-// its wings, along whichever axis is tangent to the shared face -- the
-// overlap of the two modules' own extents there, not a fixed-width
-// doorway, so the connection is exactly as wide as the two rooms
-// actually share (an alcove, not a corridor).
-function computeArchwaySpan(side, core, wing) {
-    if (side.dx !== 0) return { lo: Math.max(core.cz - core.hwz, wing.cz - wing.hwz), hi: Math.min(core.cz + core.hwz, wing.cz + wing.hwz) };
-    return { lo: Math.max(core.cx - core.hwx, wing.cx - wing.hwx), hi: Math.min(core.cx + core.hwx, wing.cx + wing.hwx) };
-}
 
 // builds one floor of the core module: exterior (with the street door on
 // floor 0, plus an archway toward the wing if it's active this floor),
@@ -2491,7 +2441,7 @@ function computeArchwaySpan(side, core, wing) {
 // shaft -- the stairwell in the same corner every time. Returns this
 // floor's own collision segments.
 function buildCoreFloor(core, fl, floorCount, floorHeight, door, extMat, shellMat, wingGaps, stairwell) {
-    const { cx, cz, hwx, hwz } = core; // no longer assumed square -- see footprint families
+    const { cx, cz, hwx, hwz } = core; // no longer assumed square -- see building sites/cell modules
     const y0 = fl * floorHeight;
     const segments = [];
     segments.push(...buildExteriorPerimeter(cx, cz, hwx, hwz, y0, floorHeight, door, extMat, wingGaps));
@@ -2512,6 +2462,16 @@ function buildCoreFloor(core, fl, floorCount, floorHeight, door, extMat, shellMa
         segments.push(...buildWallWithGaps('z', swZ - cornerSignZ * swHalf, Math.min(doorX, flightEndX), Math.max(doorX, flightEndX), [], floorHeight, shellMat, y0));
 
         const hasStairUp = fl < floorCount - 1;
+        // real roof access FROM INSIDE at the top floor -- the stair
+        // core is one continuous shaft floor 0 -> floorCount-1 already
+        // (hasStairUp above); this is just its last flight, rising from
+        // the top floor's own y0 to y0+floorHeight, which is EXACTLY
+        // this module's roof deck height (enterHeight === floorCount *
+        // floorHeight) -- climbing it steps you straight out onto the
+        // already-registered rooftop deck, not into another floor. No
+        // longer only reachable by free-climbing from outside.
+        const isTopFloor = fl === floorCount - 1;
+        const roofHatch = isTopFloor && rng() < 0.55;
         if (fl > 0) {
             // this floor's own walkable surface, notched around the hole
             // the stair below rises into.
@@ -2521,7 +2481,7 @@ function buildCoreFloor(core, fl, floorCount, floorHeight, door, extMat, shellMa
                 addHorizontalPlane(r, y0 + 0.02, shellMat);
             }
         }
-        if (hasStairUp) {
+        if (hasStairUp || roofHatch) {
             addStairFlight('x', doorX, flightEndX, swZ, y0, y0 + floorHeight, { width: swHalf * 1.1 });
             const ceilRects = computeNotchedRects(cx, cz, hwx, hwz, doorX, flightEndX, swZ - swHalf, swZ + swHalf);
             for (const r of ceilRects) {
@@ -2554,43 +2514,6 @@ function buildCoreFloor(core, fl, floorCount, floorHeight, door, extMat, shellMa
         floor.rotation.x = -Math.PI / 2;
         floor.position.set(cx, 0.02, cz);
         scene.add(floor);
-    }
-    return segments;
-}
-
-// builds one floor of a wing module -- a single open room (no further
-// partitioning; a wing is an annex, not its own subdivided building),
-// open to the core through the shared archway, with its own floor/
-// ceiling/roof-deck handling exactly like the core's, just without a
-// stairwell. Returns this floor's own collision segments.
-function buildWingFloor(wing, fl, floorHeight, extMat, wingGap) {
-    const { cx, cz, hwx, hwz } = wing;
-    const y0 = fl * floorHeight;
-    const segments = buildExteriorPerimeter(cx, cz, hwx, hwz, y0, floorHeight, null, extMat, [wingGap]);
-    const isTopFloor = fl === wing.floorMax - 1;
-    // a floor rect is only implicit (the ground plane) at true y=0 --
-    // a 'bay' wing's own bottom floor can start well above ground
-    // (floorMin > 0), and that floor needs a real registered surface
-    // the same as any other elevated floor, not just "fl > 0" (which
-    // was only ever correct for ground-up annexes).
-    if (y0 > 0.01) {
-        elevatedPlatforms.push({ x: cx, z: cz, hx: hwx, hz: hwz, y: y0 });
-        addHorizontalPlane({ x: cx, z: cz, hx: hwx, hz: hwz }, y0 + 0.02, extMat);
-    }
-    if (isTopFloor) {
-        // its own real roof deck -- a genuinely lower, separately
-        // reachable landing next to the core, not just a wider square.
-        elevatedPlatforms.push({ x: cx, z: cz, hx: hwx, hz: hwz, y: y0 + floorHeight });
-    } else {
-        overheadCeilings.push({ x: cx, z: cz, hx: hwx, hz: hwz, y: y0 + floorHeight });
-    }
-    addHorizontalPlane({ x: cx, z: cz, hx: hwx, hz: hwz }, y0 + floorHeight, extMat);
-    if (fl === wing.floorMin) scatterJunk('indoor', cx, cz, 2 + Math.floor(rng() * 3), Math.min(hwx, hwz) * 0.6);
-    if (dynamicLightsRemaining > 0 && rng() < 0.6) {
-        dynamicLightsRemaining--;
-        const light = new THREE.PointLight(0xffe9b0, 2, floorHeight * 2, 2);
-        light.position.set(cx, y0 + floorHeight * 0.6, cz);
-        scene.add(light);
     }
     return segments;
 }
@@ -2743,38 +2666,6 @@ function addStairTowerExpression(bx, bz, cornerSignX, swZ, enterHeight, hw, floo
         win.position.set(faceX + cornerSignX * (bumpDepth + 0.005), (i + 0.5) * floorHeight, swZ);
         win.rotation.y = cornerSignX > 0 ? Math.PI / 2 : -Math.PI / 2;
         scene.add(win);
-    }
-}
-
-// courtyard/void, the emergent kind rather than true boolean subtraction
-// -- the current module system only ever adds volume, so a real notched-
-// out core is out of scope, but when a building's 2 wings land on
-// ADJACENT (perpendicular) sides rather than opposite ones, the diagonal
-// gap between them is already a genuine, real negative space nobody's
-// standing in. Dressing it as a small paved courtyard nook (instead of
-// leaving it as unremarkable alley) makes that gap read as intentional.
-function addCourtyardNook(cx, cz) {
-    const paverTex = makePixelTexture((ctx, w, h) => {
-        ctx.fillStyle = '#8a8270';
-        ctx.fillRect(0, 0, w, h);
-        ctx.strokeStyle = '#5a5648';
-        for (let i = 0; i < w; i += 12) { ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, h); ctx.stroke(); }
-        for (let i = 0; i < h; i += 12) { ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(w, i); ctx.stroke(); }
-    }, 48, 48);
-    const pavers = new THREE.Mesh(
-        new THREE.PlaneGeometry(1.6, 1.6),
-        new THREE.MeshStandardMaterial({ map: paverTex, roughness: 0.9 })
-    );
-    pavers.rotation.x = -Math.PI / 2;
-    pavers.position.set(cx, 0.015, cz);
-    scene.add(pavers);
-    addPottedPlant(cx + 0.4, cz + 0.4);
-    addBench(cx - 0.3, cz - 0.3, randRange(0, Math.PI * 2));
-    if (dynamicLightsRemaining > 0) {
-        dynamicLightsRemaining--;
-        const light = new THREE.PointLight(0xfff0d0, 1.8, 4, 2);
-        light.position.set(cx, 1.6, cz);
-        scene.add(light);
     }
 }
 
@@ -3368,447 +3259,434 @@ function buildStairwayToHeaven(cx, cz) {
     addSign(lastX, topHeight + 1.6, lastZ, signRotY, 'THE TOP', 'nothing up here but you', 0xfff2d0, false);
 }
 
-function addBuilding(col, row) {
-    const { x, z } = cellToWorld(col, row);
-    // ~12% of buildings are squat warehouses instead of towers: near-full
-    // cell width, a fraction of the usual height.
-    const isWarehouse = rng() < 0.12;
-    // margins rolled independently per axis -- a plain rectangle is no
-    // longer forced square just because it has no wings; a long/narrow
-    // building and a deep/narrow one now actually look different from
-    // directly above instead of both rounding off to the same box.
-    const marginX = isWarehouse ? CONFIG.maze.buildingMarginMin : randRange(CONFIG.maze.buildingMarginMin, CONFIG.maze.buildingMarginMax);
-    const marginZ = isWarehouse ? CONFIG.maze.buildingMarginMin : randRange(CONFIG.maze.buildingMarginMin, CONFIG.maze.buildingMarginMax);
-    // envelope handed to buildBuildingPlan -- the full buildable bounds
-    // this parcel offers, before the family/core/wings decision. Single-
-    // cell for now (see assembleParcels for the multi-cell case).
-    const envHwx = (CELL - marginX) / 2, envHwz = (CELL - marginZ) / 2;
-    const isHeroTower = !isWarehouse && rng() < CONFIG.buildings.heroTowerChance;
-    const height = isWarehouse ? randRange(6, 12)
-        : isHeroTower ? randRange(CONFIG.buildings.heroHeightMin, CONFIG.buildings.heroHeightMax)
-            : randRange(CONFIG.buildings.heightMin, CONFIG.buildings.heightMax);
-    const color = pick(CONFIG.buildings.palette);
-
-    // a small per-building seeded context, derived once, that the rest of
-    // this function can actually correlate against instead of every
-    // downstream decision drawing its own independent coin flip. Real
-    // buildings don't roll their upkeep separately per feature -- a
-    // neglected block is neglected everywhere at once (grimier facade,
-    // more indoor junk, more rooftop clutter); a well-off one reads
-    // consistently well-off (more lit windows, more likely to have real
-    // furniture instead of debris). Not threaded out to the surrounding
-    // alley's props -- an alley cell can border more than one building,
-    // so there's no single owner to correlate it against without a
-    // bigger change than this pass is scoped for.
-    const buildingContext = {
-        wealth: rng(), // 0 = poor, 1 = rich
-        maintenance: rng(), // 0 = neglected, 1 = well-kept
+// ---------- facade surfaces: real, occupancy-tracked wall segments ----------
+// replaces "4 imaginary faces, place a sign dead-center" -- which is
+// exactly why 2-3 signs on one wall used to visibly stack: they were all
+// mounted at the SAME point, only offset in height. Every sign now
+// reserves the u (tangential) x v (vertical) rectangle it actually
+// occupies before the next placement on that same wall is even tried.
+function makeFacade(rect, dx, dz, yTop, door) {
+    const axisIsX = dz !== 0; // wall runs along the x axis (a north/south face)
+    const half = axisIsX ? rect.hwx : rect.hwz;
+    const rotY = dz === -1 ? 0 : dz === 1 ? Math.PI : dx === -1 ? -Math.PI / 2 : Math.PI / 2;
+    const cx = rect.cx + dx * (rect.hwx + 0.03), cz = rect.cz + dz * (rect.hwz + 0.03);
+    const isDoorWall = door && door.dx === dx && door.dz === dz;
+    return {
+        dx, dz, cx, cz, rotY, axisIsX, half, yTop,
+        occupied: isDoorWall ? [{ uMin: -0.85, uMax: 0.85, vMin: 0, vMax: 2.4 }] : [],
     };
+}
+function facadePoint(facade, u) {
+    return facade.axisIsX ? { x: facade.cx + u, z: facade.cz } : { x: facade.cx, z: facade.cz + u };
+}
+function facadeFits(facade, uMin, uMax, vMin, vMax, padding) {
+    if (uMin < -facade.half || uMax > facade.half) return false;
+    for (const r of facade.occupied) {
+        if (uMin - padding < r.uMax && r.uMin < uMax + padding && vMin < r.vMax && vMax > r.vMin) return false;
+    }
+    return true;
+}
+function facadeReserve(facade, uMin, uMax, vMin, vMax) { facade.occupied.push({ uMin, uMax, vMin, vMax }); }
 
-    // ~1 in 6 buildings is "stained" with the real elevation-gradient
-    // texture instead of a flat facade color -- trench-dark at the base
-    // climbing toward summit-pale near the roofline, more likely the more
-    // neglected this particular building rolled. Warehouses are too
-    // short/squat for either treatment to read, so they stay flat-color
-    // (matches the existing roof-topper skip below). Everything else
-    // defaults to a real per-floor window grid now instead of a bare
-    // flat prism -- facades finally have depth at a glance, not just in
-    // silhouette.
-    const useStain = !isWarehouse && rng() < 0.08 + (1 - buildingContext.maintenance) * 0.28;
-    const useWindows = !isWarehouse && !useStain;
-    // lit-window ratio: richer buildings read as more occupied/lit at
-    // night, neglected ones darker -- the same window grid, just a
-    // different fraction of its panes glowing.
-    const litRatio = Math.max(0.05, Math.min(0.4, 0.15 + buildingContext.wealth * 0.2 - (1 - buildingContext.maintenance) * 0.08));
-    // double-sided: this material used to only ever wrap the outside of a
-    // solid, unenterable tower mass, so the inside face never mattered.
-    // Now it's also the exterior wall material for real, enterable upper
-    // floors -- single-sided would make those walls invisible from inside
-    // the room they're supposed to enclose.
-    const material = useStain
-        ? new THREE.MeshStandardMaterial({ map: makeTopologyStainTexture(), roughness: CONFIG.buildings.roughness, side: THREE.DoubleSide })
-        : useWindows
-            ? new THREE.MeshStandardMaterial({ map: makeWindowGridTexture(height, color, litRatio), roughness: CONFIG.buildings.roughness, side: THREE.DoubleSide })
-            : new THREE.MeshStandardMaterial({ color, roughness: CONFIG.buildings.roughness, side: THREE.DoubleSide });
+// tries `count` signs on one facade -- each one chooses a WIDTH that
+// fits the widest still-free span at a randomly rolled vertical band,
+// instead of rolling a size first and hoping it fits somewhere (the old
+// approach). Skipping is correct once a wall is genuinely full -- this
+// returns how many actually landed.
+function placeSignsOnFacade(facade, count, row, height, floorHeight) {
+    let placed = 0;
+    const bandHi = Math.max(floorHeight + 1, Math.min(height - 0.3, height - 2, 6));
+    const bandLo = Math.max(2.2, floorHeight + 0.3);
+    for (let i = 0; i < count; i++) {
+        const vMin = randRange(bandLo, Math.max(bandLo, bandHi - 1.0));
+        const vMax = vMin + randRange(0.9, 1.5);
+        let chosenU = null, chosenWidth = null;
+        for (let tries = 0; tries < 10; tries++) {
+            const width = randRange(1.1, 2.6);
+            if (facade.half * 2 < width + 0.3) break; // this wall can't fit anything this size at all
+            const u = randRange(-facade.half + width / 2, facade.half - width / 2);
+            if (facadeFits(facade, u - width / 2, u + width / 2, vMin, vMax, 0.3)) { chosenU = u; chosenWidth = width; break; }
+        }
+        if (chosenU === null) continue; // correct to skip -- wall is full at this band
+        facadeReserve(facade, chosenU - chosenWidth / 2, chosenU + chosenWidth / 2, vMin, vMax);
+        const p = facadePoint(facade, chosenU);
+        const content = pickSignContent(p.x, p.z);
+        const neon = pickNeonForRow(row);
+        addSign(p.x, (vMin + vMax) / 2, p.z, facade.rotY, content.title, content.subtitle, neon, content.flicker, chosenWidth);
+        placed++;
+    }
+    return placed;
+}
 
-    // every building is now a real, multi-floor structure: K stacked
-    // floors (K from QUALITY.maxEnterableFloors, clamped to what the
-    // building's actual height can fit), each with real solid exterior
-    // walls, the same interconnected room layout repeated floor to floor,
-    // and a fixed-corner stairwell shaft connecting all of them -- doors
-    // between rooms on a floor, a real stair between floors. This is what
-    // constructs the building's lower mass now, not a separate decorative
-    // shell wrapped around one ground-floor room; the tapered/twisted
-    // tower below only picks up above the topmost enterable floor, purely
-    // for skyline silhouette. (That split also fixes wall props sinking
-    // into/clipping through the facade -- they anchor to this constant-hw
-    // flat wall, which the tapered tower above no longer pretends to be.)
-    const openDirs = [{ dx: 0, dz: -1 }, { dx: 0, dz: 1 }, { dx: -1, dz: 0 }, { dx: 1, dz: 0 }]
-        .filter(d => grid[row + d.dz]?.[col + d.dx] === false);
-    const door = openDirs.length ? pick(openDirs) : null;
-    const floorHeight = 3.0;
-    const maxEnterableFloors = isWarehouse ? Math.min(QUALITY.maxEnterableFloors, 2) : QUALITY.maxEnterableFloors;
-    const floorCount = Math.max(1, Math.min(maxEnterableFloors, Math.floor(height / floorHeight)));
-    const enterHeight = floorCount * floorHeight;
+// classifies one of a cell's 4 sides against the site it belongs to --
+// see assembleBuildingSites/cellEdgeKind above for the base 'internal' /
+// 'party' / 'street' cases; this adds 'courtyard' when the neighbor is
+// specifically this site's chosen void cell (see addBuildingSite).
+function edgeKindForSite(cell, dr, dc, voidCell) {
+    const base = cellEdgeKind(cell.row, cell.col, dr, dc);
+    if (base === 'internal' && voidCell && cell.row + dr === voidCell.row && cell.col + dc === voidCell.col) return 'courtyard';
+    return base;
+}
+
+const CELL_SIDE_DEFS = [
+    { key: 'N', dx: 0, dz: -1 }, { key: 'S', dx: 0, dz: 1 },
+    { key: 'W', dx: -1, dz: 0 }, { key: 'E', dx: 1, dz: 0 },
+];
+function kindForSide(kinds, dx, dz) { return kinds[CELL_SIDE_DEFS.find(s => s.dx === dx && s.dz === dz).key]; }
+
+// the actual buildable rectangle for one cell -- independent per-side
+// setbacks (0 for a same-site neighbor, a small shared value for a
+// party wall, the normal street setback otherwise) instead of one margin
+// shrinking the cell uniformly on all 4 sides. Two adjacent same-site
+// cells get EXACTLY flush (zero-gap) shared edges this way -- that flush
+// merge, not a family/wing system, is what makes an L-shaped SITE read
+// as a genuinely L-shaped BUILDING (each arm a full cell wide/deep).
+function computeCellRect(x, z, kinds, streetSetbackX, streetSetbackZ, partySetback) {
+    const setbackFor = (kind, streetSetback) => kind === 'internal' ? 0 : kind === 'party' ? partySetback : streetSetback;
+    const zMin = z - CELL / 2 + setbackFor(kinds.N, streetSetbackZ);
+    const zMax = z + CELL / 2 - setbackFor(kinds.S, streetSetbackZ);
+    const xMin = x - CELL / 2 + setbackFor(kinds.W, streetSetbackX);
+    const xMax = x + CELL / 2 - setbackFor(kinds.E, streetSetbackX);
+    return { cx: (xMin + xMax) / 2, cz: (zMin + zMax) / 2, hwx: (xMax - xMin) / 2, hwz: (zMax - zMin) / 2 };
+}
+
+// a real, fully-enclosed courtyard void -- dressed as a paved yard
+// filling roughly the whole cell, not built as a module at all. Only
+// ever chosen for a cell whose all 4 neighbors belong to the SAME site
+// (see addBuildingSite), so it has no direct alley/different-site/
+// perimeter exposure -- every side of it is a real wall belonging to one
+// of its neighboring modules (see 'courtyard' in edgeKindForSite).
+function buildCourtyardVoid(cell) {
+    const { x: cx, z: cz } = cellToWorld(cell.col, cell.row);
+    const half = CELL / 2 - 0.3;
+    const paverTex = makePixelTexture((ctx, w, h) => {
+        ctx.fillStyle = '#8a8270';
+        ctx.fillRect(0, 0, w, h);
+        ctx.strokeStyle = '#5a5648';
+        for (let i = 0; i < w; i += 12) { ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, h); ctx.stroke(); }
+        for (let i = 0; i < h; i += 12) { ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(w, i); ctx.stroke(); }
+    }, 96, 96);
+    const pavers = new THREE.Mesh(new THREE.PlaneGeometry(half * 2, half * 2), new THREE.MeshStandardMaterial({ map: paverTex, roughness: 0.9 }));
+    pavers.rotation.x = -Math.PI / 2;
+    pavers.position.set(cx, 0.015, cz);
+    scene.add(pavers);
+    addPottedPlant(cx + half * 0.5, cz + half * 0.5);
+    addPottedPlant(cx - half * 0.5, cz - half * 0.5);
+    addBench(cx - half * 0.4, cz + half * 0.3, randRange(0, Math.PI * 2));
+    addBench(cx + half * 0.3, cz - half * 0.4, randRange(0, Math.PI * 2));
+    scatterJunk('alley', cx, cz, 1 + Math.floor(rng() * 2), half * 0.5);
+    if (dynamicLightsRemaining > 0) {
+        dynamicLightsRemaining--;
+        const light = new THREE.PointLight(0xfff0d0, 2.2, 8, 2);
+        light.position.set(cx, 2.2, cz);
+        scene.add(light);
+    }
+}
+
+// ?debugFootprints=1 -- one dim rectangle per site cell's full envelope,
+// one bright rectangle per actually built module, magenta for a
+// courtyard void. Flown over with freecam (F), this is the literal
+// "gray box overhead" test: a plain grid of centered squares means the
+// generator has regressed.
+function addSiteDebugOverlay(cells, builtModules, voidCell) {
+    if (!DEBUG_FOOTPRINTS) return;
+    for (const cell of cells) {
+        const { x, z } = cellToWorld(cell.col, cell.row);
+        addDebugRectOutline(x, z, CELL / 2, CELL / 2, 0.15, 0x3355aa);
+    }
+    for (const m of builtModules) addDebugRectOutline(m.cx, m.cz, m.hwx, m.hwz, 0.16, 0x00ff88);
+    if (voidCell) {
+        const { x, z } = cellToWorld(voidCell.col, voidCell.row);
+        addDebugRectOutline(x, z, CELL / 2 - 0.3, CELL / 2 - 0.3, 0.17, 0xff33cc);
+    }
+}
+
+// one full-scale module -- one grid cell of a building site, inset per
+// real per-side edge classification (see computeCellRect). Returns its
+// own {cx,cz,hwx,hwz} (debug overlay only).
+function addBuildingModule(cell, opts) {
+    const { isPrimary, isWarehouse, floorCount, floorHeight, height, color, material, buildingContext, streetSetbackX, streetSetbackZ, partySetback, voidCell } = opts;
+    const { row, col } = cell;
+    const { x, z } = cellToWorld(col, row);
+
+    const kinds = {};
+    for (const s of CELL_SIDE_DEFS) kinds[s.key] = edgeKindForSite(cell, s.dz, s.dx, voidCell);
+
+    const rect = computeCellRect(x, z, kinds, streetSetbackX, streetSetbackZ, partySetback);
+    const { cx, cz, hwx, hwz } = rect;
+    footprintOf[row][col] = { hwx, hwz };
+
     const shellMat = new THREE.MeshStandardMaterial({ color, roughness: 0.9, side: THREE.DoubleSide });
+    const streetSides = CELL_SIDE_DEFS.filter(s => kinds[s.key] === 'street');
+    const door = streetSides.length ? pick(streetSides) : null;
 
-    // the stairwell is the one thing that stays fixed across every floor
-    // -- it's one continuous physical shaft, so its corner/footprint
-    // can't move floor to floor the way everything else now can.
-    //
-    // a modular plan -- the core (this parcel's actual footprint, which
-    // may now be a non-square rectangle, or offset off-center within the
-    // envelope entirely for L/T/U/step families) plus 0-2 wings, each a
-    // genuinely separate volume with its own width/depth and floor range
-    // (see buildBuildingPlan for 'annex' vs 'bay'). Built BEFORE the
-    // stairwell below (which used to come first) because the stairwell's
-    // corner now has to sit against the CORE's own half-extents, not the
-    // envelope's -- those can differ once the core is offset or the
-    // family is anything but a plain centered rect.
-    const parcel = { cx: x, cz: z, hwx: envHwx, hwz: envHwz };
-    const plan = buildBuildingPlan(parcel, isWarehouse, floorCount);
-    const { cx: coreX, cz: coreZ, hwx: coreHwx, hwz: coreHwz } = plan.core;
-    // recorded per-axis now -- consumers (signage faces, the "one true
-    // signal" placement, overhead cable/tarp anchoring) all need to know
-    // which axis a given wall faces, not just one averaged scalar.
-    footprintOf[row][col] = { hwx: coreHwx, hwz: coreHwz };
-    addFootprintDebugOverlay(parcel, plan, 0);
+    // base gaps -- present on EVERY floor: full-width open connections to
+    // same-site neighbors ('internal'), doorway-width openings into a
+    // courtyard void ('courtyard'). 'party' sides get a real, gap-free
+    // wall; 'street' sides get a real wall too, with the primary door
+    // (floor 0 only, handled separately below with the usual lintel).
+    const baseGaps = [];
+    for (const s of CELL_SIDE_DEFS) {
+        const kind = kinds[s.key];
+        if (kind === 'internal') {
+            baseGaps.push(s.dx !== 0 ? { dx: s.dx, dz: 0, lo: cz - hwz, hi: cz + hwz } : { dx: 0, dz: s.dz, lo: cx - hwx, hi: cx + hwx });
+        } else if (kind === 'courtyard') {
+            baseGaps.push(s.dx !== 0 ? { dx: s.dx, dz: 0, lo: cz - 0.8, hi: cz + 0.8 } : { dx: 0, dz: s.dz, lo: cx - 0.8, hi: cx + 0.8 });
+        }
+    }
 
     let stairwell = null;
-    // a fixed-corner shaft needs real room on BOTH axes to sit in --
-    // the 'rowhouse' family (and any other family that lands a very
-    // narrow core) can produce a core too thin on one axis for any swHalf
-    // to fit without going negative/inverted. Rather than emit a
-    // degenerate or inside-out shaft, those buildings simply skip interior
-    // stairs -- buildCoreFloor already has a real fallback for a null
-    // stairwell (a plain solid ceiling per floor, same as any floorCount
-    // === 1 building), so upper floors still exist, they're just not
-    // interior-reachable, same as the decorative mass above enterHeight
-    // always was.
-    if (floorCount > 1 && Math.min(coreHwx, coreHwz) > 1.6) {
-        const swHalf = Math.min(1.1, Math.min(coreHwx, coreHwz) - 0.5);
+    // a fixed-corner shaft needs real room on both axes -- a narrow
+    // module (a short wing, a rowhouse-thin cell) skips an interior stair
+    // rather than build a degenerate/inverted one. buildCoreFloor already
+    // has a real fallback for a null stairwell (a plain solid ceiling per
+    // floor, same as any floorCount === 1 module) -- upper floors still
+    // exist there, they're just not interior-reachable in that module.
+    if (floorCount > 1 && Math.min(hwx, hwz) > 1.6) {
+        const swHalf = Math.min(1.1, Math.min(hwx, hwz) - 0.5);
         const cornerSignX = rng() < 0.5 ? -1 : 1, cornerSignZ = rng() < 0.5 ? -1 : 1;
-        const swX = coreX + cornerSignX * (coreHwx - swHalf - 0.15);
-        const swZ = coreZ + cornerSignZ * (coreHwz - swHalf - 0.15);
+        const swX = cx + cornerSignX * (hwx - swHalf - 0.15);
+        const swZ = cz + cornerSignZ * (hwz - swHalf - 0.15);
         const doorX = swX - cornerSignX * swHalf;
         const flightEndX = swX + cornerSignX * swHalf * 0.3;
         stairwell = { swX, swZ, swHalf, cornerSignX, cornerSignZ, doorX, flightEndX };
     }
-    // cosmetic stair-core expression -- skipped if a wing already claims
-    // this same face, so the bump never visually collides with it.
-    if (stairwell && !plan.wings.some(w => w.side.dx === stairwell.cornerSignX && w.side.dz === 0)) {
-        addStairTowerExpression(coreX, coreZ, stairwell.cornerSignX, stairwell.swZ, enterHeight, coreHwx, floorHeight);
+    // cosmetic stair-core expression -- only where there's an actual wall
+    // to bump out from (not an open archway into a neighboring module).
+    if (stairwell && kindForSide(kinds, stairwell.cornerSignX, 0) !== 'internal') {
+        addStairTowerExpression(cx, cz, stairwell.cornerSignX, stairwell.swZ, height, hwx, floorHeight);
     }
-    // courtyard nook -- only when the 2 wings land on perpendicular
-    // (not opposite) sides, so there's an actual diagonal gap to dress.
-    if (plan.wings.length === 2) {
-        const [wa, wb] = plan.wings;
-        const perpendicular = wa.side.dx * wb.side.dx + wa.side.dz * wb.side.dz === 0;
-        if (perpendicular) {
-            addCourtyardNook(coreX + (wa.side.dx + wb.side.dx) * coreHwx * 0.85, coreZ + (wa.side.dz + wb.side.dz) * coreHwz * 0.85);
-        }
+
+    // upper-floor exterior opening: a real fire escape now connects to
+    // an actual floor, not just a decorative mesh bolted onto a sealed
+    // box. The real fire-escape model/collision (buildFireEscapeStair,
+    // below) tops out around y=5.4 regardless of how tall this building
+    // is (its landings only ever land in floor 0/1's band) -- so the
+    // connection this makes is always to floor 1 specifically, a real
+    // but bounded slice of "upper floors have exterior routes", not
+    // every floor. Decided BEFORE floors are built so the opening can be
+    // carved into that one specific floor.
+    const fireEscapeSide = floorCount >= 2 ? pick([...streetSides, null, null]) : null; // null bias -- not every multi-floor module gets one
+    if (fireEscapeSide) {
+        baseGaps.push(fireEscapeSide.dx !== 0
+            ? { dx: fireEscapeSide.dx, dz: 0, lo: cz - 0.8, hi: cz + 0.8, floorOnly: 1 }
+            : { dx: 0, dz: fireEscapeSide.dz, lo: cx - 0.8, hi: cx + 0.8, floorOnly: 1 });
     }
+
     const floors = [];
     for (let fl = 0; fl < floorCount; fl++) {
-        const y0 = fl * floorHeight;
-        const coreGaps = [];
-        const activeWings = plan.wings.filter(w => fl >= w.floorMin && fl < w.floorMax);
-        for (const w of activeWings) {
-            const span = computeArchwaySpan(w.side, plan.core, w);
-            coreGaps.push({ dx: w.side.dx, dz: w.side.dz, lo: span.lo, hi: span.hi });
-        }
+        const gaps = baseGaps.filter(g => g.floorOnly === undefined || g.floorOnly === fl);
         const coreDoor = fl === 0 ? door : null;
-        const coreExtMat = fl === 0 ? shellMat : material;
-        const segments = buildCoreFloor(plan.core, fl, floorCount, floorHeight, coreDoor, coreExtMat, shellMat, coreGaps, stairwell);
-        for (const w of activeWings) {
-            const span = computeArchwaySpan(w.side, plan.core, w);
-            const wingGap = { dx: -w.side.dx, dz: -w.side.dz, lo: span.lo, hi: span.hi };
-            segments.push(...buildWingFloor(w, fl, floorHeight, material, wingGap));
-        }
-        floors.push({ yMin: y0, yMax: y0 + floorHeight, segments });
+        const extMat = fl === 0 ? shellMat : material;
+        const segments = buildCoreFloor(rect, fl, floorCount, floorHeight, coreDoor, extMat, shellMat, gaps, stairwell);
+        floors.push({ yMin: fl * floorHeight, yMax: fl * floorHeight + floorHeight, segments });
     }
-    // real walls only ever exist up to enterHeight (floors.length worth)
-    // -- the tapered/twisted mass above that is a solid-looking but
-    // always-collision-less visual shell. Height-aware per floor now
-    // (see resolveCollisions): an upper floor's walls only ever block
-    // within their OWN [yMin,yMax] band, never a lower floor's real
-    // layout, and once you're above every registered floor's yMax at
-    // all, this building can't block you horizontally -- that's what
-    // lets you actually reach a rooftop from outside/above.
     buildingWallSegments.set(`${row},${col}`, { floors });
 
-    // interior dressing helpers below still take one scalar half-width --
-    // they're ground-floor decorative placement only (never visible from
-    // outside/above), so the smaller of the two core half-extents is used
-    // to keep every placement safely inside the room on a non-square core.
-    const hw = Math.min(coreHwx, coreHwz);
-    maybeAddMezzanine(x, z, hw, floorHeight, door);
-    maybeAddElevator(x, z, hw, floorHeight, door);
-    // denser interior dressing -- guaranteed pieces plus situational junk,
-    // scaled by this building's own maintenance instead of a flat range:
-    // a neglected building accumulates real debris, a well-kept one
-    // doesn't. Ground floor only -- upper floors' prop-placement helpers
-    // all assume a ground-level (y=0) baseline, so furniture up there is
-    // a follow-up rather than part of this pass.
-    addCrate(x - coreHwx * 0.4, z + coreHwz * 0.3);
-    addPottedPlant(x + coreHwx * 0.5, z - coreHwz * 0.4);
+    // interior dressing -- ground floor only (upper-floor prop helpers
+    // all assume a y=0 baseline).
+    const hw = Math.min(hwx, hwz);
+    maybeAddMezzanine(cx, cz, hw, floorHeight, door);
+    maybeAddElevator(cx, cz, hw, floorHeight, door);
+    addCrate(cx - hwx * 0.4, cz + hwz * 0.3);
+    addPottedPlant(cx + hwx * 0.5, cz - hwz * 0.4);
     const indoorJunkCount = 2 + Math.floor((1 - buildingContext.maintenance) * 5 + rng() * 3);
-    scatterJunk('indoor', x, z, indoorJunkCount, hw * 0.55);
-    // real furniture is more likely the better-kept this building rolled
-    // -- the one real container -> contents -> contents-of-contents
-    // chain in the whole maze: a table carrying a bowl carrying fruit,
-    // occasionally carrying one more thing still.
-    if (rng() < 0.2 + buildingContext.maintenance * 0.35) addTableWithClutter(x + randRange(-coreHwx * 0.35, coreHwx * 0.35), z + randRange(-coreHwz * 0.35, coreHwz * 0.35));
+    scatterJunk('indoor', cx, cz, indoorJunkCount, hw * 0.55);
+    if (rng() < 0.2 + buildingContext.maintenance * 0.35) addTableWithClutter(cx + randRange(-hwx * 0.35, hwx * 0.35), cz + randRange(-hwz * 0.35, hwz * 0.35));
 
-    // whatever height is left above the topmost enterable floor -- for a
-    // normal tower this is still nearly the whole building (enterHeight
-    // tops out around 9-12), purely decorative skyline exactly like
-    // before. For a warehouse it's a short cap, occasionally ~0.
-    const upperHeight = Math.max(0, height - enterHeight);
-
-    // ~30% of buildings are two-stage setback towers instead of a single
-    // prism -- a wider base with a narrower tower rising off it, like a
-    // real setback skyscraper. Reuses the same organic-tower builder
-    // twice rather than a whole new geometry function; the base tower's
-    // own top cap doubles as the roof deck the upper stage stands on,
-    // and the upper stage's un-capped bottom is never seen from ground
-    // level. Keeps the whole scene from reading as one repeated formula.
-    const archetype = upperHeight < 0.5 ? 'none' : isWarehouse ? 'warehouse' : weightedPick({ single: 5, setback: 3, clustered: 2 });
-
-    if (archetype === 'none') {
-        // nothing left above the real floors -- the topmost floor's own
-        // ceiling IS the roof, so it needs to be a real walkable surface
-        // from above too, the same way a warehouse roof always was. Uses
-        // the core's own (possibly non-square) half-extents directly --
-        // this deck IS the footprint, no rounding-off to a scalar.
-        elevatedPlatforms.push({ x, z, hx: coreHwx, hz: coreHwz, y: enterHeight });
-        rooftopDecks.push({ x, z, hx: coreHwx, hz: coreHwz, y: enterHeight, buildingKey: `${row},${col}` });
-        // a real rooftop mechanical room module, sometimes -- a genuine
-        // enterable penthouse, not more antenna/tank clutter. Appended to
-        // this building's already-registered buildingWallSegments entry
-        // (set further up in addBuilding, before this archetype section).
-        if (!isWarehouse && hw > 1.6 && rng() < 0.3) {
-            const room = buildRooftopMechanicalRoom(x, z, Math.min(coreHwx, coreHwz), enterHeight);
-            buildingWallSegments.get(`${row},${col}`).floors.push(room);
-        }
-    } else if (archetype === 'setback') {
-        const baseHeight = upperHeight * randRange(0.4, 0.7);
-        const topHeight = upperHeight - baseHeight;
-        const upperHwx = coreHwx * randRange(0.5, 0.8), upperHwz = coreHwz * randRange(0.5, 0.8);
-        const base = new THREE.Mesh(buildOrganicTowerGeometry(coreHwx, coreHwz, baseHeight), material);
-        base.position.set(x, enterHeight, z);
-        scene.add(base);
-        const upper = new THREE.Mesh(buildOrganicTowerGeometry(upperHwx, upperHwz, topHeight), material);
-        upper.position.set(x, enterHeight + baseHeight, z);
-        scene.add(upper);
-        // the upper stage's own flat cap, real roof -- every archetype's
-        // actual top surface is landable now, not just warehouses.
-        elevatedPlatforms.push({ x, z, hx: upperHwx, hz: upperHwz, y: height });
-        rooftopDecks.push({ x, z, hx: upperHwx, hz: upperHwz, y: height, buildingKey: `${row},${col}` });
-    } else if (archetype === 'clustered') {
-        // 2-3 independent thin towers sharing one footprint and a shared
-        // low base block, instead of one solid mass -- a multi-spire
-        // silhouette. The base block still fills the collision footprint.
-        const baseHeight = upperHeight * randRange(0.15, 0.3);
-        const base = new THREE.Mesh(buildOrganicTowerGeometry(coreHwx, coreHwz, baseHeight), material);
-        base.position.set(x, enterHeight, z);
-        scene.add(base);
-        const spireCount = 2 + Math.floor(rng() * 2);
-        for (let i = 0; i < spireCount; i++) {
-            const spireHwx = coreHwx * randRange(0.28, 0.42), spireHwz = coreHwz * randRange(0.28, 0.42);
-            const spireHeight = baseHeight + (upperHeight - baseHeight) * randRange(0.6, 1.0);
-            const ox = randRange(-coreHwx / 2, coreHwx / 2);
-            const oz = randRange(-coreHwz / 2, coreHwz / 2);
-            const spireTower = new THREE.Mesh(buildOrganicTowerGeometry(spireHwx, spireHwz, spireHeight - baseHeight), material);
-            spireTower.position.set(x + ox, enterHeight + baseHeight, z + oz);
-            scene.add(spireTower);
-        }
-        // the shared base block's own deck, real roof (spires just stand
-        // on it, same as antennas/tanks already do on every rooftop).
-        elevatedPlatforms.push({ x, z, hx: coreHwx, hz: coreHwz, y: enterHeight + baseHeight });
-        rooftopDecks.push({ x, z, hx: coreHwx, hz: coreHwz, y: enterHeight + baseHeight, buildingKey: `${row},${col}` });
-    } else {
-        const building = new THREE.Mesh(buildOrganicTowerGeometry(coreHwx, coreHwz, upperHeight), material);
-        building.position.set(x, enterHeight, z);
-        scene.add(building);
-
-        // every rooftop is a real, landable surface now -- it always
-        // looked solid from below/the side, it just never registered as
-        // one to land on unless this was a (short, easy-to-reach)
-        // warehouse. A 40-340 unit tower's peak is still effectively
-        // out of casual reach, but that's distance/no-fall-damage doing
-        // the gatekeeping now, not an invisible floor that isn't there.
-        elevatedPlatforms.push({ x, z, hx: coreHwx, hz: coreHwz, y: height });
-        rooftopDecks.push({ x, z, hx: coreHwx, hz: coreHwz, y: height, buildingKey: `${row},${col}` });
-
-        // roof toppers -- a fifth/sixth flavor of building silhouette,
-        // skipped on warehouses (too short to read) and setbacks (already
-        // have their own upper mass).
-        if (!isWarehouse) {
-            const topper = weightedPick({ none: 6, dome: 2, spire: 2 });
-            if (topper === 'dome') {
-                const dome = new THREE.Mesh(
-                    new THREE.SphereGeometry(hw * 0.85, 8, 6, 0, Math.PI * 2, 0, Math.PI / 2),
-                    material
-                );
-                dome.position.set(x, height, z);
-                scene.add(dome);
-            } else if (topper === 'spire') {
-                const spireH = randRange(3, 7);
-                const spire = new THREE.Mesh(
-                    jitterGeometry(new THREE.ConeGeometry(0.15, spireH, 6), 0.02),
-                    new THREE.MeshStandardMaterial({ color: 0x8a8a8a, roughness: 0.5, metalness: 0.6 })
-                );
-                spire.position.set(x, height + spireH / 2, z);
-                scene.add(spire);
-            }
+    // roof -- always the flat top of this module's own real floors. No
+    // more decorative tower above enterHeight: every unit of visible
+    // height is a real, stair-connected floor (buildCoreFloor's own roof
+    // hatch reaches it from inside), so height === floorCount *
+    // floorHeight exactly and this deck sits right where the building
+    // actually stops.
+    elevatedPlatforms.push({ x: cx, z: cz, hx: hwx, hz: hwz, y: height });
+    rooftopDecks.push({ x: cx, z: cz, hx: hwx, hz: hwz, y: height, buildingKey: `${row},${col}` });
+    if (isPrimary && !isWarehouse && hw > 1.6 && rng() < 0.3) {
+        const room = buildRooftopMechanicalRoom(cx, cz, hw, height);
+        buildingWallSegments.get(`${row},${col}`).floors.push(room);
+    }
+    // a small roof ornament -- a non-traversable cupola/spire a couple of
+    // units tall, NOT a second fake tower (real height still only ever
+    // comes from floorCount above). Primary module only.
+    if (isPrimary && !isWarehouse) {
+        const topper = weightedPick({ none: 6, dome: 2, spire: 2 });
+        if (topper === 'dome') {
+            const dome = new THREE.Mesh(new THREE.SphereGeometry(hw * 0.5, 8, 6, 0, Math.PI * 2, 0, Math.PI / 2), material);
+            dome.position.set(cx, height, cz);
+            scene.add(dome);
+        } else if (topper === 'spire') {
+            const spireH = randRange(2, 4);
+            const spire = new THREE.Mesh(
+                jitterGeometry(new THREE.ConeGeometry(0.15, spireH, 6), 0.02),
+                new THREE.MeshStandardMaterial({ color: 0x8a8a8a, roughness: 0.5, metalness: 0.6 })
+            );
+            spire.position.set(cx, height + spireH / 2, cz);
+            scene.add(spire);
         }
     }
 
-    // curb/base skirt so the building reads as sitting on something, not floating
+    // curb/base skirt so the module reads as sitting on something, not floating
     const curb = CONFIG.buildings.curb;
-    const skirt = new THREE.Mesh(
-        skirtBoxGeo,
-        new THREE.MeshStandardMaterial({ color: curb.color, roughness: 1 })
-    );
-    skirt.scale.set(coreHwx * 2 + curb.overhang, curb.height, coreHwz * 2 + curb.overhang);
-    skirt.position.set(x, curb.height / 2, z);
+    const skirt = new THREE.Mesh(skirtBoxGeo, new THREE.MeshStandardMaterial({ color: curb.color, roughness: 1 }));
+    skirt.scale.set(hwx * 2 + curb.overhang, curb.height, hwz * 2 + curb.overhang);
+    skirt.position.set(cx, curb.height / 2, cz);
     scene.add(skirt);
 
-    // sign faces: one candidate per side that borders an open alley cell.
-    // every qualifying face is recorded in candidateFaces regardless of
-    // whether a random sign lands on it — the content-card pass later
-    // claims whatever's left over so real content never double-mounts.
-    for (const face of buildingFaceDefs(coreHwx, coreHwz)) {
-        const nc = col + face.dc, nr = row + face.dr;
-        if (grid[nr]?.[nc] !== false) continue; // only sign faces open onto an alley
+    // facade surfaces + decoration -- 'street' sides only; party/
+    // internal/courtyard sides get no signage/street dressing.
+    for (const s of streetSides) {
+        const ox = s.dx * (hwx + 0.03), oz = s.dz * (hwz + 0.03);
+        const rotY = s.dz === -1 ? 0 : s.dz === 1 ? Math.PI : s.dx === -1 ? -Math.PI / 2 : Math.PI / 2;
+        const faceX = cx + ox, faceZ = cz + oz;
 
-        const t = webAlignment(z);
-        const signChance = THREE.MathUtils.lerp(
-            CONFIG.narrative.darkWeb.signChance, CONFIG.narrative.lightWeb.signChance, t
-        );
-
+        // sign faces: every qualifying face is recorded in
+        // candidateFaces regardless of whether a random sign lands on it
+        // -- the content-card pass later claims whatever's left over so
+        // real content never double-mounts.
+        const t = webAlignment(cz);
+        const signChance = THREE.MathUtils.lerp(CONFIG.narrative.darkWeb.signChance, CONFIG.narrative.lightWeb.signChance, t);
         if (rng() > signChance) {
-            candidateFaces.push({ x: x + face.ox, z: z + face.oz, rotY: face.rotY, height });
-            continue;
-        }
-
-        // more than one sign per face now -- a real signage-choked
-        // facade is layered, not one polite billboard each. Heights are
-        // kept apart on retry so a 2nd/3rd roll doesn't just double up on
-        // the first one's spot.
-        const signRolls = [1, 0.65, 0.35]; // always 1, 65% of a 2nd, 35% of a 3rd (if the 2nd landed)
-        let signCount = 0;
-        for (const p of signRolls) { if (rng() < p) signCount++; else break; }
-        const usedSignHeights = [];
-        for (let i = 0; i < signCount; i++) {
-            const content = pickSignContent(x + face.ox, z + face.oz);
-            const neon = pickNeonForRow(row);
-            // never below the shell's roofline -- otherwise a sign could
-            // end up floating in an open doorway gap on whichever face has one
-            let signHeight, tries = 0;
-            do {
-                // capped to enterHeight -- above that the wall is the
-                // tapered/twisted decorative tower, not the flat real
-                // wall a sign is actually mounted flush against.
-                signHeight = randRange(Math.max(2.2, floorHeight + 0.3), Math.max(floorHeight + 1, Math.min(enterHeight - 0.3, height - 2, 6)));
-                tries++;
-            } while (usedSignHeights.some(h => Math.abs(h - signHeight) < 0.7) && tries < 6);
-            usedSignHeights.push(signHeight);
-            addSign(
-                x + face.ox, signHeight, z + face.oz,
-                face.rotY, content.title, content.subtitle, neon, content.flicker
-            );
+            candidateFaces.push({ x: faceX, z: faceZ, rotY, height });
+        } else {
+            // more than one sign per face -- a real signage-choked
+            // facade is layered, not one polite billboard each. Each one
+            // now reserves real facade space (see placeSignsOnFacade),
+            // so layering density no longer means visible overlap.
+            const signRolls = [1, 0.65, 0.35];
+            let signCount = 0;
+            for (const p of signRolls) { if (rng() < p) signCount++; else break; }
+            const facade = makeFacade(rect, s.dx, s.dz, height, door);
+            placeSignsOnFacade(facade, signCount, row, height, floorHeight);
         }
 
         // graffiti tags scrawled near ground level -- independent of
-        // whether a sign landed above, and now often more than one, the
-        // way a real repeatedly-tagged wall accumulates over time.
-        const graffitiRolls = [0.42, 0.4, 0.25]; // always-ish one, decent odds of a 2nd, some of a 3rd
+        // whether a sign landed above, and often more than one, the way
+        // a real repeatedly-tagged wall accumulates over time.
+        const graffitiRolls = [0.42, 0.4, 0.25];
         const usedGraffitiHeights = [];
         for (const p of graffitiRolls) {
             if (rng() >= p) break;
             let gy, tries = 0;
             do { gy = randRange(0.55, 1.7); tries++; } while (usedGraffitiHeights.some(h => Math.abs(h - gy) < 0.35) && tries < 5);
             usedGraffitiHeights.push(gy);
-            addGraffitiTag(x + face.ox * 0.99, gy, z + face.oz * 0.99, face.rotY);
+            addGraffitiTag(cx + ox * 0.99, gy, cz + oz * 0.99, rotY);
         }
         if (usedGraffitiHeights.length && rng() < 0.3 * QUALITY.propDensity) {
-            // the tagger's supplies, left at the base of their own work
-            placeRealModel('sprayCans', x + face.ox * 0.85, z + face.oz * 0.85, randRange(0, Math.PI * 2));
+            placeRealModel('sprayCans', cx + ox * 0.85, cz + oz * 0.85, randRange(0, Math.PI * 2));
         }
-        // a flyer (or a small cluster of them) taped up nearby -- "more
-        // posters" without touching the real, curated site content.
+        // a flyer (or a small cluster) taped up nearby
         if (rng() < 0.4) {
             const flyerCount = rng() < 0.3 ? 2 : 1;
             for (let i = 0; i < flyerCount; i++) {
-                // offset along the wall (tangential to its face normal),
-                // not into/out of it, so a cluster reads as side-by-side
-                const tangentX = face.oz !== 0 ? randRange(-coreHwx * 0.6, coreHwx * 0.6) : 0;
-                const tangentZ = face.ox !== 0 ? randRange(-coreHwz * 0.6, coreHwz * 0.6) : 0;
-                addWallFlyer(
-                    x + face.ox * 0.985 + tangentX, randRange(1.0, 1.8), z + face.oz * 0.985 + tangentZ,
-                    face.rotY
-                );
+                const tangentX = s.dz !== 0 ? randRange(-hwx * 0.6, hwx * 0.6) : 0;
+                const tangentZ = s.dx !== 0 ? randRange(-hwz * 0.6, hwz * 0.6) : 0;
+                addWallFlyer(cx + ox * 0.985 + tangentX, randRange(1.0, 1.8), cz + oz * 0.985 + tangentZ, rotY);
             }
         }
-        // low chance of a security camera watching the alley — everything
-        // queryable is also everything watched.
-        if (rng() < 0.14) {
-            addSecurityCamera(x + face.ox * 0.97, z + face.oz * 0.97, face.rotY, Math.min(height, enterHeight));
-        }
-        // ivy/dead-vine patch, independent of everything else on this wall
-        if (rng() < 0.3) {
-            addIvyPatch(x + face.ox * 0.98, randRange(0.6, Math.min(height - 1, enterHeight - 0.5, 4)), z + face.oz * 0.98, face.rotY);
-        }
-        // shop awning, roughly shopfront height -- above the shell's door
-        // gap so it never looks like it's hanging in an open doorway
-        if (rng() < 0.42) {
-            addAwning(x + face.ox, Math.max(2.4, floorHeight + 0.2), z + face.oz, face.rotY, randRange(1.6, 2.4));
-        }
-        // exterior plumbing -- a downspout run climbing the wall, more
-        // likely (and rustier) the more neglected this building rolled.
-        if (rng() < 0.3) {
-            addPipeCluster(x + face.ox * 0.98, z + face.oz * 0.98, face.rotY, Math.min(height, enterHeight), buildingContext.maintenance);
-        }
-        // a real fire escape zigzagging up the alley-facing wall -- the
-        // single most back-alley-defining architectural feature there is.
-        // the detailed GLTF model is the silhouette; buildFireEscapeStair
-        // is what actually holds you -- these used to be pure decoration
-        // (walk right through them) while ground junk blocked you solid,
-        // which was backwards. now they climb, for real, like any interior
-        // mezzanine stair does.
-        if (rng() < 0.18) {
-            placeRealModel('fireEscape', x + face.ox * 1.02, z + face.oz * 1.02, face.rotY);
-            // warehouses are short enough to actually climb all the way
-            // to their own (now-walkable) roof; towers just get a partial
-            // decorative climb near the base -- see the roof-platform
-            // comment above for why the peak itself stays out of reach.
-            const landings = buildFireEscapeStair(x + face.ox * 1.02, z + face.oz * 1.02, face.rotY, isWarehouse ? height : randRange(5, 11));
-            // a balcony off the same wall, anchored to a real landing
-            // height so climbing the fire escape actually gets you
-            // somewhere -- offset sideways so it doesn't sit inside the
-            // stair's own switchback footprint.
-            if (landings.length && rng() < 0.5) {
-                const landing = pick(landings);
-                // shift sideways along the wall (not into/out of it) so
-                // the balcony doesn't sit inside the stair's own footprint
-                const tangentHalf = face.oz !== 0 ? coreHwx : coreHwz;
+        if (rng() < 0.14) addSecurityCamera(cx + ox * 0.97, cz + oz * 0.97, rotY, height);
+        if (rng() < 0.3) addIvyPatch(cx + ox * 0.98, randRange(0.6, Math.min(height - 0.5, 4)), cz + oz * 0.98, rotY);
+        if (rng() < 0.42) addAwning(faceX, Math.max(2.4, floorHeight + 0.2), faceZ, rotY, randRange(1.6, 2.4));
+        if (rng() < 0.3) addPipeCluster(cx + ox * 0.98, cz + oz * 0.98, rotY, height, buildingContext.maintenance);
+
+        // the real fire escape -- only on the one side (if any) actually
+        // wired to a floor-1 interior opening above (fireEscapeSide).
+        const isFireEscapeFace = fireEscapeSide && fireEscapeSide.dx === s.dx && fireEscapeSide.dz === s.dz;
+        if (isFireEscapeFace) {
+            placeRealModel('fireEscape', cx + ox * 1.02, cz + oz * 1.02, rotY);
+            const landings = buildFireEscapeStair(cx + ox * 1.02, cz + oz * 1.02, rotY, isWarehouse ? height : randRange(5, 11));
+            if (landings.length) {
+                // the landing closest to floor 1's own height -- the one
+                // that actually lines up with the real door opening.
+                const target = floorHeight * 1.5;
+                const landing = landings.reduce((best, l) => Math.abs(l.y - target) < Math.abs(best.y - target) ? l : best, landings[0]);
+                const tangentHalf = s.dz !== 0 ? hwx : hwz;
                 const tangent = (rng() < 0.5 ? -1 : 1) * tangentHalf * 0.55;
-                const bx = x + face.ox + (face.oz !== 0 ? tangent : 0);
-                const bz = z + face.oz + (face.ox !== 0 ? tangent : 0);
-                addBalcony(bx, landing.y, bz, face.rotY, buildingContext.maintenance);
+                const bx = cx + ox + (s.dz !== 0 ? tangent : 0);
+                const bz = cz + oz + (s.dx !== 0 ? tangent : 0);
+                addBalcony(bx, landing.y, bz, rotY, buildingContext.maintenance);
             }
         } else if (rng() < 0.12 && !isWarehouse) {
             // buildings without a fire escape on this face still
-            // occasionally get a balcony -- purely decorative up here,
-            // the same way a tower's own peak already is.
-            const by = randRange(floorHeight + 1.5, Math.min(height - 1.5, enterHeight - 0.5));
-            addBalcony(x + face.ox, by, z + face.oz, face.rotY, buildingContext.maintenance);
+            // occasionally get a (purely decorative) balcony.
+            const by = randRange(floorHeight + 1.5, Math.max(floorHeight + 2, height - 1.5));
+            addBalcony(faceX, by, faceZ, rotY, buildingContext.maintenance);
         }
     }
 
-    addRooftopClutter(x, z, Math.min(coreHwx, coreHwz) * 2, height, buildingContext.maintenance);
+    addRooftopClutter(cx, cz, hw * 2, height, buildingContext.maintenance);
+    return rect;
+}
+
+// replaces the old one-cell addBuilding entry point. A site's cells are
+// all rolled as ONE coherent building (shared warehouse/hero/material/
+// maintenance context) and built as N independent full-cell modules --
+// see computeCellRect for why that alone makes an L/T/U/bar/cluster
+// SITE read as a genuinely that-shaped BUILDING, not a big rectangle
+// with a token appendage.
+function addBuildingSite(site) {
+    const { cells } = site;
+    const isWarehouse = rng() < 0.12;
+    const isHeroTower = !isWarehouse && rng() < CONFIG.buildings.heroTowerChance;
+    const color = pick(CONFIG.buildings.palette);
+    const buildingContext = { wealth: rng(), maintenance: rng() };
+    const useStain = !isWarehouse && rng() < 0.08 + (1 - buildingContext.maintenance) * 0.28;
+    const useWindows = !isWarehouse && !useStain;
+    const litRatio = Math.max(0.05, Math.min(0.4, 0.15 + buildingContext.wealth * 0.2 - (1 - buildingContext.maintenance) * 0.08));
+    const floorHeight = 3.0;
+
+    // setbacks rolled ONCE per site (shared across every module) so the
+    // whole building reads as one consistent facade depth.
+    const streetSetbackX = isWarehouse ? CONFIG.maze.buildingMarginMin / 2 : randRange(CONFIG.maze.buildingMarginMin, CONFIG.maze.buildingMarginMax) / 2;
+    const streetSetbackZ = isWarehouse ? CONFIG.maze.buildingMarginMin / 2 : randRange(CONFIG.maze.buildingMarginMin, CONFIG.maze.buildingMarginMax) / 2;
+    const partySetback = randRange(0.08, 0.3); // near-flush -- an attached row, not a full alley gap
+
+    // floor count IS the height now -- see CONFIG.buildings.
+    const maxFloorsForThis = isWarehouse ? Math.min(QUALITY.maxEnterableFloors, 2) : isHeroTower ? QUALITY.maxHeroFloors : QUALITY.maxEnterableFloors;
+    const weights = isHeroTower ? CONFIG.buildings.heroFloorCountWeights : CONFIG.buildings.floorCountWeights;
+    const primaryFloorCount = Math.max(1, Math.min(maxFloorsForThis, Number(weightedPick(weights))));
+    const height = primaryFloorCount * floorHeight;
+
+    const material = useStain
+        ? new THREE.MeshStandardMaterial({ map: makeTopologyStainTexture(), roughness: CONFIG.buildings.roughness, side: THREE.DoubleSide })
+        : useWindows
+            ? new THREE.MeshStandardMaterial({ map: makeWindowGridTexture(height, color, litRatio), roughness: CONFIG.buildings.roughness, side: THREE.DoubleSide })
+            : new THREE.MeshStandardMaterial({ color, roughness: CONFIG.buildings.roughness, side: THREE.DoubleSide });
+
+    // per-cell same-site degree -- decides the "primary" mass (most
+    // connected, reads as the building's main block -- the only module
+    // eligible for a roof mechanical room/topper) and courtyard
+    // eligibility (a cell fully enclosed by its own site, degree 4,
+    // never the primary).
+    const degreeOf = (cell) => [[0, -1], [0, 1], [-1, 0], [1, 0]].filter(([dc, dr]) => siteIdOf[cell.row + dr]?.[cell.col + dc] === site.id).length;
+    let primary = cells[0], primaryDegree = -1;
+    for (const cell of cells) {
+        const d = degreeOf(cell);
+        if (d > primaryDegree) { primaryDegree = d; primary = cell; }
+    }
+    let voidCell = null;
+    if (cells.length >= 5) {
+        for (const cell of cells) {
+            if (cell === primary) continue;
+            if (degreeOf(cell) === 4) { voidCell = cell; break; }
+        }
+    }
+
+    const builtModules = [];
+    for (const cell of cells) {
+        if (voidCell && cell.row === voidCell.row && cell.col === voidCell.col) {
+            buildCourtyardVoid(cell);
+            continue;
+        }
+        const isPrimary = cell.row === primary.row && cell.col === primary.col;
+        const floorCount = isPrimary ? primaryFloorCount : Math.max(1, primaryFloorCount - Math.floor(rng() * 3));
+        const rect = addBuildingModule(cell, {
+            isPrimary, isWarehouse, floorCount, floorHeight, height: floorCount * floorHeight,
+            color, material, buildingContext, streetSetbackX, streetSetbackZ, partySetback, voidCell,
+        });
+        builtModules.push(rect);
+    }
+    addSiteDebugOverlay(cells, builtModules, voidCell);
 }
 
 const candidateFaces = []; // faces that skipped a random sign — free for content cards
@@ -3840,7 +3718,7 @@ const SIGN_FONTS = [
 const SIGN_BACKINGS = ['#020202', '#0a0410', '#04120a', '#12040a', '#0a0a02', '#080808'];
 const SIGN_BORDER_STYLES = ['solid', 'double', 'cut', 'none'];
 
-function addSign(x, y, z, rotY, title, subtitle, colorHex, flicker = false) {
+function addSign(x, y, z, rotY, title, subtitle, colorHex, flicker = false, widthOverride = null) {
     const shape = pick(SIGN_SHAPES);
     const font = pick(SIGN_FONTS);
     const backing = pick(SIGN_BACKINGS);
@@ -3881,7 +3759,11 @@ function addSign(x, y, z, rotY, title, subtitle, colorHex, flicker = false) {
         ctx.fillText(subtitle, w / 2, h / 2 + h * 0.24, w - 8);
     }, shape.w, shape.h);
 
-    const width = randRange(1.5, 2.9);
+    // callers driving real facade occupancy (see placeSignsOnFacade) pass
+    // an explicit width sized to fit the actual free span they found --
+    // "pick a size, then hope it fits" is how signs used to end up
+    // stacked on top of each other.
+    const width = widthOverride ?? randRange(1.5, 2.9);
     const height = width * (shape.h / shape.w);
     const panelDepth = randRange(0.06, 0.1);
 
@@ -5856,19 +5738,16 @@ const PROP_HEIGHTS = {
 
 const propColliders = []; // {x, z, radius, height} — soft obstacles, blended into collision pass. height === Infinity means "always a wall, never a valid floor to land on" (used for diffuse/non-object footprints like parks and construction zones)
 
-// every building cell gets a real building now -- addBuilding itself
-// gives each one a walkable ground floor (door toward an open neighbor
-// if it has one, real per-wall collision, interior dressing) plus the
-// tower/archetype above it.
+// one real building PER SITE now, not per cell -- addBuildingSite builds
+// every cell in the site as its own full-scale module (walkable ground
+// floor, door toward an open neighbor if it has one, real per-wall
+// collision, interior dressing, its own real roof), so a multi-cell site
+// comes out as a genuinely that-shaped building instead of one square
+// per grid cell.
 {
     const buildStart = performance.now();
-    let buildingCount = 0;
-    for (let r = 0; r < GRID_ROWS; r++) {
-        for (let c = 0; c < GRID_COLS; c++) {
-            if (grid[r][c]) { addBuilding(c, r); buildingCount++; }
-        }
-    }
-    console.log(`[perf] ${buildingCount} buildings generated in ${(performance.now() - buildStart).toFixed(0)}ms (${bootElapsed()} total)`);
+    for (const site of buildingSites) addBuildingSite(site);
+    console.log(`[perf] ${buildingSites.length} building sites (${buildingSites.reduce((s, x) => s + x.cells.length, 0)} cells) generated in ${(performance.now() - buildStart).toFixed(0)}ms (${bootElapsed()} total)`);
 }
 
 mountContentCards(); // real site content claims leftover wall faces
@@ -5916,7 +5795,8 @@ bootStatus(`city built, ${GRID_COLS * GRID_ROWS} cells -- placing props/decorati
         for (const [dc, dr] of [[0, -1], [0, 1], [-1, 0], [1, 0]]) {
             const bc = sc + dc, br = sr + dr;
             if (!grid[br]?.[bc]) continue; // needs a solid building to mount on
-            const fp = footprintOf[br][bc] ?? { hwx: CELL * 0.3, hwz: CELL * 0.3 };
+            if (!footprintOf[br]?.[bc]) continue; // a courtyard void is solid but has no real facade to mount on
+            const fp = footprintOf[br][bc];
             const { x, z } = cellToWorld(bc, br);
             // face pointing FROM the building back toward the dead end
             const face = buildingFaceDefs(fp.hwx, fp.hwz).find(f => f.dc === -dc && f.dr === -dr);
@@ -6640,8 +6520,8 @@ function enforceMazeSeal(prevX, prevZ, position) {
 function resolveCollisions(position, feetY = Infinity) {
     const { col, row } = worldToCell(position.x, position.z);
 
-    // real per-wall collision: every building has registered wall
-    // segments per floor (see buildCoreFloor/buildWingFloor and the
+    // real per-wall collision: every building module has registered wall
+    // segments per floor (see buildCoreFloor/addBuildingModule and the
     // buildingWallSegments comment) -- only the actual solid walls
     // block, door/archway gaps genuinely don't, and each floor's walls
     // only apply within their own Y band.

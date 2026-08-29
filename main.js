@@ -234,7 +234,7 @@ const CONFIG = {
         // blockSize footprint either way; only the odd-index pitch
         // changed, so streets got narrower without shrinking any building.
         blockSize: 7,        // world units per building-anchor cell (even row/col)
-        streetWidth: 4.5,    // world units per street/alley cell (odd row/col) -- narrower than blockSize on purpose
+        streetWidth: 2.6,    // world units per street/alley cell (odd row/col) -- real narrow-alley width, not just "narrower than blockSize"; see streetSetbackRoll for why this no longer risks a sealed/impassable alley
         loopChance: 0.14,   // chance a redundant wall opens up into a plaza/loop
         buildingMarginMin: 0.5,  // how much smaller than the cell a building footprint is
         buildingMarginMax: 1.4,
@@ -3675,9 +3675,20 @@ const SIGN_WALL_MOUNT_WIDTH = 0.5;
 // project a different depth) than what was reserved.
 function createSignSpec() {
     const shape = pick(SIGN_SHAPES);
-    const width = randRange(1.1, 2.6);
+    // width/armLength caps used to be flat constants (1.1-2.6 / 0.55-1.0),
+    // tuned back when the street pitch was a uniform, much wider cell.
+    // Left alone, a narrow alley (see CONFIG.maze.streetWidth) would
+    // still roll signs sized for the old wide streets -- most projection
+    // checks would simply fail outright (spec categorically too big for
+    // ANY position on this wall) instead of the intended effect: signs
+    // from either side crowding/staggering to actually fit. Scaling both
+    // caps to STREET keeps the old sizes on a wide street (min() is a
+    // no-op there) and shrinks them exactly enough that a single sign
+    // still always fits its own alley alone, while two full-size signs
+    // facing each other still contend -- real retries, real staggering.
+    const width = randRange(0.7, Math.min(2.6, STREET * 0.55));
     const height = width * (shape.h / shape.w);
-    const armLength = randRange(0.55, 1.0);
+    const armLength = randRange(0.35, Math.min(1.0, STREET * 0.28));
     return {
         shape, width, height, armLength,
         wallFootprintWidth: SIGN_WALL_MOUNT_WIDTH, // real facade (u-axis) occupancy
@@ -3707,7 +3718,12 @@ function placeSignsOnFacade(facade, count, row) {
     let placed = 0;
     for (let i = 0; i < count; i++) {
         let chosen = null;
-        for (let tries = 0; tries < 10; tries++) {
+        // narrow alleys mean real contention now (see createSignSpec) --
+        // raised from 10 so a facade actually works to find the gap
+        // between whatever the opposite wall already claimed (a
+        // different height, a smaller roll, a different u) instead of
+        // giving up early and reading as empty instead of crowded.
+        for (let tries = 0; tries < 20; tries++) {
             const spec = createSignSpec();
             const halfMount = spec.wallFootprintWidth / 2, halfH = spec.height / 2;
             if (facade.half * 2 < spec.wallFootprintWidth + 0.3) continue; // this wall can't fit even the small mount plate
@@ -4430,6 +4446,19 @@ function addBuildingModule(cell, opts) {
     return rect;
 }
 
+// how far a building recedes from its street-facing cell edge. Rolled
+// from CONFIG.maze.buildingMargin{Min,Max} like before, but now clamped
+// against the real, current street pitch (STREET) instead of trusting
+// the config bounds blindly -- buildingMarginMax's own randomizer (see
+// randomizeConfig) can jitter as high as 2.4, which was harmless against
+// the old uniform 7-wide cell grid but would swallow most or all of a
+// narrowed alley whole. Capping each side's setback at 30% of STREET
+// guarantees at least 40% of the alley's pitch stays clear no matter how
+// the margin config or the street/block split themselves randomize.
+function streetSetbackRoll() {
+    return Math.min(randRange(CONFIG.maze.buildingMarginMin, CONFIG.maze.buildingMarginMax) / 2, STREET * 0.3);
+}
+
 // replaces the old one-cell addBuilding entry point. A site's cells are
 // all rolled as ONE coherent building (shared warehouse/hero/material/
 // maintenance context) and built as N independent full-cell modules --
@@ -4449,8 +4478,8 @@ function addBuildingSite(site) {
 
     // setbacks rolled ONCE per site (shared across every module) so the
     // whole building reads as one consistent facade depth.
-    const streetSetbackX = isWarehouse ? CONFIG.maze.buildingMarginMin / 2 : randRange(CONFIG.maze.buildingMarginMin, CONFIG.maze.buildingMarginMax) / 2;
-    const streetSetbackZ = isWarehouse ? CONFIG.maze.buildingMarginMin / 2 : randRange(CONFIG.maze.buildingMarginMin, CONFIG.maze.buildingMarginMax) / 2;
+    const streetSetbackX = isWarehouse ? CONFIG.maze.buildingMarginMin / 2 : streetSetbackRoll();
+    const streetSetbackZ = isWarehouse ? CONFIG.maze.buildingMarginMin / 2 : streetSetbackRoll();
     const partySetback = randRange(0.08, 0.3); // near-flush -- an attached row, not a full alley gap
 
     // floor count IS the height now -- see CONFIG.buildings.
@@ -4545,8 +4574,8 @@ function buildSignaturePlaceholder(site) {
     const floorHeight = 3.0;
     const primaryFloorCount = Math.max(1, Math.min(QUALITY.maxEnterableFloors, typeCfg.preferredFloors || 3));
     const material = new THREE.MeshStandardMaterial({ map: makeWindowGridTexture(primaryFloorCount * floorHeight, color, 0.3), roughness: CONFIG.buildings.roughness, side: THREE.DoubleSide });
-    const streetSetbackX = randRange(CONFIG.maze.buildingMarginMin, CONFIG.maze.buildingMarginMax) / 2;
-    const streetSetbackZ = randRange(CONFIG.maze.buildingMarginMin, CONFIG.maze.buildingMarginMax) / 2;
+    const streetSetbackX = streetSetbackRoll();
+    const streetSetbackZ = streetSetbackRoll();
     const partySetback = randRange(0.08, 0.3);
 
     const degreeOf = (cell) => [[0, -1], [0, 1], [-1, 0], [1, 0]].filter(([dc, dr]) => siteIdOf[cell.row + dr]?.[cell.col + dc] === id).length;
@@ -4722,7 +4751,7 @@ function buildArtGallery(site) {
     const color = 0xe8e2d0; // quiet gallery cream -- off CONFIG.buildings.palette on purpose, plain (no window-grid texture)
     const material = new THREE.MeshStandardMaterial({ color, roughness: 0.85, side: THREE.DoubleSide });
     const buildingContext = { wealth: 0.8, maintenance: 0.95 }; // only feeds addRooftopClutter/curb now -- interior dressing is fully authored below
-    const streetSetback = randRange(CONFIG.maze.buildingMarginMin, CONFIG.maze.buildingMarginMax) / 2;
+    const streetSetback = streetSetbackRoll();
     const partySetback = randRange(0.08, 0.2);
 
     const degreeOf = (cell) => [[0, -1], [0, 1], [-1, 0], [1, 0]].filter(([dc, dr]) => siteIdOf[cell.row + dr]?.[cell.col + dc] === id).length;
@@ -4976,7 +5005,7 @@ function buildAS400Archive(site) {
     const color = 0xc4bc9c; // institutional beige -- midrange-computing-building, not a startup office
     const material = new THREE.MeshStandardMaterial({ color, roughness: 0.88, side: THREE.DoubleSide });
     const buildingContext = { wealth: 0.55, maintenance: 0.7 };
-    const streetSetback = randRange(CONFIG.maze.buildingMarginMin, CONFIG.maze.buildingMarginMax) / 2;
+    const streetSetback = streetSetbackRoll();
     const partySetback = randRange(0.08, 0.2);
 
     const degreeOf = (cell) => [[0, -1], [0, 1], [-1, 0], [1, 0]].filter(([dc, dr]) => siteIdOf[cell.row + dr]?.[cell.col + dc] === id).length;
@@ -5183,7 +5212,7 @@ function buildJustinIndex(site) {
     const color = 0xa8a290; // dull bureaucratic gray-tan -- a records bureau, not a startup
     const material = new THREE.MeshStandardMaterial({ color, roughness: 0.92, side: THREE.DoubleSide });
     const buildingContext = { wealth: 0.45, maintenance: 0.55 };
-    const streetSetback = randRange(CONFIG.maze.buildingMarginMin, CONFIG.maze.buildingMarginMax) / 2;
+    const streetSetback = streetSetbackRoll();
     const partySetback = randRange(0.08, 0.2);
 
     const degreeOf = (cell) => [[0, -1], [0, 1], [-1, 0], [1, 0]].filter(([dc, dr]) => siteIdOf[cell.row + dr]?.[cell.col + dc] === id).length;
@@ -5338,7 +5367,7 @@ function buildSystemsWorkshop(site) {
     const color = 0x9a9484; // grimy concrete/beige -- used, not showroom
     const material = new THREE.MeshStandardMaterial({ color, roughness: 0.95, side: THREE.DoubleSide });
     const buildingContext = { wealth: 0.35, maintenance: 0.4 }; // low maintenance -- reads lived-in, not polished
-    const streetSetback = randRange(CONFIG.maze.buildingMarginMin, CONFIG.maze.buildingMarginMax) / 2;
+    const streetSetback = streetSetbackRoll();
     const partySetback = randRange(0.08, 0.2);
 
     const degreeOf = (cell) => [[0, -1], [0, 1], [-1, 0], [1, 0]].filter(([dc, dr]) => siteIdOf[cell.row + dr]?.[cell.col + dc] === id).length;
@@ -5500,7 +5529,7 @@ function buildLoreShrine(site) {
     const color = 0xd8d0c0; // pale institutional stone -- a monument, not a warehouse
     const material = new THREE.MeshStandardMaterial({ color, roughness: 0.8, side: THREE.DoubleSide });
     const buildingContext = { wealth: 0.9, maintenance: 0.95 }; // ceremonially maintained
-    const streetSetback = randRange(CONFIG.maze.buildingMarginMin, CONFIG.maze.buildingMarginMax) / 2;
+    const streetSetback = streetSetbackRoll();
     const partySetback = randRange(0.08, 0.2);
 
     const degreeOf = (cell) => [[0, -1], [0, 1], [-1, 0], [1, 0]].filter(([dc, dr]) => siteIdOf[cell.row + dr]?.[cell.col + dc] === id).length;

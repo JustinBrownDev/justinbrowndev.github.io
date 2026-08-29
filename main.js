@@ -3355,16 +3355,29 @@ function buildStairwayToHeaven(cx, cz) {
 // mounted at the SAME point, only offset in height. Every sign now
 // reserves the u (tangential) x v (vertical) rectangle it actually
 // occupies before the next placement on that same wall is even tried.
-function makeFacade(rect, dx, dz, yTop, door) {
+// persistent -- every real exterior wall in the city becomes exactly one
+// of these, pushed to buildingFacades (see addBuildingModule) whether or
+// not anything ever gets mounted on it. Every wall-mounted system --
+// signs, posters, fire escapes, and eventually windows/pipes/awnings/
+// graffiti (see the occupancy work in later phases) -- reserves space on
+// THIS shared object instead of privately deciding a facade "happened"
+// only when it personally needed one.
+let nextFacadeId = 0;
+function makeFacade(rect, dx, dz, yMin, yMax, door, exposure = 'street') {
     const axisIsX = dz !== 0; // wall runs along the x axis (a north/south face)
     const half = axisIsX ? rect.hwx : rect.hwz;
     const rotY = outwardRotationY(dx, dz);
     const cx = rect.cx + dx * (rect.hwx + 0.03), cz = rect.cz + dz * (rect.hwz + 0.03);
     const isDoorWall = door && door.dx === dx && door.dz === dz;
     return {
-        dx, dz, cx, cz, rotY, axisIsX, half, yTop,
+        id: nextFacadeId++,
+        dx, dz, cx, cz, rotY, axisIsX, half, length: half * 2,
+        yMin, yMax,
         normalX: dx, normalZ: dz, // see outwardRotationY/pointOnFacade -- the canonical outward direction
+        tangentX: axisIsX ? 1 : 0, tangentZ: axisIsX ? 0 : 1,
+        exposure, // 'street' (this module's own perimeter) or 'setback' (exposed by a shorter same-site neighbor, see addBuildingModule)
         occupied: isDoorWall ? [{ uMin: -0.85, uMax: 0.85, vMin: 0, vMax: 2.4 }] : [],
+        projections: [], // world-space projecting volumes reserved on this facade (blade signs, awnings, ...) -- see phase 6
     };
 }
 function facadeFits(facade, uMin, uMax, vMin, vMax, padding) {
@@ -3376,31 +3389,68 @@ function facadeFits(facade, uMin, uMax, vMin, vMax, padding) {
 }
 function facadeReserve(facade, uMin, uMax, vMin, vMax) { facade.occupied.push({ uMin, uMax, vMin, vMax }); }
 
-// tries `count` signs on one facade -- each one chooses a WIDTH that
-// fits the widest still-free span at a randomly rolled vertical band,
-// instead of rolling a size first and hoping it fits somewhere (the old
-// approach). Skipping is correct once a wall is genuinely full -- this
-// returns how many actually landed.
-function placeSignsOnFacade(facade, count, row, height, floorHeight) {
+// how far a sign's bottom edge must clear the ground/sidewalk (an
+// aesthetic choice -- keeps signs from reading as eye-level clutter
+// beside the door -- NOT a function of floorHeight; that conflation is
+// exactly what let signs float above a one-floor building's own roof,
+// see the note on placeSignsOnFacade below) and how far its top edge
+// must clear the roofline.
+const SIGN_BOTTOM_CLEARANCE = 2.0;
+const SIGN_TOP_MARGIN = 0.3;
+
+// a sign's real, final dimensions, decided BEFORE it's placed anywhere --
+// shape/aspect first, width/height together from that one aspect, never
+// two independently-rolled numbers. Placement (placeSignsOnFacade) then
+// reserves exactly this footprint; addSign is handed the same spec so
+// the mesh it builds can never end up a different size than what was
+// reserved.
+function createSignSpec() {
+    const shape = pick(SIGN_SHAPES);
+    const width = randRange(1.1, 2.6);
+    const height = width * (shape.h / shape.w);
+    return { shape, width, height };
+}
+
+// tries `count` signs on one facade. Each one rolls its own real spec
+// (shape/width/height, see createSignSpec) FIRST, then searches for a
+// free spot that actually fits THAT height -- not a fixed 0.9-1.5 band
+// picked independently of the sign's real (possibly portrait, possibly
+// >1 unit taller than that) aspect ratio. The old flow reserved a band
+// sized by guesswork and only afterward asked addSign to pick a shape,
+// so the reserved occupancy and the actual rendered mesh routinely
+// disagreed -- occupancy said "empty", the real mesh said otherwise.
+//
+// Vertical bounds are derived from the facade's own real yMin/yMax, not
+// from floorHeight -- a one-floor building (height === floorHeight) used
+// to compute a minimum band starting at floorHeight+0.3, i.e. already
+// above its own roof, then place signs there anyway. Here the sign's
+// center is only ever chosen inside [yMin+bottomClearance+halfH,
+// yMax-topMargin-halfH]; if that range is inverted for this sign's real
+// height, the sign genuinely does not fit THIS facade, full stop -- it
+// is skipped, never pushed above the roof or below the ground to make it
+// fit anyway. Returns how many actually landed.
+function placeSignsOnFacade(facade, count, row) {
     let placed = 0;
-    const bandHi = Math.max(floorHeight + 1, Math.min(height - 0.3, height - 2, 6));
-    const bandLo = Math.max(2.2, floorHeight + 0.3);
     for (let i = 0; i < count; i++) {
-        const vMin = randRange(bandLo, Math.max(bandLo, bandHi - 1.0));
-        const vMax = vMin + randRange(0.9, 1.5);
-        let chosenU = null, chosenWidth = null;
+        let chosen = null;
         for (let tries = 0; tries < 10; tries++) {
-            const width = randRange(1.1, 2.6);
-            if (facade.half * 2 < width + 0.3) break; // this wall can't fit anything this size at all
-            const u = randRange(-facade.half + width / 2, facade.half - width / 2);
-            if (facadeFits(facade, u - width / 2, u + width / 2, vMin, vMax, 0.3)) { chosenU = u; chosenWidth = width; break; }
+            const spec = createSignSpec();
+            const halfW = spec.width / 2, halfH = spec.height / 2;
+            if (facade.half * 2 < spec.width + 0.3) continue; // this wall can't fit anything this wide at all
+            const minCenterY = facade.yMin + SIGN_BOTTOM_CLEARANCE + halfH;
+            const maxCenterY = facade.yMax - SIGN_TOP_MARGIN - halfH;
+            if (minCenterY > maxCenterY) continue; // this sign's real height doesn't fit this facade at all -- not this wall's problem to solve by floating outside it
+            const centerY = randRange(minCenterY, maxCenterY);
+            const u = randRange(-facade.half + halfW, facade.half - halfW);
+            if (facadeFits(facade, u - halfW, u + halfW, centerY - halfH, centerY + halfH, 0.3)) { chosen = { spec, u, centerY }; break; }
         }
-        if (chosenU === null) continue; // correct to skip -- wall is full at this band
-        facadeReserve(facade, chosenU - chosenWidth / 2, chosenU + chosenWidth / 2, vMin, vMax);
-        const p = pointOnFacade(facade, chosenU, (vMin + vMax) / 2);
+        if (chosen === null) continue; // correct to skip -- wall is full, or genuinely too short for any tried spec
+        const { spec, u, centerY } = chosen;
+        facadeReserve(facade, u - spec.width / 2, u + spec.width / 2, centerY - spec.height / 2, centerY + spec.height / 2);
+        const p = pointOnFacade(facade, u, centerY);
         const content = pickSignContent(p.x, p.z);
         const neon = pickNeonForRow(row);
-        addSign(p.x, (vMin + vMax) / 2, p.z, facade.rotY, content.title, content.subtitle, neon, content.flicker, chosenWidth);
+        addSign(p.x, p.y, p.z, facade.rotY, content.title, content.subtitle, neon, content.flicker, spec.width, spec.shape);
         placed++;
     }
     return placed;
@@ -3666,6 +3716,25 @@ function addBuildingModule(cell, opts) {
     }
     buildingWallSegments.set(`${row},${col}`, { floors });
 
+    // exposed-setback facades -- a same-site neighbor stopped short (see
+    // floorMax gaps above), so this side is a genuine exterior wall for
+    // floors [firstExposedFloor, floorCount), not the module's normal
+    // street perimeter. It still gets a real FacadeSurface (item 19 of
+    // the spec this pass implements): same normal/tangent math, same
+    // material/UVs as any other exterior wall, eligible for the same
+    // decoration pass (windows already come from the wall's own texture;
+    // ivy/pipes/grime/a setback-facing sign are the general facade-
+    // occupancy pass's job, see phase 5) -- not a blank untextured box
+    // side that happens to exist.
+    for (const s of CELL_SIDE_DEFS) {
+        let firstExposedFloor = -1;
+        for (let fl = 0; fl < floorCount; fl++) {
+            if (exposedSetbackSidesByFloor[fl].includes(s)) { firstExposedFloor = fl; break; }
+        }
+        if (firstExposedFloor === -1) continue;
+        buildingFacades.push(makeFacade(rect, s.dx, s.dz, firstExposedFloor * floorHeight, height, null, 'setback'));
+    }
+
     // interior dressing -- ground floor only (upper-floor prop helpers
     // all assume a y=0 baseline).
     const hw = Math.min(hwx, hwz);
@@ -3728,30 +3797,38 @@ function addBuildingModule(cell, opts) {
         // sign spot, not the other way around.
         const isFireEscapeFace = fireEscapeSide && fireEscapeSide.dx === s.dx && fireEscapeSide.dz === s.dz;
 
-        // sign faces: every qualifying face is recorded in
-        // candidateFaces regardless of whether a random sign lands on it
-        // -- the content-card pass later claims whatever's left over so
-        // real content never double-mounts.
+        // a FacadeSurface exists here whether or not a sign ever lands on
+        // it -- it's a real piece of architecture (this wall), not a
+        // record of "a sign happened". Persistent and pushed to
+        // buildingFacades unconditionally, BEFORE the sign roll, so any
+        // permanent fixture (the fire escape) is reserved on it no
+        // matter which branch below actually runs.
+        const facade = makeFacade(rect, s.dx, s.dz, 0, height, door);
+        // the fire escape is a permanent vertical fixture on this wall --
+        // reserve its real footprint (its own tangential width, full
+        // height) before any sign gets a chance to land on top of it.
+        if (isFireEscapeFace) facadeReserve(facade, -0.7, 0.7, 0, height);
+        buildingFacades.push(facade);
+
+        // more than one sign per face -- a real signage-choked facade is
+        // layered, not one polite billboard each. Each one reserves real
+        // facade space (see placeSignsOnFacade) sized to its OWN actual
+        // geometry, so layering density no longer means visible overlap.
         const t = webAlignment(cz);
         const signChance = THREE.MathUtils.lerp(CONFIG.narrative.darkWeb.signChance, CONFIG.narrative.lightWeb.signChance, t);
-        if (rng() > signChance) {
-            candidateFaces.push({ x: faceX, z: faceZ, rotY, height });
-        } else {
-            // more than one sign per face -- a real signage-choked
-            // facade is layered, not one polite billboard each. Each one
-            // now reserves real facade space (see placeSignsOnFacade),
-            // so layering density no longer means visible overlap.
+        let signCount = 0;
+        if (rng() < signChance) {
             const signRolls = [1, 0.65, 0.35];
-            let signCount = 0;
             for (const p of signRolls) { if (rng() < p) signCount++; else break; }
-            const facade = makeFacade(rect, s.dx, s.dz, height, door);
-            // the fire escape is a permanent vertical fixture on this
-            // wall -- reserve its real footprint (its own tangential
-            // width, full height) before any sign gets a chance to land
-            // on top of it.
-            if (isFireEscapeFace) facadeReserve(facade, -0.7, 0.7, 0, height);
-            placeSignsOnFacade(facade, signCount, row, height, floorHeight);
         }
+        const signsPlaced = placeSignsOnFacade(facade, signCount, row);
+        // a face genuinely free of signs is recorded in candidateFaces --
+        // the content-card pass later claims whatever's left over so real
+        // content never double-mounts on top of a sign. `facade` rides
+        // along so a fire-escape (or any other) reservation already on
+        // it survives into that later pass too -- it used to be lost
+        // entirely whenever this branch's sibling ran instead.
+        if (signsPlaced === 0) candidateFaces.push({ x: faceX, z: faceZ, rotY, height, facade });
 
         // graffiti tags scrawled near ground level -- independent of
         // whether a sign landed above, and often more than one, the way
@@ -3904,6 +3981,10 @@ function addBuildingSite(site) {
 }
 
 const candidateFaces = []; // faces that skipped a random sign — free for content cards
+// every real exterior wall in the generated city -- see makeFacade. Grows
+// for the life of generation; nothing ever removes a FacadeSurface once
+// its wall exists.
+const buildingFacades = [];
 
 // the four wall-facing transforms for a building of a given (possibly
 // non-square) core half-extents -- shared by normal sign placement and
@@ -3932,8 +4013,13 @@ const SIGN_FONTS = [
 const SIGN_BACKINGS = ['#020202', '#0a0410', '#04120a', '#12040a', '#0a0a02', '#080808'];
 const SIGN_BORDER_STYLES = ['solid', 'double', 'cut', 'none'];
 
-function addSign(x, y, z, rotY, title, subtitle, colorHex, flicker = false, widthOverride = null) {
-    const shape = pick(SIGN_SHAPES);
+function addSign(x, y, z, rotY, title, subtitle, colorHex, flicker = false, widthOverride = null, shapeOverride = null) {
+    // callers driving real facade occupancy (see placeSignsOnFacade) pass
+    // the EXACT shape/spec that was already reserved -- rolling a fresh
+    // one here independently is how the reserved footprint and the
+    // rendered mesh used to disagree (same bug class as widthOverride
+    // below, just on the aspect ratio instead of the width).
+    const shape = shapeOverride ?? pick(SIGN_SHAPES);
     const font = pick(SIGN_FONTS);
     const backing = pick(SIGN_BACKINGS);
     const borderStyle = pick(SIGN_BORDER_STYLES);
@@ -6009,6 +6095,27 @@ const propColliders = []; // {x, z, radius, height} — soft obstacles, blended 
     for (const site of buildingSites) addBuildingSite(site);
     console.log(`[perf] ${buildingSites.length} building sites (${buildingSites.reduce((s, x) => s + x.cells.length, 0)} cells) generated in ${(performance.now() - buildStart).toFixed(0)}ms (${bootElapsed()} total)`);
     console.log(`[testing] same-site height mismatches: ${totalExposedSetbackWalls} exterior setback wall-floors generated where a same-site neighbor stopped short (floor-aware internal-edge fix -- was structurally always 0 before)`);
+
+    // HARD TEST: every reservation on every real FacadeSurface -- doors,
+    // fire escapes, and every sign (see placeSignsOnFacade) -- must fall
+    // entirely within that facade's own real [yMin,yMax]. This is exactly
+    // the bug class that let signs float above a one-floor building's own
+    // roof: the old code reserved a band computed from floorHeight
+    // instead of the facade's real height, so the reservation was already
+    // out-of-bounds before the mesh was even built. Runs across every
+    // generated facade on every seed, not one hand-picked test building.
+    let facadeBoundsViolations = 0;
+    for (const facade of buildingFacades) {
+        for (const r of facade.occupied) {
+            if (r.vMin < facade.yMin - 0.01 || r.vMax > facade.yMax + 0.01) {
+                facadeBoundsViolations++;
+                if (facadeBoundsViolations <= 5) {
+                    console.warn(`[testing] FAILED facade occupancy bounds: facade #${facade.id} (${facade.exposure}) yRange=[${facade.yMin.toFixed(2)},${facade.yMax.toFixed(2)}] but a reservation spans vMin=${r.vMin.toFixed(2)} vMax=${r.vMax.toFixed(2)}`);
+                }
+            }
+        }
+    }
+    console.log(`[testing] facade occupancy bounds self-test: ${facadeBoundsViolations === 0 ? 'PASS' : `FAIL (${facadeBoundsViolations} violations)`} across ${buildingFacades.length} facades`);
 }
 
 mountContentCards(); // real site content claims leftover wall faces
@@ -7413,7 +7520,7 @@ window.__boot?.ready();
 window.__debug = {
     scene, camera, THREE,
     setFreecam: (v) => { freecamEnabled = v; },
-    buildingWallSegments, buildingSites, footprintOf, siteIdOf, grid,
+    buildingWallSegments, buildingSites, footprintOf, siteIdOf, grid, buildingFacades,
 };
 
 animate();

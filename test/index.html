@@ -1,22 +1,258 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
+
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <meta name="theme-color" content="#05070a">
-  <meta name="color-scheme" content="dark">
-  <title>Concrete Jungle / Performance Test</title>
-  <style>
-    *{box-sizing:border-box}html,body{width:100%;height:100%;margin:0;overflow:hidden;background:#05070a;color:#dbe7ef;font:12px/1.35 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}body{touch-action:none}canvas{display:block;width:100%;height:100%;outline:0}.hud{position:fixed;inset:0;pointer-events:none}.status{position:absolute;top:max(12px,env(safe-area-inset-top));left:max(12px,env(safe-area-inset-left));padding:7px 9px;border:1px solid #22303a;background:#071016cc;backdrop-filter:blur(4px);white-space:pre;opacity:.82}.enter{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);padding:10px 14px;border:1px solid #42515c;background:#071016e8;text-align:center;letter-spacing:.08em}.enter small{display:block;margin-top:5px;opacity:.64;letter-spacing:0}.crosshair{position:absolute;left:50%;top:50%;width:10px;height:10px;transform:translate(-50%,-50%);opacity:0}.crosshair:before,.crosshair:after{content:"";position:absolute;background:#dbe7efaa}.crosshair:before{left:4px;top:0;width:1px;height:10px}.crosshair:after{left:0;top:4px;width:10px;height:1px}body.locked .enter{display:none}body.locked .crosshair{opacity:.72}.fatal{position:fixed;inset:0;display:grid;place-items:center;padding:24px;background:#05070a;color:#f2c8c8;font:14px/1.5 ui-monospace,monospace;text-align:center}
-  </style>
+    <meta charset="UTF-8">
+    <base href="../">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>jweb.dev / test progressive runtime</title>
+    <meta name="description" content="A cramped neon back-alley maze, walkable in 3D.">
+    <style>
+        * { box-sizing: border-box; }
+        html, body {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background: #0a0305;
+            font-family: 'Courier New', monospace;
+        }
+        canvas { display: block; }
+
+        #backLink {
+            position: fixed;
+            top: 14px;
+            left: 16px;
+            z-index: 30;
+            color: #d99;
+            text-decoration: none;
+            font-size: 0.8rem;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            border: 1px solid #d9999955;
+            padding: 6px 10px;
+            background: #0a0305cc;
+        }
+        #backLink:hover { color: #ff2f4f; border-color: #ff2f4f; }
+
+        #epilepsyWarning {
+            position: fixed;
+            top: 14px;
+            right: 16px;
+            z-index: 30;
+            max-width: 220px;
+            color: #ffd93f;
+            font-size: 0.68rem;
+            letter-spacing: 0.03em;
+            line-height: 1.4;
+            border: 1px solid #ffd93f66;
+            padding: 6px 10px;
+            background: #0a0305cc;
+        }
+
+        #hint {
+            position: fixed;
+            bottom: 18px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: #e8c9c9cc;
+            font-size: 0.7rem;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            text-align: center;
+            z-index: 25;
+            pointer-events: none;
+            text-shadow: 0 0 6px #000, 0 0 2px #000;
+            transition: opacity 0.4s;
+        }
+
+        #crosshair {
+            position: fixed;
+            top: 50%; left: 50%;
+            width: 6px; height: 6px;
+            margin: -3px 0 0 -3px;
+            border-radius: 50%;
+            background: #ffffffaa;
+            z-index: 15;
+            display: none;
+            pointer-events: none;
+        }
+
+        /* touch controls */
+        #joystickZone, #lookZone {
+            position: fixed;
+            top: 0; bottom: 0;
+            width: 50%;
+            z-index: 10;
+            touch-action: none;
+            display: none;
+        }
+        #joystickZone { left: 0; }
+        #lookZone { right: 0; }
+
+        #joystickBase {
+            position: fixed;
+            width: 100px; height: 100px;
+            border-radius: 50%;
+            border: 2px solid #ff2f6a66;
+            background: #ff2f6a11;
+            display: none;
+            z-index: 11;
+            pointer-events: none;
+        }
+        #joystickKnob {
+            position: fixed;
+            width: 44px; height: 44px;
+            border-radius: 50%;
+            background: #ff2f6a55;
+            border: 1px solid #ff2f6a;
+            display: none;
+            z-index: 12;
+            pointer-events: none;
+        }
+
+        /* boot diagnostics -- visible from the very first paint, before
+           main.js has even started fetching, so "the page is just blank"
+           is never the whole story again. Fades out on a real ready()
+           call; stays put (and turns red) on fail() so an error is
+           something to screenshot, not something invisible in devtools. */
+        #bootStatus {
+            position: fixed;
+            inset: 0;
+            z-index: 50;
+            background: #0a0305;
+            color: #e8c9c9;
+            font-family: 'Courier New', monospace;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 24px;
+            transition: opacity 0.5s;
+        }
+        #bootStatusLine {
+            font-size: 1.1rem;
+            letter-spacing: 0.04em;
+            margin-bottom: 14px;
+            text-align: center;
+        }
+        #bootStatusLog {
+            font-size: 0.68rem;
+            line-height: 1.5;
+            color: #a89090;
+            max-width: 640px;
+            max-height: 40vh;
+            overflow-y: auto;
+            text-align: left;
+        }
+        #bootStatus.bootDone {
+            opacity: 0;
+            pointer-events: none;
+        }
+        #bootStatus.bootFailed {
+            background: #1a0505;
+        }
+        #bootStatus.bootFailed #bootStatusLine {
+            color: #ff5f5f;
+        }
+    </style>
+
+    <style id="testProgressiveBootStyle">
+        /* /test must expose the canvas immediately.  Diagnostics stay visible
+           without intercepting clicks or hiding streamed-in geometry. */
+        #bootStatus {
+            inset: 12px auto auto 12px;
+            width: min(620px, calc(100vw - 24px));
+            max-height: 28vh;
+            display: block;
+            padding: 9px 11px;
+            background: #0a0305b8;
+            border: 1px solid #d9999944;
+            backdrop-filter: blur(3px);
+            pointer-events: none;
+            overflow: hidden;
+        }
+        #bootStatusLine { margin: 0 0 5px; font-size: .75rem; }
+        #bootStatusLog { max-height: 18vh; font-size: .58rem; overflow: hidden; }
+        #bootStatus.bootDone { opacity: 0; }
+    </style>
 </head>
+
 <body>
-  <canvas id="view" aria-label="3D city performance test"></canvas>
-  <div class="hud" aria-hidden="true">
-    <div class="status" id="status">BOOT</div>
-    <div class="enter">CLICK TO ENTER<small>WASD · MOUSE · SHIFT</small></div>
-    <div class="crosshair"></div>
-  </div>
-  <script type="module" src="./app.js"></script>
+    <a id="backLink" href="old/index.html">&larr; old site</a>
+    <div id="epilepsyWarning">⚠ Contains flashing/flickering lights and a rapidly cycling full-screen color sequence (climb high enough). If you're photosensitive, proceed with caution.</div>
+
+    <div id="crosshair"></div>
+    <div id="hint"></div>
+    <div id="joystickZone"></div>
+    <div id="lookZone"></div>
+    <div id="joystickBase"></div>
+    <div id="joystickKnob"></div>
+
+    <div id="bootStatus">
+        <div id="bootStatusLine">booting…</div>
+        <div id="bootStatusLog"></div>
+    </div>
+
+    <script>
+        // Plain classic script, runs immediately (before the module script
+        // below even starts fetching) -- this is diagnostic scaffolding so
+        // "the page is just blank" turns into "here's exactly which phase
+        // it got stuck on, or the exact error," instead of nothing at all.
+        // window.__boot is the API main.js calls into as it progresses.
+        (function () {
+            const line = document.getElementById('bootStatusLine');
+            const log = document.getElementById('bootStatusLog');
+            const t0 = performance.now();
+            const rows = [];
+            const requestedNumericParams = [...new URLSearchParams(location.search).entries()].filter(([key]) =>
+                key === 'seed' || key === 'citySize' || key.startsWith('n.') || key.startsWith('cfg.'));
+            function stamp() { return ((performance.now() - t0) / 1000).toFixed(2) + 's'; }
+            function push(text, isError) {
+                const row = document.createElement('div');
+                row.textContent = `[${stamp()}] ${text}`;
+                if (isError) row.style.color = '#ff5f5f';
+                log.appendChild(row);
+                rows.push(text);
+                while (log.childNodes.length > 40) log.removeChild(log.firstChild);
+            }
+            window.__boot = {
+                elapsed() { return (performance.now() - t0) / 1000; }, // seconds since THIS script ran -- before main.js has even started fetching, so this covers the corpus download+parse time main.js's own clock can't see
+                status(text) { line.textContent = text; push(text); console.log('[boot]', stamp(), text); },
+                ready() {
+                    line.textContent = 'ready';
+                    document.getElementById('bootStatus').classList.add('bootDone');
+                    console.log('[boot]', stamp(), 'ready -- overlay fading');
+                },
+                fail(text) {
+                    line.textContent = 'FAILED: ' + text;
+                    document.getElementById('bootStatus').classList.add('bootFailed');
+                    push(text, true);
+                },
+            };
+            window.addEventListener('error', (e) => {
+                window.__boot.fail((e.error && e.error.stack) ? e.error.stack : e.message + ' (' + e.filename + ':' + e.lineno + ')');
+            });
+            window.addEventListener('unhandledrejection', (e) => {
+                window.__boot.fail('unhandled promise rejection: ' + (e.reason && e.reason.stack ? e.reason.stack : e.reason));
+            });
+            if (requestedNumericParams.length) {
+                const preview = requestedNumericParams.slice(0, 6).map(([k, v]) => `${k}=${v}`).join(' · ');
+                push(`PARAMETERIZED LOAD: ${requestedNumericParams.length} numeric/query value${requestedNumericParams.length === 1 ? '' : 's'} requested${preview ? ' · ' + preview : ''}`);
+            }
+            window.__boot.status('fetching three.js + noise corpus (large files, first load only -- this can take a while on a slow connection)…' + (requestedNumericParams.length ? ` · ${requestedNumericParams.length} parameter value(s) in URL` : ''));
+        })();
+    </script>
+
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "./vendor/three/three.module.js"
+        }
+    }
+    </script>
+    <script type="module" src="./test/main.js" onerror="window.__boot?.fail('main.js failed to load as a module -- check the network tab for a 404/CORS/MIME-type error on main.js or one of its imports')"></script>
 </body>
+
 </html>

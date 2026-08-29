@@ -1,46 +1,27 @@
-# `/test` performance rewrite
+# /test progressive full-fidelity runtime
 
-This path is a clean performance baseline. It deliberately does **not** import the production `main.js`, the large production HTML UI, Three.js, GLTF assets, audio, textures, or noise corpora on the critical path.
+`/test` is a scheduling fork of the real root runtime, **not a second city generator**.
 
-## Critical-path rules
+## Hard invariants
 
-1. **First paint and controls win.** `index.html` is ~2 KB and `app.js` is the only boot script.
-2. **No framework/runtime dependency.** The renderer is direct WebGL2, so there is no library download/parse/initialization tax.
-3. **One geometry draw call.** Ground and buildings share one cube mesh and one instanced draw.
-4. **No per-frame world generation.** Procedural chunks are generated in `world-worker.js` after first paint; user input starts the worker immediately, otherwise an idle callback starts it.
-5. **Nearest work first.** The worker reprioritizes around the player's current chunk, drops obsolete queued work, and yields between chunks.
-6. **Bounded work.** Generation radius, render radius, retained chunk radius, instance count, DPR, and physical pixel count are all capped.
-7. **Adaptive fill rate.** Resolution scales down only after sustained slow frames and recovers conservatively with hysteresis. Canvas resizing does not occur every frame.
-8. **Collision is local and cheap.** Only loaded neighboring chunks are checked and each building is a simple 2D AABB.
-9. **No frame-loop DOM churn.** The HUD updates four times per second. The animation loop does not create world objects or rebuild buffers unless chunk visibility/data changed.
-10. **Background work pauses in hidden tabs.** Input is cleared and the worker is paused when the page is hidden.
+- `test/main.js` starts as an exact copy of root `main.js`.
+- Maze carving, BuildingSite reservation, signature dispatch, building builders, collision registration, content, assets, props, traversal rules, and final optimizer are the root implementations.
+- Building sites execute in the same order. Cooperative yields happen only **after** a completed site/row/phase; they do not consume RNG or replace geometry.
+- No proxy grid, placeholder city, simplified AABB world, alternate `LOTS` lattice, or fake-building worker is permitted.
+- Relative JS imports point back to the authoritative root modules. The `<base href="../">` keeps runtime asset/fetch URLs rooted exactly where the main page expects them.
+- A bootstrap render/movement loop exists only while generation is incomplete. Once topology exists it constrains movement to real open maze cells. The same camera and `PointerLockControls` instance are handed to full player physics at completion.
+- The real full runtime eventually converges: content/building/prop logic is not dropped for performance.
 
-## Current scope
+## Performance model
 
-The test intentionally proves the hard base first: immediate pointer-lock/WASD movement through a progressively populated procedural city while maintaining a tiny boot path and stable render cost.
+1. Start the three giant noise imports immediately (same as root).
+2. Create renderer/camera/lighting and begin painting **before** awaiting that corpus.
+3. Allow pointer-lock look + WASD during loading.
+4. Carve the authoritative maze.
+5. Stream authoritative building sites in original deterministic order, yielding when the frame work budget is exhausted or input is pending.
+6. Stream street/alley surface preparation by rows.
+7. Keep the existing near-first deferred decoration system.
+8. Run traversal validation and the real static-world optimizer after a paint boundary.
+9. Hand off to the unchanged full physics/render loop.
 
-Production systems should return as independent lazy modules, not as a monolith. Recommended order:
-
-- near-player signage / fixtures only after the containing chunk exists;
-- textures only after geometry is visible and the frame budget is healthy;
-- audio only after user interaction;
-- GLB landmarks only inside an approach radius, decoded off the critical path;
-- simulation agents at lower update rates and only near the player;
-- large text/noise corpora as indexed/ranged shards requested by need, never 60+ MB whole-file startup fetches;
-- decorative UI after interaction or idle time.
-
-The performance contract is that none of those systems may delay the base renderer, pointer lock, movement, or the nearest geometry stream.
-
-## Seed and parity contract
-
-`/test/` accepts `?seed=<integer>`, displays the active seed in the HUD, and
-generates every chunk from that seed plus its coordinates. Chunk results are
-therefore identical regardless of worker timing, camera route, or load order.
-The worker releases one nearest-first chunk every 28 ms so the world can be
-seen filling in while movement and rendering continue.
-
-The current test renderer and production renderer still use different world
-description algorithms. A shared seed makes each independently repeatable; it
-does not yet make their geometry identical. True production parity requires
-moving production's finite maze/building-site description into this worker and
-having both renderers consume that same description.
+`?frameBudget=2..12` controls how many milliseconds of synchronous generation `/test` is allowed to spend in a slice before yielding for paint/input. Default: 7ms desktop, 5ms mobile/potato.

@@ -960,6 +960,17 @@ const forcedQuality = new URLSearchParams(location.search).get('quality');
 // footprint generator has failed. Purely additive lines, zero effect on
 // collision/gameplay when off (the default).
 const DEBUG_FOOTPRINTS = new URLSearchParams(location.search).get('debugFootprints') === '1';
+// ?debugFacades=1 -- every real FacadeSurface as a colored rectangle
+// (green = a normal street facade, cyan = an exposed-setback facade
+// created by a same-site neighbor stopping short -- the height-mismatch
+// bug's own regression signal made visible), a magenta arrow for its
+// outward normal (walk all 4 cardinal sides -- an arrow pointing through
+// the building means the rotation math is wrong), a smaller colored
+// rectangle per occupied region (door=blue, sign/poster=orange,
+// fireEscape=red, hardware=purple, overlay=green), and a purple
+// wireframe box per registered world-space projection volume. See
+// addFacadeDebugOverlay, called once generation finishes.
+const DEBUG_FACADES = new URLSearchParams(location.search).get('debugFacades') === '1';
 const cores = navigator.hardwareConcurrency || 4;
 const mem = navigator.deviceMemory || 4; // not supported in all browsers; defaults optimistic
 
@@ -3700,6 +3711,55 @@ function projectionFits(box) {
 }
 function reserveProjectionVolume(box) { exteriorDecorationVolumes.push(box); }
 
+// ?debugFacades=1 -- see the flag's own comment. A rectangle in a
+// facade's own (u,v) space, drawn as a real world-space line loop via
+// pointOnFacade -- the same primitive every actual wall-mounted object
+// uses, so this overlay is checking the exact same math it's meant to
+// visualize, not a separate approximation of it.
+function facadeDebugRectOutline(facade, uMin, uMax, vMin, vMax, color, outwardOffset = 0.02) {
+    const corners = [[uMin, vMin], [uMax, vMin], [uMax, vMax], [uMin, vMax]]
+        .map(([u, v]) => pointOnFacade(facade, u, v, outwardOffset));
+    const geo = new THREE.BufferGeometry().setFromPoints(corners.map(p => new THREE.Vector3(p.x, p.y, p.z)));
+    scene.add(new THREE.LineLoop(geo, new THREE.LineBasicMaterial({ color })));
+}
+
+const OCCUPANCY_DEBUG_COLORS = {
+    door: 0x2255ff, fireEscape: 0xff3333,
+    sign: 0xffaa00, poster: 0xffaa00,
+    camera: 0xaa33ff, pipe: 0xaa33ff, awning: 0xaa33ff, balcony: 0xaa33ff,
+    graffiti: 0x33ff88, ivy: 0x33ff88, flyer: 0x33ff88, sticker: 0x33ff88,
+};
+
+function addFacadeDebugOverlay() {
+    if (!DEBUG_FACADES) return;
+    for (const facade of buildingFacades) {
+        facadeDebugRectOutline(facade, -facade.half, facade.half, facade.yMin, facade.yMax, facade.exposure === 'setback' ? 0x00ffff : 0x00ff88);
+
+        // outward-normal arrow -- walk all 4 cardinal sides of a building;
+        // an arrow pointing back through the wall means the rotation math
+        // (outwardRotationY) is wrong for that side.
+        const midV = (facade.yMin + facade.yMax) / 2;
+        const base = pointOnFacade(facade, 0, midV, 0.05);
+        const tip = pointOnFacade(facade, 0, midV, 1.5);
+        const arrowGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(base.x, base.y, base.z), new THREE.Vector3(tip.x, tip.y, tip.z)]);
+        scene.add(new THREE.Line(arrowGeo, new THREE.LineBasicMaterial({ color: 0xff00ff })));
+        const tipDot = new THREE.Mesh(new THREE.SphereGeometry(0.08, 6, 6), new THREE.MeshBasicMaterial({ color: 0xff00ff }));
+        tipDot.position.set(tip.x, tip.y, tip.z);
+        scene.add(tipDot);
+
+        for (const r of facade.occupied) {
+            facadeDebugRectOutline(facade, r.uMin, r.uMax, r.vMin, r.vMax, OCCUPANCY_DEBUG_COLORS[r.type] ?? 0xffffff, 0.04);
+        }
+    }
+    // world-space projection volumes (blade sign arms/panels, awnings,
+    // fire escapes) -- purple wireframe boxes.
+    for (const v of exteriorDecorationVolumes) {
+        const box = new THREE.Box3(new THREE.Vector3(v.xMin, v.yMin, v.zMin), new THREE.Vector3(v.xMax, v.yMax, v.zMax));
+        scene.add(new THREE.Box3Helper(box, 0xaa33ff));
+    }
+    console.log(`[testing] debugFacades overlay: drew ${buildingFacades.length} facades + ${exteriorDecorationVolumes.length} projection volumes`);
+}
+
 // the actual buildable rectangle for one cell -- independent per-side
 // setbacks (0 for a same-site neighbor, a small shared value for a
 // party wall, the normal street setback otherwise) instead of one margin
@@ -6355,15 +6415,23 @@ const propColliders = []; // {x, z, radius, height} — soft obstacles, blended 
     for (const site of buildingSites) addBuildingSite(site);
     console.log(`[perf] ${buildingSites.length} building sites (${buildingSites.reduce((s, x) => s + x.cells.length, 0)} cells) generated in ${(performance.now() - buildStart).toFixed(0)}ms (${bootElapsed()} total)`);
     console.log(`[testing] same-site height mismatches: ${totalExposedSetbackWalls} exterior setback wall-floors generated where a same-site neighbor stopped short (floor-aware internal-edge fix -- was structurally always 0 before)`);
+}
 
-    // HARD TEST: every reservation on every real FacadeSurface -- doors,
-    // fire escapes, and every sign (see placeSignsOnFacade) -- must fall
-    // entirely within that facade's own real [yMin,yMax]. This is exactly
-    // the bug class that let signs float above a one-floor building's own
-    // roof: the old code reserved a band computed from floorHeight
-    // instead of the facade's real height, so the reservation was already
-    // out-of-bounds before the mesh was even built. Runs across every
-    // generated facade on every seed, not one hand-picked test building.
+// HARD TESTS -- run once, after EVERY consumer of facade occupancy has
+// had its turn (including mountContentCards, which claims leftover
+// facades for real site content) so these actually validate the
+// complete, final state rather than a snapshot from partway through
+// generation.
+function validateFacadeOccupancy() {
+    // every reservation on every real FacadeSurface -- doors, fire
+    // escapes, every sign (see placeSignsOnFacade), and now every
+    // content card too -- must fall entirely within that facade's own
+    // real [yMin,yMax]. This is exactly the bug class that let signs
+    // float above a one-floor building's own roof: the old code
+    // reserved a band computed from floorHeight instead of the facade's
+    // real height, so the reservation was already out-of-bounds before
+    // the mesh was even built. Runs across every generated facade on
+    // every seed, not one hand-picked test building.
     let facadeBoundsViolations = 0;
     for (const facade of buildingFacades) {
         for (const r of facade.occupied) {
@@ -6377,13 +6445,13 @@ const propColliders = []; // {x, z, radius, height} — soft obstacles, blended 
     }
     console.log(`[testing] facade occupancy bounds self-test: ${facadeBoundsViolations === 0 ? 'PASS' : `FAIL (${facadeBoundsViolations} violations)`} across ${buildingFacades.length} facades`);
 
-    // HARD TEST: no two registered world-space projection volumes
-    // (blade sign arms/panels, awnings, fire escapes) actually intersect
-    // -- catches exactly the cross-facade corner case a facade's own u/v
-    // occupancy can't see (two perpendicular walls both projecting into
-    // the same shared alley volume). O(n^2) but n is only ever a few
-    // hundred projecting fixtures citywide -- a one-time boot check, not
-    // a per-frame cost.
+    // no two registered world-space projection volumes (blade sign arms/
+    // panels, awnings, fire escapes) actually intersect -- catches
+    // exactly the cross-facade corner case a facade's own u/v occupancy
+    // can't see (two perpendicular walls both projecting into the same
+    // shared alley volume). O(n^2) but n is only ever a few hundred
+    // projecting fixtures citywide -- a one-time boot check, not a
+    // per-frame cost.
     let projectionIntersections = 0;
     for (let i = 0; i < exteriorDecorationVolumes.length; i++) {
         for (let j = i + 1; j < exteriorDecorationVolumes.length; j++) {
@@ -6394,6 +6462,8 @@ const propColliders = []; // {x, z, radius, height} — soft obstacles, blended 
 }
 
 mountContentCards(); // real site content claims leftover wall faces
+validateFacadeOccupancy();
+addFacadeDebugOverlay();
 buildRooftopCatwalks(); // every building's rooftop deck now exists -- an occasional real bridge between nearby ones
 bootStatus(`city built, ${GRID_COLS * GRID_ROWS} cells -- placing props/decoration…`);
 

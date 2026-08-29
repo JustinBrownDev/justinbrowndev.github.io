@@ -279,6 +279,59 @@ const CONFIG = {
         },
     },
 
+    // ---------------- signature locations ----------------
+    // Five authored "micro-levels" embedded in the procedural city: a
+    // recognizable footprint, a deliberate room graph, real content --
+    // built from the SAME wall/floor/facade/stair primitives generic
+    // buildings use (see SIGNATURE_BUILDERS near reserveSignatureSites),
+    // not a generic building wearing a special sign. Location is
+    // procedural (reserveSignatureSites picks WHERE, before generic
+    // BuildingSites are assembled -- see assembleBuildingSites); identity
+    // and room graph are authored per builder function, not re-rolled.
+    //
+    // Debug: ?debugSignatures=1 overlays every reserved site + its
+    // entrances; ?landmark=<key> (artGallery/as400Archive/justinIndex/
+    // systemsWorkshop/loreShrine) spawns just outside that site's main
+    // entrance instead of a random maze cell.
+    signatureBuildings: {
+        enabled: true,
+        placement: {
+            // Chebyshev cell distance between ANY two signatures' member
+            // cells -- keeps them from landing shoulder-to-shoulder on
+            // one block. Tuned for the 17x17 map (CONFIG.maze); revisit
+            // if the grid size changes again.
+            minDistanceCells: 4,
+            preferredDistanceCells: 6,
+            requireStreetEntrance: true, // >=1 site cell must be adjacent to a real open (alley/street) cell
+            requireSecondaryConnection: true, // and a second, independent open-adjacent edge, logged (not hard-failed) if the site's too small/pinched to have one
+            maxSeedAttempts: 500, // per signature, before giving up and disabling just that one this load -- never silently squeezed into an invalid spot
+        },
+        // targetCells: [min,max] site size in cells, same unit
+        // SITE_SIZE_WEIGHTS/assembleBuildingSites already uses.
+        // preferredFloors feeds the placeholder massing AND (once each
+        // builder lands) its real floor plan -- see per-builder TODOs.
+        artGallery: {
+            enabled: true, targetCells: [5, 7], preferredFloors: 2,
+            exteriorName: 'ART GALLERY', exteriorSubtitle: 'open to the public',
+        },
+        as400Archive: {
+            enabled: true, targetCells: [5, 8], preferredFloors: 4,
+            exteriorName: 'AS/400 ARCHIVE', exteriorSubtitle: 'midrange reference library',
+        },
+        justinIndex: {
+            enabled: true, targetCells: [6, 9], preferredFloors: 5,
+            exteriorName: 'JUSTIN BROWN INDEX', exteriorSubtitle: 'records bureau',
+        },
+        systemsWorkshop: {
+            enabled: true, targetCells: [4, 6], preferredFloors: 2,
+            exteriorName: 'SYSTEMS WORKSHOP', exteriorSubtitle: 'parts · repair · fabrication',
+        },
+        loreShrine: {
+            enabled: true, targetCells: [4, 7], preferredFloors: 3,
+            exteriorName: 'OFFICE OF MECHANICAL TRUTH', exteriorSubtitle: 'by appointment only',
+        },
+    },
+
     // white / yellow / green / orange / red / cyan — the full signage
     // palette. NO black, NO purple. In daylight these read as painted
     // signage rather than glowing neon, which is fine — the color logic
@@ -994,6 +1047,17 @@ const DEBUG_FOOTPRINTS = new URLSearchParams(location.search).get('debugFootprin
 // wireframe box per registered world-space projection volume. See
 // addFacadeDebugOverlay, called once generation finishes.
 const DEBUG_FACADES = new URLSearchParams(location.search).get('debugFacades') === '1';
+// ?debugSignatures=1 -- every reserved signature site (see
+// reserveSignatureSites) as a colored cell outline + a marker at its
+// main/secondary entrance. See addSignatureDebugOverlay.
+const DEBUG_SIGNATURES = new URLSearchParams(location.search).get('debugSignatures') === '1';
+// ?landmark=artGallery|as400Archive|justinIndex|systemsWorkshop|loreShrine
+// -- spawn just outside that signature's main entrance instead of a
+// random maze cell. Applied once generation finishes (see camera.position
+// near the render-loop setup) -- a no-op with a loud console warning if
+// that signature didn't get reserved this seed (spacing/entrance
+// constraints can disable one; see reserveSignatureSites).
+const urlLandmark = new URLSearchParams(location.search).get('landmark');
 const cores = navigator.hardwareConcurrency || 4;
 const mem = navigator.deviceMemory || 4; // not supported in all browsers; defaults optimistic
 
@@ -1970,6 +2034,177 @@ const siteIdOf = [];
 for (let r = 0; r < GRID_ROWS; r++) siteIdOf.push(new Array(GRID_COLS).fill(-1));
 const buildingSites = [];
 
+// ---------- signature locations: reservation ----------
+// Five authored micro-levels (see CONFIG.signatureBuildings + the
+// SIGNATURE_BUILDERS dispatch table near addBuildingSite's call site).
+// Reserved BEFORE assembleBuildingSites' generic most-constrained-first
+// pass claims anything -- "maze topology -> reserve signature locations
+// -> partition remaining solid land into generic BuildingSites", not the
+// other way around. Each reserved site becomes a normal buildingSites
+// entry (same siteIdOf/cellEdgeKind/party-wall-sealing machinery every
+// generic site uses) tagged with `signatureType` + `signatureInstance`,
+// so nothing downstream (maze-seal walls, facade classification,
+// traversal validation) needs a special case for "this one's authored."
+const SIGNATURE_TYPES = ['artGallery', 'as400Archive', 'justinIndex', 'systemsWorkshop', 'loreShrine'];
+const signatureInstances = []; // populated below; consumed by ?landmark=, ?debugSignatures=1, and the final report
+function reserveSignatureSites(unclaimedSet) {
+    const sigConfig = CONFIG.signatureBuildings;
+    if (!sigConfig?.enabled) { console.log('[signature] CONFIG.signatureBuildings.enabled=false -- no signature locations this load'); return; }
+    const placementCfg = sigConfig.placement;
+    const cheby = (a, b) => Math.max(Math.abs(a.col - b.col), Math.abs(a.row - b.row));
+    const minDistToPlaced = (cell, placedCells) => placedCells.length ? Math.min(...placedCells.map(p => cheby(cell, p))) : Infinity;
+    const placedCells = []; // every cell of every signature already placed, across all types -- spacing is global, not per-type
+    // BFS over solid+unclaimed cells reachable from `seed`, capped at
+    // `cap` -- an upper bound on how big a site rooted here could ever
+    // grow, computed BEFORE committing to a seed. Without this, a seed
+    // cell with a real street edge but sitting in (say) a 1-cell isolated
+    // pocket "reserves" successfully and then immediately grows to just
+    // 1/5-7 cells, nowhere near targetCells -- this is what makes that
+    // structurally impossible instead of a rare bad roll.
+    function unclaimedBlobSize(seed, cap) {
+        const seen = new Set([`${seed.col},${seed.row}`]);
+        const stack = [seed];
+        while (stack.length && seen.size < cap) {
+            const cur = stack.pop();
+            for (const [dc, dr] of [[0, -1], [0, 1], [-1, 0], [1, 0]]) {
+                const nc = cur.col + dc, nr = cur.row + dr, k = `${nc},${nr}`;
+                if (seen.size >= cap) break;
+                if (grid[nr]?.[nc] && unclaimedSet.has(k) && !seen.has(k)) { seen.add(k); stack.push({ col: nc, row: nr }); }
+            }
+        }
+        return seen.size;
+    }
+
+    for (const type of SIGNATURE_TYPES) {
+        const typeCfg = sigConfig[type];
+        if (!typeCfg?.enabled) { console.log(`[signature] ${type}: disabled in config -- skipped`); continue; }
+        const [minCells, maxCells] = typeCfg.targetCells;
+
+        // 1) pick a seed cell: unclaimed, solid, has a real street/alley
+        // edge (a mandatory entrance), far enough (Chebyshev, cell-space)
+        // from every other signature placed so far. Scored toward
+        // preferredDistanceCells rather than "as far as possible" -- the
+        // latter just piles every landmark into whichever corner is
+        // farthest from the map center.
+        let best = null, bestScore = -Infinity, attempts = 0;
+        const shuffled = [...unclaimedSet].sort(() => rng() - 0.5);
+        for (const key of shuffled) {
+            if (++attempts > placementCfg.maxSeedAttempts) break;
+            const [c, r] = key.split(',').map(Number);
+            const cell = { col: c, row: r };
+            const openSides = [[0, -1], [0, 1], [-1, 0], [1, 0]].filter(([dc, dr]) => grid[r + dr]?.[c + dc] === false).length;
+            if (placementCfg.requireStreetEntrance && openSides < 1) continue;
+            const d = minDistToPlaced(cell, placedCells);
+            if (d < placementCfg.minDistanceCells) continue;
+            if (unclaimedBlobSize(cell, minCells) < minCells) continue; // can't reach the minimum footprint from here -- don't even try
+            // d is Infinity for the very first signature placed (nothing
+            // to be far from yet) -- Math.abs(Infinity) is Infinity, so an
+            // un-guarded distance term would make EVERY candidate's score
+            // -Infinity, which never beats bestScore's own -Infinity
+            // starting value and silently leaves `best` null forever. Only
+            // apply the preferred-distance term once there's an actual
+            // finite distance to score against.
+            const distScore = Number.isFinite(d) ? -Math.abs(d - placementCfg.preferredDistanceCells) : 0;
+            const score = distScore + openSides * 0.5 + rng() * 0.75;
+            if (score > bestScore) { bestScore = score; best = cell; }
+        }
+        if (!best) {
+            console.warn(`[signature] ${type}: no valid seed cell found in ${attempts} attempts (spacing=${placementCfg.minDistanceCells} cells + street-entrance constraint too tight for this seed/map) -- DISABLED this load`);
+            continue;
+        }
+
+        // 2) grow it exactly like a generic site (same random-adjacent-
+        // claim rule as assembleBuildingSites below), just against this
+        // signature's own [min,max] cell-count target instead of
+        // SITE_SIZE_WEIGHTS, and only ever claiming cells `unclaimedSet`
+        // still owns (earlier signatures/this one's own seed already
+        // removed theirs).
+        const target = minCells + Math.floor(rng() * (maxCells - minCells + 1));
+        const cells = [best];
+        const claimed = new Set([`${best.col},${best.row}`]);
+        unclaimedSet.delete(`${best.col},${best.row}`);
+        while (cells.length < target) {
+            const candidates = [];
+            for (const cell of cells) {
+                for (const [dc, dr] of [[0, -1], [0, 1], [-1, 0], [1, 0]]) {
+                    const nc = cell.col + dc, nr = cell.row + dr, k = `${nc},${nr}`;
+                    if (grid[nr]?.[nc] && unclaimedSet.has(k) && !claimed.has(k)) candidates.push({ col: nc, row: nr });
+                }
+            }
+            if (!candidates.length) break; // boxed in -- smaller-than-target footprint is a valid outcome, same as generic sites
+            const next = pick(candidates);
+            cells.push(next);
+            claimed.add(`${next.col},${next.row}`);
+            unclaimedSet.delete(`${next.col},${next.row}`);
+        }
+        if (cells.length < minCells) {
+            console.warn(`[signature] ${type}: grew to only ${cells.length}/${minCells}-${maxCells} target cells (boxed in by earlier reservations) -- keeping the smaller footprint`);
+        }
+
+        // 3) re-derive every real open (street/alley) edge against the
+        // FINAL cell set -- growth can add or remove adjacency the seed
+        // cell alone didn't have. This is also the actual validation that
+        // "mainEntrance -> open navigation region": grid[...]===false is
+        // real carved alley pavement, guaranteed reachable (every open
+        // cell is on the DFS spanning tree), never another solid building.
+        const openEdges = [];
+        for (const cell of cells)
+            for (const [dc, dr] of [[0, -1], [0, 1], [-1, 0], [1, 0]])
+                if (grid[cell.row + dr]?.[cell.col + dc] === false) openEdges.push({ cell, dc, dr });
+        if (!openEdges.length) {
+            console.warn(`[signature] ${type}: grew with NO street-facing edge left (fully boxed in) -- unenterable, DISABLED this load; cells returned to the generic pool`);
+            for (const c of cells) unclaimedSet.add(`${c.col},${c.row}`);
+            continue;
+        }
+        const mainEdge = pick(openEdges);
+        const secondaryPool = openEdges.filter(e => e !== mainEdge);
+        const secondaryEdge = secondaryPool.length ? pick(secondaryPool) : null;
+        if (placementCfg.requireSecondaryConnection && !secondaryEdge) {
+            console.warn(`[signature] ${type}: only one street-facing edge -- proceeding without a secondary route (footprint too small/pinched this seed)`);
+        }
+
+        const id = buildingSites.length;
+        for (const c of cells) siteIdOf[c.row][c.col] = id;
+        const toEntrance = (edge) => {
+            const { x: cx, z: cz } = cellToWorld(edge.cell.col, edge.cell.row);
+            const doorX = cx + edge.dc * CELL / 2, doorZ = cz + edge.dr * CELL / 2;
+            // the neighboring open cell's own CENTER, not an arbitrary
+            // offset from the door -- exactly the same "safe interior of
+            // an open cell" point the normal random spawn already uses
+            // (see `spawn = cellToWorld(spawnCol, spawnRow)` below), so
+            // ?landmark= can never place the player inside a wall or
+            // clipping the building across a narrow alley. Half a cell
+            // (3.5 units) out from the door lands squarely in the
+            // "3-5 meters in front of the entrance" the spec asks for.
+            const outside = cellToWorld(edge.cell.col + edge.dc, edge.cell.row + edge.dr);
+            return {
+                cell: edge.cell, dc: edge.dc, dr: edge.dr,
+                doorX, doorZ,
+                outwardRotY: outwardRotationY(edge.dc, edge.dr),   // wall-mounted-object convention (local +Z is "front") -- this makes a sign's front face point (dc,dr), away from the building.
+                // A THREE.PerspectiveCamera (or PointerLockControls) uses
+                // the opposite convention -- local -Z is "forward" -- so
+                // the SAME angle that points a sign's +Z face outward
+                // points a camera's forward axis the other way, back
+                // toward the door: rotation.y=outwardRotationY(dc,dr)
+                // sends a sign's +Z to world (dc,dr) but a camera's -Z to
+                // world (-dc,-dr). Verified against the cardinal-
+                // orientation self-test's own convention, not guessed.
+                facingRotY: outwardRotationY(edge.dc, edge.dr),
+                outsideX: outside.x, outsideZ: outside.z,
+            };
+        };
+        const instance = {
+            type, id, cells,
+            mainEntrance: toEntrance(mainEdge),
+            secondaryEntrance: secondaryEdge ? toEntrance(secondaryEdge) : null,
+        };
+        signatureInstances.push(instance);
+        buildingSites.push({ id, cells, signatureType: type, signatureInstance: instance });
+        placedCells.push(...cells);
+        console.log(`[signature] ${typeCfg.exteriorName ?? type} reserved: site=${id} cells=${cells.length} (target ${minCells}-${maxCells}) entrance=(${instance.mainEntrance.doorX.toFixed(1)},${instance.mainEntrance.doorZ.toFixed(1)}) ${secondaryEdge ? '+secondary' : '(no secondary)'}`);
+    }
+}
+
 function assembleBuildingSites() {
     // this maze's perimeter ring is always solid and touches most of the
     // interior's solid cells too -- the "natural" contiguous solid mass
@@ -1983,6 +2218,7 @@ function assembleBuildingSites() {
     for (let r = 0; r < GRID_ROWS; r++)
         for (let c = 0; c < GRID_COLS; c++)
             if (grid[r][c]) unclaimedSet.add(`${c},${r}`);
+    reserveSignatureSites(unclaimedSet); // MUST run before the generic pass below claims anything
     const availableDegree = (c, r) => [[0, -1], [0, 1], [-1, 0], [1, 0]]
         .filter(([dc, dr]) => grid[r + dr]?.[c + dc] && siteIdOf[r + dr][c + dc] === -1).length;
 
@@ -3784,6 +4020,41 @@ function addFacadeDebugOverlay() {
     console.log(`[testing] debugFacades overlay: drew ${buildingFacades.length} facades + ${exteriorDecorationVolumes.length} projection volumes`);
 }
 
+// ?debugSignatures=1 -- every reserved signature site's cells (colored
+// per type) + a marker at its main (white dot, tall line) and secondary
+// (gray dot, short line) entrance. Room/stair-core labels get added here
+// as each landmark's real room graph lands -- for now, placeholder
+// massing (see buildSignaturePlaceholder) has no interior layout to
+// label yet.
+const SIGNATURE_DEBUG_COLORS = {
+    artGallery: 0xffe14d, as400Archive: 0x4dc8ff, justinIndex: 0xff4d9e,
+    systemsWorkshop: 0x4dff8e, loreShrine: 0xff8a4d,
+};
+function addSignatureDebugOverlay() {
+    if (!DEBUG_SIGNATURES) return;
+    for (const inst of signatureInstances) {
+        const color = SIGNATURE_DEBUG_COLORS[inst.type] ?? 0xffffff;
+        for (const cell of inst.cells) {
+            const { x, z } = cellToWorld(cell.col, cell.row);
+            addDebugRectOutline(x, z, CELL / 2 - 0.15, CELL / 2 - 0.15, 0.2, color);
+        }
+        for (const entrance of [inst.mainEntrance, inst.secondaryEntrance]) {
+            if (!entrance) continue;
+            const isMain = entrance === inst.mainEntrance;
+            const topY = isMain ? 6 : 3.5;
+            const lineGeo = new THREE.BufferGeometry().setFromPoints([
+                new THREE.Vector3(entrance.doorX, 0, entrance.doorZ),
+                new THREE.Vector3(entrance.doorX, topY, entrance.doorZ),
+            ]);
+            scene.add(new THREE.Line(lineGeo, new THREE.LineBasicMaterial({ color: isMain ? 0xffffff : 0x999999 })));
+            const dot = new THREE.Mesh(new THREE.SphereGeometry(0.25, 8, 8), new THREE.MeshBasicMaterial({ color }));
+            dot.position.set(entrance.outsideX, topY, entrance.outsideZ);
+            scene.add(dot);
+        }
+    }
+    console.log(`[signature] debugSignatures overlay: drew ${signatureInstances.length} reserved sites`);
+}
+
 // the actual buildable rectangle for one cell -- independent per-side
 // setbacks (0 for a same-site neighbor, a small shared value for a
 // party wall, the normal street setback otherwise) instead of one margin
@@ -4303,6 +4574,84 @@ function addBuildingSite(site) {
         builtModules.push(rect);
     }
     addSiteDebugOverlay(cells, builtModules, voidCell);
+}
+
+// ---------- signature locations: dispatch ----------
+// SIGNATURE_BUILDERS maps each CONFIG.signatureBuildings key to the
+// function that owns its architecture. Every entry currently points at
+// the shared placeholder below -- each gets replaced with its own real
+// buildArtGallery/buildAS400Archive/buildJustinIndex/
+// buildSystemsWorkshop/buildLoreShrine as that landmark is authored (see
+// the task list this pass is tracked against). Whichever function is
+// registered here is expected to produce the same interfaces a generic
+// building does -- real walls/floors/roofs/facades/doors/collision/
+// traversal nodes -- so nothing outside this dispatch needs a landmark
+// special case.
+function buildSignaturePlaceholder(site) {
+    const { cells, signatureType, signatureInstance, id } = site;
+    const typeCfg = CONFIG.signatureBuildings[signatureType];
+    // a distinct near-white "under construction" massing -- deliberately
+    // NOT drawn from CONFIG.buildings.palette, so a placeholder always
+    // reads as visually different from real city fabric rather than
+    // blending in and quietly pretending to be finished.
+    const color = 0xf0ece0;
+    const buildingContext = { wealth: 0.65, maintenance: 0.85 };
+    const floorHeight = 3.0;
+    const primaryFloorCount = Math.max(1, Math.min(QUALITY.maxEnterableFloors, typeCfg.preferredFloors || 3));
+    const material = new THREE.MeshStandardMaterial({ map: makeWindowGridTexture(primaryFloorCount * floorHeight, color, 0.3), roughness: CONFIG.buildings.roughness, side: THREE.DoubleSide });
+    const streetSetbackX = randRange(CONFIG.maze.buildingMarginMin, CONFIG.maze.buildingMarginMax) / 2;
+    const streetSetbackZ = randRange(CONFIG.maze.buildingMarginMin, CONFIG.maze.buildingMarginMax) / 2;
+    const partySetback = randRange(0.08, 0.3);
+
+    const degreeOf = (cell) => [[0, -1], [0, 1], [-1, 0], [1, 0]].filter(([dc, dr]) => siteIdOf[cell.row + dr]?.[cell.col + dc] === id).length;
+    let primary = cells[0], primaryDegree = -1;
+    for (const cell of cells) { const d = degreeOf(cell); if (d > primaryDegree) { primaryDegree = d; primary = cell; } }
+
+    const floorCountByCellKey = new Map();
+    for (const cell of cells) {
+        const isPrimaryCell = cell.row === primary.row && cell.col === primary.col;
+        floorCountByCellKey.set(`${cell.row},${cell.col}`, isPrimaryCell ? primaryFloorCount : Math.max(1, primaryFloorCount - Math.floor(rng() * 2)));
+    }
+
+    const builtModules = [];
+    for (const cell of cells) {
+        const isPrimary = cell.row === primary.row && cell.col === primary.col;
+        const floorCount = floorCountByCellKey.get(`${cell.row},${cell.col}`);
+        const rect = addBuildingModule(cell, {
+            isPrimary, isWarehouse: false, floorCount, floorHeight, height: floorCount * floorHeight,
+            color, material, buildingContext, streetSetbackX, streetSetbackZ, partySetback, voidCell: null,
+            siteFloorCounts: floorCountByCellKey,
+        });
+        builtModules.push(rect);
+    }
+    addSiteDebugOverlay(cells, builtModules, null);
+
+    // forced identity sign at the main entrance -- mounted high (roofline,
+    // not the usual sign band) specifically so it doesn't compete for the
+    // same facade space the generic decoration pass above already rolled
+    // for this wall. Real per-landmark signage (PART of that builder's
+    // authored facade, not a bolt-on) replaces this the moment that
+    // landmark's real builder lands.
+    const e = signatureInstance.mainEntrance;
+    // a wide, short marquee (fixed shape/width, not the usual random roll)
+    // so every placeholder's identity sign reads the same way regardless
+    // of which facade it landed on, and stays clear of the roofline at
+    // this mount height.
+    addSign(e.doorX, primaryFloorCount * floorHeight - 0.9, e.doorZ, e.outwardRotY, typeCfg.exteriorName, typeCfg.exteriorSubtitle, 0xffffff, false, 3.2, { w: 120, h: 48 });
+
+    console.log(`[signature] ${typeCfg.exteriorName}: placeholder massing built (${cells.length} cells, ${primaryFloorCount} floors) -- authored interior pending, see task list`);
+}
+
+const SIGNATURE_BUILDERS = {
+    artGallery: buildSignaturePlaceholder,
+    as400Archive: buildSignaturePlaceholder,
+    justinIndex: buildSignaturePlaceholder,
+    systemsWorkshop: buildSignaturePlaceholder,
+    loreShrine: buildSignaturePlaceholder,
+};
+function buildSignatureSite(site) {
+    const builder = SIGNATURE_BUILDERS[site.signatureType] ?? buildSignaturePlaceholder;
+    builder(site);
 }
 
 const candidateFaces = []; // real FacadeSurface objects that skipped a random sign — free for content cards (see mountContentCards)
@@ -6442,7 +6791,7 @@ const propColliders = []; // {x, z, radius, height} — soft obstacles, blended 
 // per grid cell.
 {
     const buildStart = performance.now();
-    for (const site of buildingSites) addBuildingSite(site);
+    for (const site of buildingSites) site.signatureType ? buildSignatureSite(site) : addBuildingSite(site);
     console.log(`[perf] ${buildingSites.length} building sites (${buildingSites.reduce((s, x) => s + x.cells.length, 0)} cells) generated in ${(performance.now() - buildStart).toFixed(0)}ms (${bootElapsed()} total)`);
     console.log(`[testing] same-site height mismatches: ${totalExposedSetbackWalls} exterior setback wall-floors generated where a same-site neighbor stopped short (floor-aware internal-edge fix -- was structurally always 0 before)`);
 }
@@ -6494,6 +6843,7 @@ function validateFacadeOccupancy() {
 mountContentCards(); // real site content claims leftover wall faces
 validateFacadeOccupancy();
 addFacadeDebugOverlay();
+addSignatureDebugOverlay();
 buildRooftopCatwalks(); // every building's rooftop deck now exists -- an occasional real bridge between nearby ones
 bootStatus(`city built, ${GRID_COLS * GRID_ROWS} cells -- placing props/decoration…`);
 
@@ -7434,6 +7784,23 @@ const HEAD_CLEARANCE = 0.15;
 
 const spawn = cellToWorld(spawnCol, spawnRow);
 camera.position.set(spawn.x, CONFIG.camera.eyeHeight, spawn.z);
+
+// ?landmark=<type> -- override the random spawn with a fixed point ~4m
+// outside that signature's main entrance, facing it (see
+// reserveSignatureSites' toEntrance). Applied on top of the normal
+// random spawn above, not instead of computing it, so nothing else that
+// derives from spawnCol/spawnRow needs to know this flag exists.
+if (urlLandmark) {
+    const landmarkInstance = signatureInstances.find(s => s.type === urlLandmark);
+    if (landmarkInstance) {
+        const e = landmarkInstance.mainEntrance;
+        camera.position.set(e.outsideX, CONFIG.camera.eyeHeight, e.outsideZ);
+        camera.rotation.set(0, e.facingRotY, 0);
+        console.log(`[signature] ?landmark=${urlLandmark} -- spawning outside site ${landmarkInstance.id}'s main entrance instead of a random cell`);
+    } else {
+        console.warn(`[signature] ?landmark=${urlLandmark} requested, but no such signature was reserved this seed (disabled this load, or not a real key: ${SIGNATURE_TYPES.join(', ')})`);
+    }
+}
 
 // ---------- desktop controls ----------
 

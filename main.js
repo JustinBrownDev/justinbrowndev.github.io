@@ -113,9 +113,9 @@ const CONFIG = {
         // is exactly why none of it is you specifically.
         lightWeb: {
             fogColor: 0xf0f4e0,
-            fogDensity: 0.022,
+            fogDensity: 0.042,
             ambientColor: 0xfff4d0,
-            ambientIntensity: 2.1,
+            ambientIntensity: 3.1,
             hemiIntensity: 1.0,
             signChance: 0.95,
             propDensityMul: 1.2,
@@ -124,9 +124,9 @@ const CONFIG = {
         // sparser and quieter, never actually dark.
         darkWeb: {
             fogColor: 0xc8d8d8,
-            fogDensity: 0.026,
+            fogDensity: 0.046,
             ambientColor: 0xd0e8e8,
-            ambientIntensity: 1.5,
+            ambientIntensity: 2.5,
             hemiIntensity: 0.6,
             signChance: 0.85,
             propDensityMul: 0.85,
@@ -138,7 +138,7 @@ const CONFIG = {
         near: 0.05,
         far: 380,
         eyeHeight: 1.65,
-        playerRadius: 0.32,
+        playerRadius: 0.22,
     },
 
     lighting: {
@@ -181,8 +181,8 @@ const CONFIG = {
             drawDistance: 380,
             maxDynamicLights: 40,
             propDensity: 2.5,
-            maxEnterableFloors: 10, // every floor is real/walkable now -- no decorative tower above this cap, just a shorter real building
-            maxHeroFloors: 16, // UNCHANGED -- wider map, not taller buildings
+            maxEnterableFloors: 5, // every floor is real/walkable now -- no decorative tower above this cap, just a shorter real building
+            maxHeroFloors: 10, // UNCHANGED -- wider map, not taller buildings
         },
         mobile: {
             maxPixelRatio: 1.5,
@@ -224,8 +224,8 @@ const CONFIG = {
         // counts are untouched by this change. Stays odd -- the DFS carve
         // below moves in steps of 2, so an odd grid is what keeps the
         // parity/perimeter math clean.
-        cols: 17,
-        rows: 17,
+        cols: 10,
+        rows: 10,
         // the grid alternates block/street pitch by parity -- but by
         // ROOM topology, not naive index parity: the maze DFS (below)
         // always starts on an (even,even) cell and only ever steps by 2,
@@ -236,7 +236,7 @@ const CONFIG = {
         // ODD indices (the building footprint -- see axisPitch). Naming
         // stays keyed to what each number visually controls, not the
         // literal parity.
-        blockSize: 7,        // world units per building footprint (odd row/col)
+        blockSize: 6,        // world units per building footprint (odd row/col)
         streetWidth: 2.6,    // world units per open room/plaza the street network connects through (even row/col) -- real narrow-alley width; see streetSetbackRoll for why this no longer risks a sealed/impassable alley
         loopChance: 0.14,   // chance a redundant wall opens up into a plaza/loop
         buildingMarginMin: 0.5,  // how much smaller than the cell a building footprint is

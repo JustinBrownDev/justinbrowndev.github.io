@@ -1884,6 +1884,13 @@ const PERSONAL_WANTED_FACTS = [
     ['KEEPER OF THE CYCLE', 'compress -- condense -- expand -- evaporate'],
     ['THE WORKBENCH IS AN ALTAR', 'not a mess, allegedly'],
     ['NO USER-SERVICEABLE PARTS', 'disputed, opened anyway'],
+    // same self-mythology, a different obsession -- home-AI-rig tinkering,
+    // scrambled from lore/personal_infra_vocab_lore.md (gitignored,
+    // never committed; see INFRA_LORE_FRAGMENTS below for the full pool).
+    ['KEEPS A MACHINE HUMMING', 'back room, off any map, allegedly'],
+    ['FIXES THE DOORWAY, NOT THE GHOST', 'the wall was blind, not the guest'],
+    ['CARRIES A LOCKED JAR', 'a borrowed mind, fed just enough silicon'],
+    ['MEASURES INSTEAD OF GUESSING', 'theoretical capacity means nothing unsweated'],
 ];
 const wantedPosterMeshes = [];
 // tagline pairs for the generic (non-personal) wanted poster -- picked per
@@ -5846,6 +5853,13 @@ const GRAFFITI_TAGS = [
     // personal mythology that names the codeProjects wall plaques below.
     'NO 5TH BUTTON', 'OPEN THE CASE', 'THE CYCLE KNOWS', 'JTHEWAY',
     'HEAT SHALL MOVE', 'WHO LEFT THIS OPEN', 'YES BUT HOW', 'REMOVE THE COVER',
+    // two more scrawl voices, same treatment — see INFRA_LORE_FRAGMENTS
+    // and UNDERCITY_LORE_FRAGMENTS below for the full pools these titles
+    // are pulled from.
+    'THE HUMMING RIG', 'BORROWED SILICON', 'THE TOKEN GATE', 'UNLESS-STOPPED',
+    'MEASURE DON\'T GUESS', 'QUANTIZED GHOST',
+    'THE LEDGER SPIRE', 'THE ROLLBACK SHADOW', 'THE ROUTING SIGIL', 'THE GHOST TYPO',
+    'GO LOOK AT THE WIRE', 'DIFF ALWAYS',
     // the curated lines above are hand-written; everything below is a
     // deterministic cross-join (subject x predicate, no RNG -- can't
     // shift the maze's seeded layout) drawn straight from the same
@@ -6542,6 +6556,100 @@ const MYTHOLOGY_FRAGMENTS = [
     })(),
 ];
 
+// a second self-mythology voice, distilled the same way as the 8gH pool
+// above: semantically-scrambled derivative flavor text, jumbled on
+// purpose from private working notes (`lore/personal_infra_vocab_lore.md`,
+// gitignored, never committed -- only this transformed output ships).
+// No real names/hosts/IPs/employers survive; this is a home-AI-tinkerer
+// self-mythology register (rigs, borrowed compute, the ghost-in-the-jar),
+// same personal-canon spirit as 8gH, just a different obsession.
+const INFRA_LORE_FRAGMENTS = [
+    ['THE HUMMING RIG', 'a back-room machine nobody official admits exists'],
+    ['BORROWED SILICON', 'a slice of a bigger machine, pretending to be whole'],
+    ['THE LEASH LENGTH', 'how much fast-memory a mind gets before it forgets'],
+    ['THE THROTTLE COLLAR', 'a wattage cap keeping the rig from screaming'],
+    ['THE DOORWAY, NOT THE GUEST', "won't see its own hardware? fix the wall"],
+    ['THE TOKEN GATE', 'nothing talks to the mind without a whispered key'],
+    ['THE CLOSED LOOP', 'speaks only inside these walls, never out'],
+    ['PLAINTEXT DREAD', 'the itch of wires still carrying things in the clear'],
+    ['QUANTIZED GHOST', 'a shrunk-down copy of a bigger mind, cheaper, good enough'],
+    ['THE CONTAINER JAR', 'a sealed vessel the mind lives in -- smash it, rebuild it'],
+    ['UNLESS-STOPPED', 'a vow to come back no matter what kills it'],
+    ["MEASURE, DON'T GUESS", 'theoretical capacity means nothing until it sweats'],
+    ['RECURSION SICKNESS', 'the building, the room, the bowl, the fly on the fruit'],
+    ['THE PROVENANCE OBSESSION', 'never move a fact without its source stapled on'],
+    ['THE REALITY WARNING LABEL', 'no archive holds the true inside of every locked room'],
+    // deterministic cross-join for volume, same voice, same "self-mythology
+    // treated as folklore" register as the 8gH cross-join above.
+    ...(() => {
+        const subjects = [
+            'THE HUMMING RIG', 'BORROWED SILICON', 'THE TOKEN GATE', 'THE CLOSED LOOP',
+            'QUANTIZED GHOST', 'THE CONTAINER JAR', 'THE THROTTLE COLLAR',
+            'THE ABSTRACTION-CROSSER', 'THE EVIDENCE HUNGER', 'THE DRIFTING FINISH LINE',
+        ];
+        const predicates = [
+            'KNOWS', 'REMEMBERS', 'NEVER SLEEPS', 'ADMITS NOTHING', 'KEEPS NO RECORD',
+            "WON'T BE RUSHED", 'ASKS FOR THE RECEIPT', 'STILL COUNTING', 'WAS HERE FIRST',
+            'TRUSTS NOTHING UNMEASURED',
+        ];
+        const subs = [
+            'not up for debate', 'measured, not guessed', 'still true, probably',
+            'the wattage cap holds', 'the key was never written down', 'checked, not assumed',
+        ];
+        const out = [];
+        let i = 0;
+        for (const s of subjects) for (const p of predicates) out.push([`${s} ${p}`, subs[i++ % subs.length]]);
+        return out;
+    })(),
+];
+
+// a third voice: institutional-legacy-tech-support folklore, distilled
+// from `lore/support_vocab_lore.md` (gitignored, never committed) the
+// same way as the two pools above. Deliberately NOT personal -- this is
+// in-universe city lore about a "half-forgotten legacy tech-support
+// caste," kept clearly separate from AS400_CONTENT's real/factual IBM i
+// terminology so a reader never confuses fiction with the real archive.
+const UNDERCITY_LORE_FRAGMENTS = [
+    ['THE LEDGER SPIRE', 'the oldest core module in the tower-stack'],
+    ['THE FILING DAEMON', 'used to eat submissions all night, choked on duplicates'],
+    ['THE NOTICE ENGINE', 'sometimes prints the address in the wrong window'],
+    ['THE MACRO VAULT', 'overwrite it wholesale, erase a decade of tribal knowledge'],
+    ['THE ROLLBACK SHADOW', 'every current object has a ghost twin in the obsolete-vault'],
+    ['THE PATCH COURIER', 'can push code to every district at once -- handled like a loaded weapon'],
+    ['THE WORK-FILE ORACLE', 'the unglamorous process that actually populates the numbers'],
+    ['THE JURISDICTION MATRIX', 'trusted like scripture, consulted like a rumor'],
+    ['THE ROUTING SIGIL', 'two digits, opposite meaning, in two different towers'],
+    ['THE ACCUMULATOR BLEED', 'a combined total quietly eating into the wrong bucket'],
+    ['THE LEVEL-CHECK GHOST', 'ship the format and its programs together, always'],
+    ['THE PHANTOM JOB', "an error that escaped from someone else's batch run"],
+    ['THE SENTINEL TUPLE', 'a blank key that should never match a real row, but sometimes does'],
+    ['THE SPOOL GRAVEYARD', 'finished print jobs that never actually reached paper'],
+    ['THE VERSION-SKEW TAX', 'forty-plus installs, each slightly different, expected identical'],
+    ['THE GHOST TYPO', 'a misspelling baked in so deep nobody dares fix it'],
+    // deterministic cross-join for volume, same "old-hand folklore" register.
+    ...(() => {
+        const subjects = [
+            'THE LEDGER SPIRE', 'THE FILING DAEMON', 'THE ROLLBACK SHADOW', 'THE PATCH COURIER',
+            'THE ROUTING SIGIL', 'THE JURISDICTION MATRIX', 'THE SPOOL GRAVEYARD',
+            'THE SENTINEL TUPLE', 'THE PHANTOM JOB', 'THE MACRO VAULT',
+        ];
+        const predicates = [
+            'KNOWS', 'REMEMBERS', 'WAS HERE FIRST', 'NEVER SLEEPS', 'ADMITS NOTHING',
+            'KEEPS NO RECORD', "WON'T EXPLAIN ITSELF", 'ASKS NO QUESTIONS', 'STILL RUNNING',
+            'OUTLASTS EVERYONE WHO BUILT IT',
+        ];
+        const subs = [
+            'check the wire before the code', 'diff always, ask first',
+            'older than most who fix it', 'folklore, not current truth',
+            'correlate before you panic', 'go look there first',
+        ];
+        const out = [];
+        let i = 0;
+        for (const s of subjects) for (const p of predicates) out.push([`${s} ${p}`, subs[i++ % subs.length]]);
+        return out;
+    })(),
+];
+
 // a flyer dropped flat on the pavement — skills & rhetoric fragments.
 // common, cheap, everywhere; the "public secret" hiding in plain sight.
 function addStickerTag(x, z) {
@@ -6549,7 +6657,7 @@ function addStickerTag(x, z) {
         ? pickCityNoisePair(rng, x, z)
         : (rng() < 0.4
             ? [pickPoetryTag(rng), pick(POETRY_SHORT_NOISE)]
-            : pick([...CONFIG.siteContent.skills, ...CONFIG.siteContent.about, ...CONFIG.billboards.flavorWords, ...MYTHOLOGY_FRAGMENTS]));
+            : pick([...CONFIG.siteContent.skills, ...CONFIG.siteContent.about, ...CONFIG.billboards.flavorWords, ...MYTHOLOGY_FRAGMENTS, ...INFRA_LORE_FRAGMENTS, ...UNDERCITY_LORE_FRAGMENTS]));
     const neon = pick(CONFIG.neonPalette);
     const font = pickTextFont();
     const tex = makePixelTexture((ctx, w, h) => {
@@ -6587,7 +6695,7 @@ function addWallFlyer(x, y, z, rotY) {
         ? pickCityNoisePair(rng, x, z)
         : (rng() < 0.4
             ? [pickPoetryTag(rng), pick(POETRY_MEDIUM_NOISE)]
-            : pick([...CONFIG.billboards.flavorWords, ...MYTHOLOGY_FRAGMENTS, ...CONFIG.siteContent.about]));
+            : pick([...CONFIG.billboards.flavorWords, ...MYTHOLOGY_FRAGMENTS, ...INFRA_LORE_FRAGMENTS, ...UNDERCITY_LORE_FRAGMENTS, ...CONFIG.siteContent.about]));
     const paper = pickPaperColor();
     const ink = pickInkColor();
     const font = pickTextFont();

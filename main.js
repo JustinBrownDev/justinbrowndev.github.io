@@ -3376,18 +3376,74 @@ function makeFacade(rect, dx, dz, yMin, yMax, door, exposure = 'street') {
         normalX: dx, normalZ: dz, // see outwardRotationY/pointOnFacade -- the canonical outward direction
         tangentX: axisIsX ? 1 : 0, tangentZ: axisIsX ? 0 : 1,
         exposure, // 'street' (this module's own perimeter) or 'setback' (exposed by a shorter same-site neighbor, see addBuildingModule)
-        occupied: isDoorWall ? [{ uMin: -0.85, uMax: 0.85, vMin: 0, vMax: 2.4 }] : [],
+        occupied: isDoorWall ? [{ type: 'door', uMin: -0.85, uMax: 0.85, vMin: 0, vMax: 2.4 }] : [],
         projections: [], // world-space projecting volumes reserved on this facade (blade signs, awnings, ...) -- see phase 6
     };
 }
-function facadeFits(facade, uMin, uMax, vMin, vMax, padding) {
+
+// occupancy classes -- what a facade reservation is FOR decides what it
+// can coexist with, not just whether its rectangle happens to overlap
+// another one. A dense, messy wall is the goal (see phase 5 commit) --
+// this is what keeps "messy" from meaning "physically interpenetrated":
+//   structural (door, fire escape) -- blocks everything, blocked by
+//     nothing (nothing gets to overlap a doorway or a fire escape)
+//   sign / poster / photo / terminal -- a flat mounted panel; blocks
+//     other panels and major hardware, but not overlays
+//   hardware (camera, pipe, awning, balcony) -- real physical fixtures;
+//     block each other and panels, but not overlays
+//   overlay (graffiti, ivy, flyers, stickers) -- surface treatment, not
+//     volume. Never blocks anything, and is itself only blocked by
+//     structural (nothing paints graffiti across a doorway) -- a flyer
+//     taped over old graffiti, ivy climbing past a pipe strap, is
+//     exactly the accumulated-mess look this city wants.
+const FACADE_CLASS = {
+    door: 'structural', fireEscape: 'structural',
+    sign: 'panel', poster: 'panel', photo: 'panel', terminal: 'panel',
+    camera: 'hardware', pipe: 'hardware', awning: 'hardware', balcony: 'hardware',
+    flyer: 'overlay', graffiti: 'overlay', ivy: 'overlay', sticker: 'overlay',
+};
+function facadeBlocks(typeA, typeB) {
+    const a = FACADE_CLASS[typeA] || typeA, b = FACADE_CLASS[typeB] || typeB;
+    if (a === 'structural' || b === 'structural') return true;
+    if (a === 'overlay' || b === 'overlay') return false;
+    return true; // panel-panel, panel-hardware, hardware-hardware all genuinely compete for the same wall space
+}
+function facadeFits(facade, type, uMin, uMax, vMin, vMax, padding) {
     if (uMin < -facade.half || uMax > facade.half) return false;
+    if (vMin < facade.yMin - 0.001 || vMax > facade.yMax + 0.001) return false;
     for (const r of facade.occupied) {
+        if (!facadeBlocks(type, r.type)) continue;
         if (uMin - padding < r.uMax && r.uMin < uMax + padding && vMin < r.vMax && vMax > r.vMin) return false;
     }
     return true;
 }
-function facadeReserve(facade, uMin, uMax, vMin, vMax) { facade.occupied.push({ uMin, uMax, vMin, vMax }); }
+function facadeReserve(facade, type, uMin, uMax, vMin, vMax) { facade.occupied.push({ type, uMin, uMax, vMin, vMax }); }
+
+// the generic decor-placement primitive -- tries `attempts` random
+// (u,v) rectangles of `type` sized width x height within the vertical
+// band [vMin,vMax] (clamped to the facade's own real yMin/yMax, same
+// "don't expand past real geometry" rule the sign-bounds fix uses),
+// reserves and returns the first that fits, or null if none did in
+// `attempts` tries (or the type's real height doesn't fit this facade's
+// real height at all). Callers should treat null as "skip this
+// decoration on this facade", exactly like placeSignsOnFacade already
+// does for signs -- retaining density means trying the next facade or
+// the next decoration roll, not forcing a fit that isn't there.
+function findFreeFacadeRect(facade, type, width, height, vMin, vMax, attempts = 6, padding = 0.15) {
+    const halfW = width / 2, halfH = height / 2;
+    if (facade.half * 2 < width) return null;
+    const loY = Math.max(vMin, facade.yMin + halfH), hiY = Math.min(vMax, facade.yMax - halfH);
+    if (loY > hiY) return null;
+    for (let i = 0; i < attempts; i++) {
+        const u = randRange(-facade.half + halfW, facade.half - halfW);
+        const v = randRange(loY, hiY);
+        if (facadeFits(facade, type, u - halfW, u + halfW, v - halfH, v + halfH, padding)) {
+            facadeReserve(facade, type, u - halfW, u + halfW, v - halfH, v + halfH);
+            return { u, v };
+        }
+    }
+    return null;
+}
 
 // how far a sign's bottom edge must clear the ground/sidewalk (an
 // aesthetic choice -- keeps signs from reading as eye-level clutter
@@ -3442,11 +3498,11 @@ function placeSignsOnFacade(facade, count, row) {
             if (minCenterY > maxCenterY) continue; // this sign's real height doesn't fit this facade at all -- not this wall's problem to solve by floating outside it
             const centerY = randRange(minCenterY, maxCenterY);
             const u = randRange(-facade.half + halfW, facade.half - halfW);
-            if (facadeFits(facade, u - halfW, u + halfW, centerY - halfH, centerY + halfH, 0.3)) { chosen = { spec, u, centerY }; break; }
+            if (facadeFits(facade, 'sign', u - halfW, u + halfW, centerY - halfH, centerY + halfH, 0.3)) { chosen = { spec, u, centerY }; break; }
         }
         if (chosen === null) continue; // correct to skip -- wall is full, or genuinely too short for any tried spec
         const { spec, u, centerY } = chosen;
-        facadeReserve(facade, u - spec.width / 2, u + spec.width / 2, centerY - spec.height / 2, centerY + spec.height / 2);
+        facadeReserve(facade, 'sign', u - spec.width / 2, u + spec.width / 2, centerY - spec.height / 2, centerY + spec.height / 2);
         const p = pointOnFacade(facade, u, centerY);
         const content = pickSignContent(p.x, p.z);
         const neon = pickNeonForRow(row);
@@ -3807,7 +3863,7 @@ function addBuildingModule(cell, opts) {
         // the fire escape is a permanent vertical fixture on this wall --
         // reserve its real footprint (its own tangential width, full
         // height) before any sign gets a chance to land on top of it.
-        if (isFireEscapeFace) facadeReserve(facade, -0.7, 0.7, 0, height);
+        if (isFireEscapeFace) facadeReserve(facade, 'fireEscape', -0.7, 0.7, 0, height);
         buildingFacades.push(facade);
 
         // more than one sign per face -- a real signage-choked facade is
@@ -3830,38 +3886,90 @@ function addBuildingModule(cell, opts) {
         // entirely whenever this branch's sibling ran instead.
         if (signsPlaced === 0) candidateFaces.push({ x: faceX, z: faceZ, rotY, height, facade });
 
-        // graffiti tags scrawled near ground level -- independent of
-        // whether a sign landed above, and often more than one, the way
-        // a real repeatedly-tagged wall accumulates over time.
-        const graffitiRolls = [0.42, 0.4, 0.25];
-        const usedGraffitiHeights = [];
-        for (const p of graffitiRolls) {
-            if (rng() >= p) break;
-            let gy, tries = 0;
-            do { gy = randRange(0.55, 1.7); tries++; } while (usedGraffitiHeights.some(h => Math.abs(h - gy) < 0.35) && tries < 5);
-            usedGraffitiHeights.push(gy);
-            addGraffitiTag(cx + ox * 0.99, gy, cz + oz * 0.99, rotY);
+        // everything below shares ONE occupancy manager (`facade`) instead
+        // of independently rolling a world position and hoping nothing
+        // else already claimed it -- density is unchanged (same roll
+        // chances as before), but a skipped roll now means "this facade
+        // had no free real estate for it" instead of nothing at all.
+        // Roughly the spec's decoration order: hardware fixtures
+        // (pipes/awnings/cameras) before the paper-thin overlays
+        // (flyers/graffiti) that are allowed to sit on top of anything.
+
+        // pipes/HVAC -- real hardware, a narrow but often TALL reserved
+        // column (addPipeCluster rolls its own real top height internally;
+        // this reserves a conservative upper bound on that -- an
+        // over-reservation, never an under-reservation, see phase 6's
+        // "conservative boxes are fine").
+        if (rng() < 0.3) {
+            const pipeHeight = Math.min(height - 0.4, 6);
+            const spot = findFreeFacadeRect(facade, 'pipe', 0.35, pipeHeight, 0, height);
+            if (spot) {
+                const p = pointOnFacade(facade, spot.u, 0, WALL_THICKNESS / 2 + 0.01);
+                addPipeCluster(p.x, p.z, rotY, height, buildingContext.maintenance);
+            }
         }
-        if (usedGraffitiHeights.length && rng() < 0.3 * QUALITY.propDensity) {
-            placeRealModel('sprayCans', cx + ox * 0.85, cz + oz * 0.85, randRange(0, Math.PI * 2));
+        // awnings -- hardware, low over the ground floor.
+        if (rng() < 0.42) {
+            const awningWidth = randRange(1.6, 2.4);
+            const awningY = Math.max(2.4, floorHeight + 0.2);
+            const spot = findFreeFacadeRect(facade, 'awning', awningWidth, awningWidth * 0.45, awningY - 0.4, awningY + 0.4);
+            if (spot) {
+                const p = pointOnFacade(facade, spot.u, spot.v);
+                addAwning(p.x, p.y, p.z, rotY, awningWidth);
+            }
         }
-        // a flyer (or a small cluster) taped up nearby
+        // security cameras -- small hardware fixture, watches the street.
+        if (rng() < 0.14) {
+            const spot = findFreeFacadeRect(facade, 'camera', 0.3, 0.3, 2.6, Math.min(height - 1, 5.5));
+            if (spot) {
+                const p = pointOnFacade(facade, spot.u, spot.v);
+                addSecurityCamera(p.x, p.z, rotY, height);
+            }
+        }
+
+        // a flyer (or a small cluster) taped up nearby -- overlay, blocked
+        // only by the door, free to sit over/under any hardware or sign.
         if (rng() < 0.4) {
             const flyerCount = rng() < 0.3 ? 2 : 1;
             for (let i = 0; i < flyerCount; i++) {
-                const tangentX = s.dz !== 0 ? randRange(-hwx * 0.6, hwx * 0.6) : 0;
-                const tangentZ = s.dx !== 0 ? randRange(-hwz * 0.6, hwz * 0.6) : 0;
-                addWallFlyer(cx + ox * 0.985 + tangentX, randRange(1.0, 1.8), cz + oz * 0.985 + tangentZ, rotY);
+                const spot = findFreeFacadeRect(facade, 'flyer', 0.55, 0.7, 1.0, 1.8, 4, 0.02);
+                if (spot) {
+                    const p = pointOnFacade(facade, spot.u, spot.v);
+                    addWallFlyer(p.x, p.y, p.z, rotY);
+                }
             }
         }
-        if (rng() < 0.14) addSecurityCamera(cx + ox * 0.97, cz + oz * 0.97, rotY, height);
-        if (rng() < 0.3) addIvyPatch(cx + ox * 0.98, randRange(0.6, Math.min(height - 0.5, 4)), cz + oz * 0.98, rotY);
-        if (rng() < 0.42) addAwning(faceX, Math.max(2.4, floorHeight + 0.2), faceZ, rotY, randRange(1.6, 2.4));
-        if (rng() < 0.3) addPipeCluster(cx + ox * 0.98, cz + oz * 0.98, rotY, height, buildingContext.maintenance);
+        // ivy -- overlay, spreads up the wall.
+        if (rng() < 0.3) {
+            const spot = findFreeFacadeRect(facade, 'ivy', 1.0, 1.4, 0.6, Math.min(height - 0.5, 4), 4, 0.02);
+            if (spot) {
+                const p = pointOnFacade(facade, spot.u, spot.v);
+                addIvyPatch(p.x, p.y, p.z, rotY);
+            }
+        }
+        // graffiti tags scrawled near ground level -- overlay, independent
+        // of whatever else landed on this facade, and often more than
+        // one, the way a real repeatedly-tagged wall accumulates over
+        // time (overlapping each other a little is realistic, not a bug
+        // -- only the door itself is off-limits, see FACADE_CLASS).
+        const graffitiRolls = [0.42, 0.4, 0.25];
+        let graffitiPlaced = 0;
+        for (const p of graffitiRolls) {
+            if (rng() >= p) break;
+            const spot = findFreeFacadeRect(facade, 'graffiti', 1.2, 0.5, 0.55, 1.7, 4, 0.02);
+            if (!spot) continue;
+            graffitiPlaced++;
+            const pp = pointOnFacade(facade, spot.u, spot.v);
+            addGraffitiTag(pp.x, pp.y, pp.z, rotY);
+        }
+        if (graffitiPlaced && rng() < 0.3 * QUALITY.propDensity) {
+            placeRealModel('sprayCans', cx + ox * 0.85, cz + oz * 0.85, randRange(0, Math.PI * 2));
+        }
 
         // the real fire escape -- only on the one side (if any) actually
         // wired to a floor-1 interior opening above (fireEscapeSide, see
-        // isFireEscapeFace above).
+        // isFireEscapeFace above). Its facade footprint (-0.7..0.7, full
+        // height) was already reserved before any sign/hardware roll ran.
         if (isFireEscapeFace) {
             placeRealModel('fireEscape', cx + ox * 1.02, cz + oz * 1.02, rotY);
             const landings = buildFireEscapeStair(cx + ox * 1.02, cz + oz * 1.02, rotY, isWarehouse ? height : randRange(5, 11));
@@ -3874,13 +3982,18 @@ function addBuildingModule(cell, opts) {
                 const tangent = (rng() < 0.5 ? -1 : 1) * tangentHalf * 0.55;
                 const bx = cx + ox + (s.dz !== 0 ? tangent : 0);
                 const bz = cz + oz + (s.dx !== 0 ? tangent : 0);
+                facadeReserve(facade, 'balcony', tangent - 0.6, tangent + 0.6, landing.y - 0.3, landing.y + 1.1);
                 addBalcony(bx, landing.y, bz, rotY, buildingContext.maintenance);
             }
         } else if (rng() < 0.12 && !isWarehouse) {
             // buildings without a fire escape on this face still
-            // occasionally get a (purely decorative) balcony.
-            const by = randRange(floorHeight + 1.5, Math.max(floorHeight + 2, height - 1.5));
-            addBalcony(faceX, by, faceZ, rotY, buildingContext.maintenance);
+            // occasionally get a (purely decorative) balcony -- real
+            // hardware, so it still claims real facade space.
+            const spot = findFreeFacadeRect(facade, 'balcony', 1.2, 1.4, floorHeight + 1.5, Math.max(floorHeight + 2, height - 1.5));
+            if (spot) {
+                const p = pointOnFacade(facade, spot.u, spot.v);
+                addBalcony(p.x, p.y, p.z, rotY, buildingContext.maintenance);
+            }
         }
     }
 

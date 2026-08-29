@@ -329,6 +329,9 @@ const CONFIG = {
         loreShrine: {
             enabled: true, targetCells: [4, 7], preferredFloors: 3,
             exteriorName: 'OFFICE OF MECHANICAL TRUTH', exteriorSubtitle: 'by appointment only',
+            // the Four Button Chamber's centerpiece -- exactly 4, no
+            // fifth-button joke unless this array itself grows one.
+            buttonLabels: ['TIME', 'POWER', 'START', 'STOP'],
         },
     },
 
@@ -5593,12 +5596,216 @@ function buildSystemsWorkshop(site) {
     console.log(`[signature] SYSTEMS WORKSHOP: built ${cells.length} modules, ${floorCount} floors -- main workshop+front shop+computer lab+electronics bench+rear yard populated, ${codeHung}/${CONFIG.siteContent.codeProjects.length} real code projects on display`);
 }
 
+// ============================================================
+// LORE SHRINE -- authored signature location #5, the weird one.
+// ============================================================
+// Architecturally far too serious for what it contains. No dedicated
+// city-pack category exists for "monumental microwave" or "vise grip"
+// (rightly -- this project's model pack is real hardware/gallery/
+// workshop props, not novelty items), so its four centerpieces are
+// simple, deliberately abstract procedural forms -- the same honest
+// move ORGANIC TV's pedestal sculpture already made in the Art Gallery
+// (a real, named, represented object; not a photorealistic claim about
+// its exact appearance) -- given ceremonial staging (a real plinth, a
+// real placard, real dedicated floor space) instead of visual realism.
+const addAbstractDisplay = (x, z, title, subtitle, geometry, matColor, pedestalHeight = 1.1) => {
+    const pedestal = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.42, 0.48, pedestalHeight, 8),
+        new THREE.MeshStandardMaterial({ color: 0xe8e2d0, roughness: 0.7 })
+    );
+    pedestal.position.set(x, pedestalHeight / 2, z);
+    scene.add(pedestal);
+    const obj = new THREE.Mesh(jitterGeometry(geometry, 0.015), new THREE.MeshStandardMaterial({ color: matColor, roughness: 0.5, metalness: 0.6 }));
+    obj.position.set(x, pedestalHeight + 0.32, z);
+    obj.rotation.set(randRange(0, Math.PI * 0.2), randRange(0, Math.PI * 2), 0);
+    scene.add(obj);
+    addGalleryPlacard(x + 0.6, z + 0.4, randRange(0, Math.PI * 2), title, subtitle);
+    if (dynamicLightsRemaining > 0) {
+        dynamicLightsRemaining--;
+        const light = new THREE.PointLight(0xfff4d0, 3, 6, 2); // absurdly formal -- a real spotlight-style accent on a mechanical altar
+        light.position.set(x, pedestalHeight + 1.6, z);
+        scene.add(light);
+    }
+};
+
+function buildLoreShrine(site) {
+    const { cells, id, signatureInstance } = site;
+    const typeCfg = CONFIG.signatureBuildings.loreShrine;
+    const floorHeight = 3.0;
+    const floorCount = Math.max(2, Math.min(4, typeCfg.preferredFloors || 3));
+    const color = 0xd8d0c0; // pale institutional stone -- a monument, not a warehouse
+    const material = new THREE.MeshStandardMaterial({ color, roughness: 0.8, side: THREE.DoubleSide });
+    const buildingContext = { wealth: 0.9, maintenance: 0.95 }; // ceremonially maintained
+    const streetSetback = randRange(CONFIG.maze.buildingMarginMin, CONFIG.maze.buildingMarginMax) / 2;
+    const partySetback = randRange(0.08, 0.2);
+
+    const degreeOf = (cell) => [[0, -1], [0, 1], [-1, 0], [1, 0]].filter(([dc, dr]) => siteIdOf[cell.row + dr]?.[cell.col + dc] === id).length;
+    let primary = cells[0], primaryDegree = -1;
+    for (const c of cells) { const d = degreeOf(c); if (d > primaryDegree) { primaryDegree = d; primary = c; } }
+
+    const mainEntrance = signatureInstance.mainEntrance;
+    const secondaryEntrance = signatureInstance.secondaryEntrance;
+    const others0 = cells.filter(c => c !== primary);
+    // Four Button Chamber -- the spec's own plan puts it directly off the
+    // entrance, before the grand hall.
+    const fourButtonChamber = others0.find(c => c.row === mainEntrance.cell.row && c.col === mainEntrance.cell.col) ?? others0[0] ?? primary;
+    const others1 = others0.filter(c => c !== fourButtonChamber);
+    // rear ceremonial exit -- the secondary edge.
+    const rearChamber = (secondaryEntrance && others1.find(c => c.row === secondaryEntrance.cell.row && c.col === secondaryEntrance.cell.col)) ?? others1[others1.length - 1] ?? primary;
+    const others2 = others1.filter(c => c !== rearChamber);
+    const refrigerationSanctum = others2[0] ?? rearChamber;
+    const handToolsHall = others2[1] ?? rearChamber;
+    // the Vise-Grip Altar sits beyond the grand hall -- whichever cell is
+    // left over reads as the axial terminus; falls back to the grand
+    // hall itself on the smallest (4-cell) footprints, which just means
+    // the altar shares the main room instead of getting its own -- still
+    // a real, dedicated display, just not a separate chamber this seed.
+    const altarCell = others2[2] ?? primary;
+
+    const floorCountByCellKey = new Map(cells.map(c => [`${c.row},${c.col}`, floorCount]));
+    const cellIs = (cell, edge) => edge && cell.row === edge.cell.row && cell.col === edge.cell.col;
+    const rectByCellKey = new Map();
+    for (const cell of cells) {
+        const forceDoorSide = cellIs(cell, mainEntrance) ? { dc: mainEntrance.dc, dr: mainEntrance.dr }
+            : cellIs(cell, secondaryEntrance) ? { dc: secondaryEntrance.dc, dr: secondaryEntrance.dr }
+                : null;
+        const rect = addBuildingModule(cell, {
+            isPrimary: cell === primary, isWarehouse: false, floorCount, floorHeight, height: floorCount * floorHeight,
+            color, material, buildingContext, streetSetbackX: streetSetback, streetSetbackZ: streetSetback, partySetback,
+            voidCell: null, siteFloorCounts: floorCountByCellKey, signatureMode: true, forceDoorSide,
+        });
+        rectByCellKey.set(`${cell.row},${cell.col}`, rect);
+    }
+    const facadesFor = (cell) => cell && rectByCellKey.get(`${cell.row},${cell.col}`)?.streetFacades || [];
+
+    // FOUR BUTTON CHAMBER -- the monumental microwave. Exactly four
+    // primary buttons (TIME/POWER/START/STOP -- config-editable, no
+    // fifth-button joke), presented with ridiculous ceremonial
+    // seriousness: an oversized box on its own plinth, a door panel, and
+    // four real, individually placed control buttons.
+    {
+        const { x, z } = cellToWorld(fourButtonChamber.col, fourButtonChamber.row);
+        const plinthH = 0.5;
+        const plinth = new THREE.Mesh(new THREE.BoxGeometry(2.0, plinthH, 1.5), new THREE.MeshStandardMaterial({ color: 0xe8e2d0, roughness: 0.7 }));
+        plinth.position.set(x, plinthH / 2, z);
+        scene.add(plinth);
+        const body = new THREE.Mesh(jitterGeometry(new THREE.BoxGeometry(1.6, 1.0, 1.15), 0.015), new THREE.MeshStandardMaterial({ color: 0xe0e0e0, roughness: 0.4, metalness: 0.5 }));
+        body.position.set(x, plinthH + 0.5, z);
+        scene.add(body);
+        const doorPanel = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.75, 0.04), new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.25, metalness: 0.4 }));
+        doorPanel.position.set(x, plinthH + 0.5, z + 0.6);
+        scene.add(doorPanel);
+        const buttonLabels = typeCfg.buttonLabels || ['TIME', 'POWER', 'START', 'STOP'];
+        const buttonColors = [0x2f6aff, 0xff8a2f, 0x3aff6a, 0xff3b3b];
+        for (let i = 0; i < 4; i++) {
+            const btn = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 0.05, 12), new THREE.MeshStandardMaterial({ color: buttonColors[i], roughness: 0.3, metalness: 0.5 }));
+            btn.rotation.x = Math.PI / 2;
+            btn.position.set(x + 0.55, plinthH + 0.75 - i * 0.22, z + 0.62);
+            scene.add(btn);
+        }
+        addGalleryPlacard(x - 0.9, z - 0.7, randRange(0, Math.PI * 2), 'THE FOUR BUTTON CHAMBER', `${buttonLabels.join(' · ')} -- nothing more, nothing less`);
+        if (dynamicLightsRemaining > 0) {
+            dynamicLightsRemaining--;
+            const light = new THREE.PointLight(0xfff4d0, 3.5, 7, 2);
+            light.position.set(x, plinthH + 2.2, z);
+            scene.add(light);
+        }
+        console.log('[signature] LORE SHRINE: Four Button Chamber built -- ' + buttonLabels.join('/'));
+    }
+
+    // REFRIGERATION SANCTUM -- the cycle treated like sacred machinery,
+    // with a real wall diagram of the actual thermodynamic cycle.
+    {
+        const { x, z } = cellToWorld(refrigerationSanctum.col, refrigerationSanctum.row);
+        const stages = [
+            ['COMPRESSOR', 'raises pressure & temperature'],
+            ['CONDENSER', 'rejects heat, refrigerant liquefies'],
+            ['EXPANSION DEVICE', 'pressure drops sharply'],
+            ['EVAPORATOR', 'absorbs heat, refrigerant boils'],
+        ];
+        const positions = [[-0.7, -0.7], [0.7, -0.7], [0.7, 0.7], [-0.7, 0.7]];
+        for (let i = 0; i < stages.length; i++) {
+            const [dx, dz] = positions[i];
+            const geo = i % 2 === 0 ? new THREE.CylinderGeometry(0.28, 0.28, 0.6, 10) : new THREE.SphereGeometry(0.3, 10, 8);
+            const mesh = new THREE.Mesh(jitterGeometry(geo, 0.015), new THREE.MeshStandardMaterial({ color: 0xb8b8c0, roughness: 0.35, metalness: 0.75 }));
+            mesh.position.set(x + dx, 0.4, z + dz);
+            scene.add(mesh);
+            addGalleryPlacard(x + dx + 0.35, z + dz, randRange(0, Math.PI * 2), stages[i][0], stages[i][1]);
+        }
+        let diagramHung = 0;
+        for (const facade of facadesFor(refrigerationSanctum)) {
+            const spot = findFreeFacadeRect(facade, 'sign', 1.9, 0.71, 0.3, floorHeight - 0.3, 6, 0.1);
+            if (!spot) continue;
+            const p = pointOnFacade(facade, spot.u, spot.v, -0.05);
+            addWallPoster(p.x, p.y, p.z, facade.rotY + Math.PI, 'THE CYCLE', 'compress → condense → expand → evaporate');
+            diagramHung++;
+            break;
+        }
+        console.log(`[signature] LORE SHRINE: Refrigeration Sanctum built -- 4 stages + ${diagramHung} cycle diagram`);
+    }
+
+    // HALL OF HAND TOOLS -- absurd museum placards for ordinary tools.
+    {
+        const { x, z } = cellToWorld(handToolsHall.col, handToolsHall.row);
+        const tools = [
+            ['VISE GRIP, 10-INCH', 'locking pliers -- see also: the Altar'],
+            ['CRESCENT WRENCH', 'adjustable, forged steel'],
+            ['CLAW HAMMER', 'one head, two purposes'],
+            ['NEEDLE-NOSE PLIERS', 'precision, not force'],
+        ];
+        const toolGeos = [
+            new THREE.TorusGeometry(0.18, 0.05, 8, 12, Math.PI * 1.4),
+            new THREE.CylinderGeometry(0.05, 0.05, 0.5, 8),
+            new THREE.BoxGeometry(0.4, 0.1, 0.1),
+            new THREE.ConeGeometry(0.06, 0.4, 8),
+        ];
+        const spread = [[-0.7, -0.5], [0.7, -0.5], [0.7, 0.5], [-0.7, 0.5]];
+        for (let i = 0; i < tools.length; i++) {
+            const [dx, dz] = spread[i];
+            addAbstractDisplay(x + dx, z + dz, tools[i][0], tools[i][1], toolGeos[i], 0x8a8a8a, 0.7);
+        }
+        console.log('[signature] LORE SHRINE: Hall of Hand Tools built -- 4 exhibits');
+    }
+
+    // VISE-GRIP ALTAR -- the one intentionally over-important display.
+    {
+        const { x, z } = cellToWorld(altarCell.col, altarCell.row);
+        const jawGeo = new THREE.TorusGeometry(0.32, 0.09, 10, 16, Math.PI * 1.5);
+        addAbstractDisplay(x, z, 'THE VISE-GRIP ALTAR', 'locking pliers, mounted with undue ceremony', jawGeo, 0xc8a028, 1.5);
+        // an extra ring of light -- the altar gets the most formal
+        // treatment in the building, on purpose.
+        if (dynamicLightsRemaining > 0) {
+            dynamicLightsRemaining--;
+            const light = new THREE.PointLight(0xffd93f, 4, 8, 2);
+            light.position.set(x, 3.4, z);
+            scene.add(light);
+        }
+        console.log('[signature] LORE SHRINE: Vise-Grip Altar built');
+    }
+
+    // identity facade -- symmetrical, recognizable before reading a
+    // single placard (spec: "recognizable BEFORE reading its contents").
+    const vestFacade = facadesFor(fourButtonChamber)[0] ?? facadesFor(primary)[0];
+    if (vestFacade) {
+        const spot = findFreeFacadeRect(vestFacade, 'sign', 3.6, 1.3, floorCount * floorHeight - 1.8, floorCount * floorHeight - 0.3, 6, 0.1);
+        const e = mainEntrance;
+        if (spot) {
+            const p = pointOnFacade(vestFacade, spot.u, spot.v);
+            addSign(p.x, p.y, p.z, vestFacade.rotY, typeCfg.exteriorName, typeCfg.exteriorSubtitle, 0xffd93f, false, 3.6, { w: 120, h: 48 });
+        } else {
+            addSign(e.doorX, floorCount * floorHeight - 0.9, e.doorZ, e.outwardRotY, typeCfg.exteriorName, typeCfg.exteriorSubtitle, 0xffd93f, false, 3.6, { w: 120, h: 48 });
+        }
+    }
+
+    console.log(`[signature] LORE SHRINE: built ${cells.length} modules, ${floorCount} floors -- Four Button Chamber + Refrigeration Sanctum + Hall of Hand Tools + Vise-Grip Altar all present`);
+}
+
 const SIGNATURE_BUILDERS = {
     artGallery: buildArtGallery,
     as400Archive: buildAS400Archive,
     justinIndex: buildJustinIndex,
     systemsWorkshop: buildSystemsWorkshop,
-    loreShrine: buildSignaturePlaceholder,
+    loreShrine: buildLoreShrine,
 };
 function buildSignatureSite(site) {
     const builder = SIGNATURE_BUILDERS[site.signatureType] ?? buildSignaturePlaceholder;

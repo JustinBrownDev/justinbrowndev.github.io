@@ -1,0 +1,34 @@
+Homepage progressive / nearest-first validation
+==============================================
+
+Route move
+- / now launches ./test/main.js (progressive full-fidelity runtime).
+- /synchronous/ launches the original ./main.js through <base href="../">.
+- Old Site link removed from /, /test, /synchronous.
+- Photosensitivity warning removed from /, /test, /synchronous.
+
+Nearest-player scheduling
+- BuildingSites are re-prioritized around the current player after real yield boundaries.
+- Building/decor streamed units use stable local RNG streams so movement changes priority, not a unit's random content.
+- Streets/alleys are grouped and emitted as nearest render chunks; each chunk can paint before the whole grid is prepared.
+- Loaded real-model and city-asset placement batches sort nearest-player-first.
+- Initial decoration uses nearest sectors; deferred queue re-sorts around the player and eventually admits every pending sector.
+
+Static-world optimizer
+- Progressive controller replaces the monolithic optimizer on the progressive runtime only.
+- Spatial chunking, material dedupe, opaque mesh merging, empty-group pruning, and matrix freezing remain enabled.
+- Work yields between real roots/chunks and merges nearest chunks first.
+- Late async objects are queued safely while optimization is in progress.
+- Original synchronous optimizer remains unchanged for /synchronous/.
+
+Automated validation
+- JavaScript syntax checks: PASS
+- test/homepage-priority-selftest.mjs: PASS
+- test/full-fidelity-selftest.mjs: PASS
+- test/progressive-optimizer-selftest.mjs: PASS
+- city-performance-selftest.mjs: PASS
+- parameter-system-selftest.mjs: PASS
+- parameter-catalog-selftest.mjs: PASS (9,328 catalog parameters)
+- tdz-boot-audit.cjs test/main.js: no hazards
+- tdz-generation-audit.cjs test/main.js: no hazards
+- player-physics-selftest.mjs: PASS

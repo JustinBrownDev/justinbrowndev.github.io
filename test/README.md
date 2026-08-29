@@ -1,27 +1,23 @@
-# /test progressive full-fidelity runtime
+# Progressive full-fidelity runtime
 
-`/test` is a scheduling fork of the real root runtime, **not a second city generator**.
+`test/main.js` is the progressive scheduling fork of the original city runtime. It now powers `/` as well as `/test`; the former synchronous homepage is preserved at `/synchronous/` through the untouched root `main.js`.
 
 ## Hard invariants
 
-- `test/main.js` starts as an exact copy of root `main.js`.
-- Maze carving, BuildingSite reservation, signature dispatch, building builders, collision registration, content, assets, props, traversal rules, and final optimizer are the root implementations.
-- Building sites execute in the same order. Cooperative yields happen only **after** a completed site/row/phase; they do not consume RNG or replace geometry.
-- No proxy grid, placeholder city, simplified AABB world, alternate `LOTS` lattice, or fake-building worker is permitted.
-- Relative JS imports point back to the authoritative root modules. The `<base href="../">` keeps runtime asset/fetch URLs rooted exactly where the main page expects them.
-- A bootstrap render/movement loop exists only while generation is incomplete. Once topology exists it constrains movement to real open maze cells. The same camera and `PointerLockControls` instance are handed to full player physics at completion.
-- The real full runtime eventually converges: content/building/prop logic is not dropped for performance.
+- Maze carving, BuildingSite/signature builders, collision registration, content, assets, props, traversal rules, and player physics remain the real implementations. There is no proxy grid, placeholder city, fake-building worker, or simplified alternate world.
+- Relative module imports point back to the authoritative root support modules. `/test/index.html` uses `<base href="../">`; `/index.html` does not need it.
+- The bootstrap renderer uses the real camera and `PointerLockControls`; after generation they are handed directly to the full physics/runtime.
+- Progressive scheduling changes *when* real work happens, not whether it happens. Deferred decoration continues outward until every sector is complete if the page is left running.
 
-## Performance model
+## Player-nearest scheduling
 
-1. Start the three giant noise imports immediately (same as root).
-2. Create renderer/camera/lighting and begin painting **before** awaiting that corpus.
-3. Allow pointer-lock look + WASD during loading.
-4. Carve the authoritative maze.
-5. Stream authoritative building sites in original deterministic order, yielding when the frame work budget is exhausted or input is pending.
-6. Stream street/alley surface preparation by rows.
-7. Keep the existing near-first deferred decoration system.
-8. Run traversal validation and the real static-world optimizer after a paint boundary.
-9. Hand off to the unchanged full physics/render loop.
+1. Create renderer/camera/lighting and start painting before waiting on the large noise corpus.
+2. Carve the authoritative maze and place the player in the real topology.
+3. Materialize BuildingSites nearest the current player first. Re-prioritize after actual browser yields so movement can redirect the remaining queue.
+4. Stream streets/alleys as spatial instance chunks and flush each completed nearest chunk immediately instead of waiting to batch the entire grid.
+5. Sort async model placement batches nearest-player-first when their GLTF becomes available.
+6. Seed decoration from the nearest sectors, then keep an idle queue ordered around the current player. Far sectors remain eligible so an idle tab eventually converges to the complete world.
+7. Give independently scheduled building/decor units stable local RNG streams, so player movement changes priority rather than making an individual unit's content timing-dependent.
+8. Run the full static-world optimizer progressively: spatial chunking, material dedupe, opaque-mesh merging, pruning, and matrix freezing all remain enabled, but yield between roots/chunks. Nearest chunks are optimized first and async asset arrivals are queued safely during the pass.
 
-`?frameBudget=2..12` controls how many milliseconds of synchronous generation `/test` is allowed to spend in a slice before yielding for paint/input. Default: 7ms desktop, 5ms mobile/potato.
+`?frameBudget=2..12` controls how many milliseconds of synchronous work the progressive runtime may spend in a slice before yielding for paint/input. Default: 7ms desktop, 5ms mobile/potato.

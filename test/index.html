@@ -19,39 +19,7 @@
             font-family: 'Courier New', monospace;
         }
         canvas { display: block; }
-
-        #backLink {
-            position: fixed;
-            top: 14px;
-            left: 16px;
-            z-index: 30;
-            color: #d99;
-            text-decoration: none;
-            font-size: 0.8rem;
-            letter-spacing: 0.08em;
-            text-transform: uppercase;
-            border: 1px solid #d9999955;
-            padding: 6px 10px;
-            background: #0a0305cc;
-        }
-        #backLink:hover { color: #ff2f4f; border-color: #ff2f4f; }
-
-        #epilepsyWarning {
-            position: fixed;
-            top: 14px;
-            right: 16px;
-            z-index: 30;
-            max-width: 220px;
-            color: #ffd93f;
-            font-size: 0.68rem;
-            letter-spacing: 0.03em;
-            line-height: 1.4;
-            border: 1px solid #ffd93f66;
-            padding: 6px 10px;
-            background: #0a0305cc;
-        }
-
-        #hint {
+#hint {
             position: fixed;
             bottom: 18px;
             left: 50%;
@@ -180,10 +148,7 @@
 </head>
 
 <body>
-    <a id="backLink" href="old/index.html">&larr; old site</a>
-    <div id="epilepsyWarning">⚠ Contains flashing/flickering lights and a rapidly cycling full-screen color sequence (climb high enough). If you're photosensitive, proceed with caution.</div>
-
-    <div id="crosshair"></div>
+<div id="crosshair"></div>
     <div id="hint"></div>
     <div id="joystickZone"></div>
     <div id="lookZone"></div>

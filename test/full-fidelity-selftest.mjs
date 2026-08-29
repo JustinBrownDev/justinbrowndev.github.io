@@ -52,9 +52,9 @@ ok(test.includes("import('../noise-data-hard.js')"), 'local noise corpus must be
 ok(test.includes("import('../noise-data-remote.js')"), 'remote noise corpus must be the real root module');
 ok(test.includes("import('../noise-data-poetry.js')"), 'poetry corpus must be the real root module');
 ok(test.includes("site.signatureType ? buildSignatureSite(site) : addBuildingSite(site);"), 'real BuildingSite dispatch missing');
-ok(test.includes("await testYieldIfNeeded('streaming real buildings'"), 'real building loop is not cooperatively yielding');
+ok(test.includes("await testYieldIfNeeded('streaming nearest real buildings'"), 'real building loop is not cooperatively yielding');
 ok(test.includes('async function layOpenCellSurfaces()'), 'real ground generation is not cooperatively yielding');
-ok(test.includes('createStaticWorldOptimizer({'), 'real static-world optimizer missing');
+ok(test.includes('createProgressiveStaticWorldOptimizer({'), 'real progressive static-world optimizer missing');
 ok(test.includes('createPlayerPhysics({'), 'real player physics missing');
 ok(test.includes("mode: 'full-fidelity-progressive'"), 'progressive runtime telemetry missing');
 

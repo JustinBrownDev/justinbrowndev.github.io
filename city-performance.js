@@ -189,10 +189,9 @@ function materialKey(mat) {
     ].join('|');
 }
 
-function dedupeMaterials(scene, dynamicMaterials) {
-    const canonical = new Map();
+function dedupeMaterialsInto(root, dynamicMaterials, canonical) {
     let replacements = __qp32;
-    scene.traverse(obj => {
+    root.traverse(obj => {
         if (!obj.isMesh || Array.isArray(obj.material) || !obj.material) return;
         const mat = obj.material;
         if (dynamicMaterials?.has(mat)) return;
@@ -206,6 +205,12 @@ function dedupeMaterials(scene, dynamicMaterials) {
             canonical.set(key, mat);
         }
     });
+    return replacements;
+}
+
+function dedupeMaterials(scene, dynamicMaterials) {
+    const canonical = new Map();
+    const replacements = dedupeMaterialsInto(scene, dynamicMaterials, canonical);
     return { replacements, uniqueMaterials: canonical.size };
 }
 
@@ -383,6 +388,278 @@ function freezeObject(root) {
         if ('matrixAutoUpdate' in obj) obj.matrixAutoUpdate = false;
         if ('matrixWorldAutoUpdate' in obj) obj.matrixWorldAutoUpdate = false;
     });
+}
+
+// Progressive twin of createStaticWorldOptimizer. The rendered result uses the
+// same chunking, material dedupe, conservative mesh merging, empty-group
+// pruning and matrix freezing as the synchronous optimizer below. The only
+// difference is scheduling: each root/chunk is a yield boundary, and the
+// controller exists before optimization starts so async GLTF/photo arrivals can
+// be queued safely while the optimizer is between slices.
+export function createProgressiveStaticWorldOptimizer({
+    THREE,
+    scene,
+    camera,
+    rawSceneAdd,
+    drawDistance,
+    chunkSize = __qp68,
+    dynamicRoots = new Set(),
+    dynamicMaterials = new Set(),
+    maxChunkSpan = chunkSize * __qp69,
+    mergeMinMeshes = __qp70,
+    mergeMaxVertices = __qp71,
+} = {}) {
+    if (!THREE || !scene || !camera || !rawSceneAdd) throw new Error('createProgressiveStaticWorldOptimizer missing required scene arguments');
+
+    const chunks = new Map();
+    const visibleKeys = new Set();
+    const pendingLateObjects = [];
+    const canonicalMaterials = new Map();
+    const box = new THREE.Box3();
+    const size = new THREE.Vector3();
+    const center = new THREE.Vector3();
+    let enabled = false;
+    let optimizing = false;
+    let phase = 'pending';
+    let phaseDone = __qp72;
+    let phaseTotal = __qp72;
+    let lateObjects = __qp72;
+    let materialReplacements = __qp72;
+    let activeDrawDistance = drawDistance;
+    let batchStats = { sourceMeshes: __qp73, mergedMeshes: __qp74, drawCallsSaved: __qp75, emptyGroupsPruned: __qp76 };
+    let lastCx = Infinity, lastCz = Infinity;
+
+    function chunkKey(ix, iz) { return `${ix},${iz}`; }
+    function getChunk(ix, iz) {
+        const key = chunkKey(ix, iz);
+        let group = chunks.get(key);
+        if (group) return group;
+        group = new THREE.Group();
+        group.name = `perf-chunk:${key}`;
+        group.userData.__perfChunkGroup = true;
+        group.userData.chunkX = ix;
+        group.userData.chunkZ = iz;
+        group.visible = false;
+        rawSceneAdd(group);
+        if (enabled) {
+            group.updateMatrixWorld(true);
+            group.matrixAutoUpdate = false;
+            group.matrixWorldAutoUpdate = false;
+        }
+        chunks.set(key, group);
+        return group;
+    }
+
+    function boundsOf(obj) {
+        box.makeEmpty();
+        try {
+            if (obj.isInstancedMesh) {
+                obj.computeBoundingBox?.();
+                obj.computeBoundingSphere?.();
+            }
+            obj.updateMatrixWorld(true);
+            box.setFromObject(obj);
+        } catch {
+            return null;
+        }
+        if (box.isEmpty()) return null;
+        box.getSize(size);
+        box.getCenter(center);
+        return {
+            minX: box.min.x, maxX: box.max.x, minZ: box.min.z, maxZ: box.max.z,
+            width: size.x, depth: size.z, centerX: center.x, centerZ: center.z,
+        };
+    }
+
+    function shouldStayGlobal(obj, b) {
+        if (!b) return true;
+        if (dynamicRoots.has(obj) || obj.isLight || obj.isCamera || obj.userData?.noSpatialChunk) return true;
+        return b.width > maxChunkSpan || b.depth > maxChunkSpan;
+    }
+
+    function placeObject(obj, isLate = false) {
+        if (!obj || obj.userData?.__perfChunkGroup) return false;
+        const b = boundsOf(obj);
+        if (shouldStayGlobal(obj, b)) {
+            if (isLate && !dynamicRoots.has(obj)) freezeObject(obj);
+            return false;
+        }
+        const ix = Math.floor(b.centerX / chunkSize);
+        const iz = Math.floor(b.centerZ / chunkSize);
+        const group = getChunk(ix, iz);
+        group.add(obj);
+        if (isLate) {
+            freezeObject(obj);
+            lateObjects++;
+            if (visibleKeys.has(chunkKey(ix, iz))) group.visible = true;
+        }
+        return true;
+    }
+
+    function roughDistanceSq(obj) {
+        const x = obj?.userData?.detailCullCenterX ?? obj?.position?.x ?? camera.position.x;
+        const z = obj?.userData?.detailCullCenterZ ?? obj?.position?.z ?? camera.position.z;
+        const dx = x - camera.position.x, dz = z - camera.position.z;
+        return dx * dx + dz * dz;
+    }
+
+    function chunkDistanceSq(group) {
+        const x = (group.userData.chunkX + __qp77) * chunkSize;
+        const z = (group.userData.chunkZ + __qp78) * chunkSize;
+        const dx = x - camera.position.x, dz = z - camera.position.z;
+        return dx * dx + dz * dz;
+    }
+
+    function updateVisibility(force = false) {
+        if (!chunks.size) return;
+        const cx = Math.floor(camera.position.x / chunkSize);
+        const cz = Math.floor(camera.position.z / chunkSize);
+        if (!force && cx === lastCx && cz === lastCz) return;
+        lastCx = cx; lastCz = cz;
+
+        const range = Math.ceil((activeDrawDistance + Math.SQRT2 * chunkSize) / chunkSize);
+        const next = new Set();
+        const maxDist = activeDrawDistance + Math.SQRT2 * chunkSize;
+        const maxDistSq = maxDist * maxDist;
+        for (let dx = -range; dx <= range; dx++) {
+            for (let dz = -range; dz <= range; dz++) {
+                const key = chunkKey(cx + dx, cz + dz);
+                const group = chunks.get(key);
+                if (!group) continue;
+                const centerX = (cx + dx + __qp77) * chunkSize;
+                const centerZ = (cz + dz + __qp78) * chunkSize;
+                const ddx = centerX - camera.position.x, ddz = centerZ - camera.position.z;
+                if (ddx * ddx + ddz * ddz > maxDistSq) continue;
+                next.add(key);
+                if (!visibleKeys.has(key)) group.visible = true;
+            }
+        }
+        for (const key of visibleKeys) {
+            if (!next.has(key)) {
+                const group = chunks.get(key);
+                if (group) group.visible = false;
+            }
+        }
+        visibleKeys.clear();
+        for (const key of next) visibleKeys.add(key);
+    }
+
+    async function optimize({ yieldControl = null } = {}) {
+        if (enabled || optimizing) return controller;
+        optimizing = true;
+        const yieldStep = async (nextPhase, done, total) => {
+            phase = nextPhase;
+            phaseDone = done;
+            phaseTotal = total;
+            updateVisibility(true);
+            if (yieldControl) return !!(await yieldControl(nextPhase, done, total));
+            return false;
+        };
+
+        // Direct scene roots are cheap to order without recursively measuring
+        // every object up front. Exact bounds are still computed by placeObject
+        // before a root is assigned to a render chunk.
+        const roots = [...scene.children]
+            .filter(obj => !obj.userData?.__perfChunkGroup)
+            .sort((a, b) => roughDistanceSq(b) - roughDistanceSq(a));
+        phaseTotal = roots.length;
+        for (let done = __qp72; roots.length; done++) {
+            // Descending sort + pop keeps the nearest currently-known root at
+            // the end without O(n) shift operations.
+            const obj = roots.pop();
+            placeObject(obj, false);
+            await yieldStep('optimizing static world · spatial chunks', done + 1, phaseTotal);
+        }
+
+        // Optimize visible/near chunks first. Re-sort after every yielded chunk
+        // so walking during boot changes what gets merged next, not what exists.
+        const pendingChunks = [...chunks.values()];
+        phaseTotal = pendingChunks.length;
+        let reprioritizeChunks = true;
+        for (let done = __qp72; pendingChunks.length; done++) {
+            if (reprioritizeChunks) {
+                pendingChunks.sort((a, b) => chunkDistanceSq(b) - chunkDistanceSq(a));
+                reprioritizeChunks = false;
+            }
+            const group = pendingChunks.pop();
+            materialReplacements += dedupeMaterialsInto(group, dynamicMaterials, canonicalMaterials);
+            const s = batchChunkMeshes(THREE, group, dynamicMaterials, mergeMinMeshes, mergeMaxVertices);
+            batchStats.sourceMeshes += s.sourceMeshes;
+            batchStats.mergedMeshes += s.mergedMeshes;
+            batchStats.drawCallsSaved += s.drawCallsSaved;
+            batchStats.emptyGroupsPruned += pruneEmptyGroups(group);
+            freezeObject(group);
+            reprioritizeChunks = await yieldStep('optimizing static world · merging nearest chunks', done + 1, phaseTotal);
+        }
+
+        // Anything too large/dynamic to live in a render chunk remains a scene
+        // root. Static globals still get material dedupe + one-time matrix
+        // freezing, one root per cooperative slice.
+        const globalRoots = [...scene.children].filter(obj => !obj.userData?.__perfChunkGroup && !dynamicRoots.has(obj));
+        phaseTotal = globalRoots.length;
+        for (let done = __qp72; done < globalRoots.length; done++) {
+            const obj = globalRoots[done];
+            materialReplacements += dedupeMaterialsInto(obj, dynamicMaterials, canonicalMaterials);
+            freezeObject(obj);
+            await yieldStep('optimizing static world · freezing globals', done + 1, phaseTotal);
+        }
+
+        // All static descendants now own final matrixWorld values. Disabling the
+        // scene-wide walk is the same final state as the synchronous optimizer,
+        // without one last full-tree update spike.
+        if ('matrixWorldAutoUpdate' in scene) scene.matrixWorldAutoUpdate = false;
+        enabled = true;
+        optimizing = false;
+
+        // Async model/photo arrivals that landed during cooperative yields were
+        // captured by registerLateObject and are now folded into normal chunks.
+        while (pendingLateObjects.length) placeObject(pendingLateObjects.shift(), true);
+        updateVisibility(true);
+        phase = 'ready';
+        phaseDone = phaseTotal;
+        return controller;
+    }
+
+    const controller = {
+        optimize,
+        updateVisibility,
+        setDrawDistance(value) {
+            const next = Number(value);
+            if (!Number.isFinite(next) || next <= __qp79 || Math.abs(next - activeDrawDistance) < __qp80) return;
+            activeDrawDistance = next;
+            updateVisibility(true);
+        },
+        registerLateObject(obj) {
+            if (!obj || obj.userData?.__perfChunkGroup) return;
+            if (!enabled) {
+                pendingLateObjects.push(obj);
+                return;
+            }
+            placeObject(obj, true);
+        },
+        updateDynamicObject(obj) {
+            if (!obj) return;
+            obj.updateMatrix();
+            obj.updateMatrixWorld(true);
+        },
+        getStats() {
+            return {
+                chunkSize,
+                drawDistance: activeDrawDistance,
+                chunks: chunks.size,
+                visibleChunks: visibleKeys.size,
+                lateObjects,
+                materialReplacements,
+                uniqueMaterials: canonicalMaterials.size,
+                optimizing,
+                phase,
+                phaseDone,
+                phaseTotal,
+                ...batchStats,
+            };
+        },
+    };
+    return controller;
 }
 
 export function createStaticWorldOptimizer({

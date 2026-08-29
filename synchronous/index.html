@@ -3,6 +3,7 @@
 
 <head>
     <meta charset="UTF-8">
+    <base href="../">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>jweb.dev</title>
     <meta name="description" content="A cramped neon back-alley maze, walkable in 3D.">
@@ -18,7 +19,8 @@
             font-family: 'Courier New', monospace;
         }
         canvas { display: block; }
-#hint {
+
+        #hint {
             position: fixed;
             bottom: 18px;
             left: 50%;
@@ -124,30 +126,11 @@
             color: #ff5f5f;
         }
     </style>
-
-    <style id="testProgressiveBootStyle">
-        /* /test must expose the canvas immediately.  Diagnostics stay visible
-           without intercepting clicks or hiding streamed-in geometry. */
-        #bootStatus {
-            inset: 12px auto auto 12px;
-            width: min(620px, calc(100vw - 24px));
-            max-height: 28vh;
-            display: block;
-            padding: 9px 11px;
-            background: #0a0305b8;
-            border: 1px solid #d9999944;
-            backdrop-filter: blur(3px);
-            pointer-events: none;
-            overflow: hidden;
-        }
-        #bootStatusLine { margin: 0 0 5px; font-size: .75rem; }
-        #bootStatusLog { max-height: 18vh; font-size: .58rem; overflow: hidden; }
-        #bootStatus.bootDone { opacity: 0; }
-    </style>
 </head>
 
 <body>
-<div id="crosshair"></div>
+
+    <div id="crosshair"></div>
     <div id="hint"></div>
     <div id="joystickZone"></div>
     <div id="lookZone"></div>
@@ -216,7 +199,7 @@
         }
     }
     </script>
-    <script type="module" src="./test/main.js" onerror="window.__boot?.fail('main.js failed to load as a module -- check the network tab for a 404/CORS/MIME-type error on main.js or one of its imports')"></script>
+    <script type="module" src="./main.js" onerror="window.__boot?.fail('main.js failed to load as a module -- check the network tab for a 404/CORS/MIME-type error on main.js or one of its imports')"></script>
 </body>
 
 </html>

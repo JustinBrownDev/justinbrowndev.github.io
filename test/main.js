@@ -6,7 +6,7 @@ import { UnrealBloomPass } from '../vendor/three/addons/postprocessing/UnrealBlo
 import { GLTFLoader } from '../vendor/three/addons/loaders/GLTFLoader.js';
 import { CLAUDE_CITY_ASSETS } from '../vendor/city-pack/asset-catalog.js';
 import { createPlayerPhysics } from '../player-physics.js';
-import { SpatialHash2D, createStaticWorldOptimizer } from '../city-performance.js';
+import { SpatialHash2D, createProgressiveStaticWorldOptimizer } from '../city-performance.js';
 import { announceParameterOverrides, parameterNumber, registerConfigLiveParameter, registerConfigLivePrefix, registerConfigRoot, registerLiteralScope } from '../numeric-parameters.js';
 // @quantitative-parameterized -- generated; edit build-parameter-catalog.cjs to rebuild
 let __qp0=parameterNumber("n.main.84dad655289e",2,true,"main",0);
@@ -6176,7 +6176,9 @@ function mulberry32(seed) {
 }
 const urlSeed = new URLSearchParams(location.search).get('seed');
 const SEED = urlSeed !== null ? Number(urlSeed) : Math.floor(Math.random() * __qp29 ** __qp30);
-const rng = mulberry32(SEED);
+const _globalRng = mulberry32(SEED);
+let _rngSource = _globalRng;
+function rng() { return _rngSource(); }
 console.log(`[testing] maze seed = ${SEED}  (reload with ?seed=${SEED} to get this exact layout)`);
 
 // the noise corpus itself (NOISE_DISTRICTS, pickCityNoisePair, etc.) is
@@ -6633,7 +6635,7 @@ function testEarlyKeyUp(e) {
     }
 }
 function testEarlyClick(e) {
-    if (IS_TOUCH || e.target.closest?.('#backLink, #parameterEditorRoot')) return;
+    if (IS_TOUCH || e.target.closest?.('#parameterEditorRoot')) return;
     if (!controls.isLocked) controls.lock();
 }
 document.addEventListener('keydown', testEarlyKeyDown);
@@ -7225,12 +7227,21 @@ const REAL_MODEL_BUDGETS = {
     ironGate: __qp383,
 };
 
+function sortPlacementRequestsNearestToPlayer(requests) {
+    requests.sort((a, b) => {
+        const adx = a.x - camera.position.x, adz = a.z - camera.position.z;
+        const bdx = b.x - camera.position.x, bdz = b.z - camera.position.z;
+        return (adx * adx + adz * adz) - (bdx * bdx + bdz * bdz);
+    });
+    return requests;
+}
+
 function flushRealModelPlacements(name) {
     realModelFlushScheduled.delete(name);
     const template = realModelTemplates.get(name);
     const pending = pendingRealModelPlacements[name];
     if (!template || !pending?.length) return;
-    const requests = pending.splice(__qp384, pending.length);
+    const requests = sortPlacementRequestsNearestToPlayer(pending.splice(__qp384, pending.length));
     instantiateCityAssetBatch(template, requests, `real:${name}`);
 }
 
@@ -7376,7 +7387,7 @@ function flushCityAssetPending(id) {
     const template = cityAssetTemplates.get(id);
     const pending = cityAssetPending.get(id);
     if (!template || !pending?.length) return;
-    const requests = pending.splice(__qp405, pending.length);
+    const requests = sortPlacementRequestsNearestToPlayer(pending.splice(__qp405, pending.length));
     if (!pending.length) cityAssetPending.delete(id);
     instantiateCityAssetBatch(template, requests, id);
 }
@@ -7927,6 +7938,26 @@ function localRng(seed) {
         t ^= t + Math.imul(t ^ (t >>> __qp592), t | __qp593);
         return ((t ^ (t >>> __qp594)) >>> __qp595) / __qp596;
     };
+}
+
+// Progressive work can execute in player-priority order without making the
+// final authored content depend on how quickly the user walked while it was
+// loading. Each independently scheduled unit gets a deterministic local RNG;
+// the global stream is then advanced by the same number of draws so later
+// non-streamed generation still advances monotonically.
+function runWithStableStreamingRng(key, work) {
+    const previous = _rngSource;
+    const local = localRng(hashString32(`${SEED}:stream:${key}`));
+    let draws = 0;
+    _rngSource = () => { draws++; return local(); };
+    try {
+        return work();
+    } finally {
+        _rngSource = previous;
+        if (previous === _globalRng) {
+            for (let i = 0; i < draws; i++) _globalRng();
+        }
+    }
 }
 function makeWindowGridTexture(height, baseColorHex, litRatio = __qp597) {
     const floorH = randRange(__qp598, __qp599);
@@ -14852,18 +14883,44 @@ function propCandidatesNear(x, z, queryRadius) {
 // collision, interior dressing, its own real roof), so a multi-cell site
 // comes out as a genuinely that-shaped building instead of one square
 // per grid cell.
+function buildingSiteDistanceSqToPlayer(site) {
+    let best = Infinity;
+    for (const cell of site.cells) {
+        const pos = cellToWorld(cell.col, cell.row);
+        const dx = pos.x - camera.position.x, dz = pos.z - camera.position.z;
+        best = Math.min(best, dx * dx + dz * dz);
+    }
+    return best;
+}
+
+function sortBuildingSitesNearestToPlayer(sites) {
+    // Descending sort + pop: nearest is O(1) to remove. Site id is the stable
+    // tie-breaker so an unmoving player gets a repeatable priority order.
+    sites.sort((a, b) => buildingSiteDistanceSqToPlayer(b) - buildingSiteDistanceSqToPlayer(a) || b.id - a.id);
+}
+
 {
     const buildStart = performance.now();
     _testGenerationTotal = buildingSites.length;
     _testGenerationDone = 0;
-    for (const site of buildingSites) {
-        // Same function, same site order, same RNG state.  The only addition
-        // is a paint/input yield AFTER a completed site, never inside its logic.
-        site.signatureType ? buildSignatureSite(site) : addBuildingSite(site);
+    const pendingBuildingSites = buildingSites.slice();
+    let reprioritize = true;
+    await testYieldNow('streaming nearest real buildings', _testGenerationDone, _testGenerationTotal);
+    while (pendingBuildingSites.length) {
+        if (reprioritize) {
+            sortBuildingSitesNearestToPlayer(pendingBuildingSites);
+            reprioritize = false;
+        }
+        const site = pendingBuildingSites.pop();
+        runWithStableStreamingRng(`building:${site.id}`, () => {
+            site.signatureType ? buildSignatureSite(site) : addBuildingSite(site);
+        });
         _testGenerationDone++;
-        await testYieldIfNeeded('streaming real buildings', _testGenerationDone, _testGenerationTotal);
+        // Re-rank only after a real browser yield. This keeps sorting overhead
+        // bounded while still following a player who walks during generation.
+        reprioritize = await testYieldIfNeeded('streaming nearest real buildings', _testGenerationDone, _testGenerationTotal);
     }
-    console.log(`[perf:test] ${buildingSites.length} authoritative building sites streamed in ${(performance.now() - buildStart).toFixed(__qp4723)}ms wall-clock (${bootElapsed()} total)`);
+    console.log(`[perf:test] ${buildingSites.length} authoritative building sites streamed nearest-player-first in ${(performance.now() - buildStart).toFixed(__qp4723)}ms wall-clock (${bootElapsed()} total)`);
     console.log(`[testing] same-site height mismatches: ${totalExposedSetbackWalls} exterior setback wall-floors generated where a same-site neighbor stopped short (floor-aware internal-edge fix -- was structurally always 0 before)`);
 }
 
@@ -15190,10 +15247,12 @@ function queueGroundSurface(kind, x, y, z, sx, sy, sz, materialKey, material, ge
     groundSurfaceBucket(kind, x, z, materialKey, material, geometry).transforms.push({ x, y, z, sx, sy, sz, plane });
 }
 
-function flushGroundSurfaceBatches() {
+function flushGroundSurfaceBatches(onlyChunkX = null, onlyChunkZ = null) {
     let draws = __qp4883, instances = __qp4884;
-    for (const [key, bucket] of groundSurfaceBuckets) {
+    for (const [key, bucket] of [...groundSurfaceBuckets]) {
+        if (onlyChunkX !== null && (bucket.chunkX !== onlyChunkX || bucket.chunkZ !== onlyChunkZ)) continue;
         const list = bucket.transforms;
+        groundSurfaceBuckets.delete(key);
         if (!list.length) continue;
         const mesh = new THREE.InstancedMesh(bucket.geometry, bucket.material, list.length);
         mesh.name = `groundBatch:${key}`;
@@ -15213,7 +15272,6 @@ function flushGroundSurfaceBatches() {
         draws++;
         instances += list.length;
     }
-    groundSurfaceBuckets.clear();
     return { draws, instances };
 }
 
@@ -15242,20 +15300,55 @@ function addStreetSurface(c, r, x, z, street = isStreetCell(c, r)) {
 
 async function layOpenCellSurfaces() {
     let roadCells = __qp4904, alleyCells = __qp4905, parkSkipped = __qp4906;
+    const cellChunks = new Map();
     for (let r = __qp4907; r < GRID_ROWS - __qp4908; r++) {
         for (let c = __qp4909; c < GRID_COLS - __qp4910; c++) {
             if (grid[r][c]) continue;
             if (parkCells.has(`${c},${r}`)) { parkSkipped++; continue; }
             const { x, z } = cellToWorld(c, r);
-            const street = isStreetCell(c, r);
-            addStreetSurface(c, r, x, z, street);
-            if (street) roadCells++; else alleyCells++;
+            const chunkX = Math.floor(x / JUNK_RENDER_CHUNK), chunkZ = Math.floor(z / JUNK_RENDER_CHUNK);
+            const key = `${chunkX},${chunkZ}`;
+            let chunk = cellChunks.get(key);
+            if (!chunk) cellChunks.set(key, chunk = { chunkX, chunkZ, cells: [] });
+            chunk.cells.push({ c, r, x, z, street: isStreetCell(c, r) });
         }
-        await testYieldIfNeeded('streaming real streets/alleys', r + 1, GRID_ROWS);
     }
-    const batched = flushGroundSurfaceBatches();
-    groundSurfaceBatchStats = batched;
-    console.log(`[gen] explicit ground surfaces: ${roadCells} road + ${alleyCells} alley cells, ${parkSkipped} parks; ${batched.instances} plates/sidewalks emitted directly as ${batched.draws} chunked instance batches (shared ${roadMaterialCache.size} road materials + 1 alley material)`);
+
+    const pendingChunks = [...cellChunks.values()];
+    const totalChunks = pendingChunks.length;
+    let doneChunks = 0, draws = 0, instances = 0;
+    let reprioritizeChunks = true;
+    await testYieldNow('streaming nearest real streets/alleys', doneChunks, totalChunks);
+    while (pendingChunks.length) {
+        if (reprioritizeChunks) {
+            pendingChunks.sort((a, b) => {
+                const ax = (a.chunkX + 0.5) * JUNK_RENDER_CHUNK - camera.position.x;
+                const az = (a.chunkZ + 0.5) * JUNK_RENDER_CHUNK - camera.position.z;
+                const bx = (b.chunkX + 0.5) * JUNK_RENDER_CHUNK - camera.position.x;
+                const bz = (b.chunkZ + 0.5) * JUNK_RENDER_CHUNK - camera.position.z;
+                return (bx * bx + bz * bz) - (ax * ax + az * az);
+            });
+            reprioritizeChunks = false;
+        }
+        const chunk = pendingChunks.pop();
+        for (const cell of chunk.cells) {
+            addStreetSurface(cell.c, cell.r, cell.x, cell.z, cell.street);
+            if (cell.street) roadCells++; else alleyCells++;
+        }
+        const batched = flushGroundSurfaceBatches(chunk.chunkX, chunk.chunkZ);
+        draws += batched.draws;
+        instances += batched.instances;
+        doneChunks++;
+        reprioritizeChunks = await testYieldIfNeeded('streaming nearest real streets/alleys', doneChunks, totalChunks);
+    }
+    // A sidewalk can straddle a chunk edge after its owning cell's chunk was
+    // already flushed. Emit those rare spill buckets now; the visible nearby
+    // ground has already been painting throughout the loop above.
+    const spill = flushGroundSurfaceBatches();
+    draws += spill.draws;
+    instances += spill.instances;
+    groundSurfaceBatchStats = { draws, instances };
+    console.log(`[gen] explicit ground surfaces: ${roadCells} road + ${alleyCells} alley cells, ${parkSkipped} parks; ${instances} plates/sidewalks emitted directly as ${draws} nearest-first chunked instance batches (shared ${roadMaterialCache.size} road materials + 1 alley material)`);
 }
 
 // a park bench — reused wherever a park needs one.
@@ -15738,18 +15831,22 @@ for (const sector of decorationSectors) {
     sector.centerX = pos.x; sector.centerZ = pos.z;
 }
 
-const spawnDecorSectorX = Math.floor(spawnCol / DECOR_SECTOR_SPAN);
-const spawnDecorSectorZ = Math.floor(spawnRow / DECOR_SECTOR_SPAN);
 let initialDecorationCells = __qp5274;
 let initialDecorationSectors = __qp5275;
-for (const sector of decorationSectors) {
-    if (Math.max(Math.abs(sector.sx - spawnDecorSectorX), Math.abs(sector.sz - spawnDecorSectorZ)) > __qp5276) continue;
+const initialDecorationCount = Math.min(decorationSectors.length, (__qp5276 * 2 + 1) ** 2);
+const initialDecorationOrder = decorationSectors.slice().sort((a, b) => {
+    const adx = a.centerX - camera.position.x, adz = a.centerZ - camera.position.z;
+    const bdx = b.centerX - camera.position.x, bdz = b.centerZ - camera.position.z;
+    return (adx * adx + adz * adz) - (bdx * bdx + bdz * bdz);
+});
+for (const sector of initialDecorationOrder.slice(0, initialDecorationCount)) {
     sector.status = 'generated';
     sector.cursor = sector.cells.length;
     initialDecorationSectors++;
     for (const [c, r] of sector.cells) {
-        if (decorateOpenCell(c, r)) initialDecorationCells++;
+        if (runWithStableStreamingRng(`decor:${c}:${r}`, () => decorateOpenCell(c, r))) initialDecorationCells++;
     }
+    await testYieldIfNeeded('seeding nearest real props', initialDecorationSectors, initialDecorationCount);
 }
 finalizeOverheadCables();
 
@@ -15765,6 +15862,14 @@ const decorationQueue = [];
 let decorationIdleHandle = null;
 let decorationStreamTimer = __qp5280;
 
+function sortDecorationQueueNearPlayer() {
+    decorationQueue.sort((a, b) => {
+        const adx = a.centerX - camera.position.x, adz = a.centerZ - camera.position.z;
+        const bdx = b.centerX - camera.position.x, bdz = b.centerZ - camera.position.z;
+        return (adx * adx + adz * adz) - (bdx * bdx + bdz * bdz);
+    });
+}
+
 function queueDecorationNear(x, z) {
     const prefetch = QUALITY.drawDistance * __qp5281 + JUNK_RENDER_CHUNK;
     const prefetchSq = prefetch * prefetch;
@@ -15773,18 +15878,19 @@ function queueDecorationNear(x, z) {
         if (sector.status !== 'pending') continue;
         const dx = sector.centerX - x, dz = sector.centerZ - z;
         const d2 = dx * dx + dz * dz;
-        if (d2 <= prefetchSq) candidates.push([d2, sector]);
+        // Near sectors always sort first, but far sectors remain candidates.
+        // That means an idle tab eventually finishes the whole world instead
+        // of permanently stopping at the current draw-distance ring.
+        candidates.push([d2 <= prefetchSq ? 0 : 1, d2, sector]);
     }
-    candidates.sort((a, b) => a[__qp5282] - b[__qp5283]);
-    // Don't enqueue an entire metropolis just because draw distance is large;
-    // each movement tick admits a few nearest sectors and the idle pump drains
-    // them before asking for more.
+    candidates.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
     const admit = Math.min(__qp5284, candidates.length);
     for (let i = __qp5285; i < admit; i++) {
-        const sector = candidates[i][__qp5286];
+        const sector = candidates[i][2];
         sector.status = 'queued';
         decorationQueue.push(sector);
     }
+    sortDecorationQueueNearPlayer();
     deferredDecorationStats.queuedSectors = decorationQueue.length;
     scheduleDecorationPump();
 }
@@ -15800,6 +15906,7 @@ function scheduleDecorationPump() {
 
 function pumpDecoration(deadline) {
     decorationIdleHandle = null;
+    sortDecorationQueueNearPlayer();
     const started = performance.now();
     let cellsDone = __qp5289;
     const hardBudgetMs = __qp5290;
@@ -15813,7 +15920,7 @@ function pumpDecoration(deadline) {
         const sector = decorationQueue[__qp5294];
         const cell = sector.cells[sector.cursor++];
         if (cell) {
-            if (decorateOpenCell(cell[__qp5295], cell[__qp5296])) deferredDecorationStats.generatedCells++;
+            if (runWithStableStreamingRng(`decor:${cell[__qp5295]}:${cell[__qp5296]}`, () => decorateOpenCell(cell[__qp5295], cell[__qp5296]))) deferredDecorationStats.generatedCells++;
             cellsDone++;
         }
         if (sector.cursor >= sector.cells.length) {
@@ -16319,15 +16426,14 @@ function validateTraversal() {
 }
 await testYieldNow('validating traversal graph');
 validateTraversal();
-await testYieldNow('optimizing static world');
+await testYieldNow('optimizing static world · preparing');
 
 // ---------- static-world render optimization ----------
-// Build this only after all synchronous procedural geometry exists. Far city
-// chunks then become one visibility toggle instead of thousands of scene-node
-// visits, compatible opaque meshes inside each chunk are merged by material,
-// and immutable world matrices stop being recomputed every frame. Async model
-// and photo arrivals are caught by the scene.add wrapper and registered here
-// as late static objects.
+// Same full optimizer, different execution model: the controller is installed
+// BEFORE work starts so late async assets can queue safely, then chunking,
+// dedupe/merge and matrix freezing yield between real spatial units. The boot
+// renderer keeps painting and accepting movement instead of spending one long
+// uninterrupted task under an "optimizing static world" overlay.
 const animatedMaterials = new Set();
 for (const signal of trafficSignals) {
     animatedMaterials.add(signal.redMat);
@@ -16335,7 +16441,7 @@ for (const signal of trafficSignals) {
     animatedMaterials.add(signal.greenMat);
 }
 const staticOptimizeStart = performance.now();
-staticWorldOptimizer = createStaticWorldOptimizer({
+staticWorldOptimizer = createProgressiveStaticWorldOptimizer({
     THREE,
     scene,
     camera,
@@ -16347,8 +16453,11 @@ staticWorldOptimizer = createStaticWorldOptimizer({
     mergeMinMeshes: __qp5424,
     mergeMaxVertices: __qp5425,
 });
+await staticWorldOptimizer.optimize({
+    yieldControl: (phase, done, total) => testYieldIfNeeded(phase, done, total),
+});
 const staticWorldStats = staticWorldOptimizer.getStats();
-console.log(`[perf] static-world optimization ${(performance.now() - staticOptimizeStart).toFixed(__qp5426)}ms:`, staticWorldStats);
+console.log(`[perf] progressive static-world optimization ${(performance.now() - staticOptimizeStart).toFixed(__qp5426)}ms wall-clock:`, staticWorldStats);
 
 console.log(`[perf] generation complete at ${bootElapsed()} since page start -- starting render loop`);
 testStatus('full world ready · optimizer active');

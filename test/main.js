@@ -6430,8 +6430,11 @@ const QUALITY = forcedQuality === 'high' ? CONFIG.quality.desktop
 // ---------- basic setup ----------
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(CONFIG.scene.backgroundColor);
-scene.fog = new THREE.FogExp2(CONFIG.scene.fogColor, CONFIG.scene.fogDensity);
+// Match the first HTML paint immediately. The ground-level vertical gradient
+// is already nighttime-purple; starting black prevents a one-frame blue/day
+// flash before the first live gradient update.
+scene.background = new THREE.Color(0x000000);
+scene.fog = new THREE.FogExp2(0x050008, CONFIG.scene.fogDensity);
 
 // ---------- dynamic light distance culling ----------
 // generation hands out real THREE.PointLights greedily, in whatever
@@ -6579,11 +6582,13 @@ let _testLastBootPaint = performance.now();
 let _testGenerationPhase = 'loading corpus';
 let _testGenerationDone = 0;
 let _testGenerationTotal = 0;
+let _cityShutdownRequested = false;
 
 function testStatus(phase, done = _testGenerationDone, total = _testGenerationTotal) {
     _testGenerationPhase = phase;
     _testGenerationDone = done;
     _testGenerationTotal = total;
+    window.__boot?.progress(phase, done, total);
     const progress = total > 0 ? ` ${done}/${total}` : '';
     bootStatus(`${phase}${progress} · live ${bootElapsed()}`);
 }
@@ -6635,7 +6640,8 @@ function testEarlyKeyUp(e) {
     }
 }
 function testEarlyClick(e) {
-    if (IS_TOUCH || e.target.closest?.('#parameterEditorRoot')) return;
+    if (IS_TOUCH || e.target.closest?.('#bootStatus, #bootActions, #oldHomepageEscape, #parameterEditorRoot')) return;
+    window.__boot?.enter();
     if (!controls.isLocked) controls.lock();
 }
 document.addEventListener('keydown', testEarlyKeyDown);
@@ -6656,7 +6662,7 @@ function testBootstrapCanStand(x, z) {
 
 let _testBootstrapLast = performance.now();
 function testBootstrapRenderLoop(now) {
-    if (!_testBootstrapActive) return;
+    if (!_testBootstrapActive || _cityShutdownRequested) return;
     requestAnimationFrame(testBootstrapRenderLoop);
     const dt = Math.min(0.05, Math.max(0, (now - _testBootstrapLast) / 1000));
     _testBootstrapLast = now;
@@ -6689,6 +6695,21 @@ function testBootstrapRenderLoop(now) {
     _testBootstrapFrame++;
 }
 requestAnimationFrame(testBootstrapRenderLoop);
+// Fast emergency teardown used by the client-facing /old/ escape. Avoid a
+// recursive scene disposal walk here: on truly weak hardware that walk is
+// exactly the kind of long task the escape exists to avoid. Context loss frees
+// GPU allocations immediately; navigation then drops the document heap.
+window.__shutdownCity = () => {
+    if (_cityShutdownRequested) return;
+    _cityShutdownRequested = true;
+    _testBootstrapActive = false;
+    try { controls.unlock(); } catch {}
+    try { renderer.setAnimationLoop(null); } catch {}
+    try { composer?.dispose?.(); } catch {}
+    try { renderer.dispose(); } catch {}
+    try { renderer.forceContextLoss(); } catch {}
+    try { scene.clear(); } catch {}
+};
 console.log(`[test-perf] progressive runtime active; frame work budget=${TEST_FRAME_BUDGET_MS}ms; authoritative generator=main.js copy`);
 window.__testStreaming = {
     mode: 'full-fidelity-progressive',
@@ -7048,6 +7069,13 @@ function updateWebGradient(worldZ, worldY, elapsed) {
 // browsers require a real gesture before any audio plays, so this
 // piggybacks on gestures that already exist rather than adding a new one).
 let audioCtx = null;
+const _shutdownRenderCore = window.__shutdownCity;
+window.__shutdownCity = () => {
+    if (_cityShutdownRequested) return;
+    try { audioCtx?.close?.(); } catch {}
+    _shutdownRenderCore?.();
+};
+window.addEventListener('pagehide', () => window.__shutdownCity?.(), { once: true });
 let droneGain = null;
 let hissGain = null;
 let droneFilter = null;
@@ -16052,7 +16080,8 @@ if (IS_TOUCH) {
 
     document.addEventListener('click', (e) => {
         initAudio();
-        if (e.target.closest('#backLink, #parameterEditorRoot')) return;
+        if (e.target.closest('#bootStatus, #bootActions, #oldHomepageEscape, #backLink, #parameterEditorRoot')) return;
+        window.__boot?.enter();
         if (!controls.isLocked) controls.lock();
     });
     controls.addEventListener('lock', () => fadeHint(__qp5323));
@@ -16205,6 +16234,7 @@ let footstepTimer = __qp5341;
 let trafficSignalUpdateTimer = __qp5342;
 
 function animate() {
+    if (_cityShutdownRequested) return;
     requestAnimationFrame(animate);
     renderer.info.reset();
     const delta = Math.min(CONFIG.movement.maxDeltaSeconds, clock.getDelta());

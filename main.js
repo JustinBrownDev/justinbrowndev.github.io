@@ -2808,7 +2808,11 @@ function maybeAddMezzanine(x, z, hw, groundFloorHeight, door) {
     // other prop in this maze already climbs by.
     const ladderX = axis === 'x' ? px - awayX * platformHalf : x;
     const ladderZ = axis === 'x' ? z : pz - awayZ * platformHalf;
-    const ladderRotY = Math.atan2(-awayX, awayZ);
+    // faces back toward the room, i.e. the OPPOSITE of "away" (see
+    // outwardRotationY) -- this dropped the z-axis negation before,
+    // the same recurring bug: north/south platforms had their ladder
+    // facing further away from the room instead of back into it.
+    const ladderRotY = outwardRotationY(-awayX, -awayZ);
     addLadder(ladderX, ladderZ, ladderRotY, 0, platformY);
 
     elevatedPlatforms.push({ x: px, z: pz, hx: platformHalf, hz: platformHalf, y: platformY });
@@ -2874,9 +2878,12 @@ function maybeAddElevator(x, z, hw, groundFloorHeight, door) {
         g.add(light);
     }
 
-    // face away from the wall it's mounted on, same convention
-    // buildingFaceDefs/wall-hugging props use elsewhere
-    g.rotation.y = Math.atan2(-w.dx, w.dz);
+    // face away from the wall it's mounted on -- outward normal is -w
+    // (see outwardRotationY). Same missing z-negation bug as the other
+    // independently hand-rolled cardinal rotations in this file: north/
+    // south walls had this elevator facing INTO the wall instead of out
+    // into the room; east/west were unaffected (z-term is 0 there).
+    g.rotation.y = outwardRotationY(-w.dx, -w.dz);
     g.position.set(x + w.dx * (hw - 0.05), 0, z + w.dz * (hw - 0.05));
     scene.add(g);
 }
@@ -3363,7 +3370,7 @@ function buildStairwayToHeaven(cx, cz) {
 // THIS shared object instead of privately deciding a facade "happened"
 // only when it personally needed one.
 let nextFacadeId = 0;
-function makeFacade(rect, dx, dz, yMin, yMax, door, exposure = 'street') {
+function makeFacade(rect, dx, dz, yMin, yMax, door, exposure = 'street', moduleKey = null) {
     const axisIsX = dz !== 0; // wall runs along the x axis (a north/south face)
     const half = axisIsX ? rect.hwx : rect.hwz;
     const rotY = outwardRotationY(dx, dz);
@@ -3371,6 +3378,7 @@ function makeFacade(rect, dx, dz, yMin, yMax, door, exposure = 'street') {
     const isDoorWall = door && door.dx === dx && door.dz === dz;
     return {
         id: nextFacadeId++,
+        moduleKey, // "row,col" of the module this wall belongs to -- see buildingFacades consumers that need to find a specific building's specific wall (e.g. the forced "signal" sign)
         dx, dz, cx, cz, rotY, axisIsX, half, length: half * 2,
         yMin, yMax,
         normalX: dx, normalZ: dz, // see outwardRotationY/pointOnFacade -- the canonical outward direction
@@ -3850,7 +3858,7 @@ function addBuildingModule(cell, opts) {
             if (exposedSetbackSidesByFloor[fl].includes(s)) { firstExposedFloor = fl; break; }
         }
         if (firstExposedFloor === -1) continue;
-        buildingFacades.push(makeFacade(rect, s.dx, s.dz, firstExposedFloor * floorHeight, height, null, 'setback'));
+        buildingFacades.push(makeFacade(rect, s.dx, s.dz, firstExposedFloor * floorHeight, height, null, 'setback', `${row},${col}`));
     }
 
     // interior dressing -- ground floor only (upper-floor prop helpers
@@ -3908,7 +3916,6 @@ function addBuildingModule(cell, opts) {
     for (const s of streetSides) {
         const ox = s.dx * (hwx + 0.03), oz = s.dz * (hwz + 0.03);
         const rotY = outwardRotationY(s.dx, s.dz);
-        const faceX = cx + ox, faceZ = cz + oz;
         // decided up front (not just at the point it's actually placed
         // below) so its facade space can be reserved BEFORE signs are
         // placed on this same wall -- an architectural feature blocks a
@@ -3921,7 +3928,7 @@ function addBuildingModule(cell, opts) {
         // buildingFacades unconditionally, BEFORE the sign roll, so any
         // permanent fixture (the fire escape) is reserved on it no
         // matter which branch below actually runs.
-        const facade = makeFacade(rect, s.dx, s.dz, 0, height, door);
+        const facade = makeFacade(rect, s.dx, s.dz, 0, height, door, 'street', `${row},${col}`);
         // the fire escape is a permanent vertical fixture on this wall --
         // reserve its real footprint (its own tangential width, full
         // height) before any sign gets a chance to land on top of it.
@@ -3941,12 +3948,13 @@ function addBuildingModule(cell, opts) {
         }
         const signsPlaced = placeSignsOnFacade(facade, signCount, row);
         // a face genuinely free of signs is recorded in candidateFaces --
-        // the content-card pass later claims whatever's left over so real
-        // content never double-mounts on top of a sign. `facade` rides
-        // along so a fire-escape (or any other) reservation already on
-        // it survives into that later pass too -- it used to be lost
-        // entirely whenever this branch's sibling ran instead.
-        if (signsPlaced === 0) candidateFaces.push({ x: faceX, z: faceZ, rotY, height, facade });
+        // the real FacadeSurface itself, not a raw {x,z,rotY} snapshot of
+        // it -- so the content-card pass later reserves real occupancy on
+        // the SAME persistent object everything else here already used
+        // (a fire-escape reservation made above survives into that pass
+        // automatically; it used to be lost entirely whenever this
+        // branch's sibling ran instead).
+        if (signsPlaced === 0) candidateFaces.push(facade);
 
         // everything below shares ONE occupancy manager (`facade`) instead
         // of independently rolling a world position and hoping nothing
@@ -4171,23 +4179,19 @@ function addBuildingSite(site) {
     addSiteDebugOverlay(cells, builtModules, voidCell);
 }
 
-const candidateFaces = []; // faces that skipped a random sign — free for content cards
+const candidateFaces = []; // real FacadeSurface objects that skipped a random sign — free for content cards (see mountContentCards)
 // every real exterior wall in the generated city -- see makeFacade. Grows
 // for the life of generation; nothing ever removes a FacadeSurface once
 // its wall exists.
 const buildingFacades = [];
 
-// the four wall-facing transforms for a building of a given (possibly
-// non-square) core half-extents -- shared by normal sign placement and
-// the single forced "signal" sign.
-function buildingFaceDefs(hwx, hwz) {
-    return [
-        { dc: 0, dr: -1, rotY: outwardRotationY(0, -1), ox: 0, oz: -hwz - 0.03 },
-        { dc: 0, dr: 1, rotY: outwardRotationY(0, 1), ox: 0, oz: hwz + 0.03 },
-        { dc: -1, dr: 0, rotY: outwardRotationY(-1, 0), ox: -hwx - 0.03, oz: 0 },
-        { dc: 1, dr: 0, rotY: outwardRotationY(1, 0), ox: hwx + 0.03, oz: 0 },
-    ];
-}
+// buildingFaceDefs (four cardinal faces re-derived from a bare hwx/hwz,
+// with no idea which sides are real street walls vs. party/internal/
+// courtyard edges) used to live here. Retired -- its one remaining
+// caller (the forced "signal" sign) now selects an actual exposed
+// FacadeSurface from `buildingFacades` instead (see below). This is
+// exactly the kind of old-geometry assumption a refactor should not
+// keep alive just to feed one leftover call site.
 
 // style axes a sign rolls independently, so no two signs in the city
 // necessarily share a look -- shape (canvas aspect), font family, border
@@ -4636,6 +4640,28 @@ function addTerminalPlaque(x, y, z, rotY, title, subtitle) {
 // ---------- content-card wall mounting ----------
 // real site content (art + projects) claims whatever building faces the
 // random-sign pass skipped. Runs after all buildings exist.
+// conservative upper-bound reserve size per content-card kind -- each of
+// addWallPoster/addTerminalPlaque/placePhotoPoster rolls its own real
+// width (and derives height from its own fixed aspect) internally; this
+// is the largest that roll can ever come out to, so a reservation made
+// from these numbers can never be smaller than the real mesh (the exact
+// bug class the sign-spec-precompute fix addressed for signs).
+const CONTENT_CARD_RESERVE = {
+    poster: { width: 2.0, height: 2.0 * 0.75 },
+    terminal: { width: 1.9, height: 1.9 * (40 / 108) },
+    photo: { width: 2.0, height: 2.0 * (168 / 128) },
+};
+
+// real site content claims real facade space through the SAME occupancy
+// manager everything else uses (findFreeFacadeRect/pointOnFacade) --
+// not a blind random Y on a bare {x,z,rotY,height} record. Previously a
+// content card could still land on top of a fire escape or anything
+// else reserved on its target facade: candidateFaces only ever
+// guaranteed "no SIGN landed here", never "nothing else did either".
+// Now each candidate's real FacadeSurface (see addBuildingModule) is
+// consulted directly, and a facade that turns out to have no free room
+// (because a fire escape/awning/etc. already claimed it) is skipped in
+// favor of the next one instead of forcing an overlap.
 function mountContentCards() {
     const jobs = [];
     for (const [title, subtitle] of CONFIG.siteContent.art) jobs.push({ title, subtitle, kind: 'poster' });
@@ -4646,16 +4672,19 @@ function mountContentCards() {
     const faces = [...candidateFaces].sort(() => rng() - 0.5);
     let fi = 0;
     for (const job of jobs) {
-        if (fi >= faces.length) break;
-        const face = faces[fi++];
-        const y = randRange(2.2, Math.min(face.height - 2, 6));
         const photoKey = PHOTO_BY_TITLE[job.title];
-        if (photoKey) {
-            placePhotoPoster(photoKey, face.x, y, face.z, face.rotY, job.title, job.subtitle);
-        } else if (job.kind === 'poster') {
-            addWallPoster(face.x, y, face.z, face.rotY, job.title, job.subtitle);
-        } else {
-            addTerminalPlaque(face.x, y, face.z, face.rotY, job.title, job.subtitle);
+        const kind = photoKey ? 'photo' : job.kind;
+        const { width, height } = CONTENT_CARD_RESERVE[kind];
+        let placed = false;
+        while (!placed && fi < faces.length) {
+            const facade = faces[fi++];
+            const spot = findFreeFacadeRect(facade, 'poster', width, height, facade.yMin + 2.2, Math.min(facade.yMax - 0.5, facade.yMin + 6));
+            if (!spot) continue; // this facade had no free room after all (e.g. a fire escape already claimed it) -- try the next one, don't force an overlap
+            const p = pointOnFacade(facade, spot.u, spot.v);
+            if (kind === 'photo') placePhotoPoster(photoKey, p.x, p.y, p.z, facade.rotY, job.title, job.subtitle);
+            else if (kind === 'poster') addWallPoster(p.x, p.y, p.z, facade.rotY, job.title, job.subtitle);
+            else addTerminalPlaque(p.x, p.y, p.z, facade.rotY, job.title, job.subtitle);
+            placed = true;
         }
     }
 }
@@ -6373,20 +6402,26 @@ bootStatus(`city built, ${GRID_COLS * GRID_ROWS} cells -- placing props/decorati
         for (const [dc, dr] of [[0, -1], [0, 1], [-1, 0], [1, 0]]) {
             const bc = sc + dc, br = sr + dr;
             if (!grid[br]?.[bc]) continue; // needs a solid building to mount on
-            if (!footprintOf[br]?.[bc]) continue; // a courtyard void is solid but has no real facade to mount on
-            const fp = footprintOf[br][bc];
-            const { x, z } = cellToWorld(bc, br);
-            // face pointing FROM the building back toward the dead end
-            const face = buildingFaceDefs(fp.hwx, fp.hwz).find(f => f.dc === -dc && f.dr === -dr);
-            if (!face) continue;
+            // an actual exposed FacadeSurface belonging to that module,
+            // facing back toward the dead end (-dc,-dr) -- not four
+            // imaginary cardinal faces re-derived from a bare hwx/hwz
+            // (the old buildingFaceDefs), which knows nothing of which
+            // sides are real street-facing walls vs. party/internal/
+            // courtyard edges a sign can't actually be mounted on at all.
+            const moduleKey = `${br},${bc}`;
+            const facade = buildingFacades.find(f => f.moduleKey === moduleKey && f.dx === -dc && f.dz === -dr);
+            if (!facade) continue;
+            const spot = findFreeFacadeRect(facade, i === 0 ? 'photo' : 'sign', i === 0 ? 1.8 : 2.0, i === 0 ? 1.8 * (168 / 128) : 1.6, facade.yMin + 2.0, Math.min(facade.yMax - 0.3, facade.yMin + 5));
+            if (!spot) continue;
+            const p = pointOnFacade(facade, spot.u, spot.v);
             if (i === 0) {
                 // the one true signal carries his actual photo -- the
                 // near-miss decoys stay text-only, since they're
                 // specifically NOT him and showing a real photo there
                 // would give the game away.
-                placePhotoPoster('portrait', x + face.ox, 2.6, z + face.oz, face.rotY, content.title, content.subtitle, { width: 1.8, frameColor: '#ffffff' });
+                placePhotoPoster('portrait', p.x, p.y, p.z, facade.rotY, content.title, content.subtitle, { width: 1.8, frameColor: '#ffffff' });
             } else {
-                addSign(x + face.ox, 2.4, z + face.oz, face.rotY, content.title, content.subtitle, content.color);
+                addSign(p.x, p.y, p.z, facade.rotY, content.title, content.subtitle, content.color);
             }
             break;
         }
@@ -6928,10 +6963,15 @@ for (let r = 1; r < GRID_ROWS - 1; r++) {
                 const bz = z + w.dz * hug + (w.dz === 0 ? along : 0);
                 const spot = findClearSpot(bx, bz, 0.3, [[0, 0], [0.3, 0], [-0.3, 0], [0, 0.3], [0, -0.3]]);
                 px = spot.x; pz = spot.z;
-                // face away from the wall it's hugging, into the open alley —
-                // matches the same (dc,dr) -> rotY convention buildingFaceDefs
-                // uses, just inverted (wall direction, not facing direction).
-                facingRotY = Math.atan2(-w.dx, w.dz);
+                // face away from the wall it's hugging, into the open alley
+                // -- outward normal is simply -w (see outwardRotationY).
+                // This used to be a hand-rolled atan2(-w.dx, w.dz), missing
+                // the same z-axis negation as every other independently-
+                // implemented cardinal rotation in this file (see
+                // outwardRotationY's own comment) -- north/south wall-
+                // huggers faced INTO their wall instead of away from it;
+                // east/west were unaffected (z-term is 0 there).
+                facingRotY = outwardRotationY(-w.dx, -w.dz);
             } else {
                 px = x + randRange(-CELL * 0.28, CELL * 0.28);
                 pz = z + randRange(-CELL * 0.28, CELL * 0.28);

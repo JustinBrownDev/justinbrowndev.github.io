@@ -5045,9 +5045,257 @@ function buildArtGallery(site) {
     console.log(`[signature] ART GALLERY: built ${buildCells.length} modules (courtyard=${!!voidCell}), ${hung}/${ART_GALLERY_CATALOG.filter(p => p.kind !== 'pedestal').length} wall pieces hung${skipped ? `, ${skipped} skipped (no free wall)` : ''}, 1 pedestal piece, roof terrace active`);
 }
 
+// ============================================================
+// AS/400 ARCHIVE -- authored signature location #2.
+// ============================================================
+// PUBLIC TECHNICAL KNOWLEDGE ONLY -- every fact below is well-documented
+// public IBM i/AS-400 platform history and terminology (product
+// lineage, CL command names, architecture concepts). None of it is
+// company-specific, none of it is credentials/internal-systems/GAL
+// implementation detail -- this is a public website.
+const AS400_CONTENT = {
+    // real product lineage -- System/38's single-level-store/integrated-
+    // database architecture is the actual throughline every rename since
+    // has kept running underneath.
+    lineage: [
+        ['SYSTEM/38', '1978 -- introduced the single-level store & integrated database this whole lineage still runs on'],
+        ['AS/400', '1988 -- System/38 and System/36 unified into one machine'],
+        ['ISERIES', '2000 rebrand -- same OS lineage, eServer branding era'],
+        ['SYSTEM I', '2006 rebrand'],
+        ['IBM I', '2008 -- current name; same underlying architecture throughout'],
+    ],
+    // CL commands -- real, well-known, generic (never a company's actual
+    // job/library/object names).
+    commands: [
+        ['WRKACTJOB', 'work with active jobs'],
+        ['WRKOBJ', 'work with objects'],
+        ['WRKLIB', 'work with libraries'],
+        ['WRKSPLF', 'work with spooled files'],
+        ['DSPJOB', 'display job'],
+        ['DSPMSG', 'display messages'],
+        ['DSPOBJD', 'display object description'],
+        ['DSPFD', 'display file description'],
+        ['DSPPGMREF', 'display program references'],
+        ['CRTLIB', 'create library'],
+        ['CRTBNDRPG', 'create bound RPG program'],
+        ['CRTSQLRPGI', 'create SQL RPG ILE program'],
+    ],
+    // architecture/object-model concepts -- the library/object system,
+    // languages, and runtime vocabulary. Real terminology, generic
+    // definitions.
+    concepts: [
+        ['LIBRARY', 'a container object for other objects -- not a folder; an object of type *LIB'],
+        ['OBJECT', 'everything on the system is a typed object (*PGM, *FILE, *LIB...) with attributes, not a raw byte stream'],
+        ['DDS', 'Data Description Specifications -- fixed-format file/screen/printer-output layout definitions'],
+        ['RPG', 'Report Program Generator -- the platform’s dominant business-logic language, still actively developed'],
+        ['CL', 'Control Language -- the shell/scripting language for job & system control'],
+        ['ILE', 'Integrated Language Environment -- lets RPG/COBOL/C/CL modules bind into one program'],
+        ['JOB', 'the unit of work the OS schedules & tracks -- interactive, batch, or autostart'],
+        ['SUBSYSTEM', 'a runtime environment controlling how jobs are routed & given resources'],
+        ['MESSAGE QUEUE', 'how jobs/programs communicate & how operators are notified'],
+        ['SPOOL FILE', 'print output held on the system before/instead of printing'],
+        ['DB2 FOR I', 'the integrated relational database -- built into the OS, not a separate product'],
+        ['QSYS2', 'SQL services library -- system information exposed as queryable views'],
+        ['IFS', 'Integrated File System -- a Unix-like hierarchical filesystem layered over the object-based one'],
+        ['JTOPEN', 'open-source Java toolbox for talking to IBM i from external programs'],
+    ],
+};
+
+function buildAS400Archive(site) {
+    const { cells, id, signatureInstance } = site;
+    const typeCfg = CONFIG.signatureBuildings.as400Archive;
+    const floorHeight = 3.0;
+    const floorCount = Math.max(3, Math.min(4, typeCfg.preferredFloors || 4));
+    const color = 0xc4bc9c; // institutional beige -- midrange-computing-building, not a startup office
+    const material = new THREE.MeshStandardMaterial({ color, roughness: 0.88, side: THREE.DoubleSide });
+    const buildingContext = { wealth: 0.55, maintenance: 0.7 };
+    const streetSetback = randRange(CONFIG.maze.buildingMarginMin, CONFIG.maze.buildingMarginMax) / 2;
+    const partySetback = randRange(0.08, 0.2);
+
+    const degreeOf = (cell) => [[0, -1], [0, 1], [-1, 0], [1, 0]].filter(([dc, dr]) => siteIdOf[cell.row + dr]?.[cell.col + dc] === id).length;
+    let primary = cells[0], primaryDegree = -1;
+    for (const c of cells) { const d = degreeOf(c); if (d > primaryDegree) { primaryDegree = d; primary = c; } }
+
+    const mainEntrance = signatureInstance.mainEntrance;
+    const secondaryEntrance = signatureInstance.secondaryEntrance;
+    const others0 = cells.filter(c => c !== primary);
+    // vestibule/orientation lobby -- the cell touching the real
+    // mainEntrance edge (spec: "ORIENTATION LOBBY" at street level).
+    const orientation = others0.find(c => c.row === mainEntrance.cell.row && c.col === mainEntrance.cell.col) ?? others0[0] ?? primary;
+    // machine room annex -- the cell touching the secondary (service)
+    // edge, a real rear/loading connection (spec: "SERVICE / LOADING").
+    const others1 = others0.filter(c => c !== orientation);
+    const machineRoom = (secondaryEntrance && others1.find(c => c.row === secondaryEntrance.cell.row && c.col === secondaryEntrance.cell.col)) ?? others1[others1.length - 1] ?? primary;
+    const remaining = others1.filter(c => c !== machineRoom);
+
+    const floorCountByCellKey = new Map(cells.map(c => [`${c.row},${c.col}`, floorCount]));
+    const cellIs = (cell, edge) => edge && cell.row === edge.cell.row && cell.col === edge.cell.col;
+    const rectByCellKey = new Map();
+    for (const cell of cells) {
+        const forceDoorSide = cellIs(cell, mainEntrance) ? { dc: mainEntrance.dc, dr: mainEntrance.dr }
+            : cellIs(cell, secondaryEntrance) ? { dc: secondaryEntrance.dc, dr: secondaryEntrance.dr }
+                : null;
+        const rect = addBuildingModule(cell, {
+            isPrimary: cell === primary, isWarehouse: false, floorCount, floorHeight, height: floorCount * floorHeight,
+            color, material, buildingContext, streetSetbackX: streetSetback, streetSetbackZ: streetSetback, partySetback,
+            voidCell: null, siteFloorCounts: floorCountByCellKey, signatureMode: true, forceDoorSide,
+        });
+        rectByCellKey.set(`${cell.row},${cell.col}`, rect);
+    }
+
+    const facadesFor = (cell) => cell && rectByCellKey.get(`${cell.row},${cell.col}`)?.streetFacades || [];
+    const bandFor = (fl) => [fl * floorHeight + 0.3, (fl + 1) * floorHeight - 0.3];
+    const RACK_MODELS = ['as400_archive/equipment_rack_01', 'as400_archive/equipment_rack_02', 'as400_archive/equipment_rack_03', 'as400_archive/equipment_rack_04'];
+    const TERMINAL_MODELS = ['as400_archive/crt_terminal_01', 'as400_archive/crt_terminal_02', 'as400_archive/crt_terminal_03', 'as400_archive/crt_terminal_04', 'as400_archive/crt_terminal_05', 'as400_archive/crt_terminal_06'];
+    const WORKSTATION_MODELS = ['as400_archive/workstation_01', 'as400_archive/workstation_02', 'as400_archive/workstation_03', 'as400_archive/workstation_04', 'as400_archive/workstation_05'];
+
+    // FLOOR 0 -- orientation/history at the lobby (spec: "entry lobby,
+    // timeline wall, object-model exhibit, intro terminals, reference
+    // desk") + the machine room annex (spec: "visually memorable...
+    // green-screen stations, racks, line printers, tape equipment").
+    {
+        const { x: ox, z: oz } = cellToWorld(orientation.col, orientation.row);
+        addBench(ox + randRange(-1, 1), oz + randRange(-1, 1), randRange(0, Math.PI * 2));
+        // each real lineage entry placed exactly ONCE -- tries every
+        // orientation-cell facade in turn and stops at the first one with
+        // room, instead of the earlier version's bug: looping the full
+        // lineage list once per facade duplicated every entry onto every
+        // street-facing wall this cell happened to have.
+        let placedLineage = 0;
+        const orientationFacades = facadesFor(orientation);
+        for (const [name, desc] of AS400_CONTENT.lineage) {
+            for (const facade of orientationFacades) {
+                const spot = findFreeFacadeRect(facade, 'sign', 1.6, 0.55, ...bandFor(0), 6, 0.1);
+                if (!spot) continue;
+                const p = pointOnFacade(facade, spot.u, spot.v, -0.05);
+                addWallPoster(p.x, p.y, p.z, facade.rotY + Math.PI, name, desc);
+                placedLineage++;
+                break;
+            }
+        }
+        // intro terminals -- real CRT props, real early object-model facts
+        for (let i = 0; i < 2; i++) {
+            placeCityAsset(pick(TERMINAL_MODELS), ox + randRange(-1.2, 1.2), oz + randRange(-1.2, 1.2), randRange(0, Math.PI * 2), { y: 0 });
+        }
+        const [objTitle, objDesc] = AS400_CONTENT.concepts[1]; // 'OBJECT'
+        addGalleryPlacard(ox + 0.6, oz - 0.6, randRange(0, Math.PI * 2), objTitle, objDesc);
+        console.log(`[signature] AS/400 ARCHIVE: orientation lobby -- ${placedLineage}/${AS400_CONTENT.lineage.length} lineage panels hung`);
+    }
+    {
+        const { x: mx, z: mz } = cellToWorld(machineRoom.col, machineRoom.row);
+        const mr = rectByCellKey.get(`${machineRoom.row},${machineRoom.col}`);
+        const jr = Math.min(mr?.hwx ?? 2, mr?.hwz ?? 2) * 0.6;
+        const machineModels = [...RACK_MODELS, 'as400_archive/line_printer_01', 'as400_archive/line_printer_02', 'as400_archive/tape_drive_01', 'as400_archive/tape_drive_02', 'as400_archive/disk_unit_01', 'as400_archive/operator_console_01'];
+        for (const modelId of machineModels) {
+            placeCityAsset(modelId, mx + randRange(-jr, jr), mz + randRange(-jr, jr), randRange(0, Math.PI * 2), { y: 0 });
+        }
+        addGalleryPlacard(mx, mz + jr * 0.7, randRange(0, Math.PI * 2), 'MACHINE ROOM', 'real hardware, real heat -- keep clear of the racks');
+        console.log(`[signature] AS/400 ARCHIVE: machine room -- ${machineModels.length} real hardware props placed`);
+    }
+
+    // FLOOR 1 -- reference library (spec: "library stacks, reading
+    // tables, reference terminals, diagram walls"). Sections: libraries,
+    // objects, files, DDS, RPG, CL, ILE, jobs, subsystems, message
+    // queues, spool -- one diagram-wall panel per concept, spread across
+    // every module's facade on this floor's band.
+    let libraryHung = 0;
+    if (floorCount > 1) {
+        const libraryCells = [primary, orientation, machineRoom, ...remaining];
+        let ci = 0;
+        for (const [term, desc] of AS400_CONTENT.concepts) {
+            let placed = false;
+            for (let attempt = 0; attempt < libraryCells.length && !placed; attempt++) {
+                const cell = libraryCells[(ci + attempt) % libraryCells.length];
+                for (const facade of facadesFor(cell)) {
+                    const spot = findFreeFacadeRect(facade, 'sign', 1.5, 0.6, ...bandFor(1), 6, 0.1);
+                    if (!spot) continue;
+                    const p = pointOnFacade(facade, spot.u, spot.v, -0.05);
+                    addWallPoster(p.x, p.y, p.z, facade.rotY + Math.PI, term, desc);
+                    placed = true;
+                    break;
+                }
+            }
+            if (placed) { libraryHung++; ci++; }
+        }
+        const { x: px, z: pz } = cellToWorld(primary.col, primary.row);
+        for (let i = 0; i < 3; i++) placeCityAsset(pick(['as400_archive/binder_shelf_01', 'as400_archive/binder_shelf_02', 'as400_archive/binder_shelf_03']), px + randRange(-1.6, 1.6), pz + randRange(-1.6, 1.6), randRange(0, Math.PI * 2), { y: floorHeight });
+    }
+    console.log(`[signature] AS/400 ARCHIVE: reference library -- ${libraryHung}/${AS400_CONTENT.concepts.length} concept panels hung`);
+
+    // FLOOR 2 -- terminal lab (spec: "rows of terminals... readable
+    // terminal pages about WRKACTJOB, WRKOBJ..."). addTerminalPlaque is
+    // the real green-phosphor CRT-styled readable page primitive already
+    // in this codebase -- exactly the right object for this room.
+    let commandsHung = 0;
+    if (floorCount > 2) {
+        const labCells = [primary, orientation, machineRoom, ...remaining];
+        let ci = 0;
+        for (const [cmd, desc] of AS400_CONTENT.commands) {
+            let placed = false;
+            for (let attempt = 0; attempt < labCells.length && !placed; attempt++) {
+                const cell = labCells[(ci + attempt) % labCells.length];
+                for (const facade of facadesFor(cell)) {
+                    const spot = findFreeFacadeRect(facade, 'sign', 1.9, 0.71, ...bandFor(2), 6, 0.1);
+                    if (!spot) continue;
+                    const p = pointOnFacade(facade, spot.u, spot.v, -0.05);
+                    addTerminalPlaque(p.x, p.y, p.z, facade.rotY + Math.PI, cmd, desc);
+                    placed = true;
+                    break;
+                }
+            }
+            if (placed) { commandsHung++; ci++; }
+        }
+        const { x: px, z: pz } = cellToWorld(primary.col, primary.row);
+        for (let i = 0; i < 4; i++) {
+            const modelId = rng() < 0.5 ? pick(TERMINAL_MODELS) : pick(WORKSTATION_MODELS);
+            placeCityAsset(modelId, px + randRange(-1.8, 1.8), pz + randRange(-1.8, 1.8), randRange(0, Math.PI * 2), { y: floorHeight * 2 });
+        }
+    }
+    console.log(`[signature] AS/400 ARCHIVE: terminal lab -- ${commandsHung}/${AS400_CONTENT.commands.length} command pages hung, real terminal/workstation props on floor`);
+
+    // roof -- antenna, dish, small equipment hut (spec: "no giant
+    // tower"). addRooftopClutter (called unconditionally by
+    // addBuildingModule, even in signatureMode) already supplies generic
+    // HVAC-scale clutter; this adds the specific antenna/dish silhouette
+    // the spec calls for.
+    {
+        const { x: rx, z: rz } = cellToWorld(primary.col, primary.row);
+        const roofY = floorCount * floorHeight;
+        const mast = new THREE.Mesh(
+            new THREE.CylinderGeometry(0.04, 0.05, 2.2, 6),
+            new THREE.MeshStandardMaterial({ color: 0x8a8a8a, roughness: 0.5, metalness: 0.7 })
+        );
+        mast.position.set(rx - 0.8, roofY + 1.1, rz - 0.8);
+        scene.add(mast);
+        const dish = new THREE.Mesh(
+            new THREE.SphereGeometry(0.5, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2.2),
+            new THREE.MeshStandardMaterial({ color: 0xd8d8d8, roughness: 0.4, metalness: 0.3, side: THREE.DoubleSide })
+        );
+        dish.rotation.x = Math.PI * 0.62;
+        dish.position.set(rx + 0.9, roofY + 0.6, rz + 0.7);
+        scene.add(dish);
+        console.log(`[signature] AS/400 ARCHIVE: roof antenna/dish at y=${roofY.toFixed(1)}`);
+    }
+
+    // identity facade
+    const vestFacade = facadesFor(orientation)[0] ?? facadesFor(primary)[0];
+    if (vestFacade) {
+        const spot = findFreeFacadeRect(vestFacade, 'sign', 3.4, 1.3, floorCount * floorHeight - 1.8, floorCount * floorHeight - 0.3, 6, 0.1);
+        const e = mainEntrance;
+        if (spot) {
+            const p = pointOnFacade(vestFacade, spot.u, spot.v);
+            addSign(p.x, p.y, p.z, vestFacade.rotY, typeCfg.exteriorName, typeCfg.exteriorSubtitle, 0x3aff6a, false, 3.4, { w: 120, h: 48 });
+        } else {
+            addSign(e.doorX, floorCount * floorHeight - 0.9, e.doorZ, e.outwardRotY, typeCfg.exteriorName, typeCfg.exteriorSubtitle, 0x3aff6a, false, 3.4, { w: 120, h: 48 });
+        }
+    }
+
+    console.log(`[signature] AS/400 ARCHIVE: built ${cells.length} modules, ${floorCount} floors, orientation+machine room+library+terminal lab all populated`);
+}
+
 const SIGNATURE_BUILDERS = {
     artGallery: buildArtGallery,
-    as400Archive: buildSignaturePlaceholder,
+    as400Archive: buildAS400Archive,
     justinIndex: buildSignaturePlaceholder,
     systemsWorkshop: buildSignaturePlaceholder,
     loreShrine: buildSignaturePlaceholder,

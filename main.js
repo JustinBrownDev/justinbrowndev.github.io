@@ -1359,6 +1359,17 @@ function updateRain(delta) {
 // each model finishes loading, in whatever order that happens.
 const gltfLoader = new GLTFLoader();
 gltfLoader.setPath('./vendor/models/');
+// a SEPARATE loader for the city-pack catalog (see placeCityAsset below)
+// -- three.js's FileLoader unconditionally prepends `this.path` to every
+// url passed to .load() (`if (this.path !== undefined) url = this.path +
+// url`, and it defaults to '', not undefined, so setPath's effect is
+// permanent for that instance). Sharing gltfLoader here silently turned
+// './vendor/city-pack/' + def.file into './vendor/models/./vendor/
+// city-pack/...' for EVERY city-pack load, always -- a real, systemic
+// 404 that just happened to go unnoticed because placeCityAsset call
+// sites were still sparse. A second instance with no path set (every
+// city-pack call already passes a full relative path) fixes it for good.
+const cityAssetLoader = new GLTFLoader();
 const pendingRealModelPlacements = { tyre: [], trashbag: [], manhole: [], sprayCans: [], trashCanReal: [], streetLamp: [], barrelStove: [], ironGate: [], fireEscape: [] };
 
 function placeRealModel(name, x, z, rotY) {
@@ -1433,7 +1444,7 @@ function placeCityAsset(id, x, z, rotY = 0, opts = {}) {
     if (cityAssetTemplates.has(id)) { instantiateCityAsset(cityAssetTemplates.get(id), req); return; }
     if (cityAssetPending.has(id)) { cityAssetPending.get(id).push(req); return; }
     cityAssetPending.set(id, [req]);
-    gltfLoader.load('./vendor/city-pack/' + def.file, (gltf) => {
+    cityAssetLoader.load('./vendor/city-pack/' + def.file, (gltf) => {
         cityAssetTemplates.set(id, gltf.scene);
         for (const r of cityAssetPending.get(id)) instantiateCityAsset(gltf.scene, r);
         cityAssetPending.delete(id);
@@ -1468,6 +1479,13 @@ function loadPhoto(key, file) {
         photoImages[key] = img;
         for (const req of (pendingPhotoPlacements[key] || [])) buildPhotoPosterMesh(img, req);
         pendingPhotoPlacements[key] = [];
+        // same pattern, for the Art Gallery's real-aspect panels (see
+        // mountGalleryPiece) -- pendingGalleryPanels is declared later in
+        // the file, but this callback only ever runs once the image
+        // actually loads (well after the whole module has finished
+        // executing top-to-bottom), so it's always defined by then.
+        for (const req of (pendingGalleryPanels[key] || [])) buildGalleryArtPanel(img, req.x, req.y, req.z, req.rotY, req.widthUnits, req.title, req.subtitle);
+        pendingGalleryPanels[key] = [];
     };
     img.onerror = () => console.warn(`[testing] photo "${key}" didn't load, skipping`);
     img.src = './vendor/photos/' + file;
@@ -4126,7 +4144,7 @@ function addSiteDebugOverlay(cells, builtModules, voidCell) {
 // real per-side edge classification (see computeCellRect). Returns its
 // own {cx,cz,hwx,hwz} (debug overlay only).
 function addBuildingModule(cell, opts) {
-    const { isPrimary, isWarehouse, floorCount, floorHeight, height, color, material, buildingContext, streetSetbackX, streetSetbackZ, partySetback, voidCell, siteFloorCounts } = opts;
+    const { isPrimary, isWarehouse, floorCount, floorHeight, height, color, material, buildingContext, streetSetbackX, streetSetbackZ, partySetback, voidCell, siteFloorCounts, signatureMode } = opts;
     const { row, col } = cell;
     const { x, z } = cellToWorld(col, row);
 
@@ -4139,7 +4157,15 @@ function addBuildingModule(cell, opts) {
 
     const shellMat = new THREE.MeshStandardMaterial({ color, roughness: 0.9, side: THREE.DoubleSide });
     const streetSides = CELL_SIDE_DEFS.filter(s => kinds[s.key] === 'street');
-    const door = streetSides.length ? pick(streetSides) : null;
+    // signature buildings can request a SPECIFIC side (matching the exact
+    // edge reserveSignatureSites already recorded as mainEntrance/
+    // secondaryEntrance) instead of a random one -- so the door that
+    // actually gets built lines up with the entrance markers/spawn point
+    // the reservation already committed to. Falls back to the normal
+    // random pick if the requested side isn't actually a street side on
+    // this cell (shouldn't happen, but never silently drop the door).
+    const forcedSide = opts.forceDoorSide && streetSides.find(s => s.dx === opts.forceDoorSide.dc && s.dz === opts.forceDoorSide.dr);
+    const door = forcedSide || (streetSides.length ? pick(streetSides) : null);
 
     // base gaps -- present on qualifying floors: full-width open
     // connections to same-site neighbors ('internal'), doorway-width
@@ -4202,7 +4228,13 @@ function addBuildingModule(cell, opts) {
     // but bounded slice of "upper floors have exterior routes", not
     // every floor. Decided BEFORE floors are built so the opening can be
     // carved into that one specific floor.
-    const fireEscapeSide = floorCount >= 2 ? pick([...streetSides, null, null]) : null; // null bias -- not every multi-floor module gets one
+    // signature buildings (see buildArtGallery et al.) route their own
+    // exterior connections through an authored secondary entrance --
+    // never a random fire escape punched through wherever this roll
+    // happens to land (spec: "no random fire escape through gallery
+    // artwork"). null here just means "no fire-escape opening this
+    // module", same as any other module that lost the coin flip.
+    const fireEscapeSide = (floorCount >= 2 && !signatureMode) ? pick([...streetSides, null, null]) : null; // null bias -- not every multi-floor module gets one
     if (fireEscapeSide) {
         baseGaps.push(fireEscapeSide.dx !== 0
             ? { dx: fireEscapeSide.dx, dz: 0, lo: cz - 0.8, hi: cz + 0.8, floorOnly: 1 }
@@ -4253,15 +4285,20 @@ function addBuildingModule(cell, opts) {
     }
 
     // interior dressing -- ground floor only (upper-floor prop helpers
-    // all assume a y=0 baseline).
+    // all assume a y=0 baseline). Signature buildings skip ALL of this:
+    // their own builder places its own authored furniture/exhibits
+    // instead of generic crates/junk/a random table (spec: "the generic
+    // building generator MUST NOT... randomly add warehouse logic").
     const hw = Math.min(hwx, hwz);
-    maybeAddMezzanine(cx, cz, hw, floorHeight, door);
-    maybeAddElevator(cx, cz, hw, floorHeight, door);
-    addCrate(cx - hwx * 0.4, cz + hwz * 0.3);
-    addPottedPlant(cx + hwx * 0.5, cz - hwz * 0.4);
-    const indoorJunkCount = 2 + Math.floor((1 - buildingContext.maintenance) * 5 + rng() * 3);
-    scatterJunk('indoor', cx, cz, indoorJunkCount, hw * 0.55);
-    if (rng() < 0.2 + buildingContext.maintenance * 0.35) addTableWithClutter(cx + randRange(-hwx * 0.35, hwx * 0.35), cz + randRange(-hwz * 0.35, hwz * 0.35));
+    if (!signatureMode) {
+        maybeAddMezzanine(cx, cz, hw, floorHeight, door);
+        maybeAddElevator(cx, cz, hw, floorHeight, door);
+        addCrate(cx - hwx * 0.4, cz + hwz * 0.3);
+        addPottedPlant(cx + hwx * 0.5, cz - hwz * 0.4);
+        const indoorJunkCount = 2 + Math.floor((1 - buildingContext.maintenance) * 5 + rng() * 3);
+        scatterJunk('indoor', cx, cz, indoorJunkCount, hw * 0.55);
+        if (rng() < 0.2 + buildingContext.maintenance * 0.35) addTableWithClutter(cx + randRange(-hwx * 0.35, hwx * 0.35), cz + randRange(-hwz * 0.35, hwz * 0.35));
+    }
 
     // roof -- always the flat top of this module's own real floors. No
     // more decorative tower above enterHeight: every unit of visible
@@ -4271,14 +4308,20 @@ function addBuildingModule(cell, opts) {
     // actually stops.
     elevatedPlatforms.push({ x: cx, z: cz, hx: hwx, hz: hwz, y: height });
     rooftopDecks.push({ x: cx, z: cz, hx: hwx, hz: hwz, y: height, buildingKey: `${row},${col}` });
-    if (isPrimary && !isWarehouse && hw > 1.6 && rng() < 0.3) {
+    // signature buildings decide their own roof (terrace, mechanical hut,
+    // antenna array...) explicitly in their own builder -- an auto-rolled
+    // mechanical room or a random dome/spire would fight that (spec:
+    // "the generic building generator MUST NOT... randomly choose its
+    // height" and the roof-access requirements are per-landmark, not a
+    // coin flip).
+    if (!signatureMode && isPrimary && !isWarehouse && hw > 1.6 && rng() < 0.3) {
         const room = buildRooftopMechanicalRoom(cx, cz, hw, height);
         buildingWallSegments.get(`${row},${col}`).floors.push(room);
     }
     // a small roof ornament -- a non-traversable cupola/spire a couple of
     // units tall, NOT a second fake tower (real height still only ever
     // comes from floorCount above). Primary module only.
-    if (isPrimary && !isWarehouse) {
+    if (!signatureMode && isPrimary && !isWarehouse) {
         const topper = weightedPick({ none: 6, dome: 2, spire: 2 });
         if (topper === 'dome') {
             const dome = new THREE.Mesh(new THREE.SphereGeometry(hw * 0.5, 8, 6, 0, Math.PI * 2, 0, Math.PI / 2), material);
@@ -4324,11 +4367,47 @@ function addBuildingModule(cell, opts) {
         const facade = makeFacade(rect, s.dx, s.dz, 0, height, door, 'street', `${row},${col}`);
         if (isFireEscapeFace) {
             facadeReserve(facade, 'fireEscape', -0.7, 0.7, 0, height);
+            // KNOWN GAP (pre-existing, root-caused 2026-08-28, not fixed
+            // here): every other projecting fixture (awnings at ~4451,
+            // blade signs at ~3861) calls projectionFits(box) before
+            // reserveProjectionVolume; this is the one path that doesn't.
+            // fireEscapeSide is chosen, and this building's interior
+            // floor-1 opening already carved (see baseGaps, well above,
+            // before this module's own facades even exist), long before
+            // it's possible to know whether the projection actually
+            // clears an ALREADY-BUILT neighbor's fixture at a shared
+            // alley corner -- that's what occasionally trips the
+            // "world-space projection intersection self-test" (~1 seed
+            // in 5-10, confirmed present before this pass at both 11x11
+            // and 17x17, so it's not a regression from anything in this
+            // session). A real fix means deciding fireEscapeSide AFTER
+            // this module's own facade/projection-box exists (checking it
+            // against neighbors) instead of before floors are built --
+            // real surgery on a path every generic building in the city
+            // runs through, deliberately not attempted mid-signature-
+            // location-pass. Guarding the reservation here without also
+            // being able to retract the already-carved interior opening
+            // would trade a cosmetic mesh overlap for an actual hole in
+            // the wall with nothing built outside it, which is worse.
             reserveProjectionVolume(makeProjectionBox(facade, 0, 0, height, 1.3, 0.7));
         }
         buildingFacades.push(facade);
         return { s, facade, isFireEscapeFace };
     });
+    // signature buildings get the real FacadeSurface objects above (so
+    // their own builder can hang authored signage/art on them through
+    // the same findFreeFacadeRect/pointOnFacade occupancy manager
+    // everything else uses) but NONE of the random sign/pipe/awning/
+    // camera/flyer/ivy/graffiti/balcony decoration below -- that's
+    // exactly the "no generic architecture may... spam generic signs
+    // over its identity facade" requirement. rect.streetFacades carries
+    // them out to the caller (addBuildingSite/buildArtGallery etc.)
+    // without changing addBuildingModule's return shape for anyone else.
+    rect.streetFacades = sideFacades.map(sf => sf.facade);
+    if (signatureMode) {
+        addRooftopClutter(cx, cz, hw * 2, height, buildingContext.maintenance);
+        return rect;
+    }
 
     for (const { s, facade, isFireEscapeFace } of sideFacades) {
         const ox = s.dx * (hwx + 0.03), oz = s.dz * (hwz + 0.03);
@@ -4642,8 +4721,332 @@ function buildSignaturePlaceholder(site) {
     console.log(`[signature] ${typeCfg.exteriorName}: placeholder massing built (${cells.length} cells, ${primaryFloorCount} floors) -- authored interior pending, see task list`);
 }
 
+// ============================================================
+// ART GALLERY -- authored signature location #1.
+// ============================================================
+// Real content only -- every entry is drawn straight from
+// CONFIG.siteContent.art/webProjects (already in this repo) and
+// PHOTO_BY_TITLE; aspectRatio is measured directly from the actual jpg
+// in vendor/photos (`python3 -c "from PIL import Image; ..."`, not
+// guessed). Nothing here is invented. 'GARY FISCHER' inherits the
+// project's own pre-existing (slightly odd) PHOTO_BY_TITLE mapping to
+// the 'bike' photo -- that mapping already existed before this pass;
+// this catalog reports it faithfully rather than silently "fixing" it
+// into a fact nobody actually asserted.
+// aspectRatio = height/width, measured directly off the real jpg
+// (Pillow: Image.open(f).size), same convention buildGalleryArtPanel's
+// own img.height/img.width uses -- known ahead of the image's own
+// (async, network) load, which is what lets mountGalleryPiece reserve
+// real facade space synchronously during layout instead of guessing a
+// placeholder box and hoping the real image comes in the same shape.
+const ART_GALLERY_CATALOG = [
+    { id: 'teeth', title: "'TEETH'", subtitle: 'acrylic on canvas', photoKey: 'teeth', aspectRatio: 493 / 400, kind: 'wall', featured: false, room: 'sideGalleryA' },
+    { id: 'selfPortrait', title: 'SELF PORTRAIT', subtitle: 'acrylic on canvas', photoKey: 'selfPortrait', aspectRatio: 505 / 400, kind: 'wall', featured: true, room: 'mainGallery' },
+    { id: 'garyFischer', title: "'GARY FISCHER'", subtitle: 'india ink on paper', photoKey: 'bike', aspectRatio: 310 / 400, kind: 'wall', featured: false, room: 'sideGalleryA' },
+    { id: 'theFish', title: "'THE FISH'", subtitle: 'linoleum print', photoKey: 'linoPrint', aspectRatio: 527 / 400, kind: 'wall', featured: false, room: 'sideGalleryB' },
+    // the one piece with no backing photo (see PHOTO_BY_TITLE) -- a real
+    // sculpture, displayed the way a sculpture actually is (pedestal +
+    // placard), not forced into a wall frame it doesn't have a photo for.
+    { id: 'organicTV', title: 'ORGANIC TV', subtitle: 'cast iron · lost wax', photoKey: null, aspectRatio: null, kind: 'pedestal', featured: true, room: 'courtyard' },
+    { id: 'puppetHead', title: 'PUPPET HEAD', subtitle: 'wire & tissue paper', photoKey: 'puppet', aspectRatio: 546 / 400, kind: 'wall', featured: false, room: 'sideGalleryB' },
+    { id: 'vitalsage', title: 'VITALSAGE', subtitle: 'wordpress build, 2024', photoKey: 'vitalsage', aspectRatio: 204 / 400, kind: 'wall', featured: false, room: 'upperGallery' },
+    { id: 'brandyoupromo', title: 'BRANDYOUPROMO', subtitle: 'asp.net site, 2022', photoKey: 'brandyou', aspectRatio: 217 / 400, kind: 'wall', featured: false, room: 'upperGallery' },
+];
+
+// a real museum wall placard with caller-chosen text -- addMuseumPlacard
+// already exists but always rolls its OWN random education/employment
+// text internally; this is the same physical object (post + angled
+// plate) with the gallery's actual title/subtitle instead.
+function addGalleryPlacard(x, z, facingRotY, title, subtitle) {
+    const g = new THREE.Group();
+    const post = new THREE.Mesh(
+        jitterGeometry(new THREE.CylinderGeometry(0.04, 0.04, 1.1, 6), 0.008),
+        new THREE.MeshStandardMaterial({ color: 0x2c2c2c, roughness: 0.6, metalness: 0.5 })
+    );
+    post.position.y = 0.55;
+    const tex = makePixelTexture((ctx, w, h) => {
+        ctx.fillStyle = '#e8e2d0';
+        ctx.fillRect(0, 0, w, h);
+        ctx.fillStyle = '#201c18';
+        ctx.textAlign = 'center';
+        ctx.font = 'bold 9px "Courier New", monospace';
+        ctx.fillText(title, w / 2, h / 2 - 3, w - 6);
+        ctx.font = '7px "Courier New", monospace';
+        ctx.fillText(subtitle, w / 2, h / 2 + 9, w - 6);
+    }, 96, 32);
+    const plate = new THREE.Mesh(
+        new THREE.PlaneGeometry(0.5, 0.17),
+        new THREE.MeshStandardMaterial({ map: tex, roughness: 0.5, metalness: 0.3 })
+    );
+    plate.rotation.x = -0.3;
+    plate.position.set(0, 1.05, 0.02);
+    g.add(post, plate);
+    g.rotation.y = facingRotY;
+    g.position.set(x, 0, z);
+    scene.add(g);
+}
+
+// a real-aspect-ratio framed panel -- unlike buildPhotoPosterMesh's fixed
+// 128x168 "postcard" (built for the generic city-wide content-card
+// scatter, one uniform shape for every category), this sizes the canvas
+// to the ACTUAL image's own aspect ratio (a thin fixed-height caption
+// strip below is the only addition), so a wide piece reads wide and a
+// tall piece reads tall -- "preserves aspect ratio" for real, not just
+// letterboxed inside a uniform frame.
+function buildGalleryArtPanel(img, x, y, z, rotY, widthUnits, title, subtitle) {
+    const imgAspect = img.height / img.width; // measured from the real file, not guessed
+    const canvasW = 256;
+    const imgAreaH = Math.round(canvasW * imgAspect);
+    const captionH = 34;
+    const canvas = document.createElement('canvas');
+    canvas.width = canvasW; canvas.height = imgAreaH + captionH;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#f2ede0';
+    ctx.fillRect(0, 0, canvasW, canvas.height);
+    ctx.drawImage(img, 0, 0, canvasW, imgAreaH);
+    ctx.fillStyle = '#201c18';
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 13px "Courier New", monospace';
+    ctx.fillText(title, canvasW / 2, imgAreaH + 17, canvasW - 10);
+    ctx.font = '10px "Courier New", monospace';
+    ctx.fillText(subtitle, canvasW / 2, imgAreaH + 29, canvasW - 10);
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    const heightUnits = widthUnits * (canvas.height / canvasW);
+    mountStandoffPanel(x, y, z, rotY, widthUnits, heightUnits, new THREE.MeshStandardMaterial({ map: tex, roughness: 0.7 }));
+    return heightUnits;
+}
+
+// mounts one catalog piece on the INSIDE face of a real exterior
+// FacadeSurface -- same occupancy manager (findFreeFacadeRect/
+// pointOnFacade) everything else in the city uses, just with a small
+// NEGATIVE outward offset (mounts against the wall's inner face) and
+// rotY flipped 180 deg from the facade's own outward normal, so the
+// piece hangs facing INTO the room instead of out at the street the way
+// every other faca de-mounted object in this codebase does. Returns
+// true if it found real wall space; false (never a silent overlap) if
+// the facade was already full.
+// keyed by photoKey -- mirrors pendingPhotoPlacements' exact pattern
+// (see loadPhoto) for the same reason: facade occupancy has to be
+// reserved NOW, synchronously, during layout, but the real photo is
+// still an in-flight network Image() that may resolve later. Reserving
+// with the catalog's own pre-measured aspectRatio means the real mesh
+// -- built the moment the photo actually loads, via loadPhoto's
+// onload -- always exactly fills the space already carved out for it.
+const pendingGalleryPanels = {};
+function mountGalleryPiece(facade, vLo, vHi, piece) {
+    const width = piece.featured ? randRange(1.5, 1.9) : randRange(0.85, 1.15);
+    const height = width * piece.aspectRatio + width * 0.14; // + the caption strip's real share of the panel -- rounded UP from buildGalleryArtPanel's true ~0.133 so the reservation is never smaller than the real mesh
+    const spot = findFreeFacadeRect(facade, 'galleryArt', width, height, vLo, vHi, 10, 0.15);
+    if (!spot) return false;
+    const p = pointOnFacade(facade, spot.u, spot.v, -0.06); // negative -- inside face, not the street face
+    const rotY = facade.rotY + Math.PI; // faces into the room
+    const img = photoImages[piece.photoKey];
+    if (img) buildGalleryArtPanel(img, p.x, p.y, p.z, rotY, width, piece.title, piece.subtitle);
+    else (pendingGalleryPanels[piece.photoKey] ??= []).push({ x: p.x, y: p.y, z: p.z, rotY, widthUnits: width, title: piece.title, subtitle: piece.subtitle });
+    return true;
+}
+
+function buildArtGallery(site) {
+    const { cells, id, signatureInstance } = site;
+    const typeCfg = CONFIG.signatureBuildings.artGallery;
+    const floorHeight = 3.0;
+    const floorCount = 2; // ground + upper gallery -- "2 full floors", spec section ART GALLERY SITE
+    const color = 0xe8e2d0; // quiet gallery cream -- off CONFIG.buildings.palette on purpose, plain (no window-grid texture)
+    const material = new THREE.MeshStandardMaterial({ color, roughness: 0.85, side: THREE.DoubleSide });
+    const buildingContext = { wealth: 0.8, maintenance: 0.95 }; // only feeds addRooftopClutter/curb now -- interior dressing is fully authored below
+    const streetSetback = randRange(CONFIG.maze.buildingMarginMin, CONFIG.maze.buildingMarginMax) / 2;
+    const partySetback = randRange(0.08, 0.2);
+
+    const degreeOf = (cell) => [[0, -1], [0, 1], [-1, 0], [1, 0]].filter(([dc, dr]) => siteIdOf[cell.row + dr]?.[cell.col + dc] === id).length;
+    let primary = cells[0], primaryDegree = -1;
+    for (const c of cells) { const d = degreeOf(c); if (d > primaryDegree) { primaryDegree = d; primary = c; } }
+
+    // courtyard -- same eligibility rule addBuildingSite uses (a non-
+    // primary cell fully enclosed by this site's own cells), so a real
+    // exterior void only ever appears where the maze topology actually
+    // supports one, never forced.
+    let voidCell = null;
+    if (cells.length >= 5) {
+        for (const c of cells) {
+            if (c === primary) continue;
+            if (degreeOf(c) === 4) { voidCell = c; break; }
+        }
+    }
+    const buildCells = cells.filter(c => !voidCell || c.row !== voidCell.row || c.col !== voidCell.col);
+
+    // room graph: authored ROLES, procedurally assigned to whichever
+    // cells this seed's maze actually granted. mainGallery is always the
+    // best-connected cell (reads as the building's main volume); the
+    // vestibule is whichever remaining cell touches the real mainEntrance
+    // edge (falls back to nearest available); the service/rear cell
+    // mirrors that against secondaryEntrance. Everything left over is a
+    // side gallery, then overflow storage. Same relationships every time
+    // -- vestibule -> mainGallery -> sideGalleries -> service -- even
+    // though which physical cell plays which role changes per seed.
+    const mainEntrance = signatureInstance.mainEntrance;
+    const secondaryEntrance = signatureInstance.secondaryEntrance;
+    const others0 = buildCells.filter(c => c !== primary);
+    const vestibule = others0.find(c => c.row === mainEntrance.cell.row && c.col === mainEntrance.cell.col) ?? others0[0] ?? primary;
+    const others1 = others0.filter(c => c !== vestibule);
+    const service = (secondaryEntrance && others1.find(c => c.row === secondaryEntrance.cell.row && c.col === secondaryEntrance.cell.col)) ?? others1[others1.length - 1] ?? null;
+    const others2 = others1.filter(c => c !== service);
+    const sideGalleryA = others2[0] ?? null;
+    const sideGalleryB = others2[1] ?? null;
+    const storageExtras = others2.slice(2);
+
+    const roleByCellKey = new Map();
+    roleByCellKey.set(`${primary.row},${primary.col}`, 'mainGallery');
+    roleByCellKey.set(`${vestibule.row},${vestibule.col}`, roleByCellKey.get(`${vestibule.row},${vestibule.col}`) ?? 'vestibule');
+    if (service) roleByCellKey.set(`${service.row},${service.col}`, roleByCellKey.get(`${service.row},${service.col}`) ?? 'service');
+    if (sideGalleryA) roleByCellKey.set(`${sideGalleryA.row},${sideGalleryA.col}`, 'sideGalleryA');
+    if (sideGalleryB) roleByCellKey.set(`${sideGalleryB.row},${sideGalleryB.col}`, 'sideGalleryB');
+    for (const c of storageExtras) roleByCellKey.set(`${c.row},${c.col}`, 'storage');
+
+    // every buildCell gets the same real floor count -- see
+    // addBuildingModule's siteFloorCounts: needed so 'internal' edges
+    // between two gallery cells compute the right shared-connection
+    // height, exactly like a generic multi-cell site.
+    const floorCountByCellKey = new Map(buildCells.map(c => [`${c.row},${c.col}`, floorCount]));
+
+    // whichever cell physically IS mainEntrance.cell/secondaryEntrance.cell
+    // (independent of which ROLE it was assigned above) gets forced onto
+    // that exact door side -- so the built door always lines up with the
+    // edge reserveSignatureSites already committed to, regardless of
+    // which role-assignment branch happened to pick that cell.
+    const cellIs = (cell, edge) => edge && cell.row === edge.cell.row && cell.col === edge.cell.col;
+    const rectByCellKey = new Map();
+    for (const cell of buildCells) {
+        const isPrimaryCell = cell === primary;
+        const forceDoorSide = cellIs(cell, mainEntrance) ? { dc: mainEntrance.dc, dr: mainEntrance.dr }
+            : cellIs(cell, secondaryEntrance) ? { dc: secondaryEntrance.dc, dr: secondaryEntrance.dr }
+                : null;
+        const rect = addBuildingModule(cell, {
+            isPrimary: isPrimaryCell, isWarehouse: false, floorCount, floorHeight, height: floorCount * floorHeight,
+            color, material, buildingContext, streetSetbackX: streetSetback, streetSetbackZ: streetSetback, partySetback,
+            voidCell, siteFloorCounts: floorCountByCellKey, signatureMode: true, forceDoorSide,
+        });
+        rectByCellKey.set(`${cell.row},${cell.col}`, rect);
+    }
+    if (voidCell) buildCourtyardVoid(voidCell); // real exterior void -- pavers/benches/plants/light, see buildCourtyardVoid
+
+    const facadesFor = (cell) => cell && rectByCellKey.get(`${cell.row},${cell.col}`)?.streetFacades || [];
+    // ground-floor art band vs. upper-gallery band on the SAME facade
+    // object -- makeFacade spans a module's FULL height (both floors),
+    // not one FacadeSurface per floor, so "upstairs" vs "downstairs" here
+    // is which vertical band of the one wall gets used, exactly like
+    // findFreeFacadeRect already does for every other decoration pass.
+    const groundBand = [0.35, floorHeight - 0.35];
+    const upperBand = [floorHeight + 0.35, floorCount * floorHeight - 0.35];
+
+    // hang every wall piece against its assigned room's real facade --
+    // falls back to the main gallery's own wall (guaranteed to exist,
+    // guaranteed street-facing) if the assigned room's cell doesn't
+    // happen to have street exposure this seed, so a piece is never
+    // silently dropped for a topology reason alone.
+    const roomCellFor = { mainGallery: primary, vestibule, sideGalleryA, sideGalleryB, upperGallery: primary, service, storage: storageExtras[0] };
+    let hung = 0, skipped = 0;
+    for (const piece of ART_GALLERY_CATALOG) {
+        if (piece.kind === 'pedestal') continue; // handled separately below
+        const band = piece.room === 'upperGallery' ? upperBand : groundBand;
+        const preferredCell = roomCellFor[piece.room] ?? primary;
+        const candidateCells = [preferredCell, primary, vestibule, sideGalleryA, sideGalleryB].filter(Boolean);
+        let placed = false;
+        for (const cell of candidateCells) {
+            for (const facade of facadesFor(cell)) {
+                if (mountGalleryPiece(facade, band[0], band[1], piece)) { placed = true; break; }
+            }
+            if (placed) break;
+        }
+        placed ? hung++ : skipped++;
+        if (!placed) console.warn(`[signature] ART GALLERY: no free wall found for "${piece.title}" -- skipped (never overlapped, never invented a second wall)`);
+    }
+
+    // the one sculpture -- a real pedestal model from the city-pack
+    // (art_gallery/pedestal_*), an abstract cast-metal form on top (this
+    // project has no literal 3D scan of the real piece, so this is
+    // honestly a representative abstract shape, not a claim about its
+    // real appearance), and a placard with its real title/subtitle.
+    // Prefers the courtyard (a real sculpture-garden placement) and
+    // falls back to the main gallery floor if this seed has no courtyard.
+    {
+        const organicTV = ART_GALLERY_CATALOG.find(p => p.id === 'organicTV');
+        const target = voidCell ?? primary;
+        const { x: tx, z: tz } = cellToWorld(target.col, target.row);
+        const jitterR = voidCell ? (CELL / 2 - 1.1) : Math.min(rectByCellKey.get(`${target.row},${target.col}`)?.hwx ?? 2, rectByCellKey.get(`${target.row},${target.col}`)?.hwz ?? 2) * 0.5;
+        const px = tx + randRange(-jitterR, jitterR), pz = tz + randRange(-jitterR, jitterR);
+        placeCityAsset(pick(['art_gallery/pedestal_01', 'art_gallery/pedestal_02', 'art_gallery/pedestal_03', 'art_gallery/pedestal_04']), px, pz, randRange(0, Math.PI * 2));
+        const sculpture = new THREE.Mesh(
+            jitterGeometry(new THREE.TorusKnotGeometry(0.22, 0.075, 64, 8, 2, 3), 0.015),
+            new THREE.MeshStandardMaterial({ color: 0x2a2622, roughness: 0.55, metalness: 0.75 })
+        );
+        sculpture.position.set(px, 1.25, pz);
+        sculpture.rotation.set(randRange(0, Math.PI), randRange(0, Math.PI), 0);
+        scene.add(sculpture);
+        addGalleryPlacard(px + 0.55, pz + 0.35, randRange(0, Math.PI * 2), organicTV.title, organicTV.subtitle);
+        console.log(`[signature] ART GALLERY: "${organicTV.title}" on pedestal in ${voidCell ? 'the courtyard' : 'the main gallery'}`);
+    }
+
+    // reception desk + a bench -- vestibule reads as an entry sequence,
+    // not just another empty room (spec: "deliberate entrance sequence").
+    {
+        const { x: vx, z: vz } = cellToWorld(vestibule.col, vestibule.row);
+        addBench(vx + randRange(-1, 1), vz + randRange(-1, 1), randRange(0, Math.PI * 2));
+    }
+    // benches in the main gallery -- somewhere to sit and look, same as
+    // any real gallery's main hall.
+    {
+        const { x: mx, z: mz } = cellToWorld(primary.col, primary.row);
+        const mr = rectByCellKey.get(`${primary.row},${primary.col}`);
+        addBench(mx + randRange(-((mr?.hwx ?? 2) * 0.5), (mr?.hwx ?? 2) * 0.5), mz + randRange(-((mr?.hwz ?? 2) * 0.5), (mr?.hwz ?? 2) * 0.5), randRange(0, Math.PI * 2));
+    }
+    // roof terrace on the main gallery -- benches + plants on top of the
+    // real roof deck addBuildingModule already registered (stair core
+    // reaches it the same way it does on every 2+-floor module).
+    {
+        const { x: rx, z: rz } = cellToWorld(primary.col, primary.row);
+        const roofY = floorCount * floorHeight;
+        const mr = rectByCellKey.get(`${primary.row},${primary.col}`);
+        const rhw = Math.min(mr?.hwx ?? 2, mr?.hwz ?? 2) * 0.6;
+        addPottedPlant(rx + rhw, rz + rhw * 0.3);
+        addPottedPlant(rx - rhw, rz - rhw * 0.3);
+        addBench(rx + rhw * 0.3, rz - rhw * 0.5, randRange(0, Math.PI * 2));
+        console.log(`[signature] ART GALLERY: roof terrace at y=${roofY.toFixed(1)} above the main gallery`);
+    }
+
+    // identity facade -- ART GALLERY marquee at the real main entrance,
+    // on the vestibule's own street wall (not a random facade).
+    const e = mainEntrance;
+    const vestFacade = facadesFor(vestibule)[0] ?? facadesFor(primary)[0];
+    if (vestFacade) {
+        const spot = findFreeFacadeRect(vestFacade, 'sign', 3.0, 1.1, floorCount * floorHeight - 1.6, floorCount * floorHeight - 0.3, 6, 0.1);
+        if (spot) {
+            const p = pointOnFacade(vestFacade, spot.u, spot.v);
+            addSign(p.x, p.y, p.z, vestFacade.rotY, typeCfg.exteriorName, typeCfg.exteriorSubtitle, 0xffffff, false, 3.0, { w: 120, h: 48 });
+        } else {
+            addSign(e.doorX, floorCount * floorHeight - 0.9, e.doorZ, e.outwardRotY, typeCfg.exteriorName, typeCfg.exteriorSubtitle, 0xffffff, false, 3.0, { w: 120, h: 48 });
+        }
+    }
+    // poster cases either side of the door -- required exterior element
+    // (spec: "poster cases"). Reuses the same wall poster primitive
+    // everything else in the city does, just for real gallery content
+    // instead of noise -- a second, small, street-facing preview of a
+    // couple of the pieces actually inside.
+    if (vestFacade) {
+        for (const piece of [ART_GALLERY_CATALOG[0], ART_GALLERY_CATALOG[3]]) {
+            const spot = findFreeFacadeRect(vestFacade, 'posterCase', 0.7, 0.9, 1.0, 2.0, 6, 0.12);
+            if (spot) {
+                const p = pointOnFacade(vestFacade, spot.u, spot.v);
+                addWallPoster(p.x, p.y, p.z, vestFacade.rotY, piece.title, piece.subtitle);
+            }
+        }
+    }
+
+    console.log(`[signature] ART GALLERY: built ${buildCells.length} modules (courtyard=${!!voidCell}), ${hung}/${ART_GALLERY_CATALOG.filter(p => p.kind !== 'pedestal').length} wall pieces hung${skipped ? `, ${skipped} skipped (no free wall)` : ''}, 1 pedestal piece, roof terrace active`);
+}
+
 const SIGNATURE_BUILDERS = {
-    artGallery: buildSignaturePlaceholder,
+    artGallery: buildArtGallery,
     as400Archive: buildSignaturePlaceholder,
     justinIndex: buildSignaturePlaceholder,
     systemsWorkshop: buildSignaturePlaceholder,
@@ -5139,8 +5542,20 @@ const CONTENT_CARD_RESERVE = {
 // favor of the next one instead of forcing an overlap.
 function mountContentCards() {
     const jobs = [];
-    for (const [title, subtitle] of CONFIG.siteContent.art) jobs.push({ title, subtitle, kind: 'poster' });
-    for (const [title, subtitle] of CONFIG.siteContent.webProjects) jobs.push({ title, subtitle, kind: 'poster' });
+    // siteContent.art + webProjects are now exhibited exclusively inside
+    // the Art Gallery signature location (see ART_GALLERY_CATALOG/
+    // buildArtGallery) when it's enabled -- scattering them across random
+    // building faces too would dilute the one place they're actually
+    // curated. If the gallery is disabled this load (CONFIG.
+    // signatureBuildings.artGallery.enabled=false, or no valid site this
+    // seed), they fall back to the generic scatter so the real content
+    // still appears SOMEWHERE rather than vanishing.
+    const galleryActive = CONFIG.signatureBuildings?.enabled && CONFIG.signatureBuildings.artGallery?.enabled
+        && signatureInstances.some(s => s.type === 'artGallery');
+    if (!galleryActive) {
+        for (const [title, subtitle] of CONFIG.siteContent.art) jobs.push({ title, subtitle, kind: 'poster' });
+        for (const [title, subtitle] of CONFIG.siteContent.webProjects) jobs.push({ title, subtitle, kind: 'poster' });
+    }
     for (const [title, subtitle] of CONFIG.siteContent.codeProjects) jobs.push({ title, subtitle, kind: 'terminal' });
     for (const [title, subtitle] of CONFIG.siteContent.lifePhotos) jobs.push({ title, subtitle, kind: 'poster' });
 

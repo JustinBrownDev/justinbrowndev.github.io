@@ -3700,6 +3700,7 @@ function makeProjectionBox(facade, u, yBase, height, outwardDepth, tangentHalfWi
         xMin: Math.min(baseX, baseX + outX) - spanX, xMax: Math.max(baseX, baseX + outX) + spanX,
         yMin: yBase, yMax: yBase + height,
         zMin: Math.min(baseZ, baseZ + outZ) - spanZ, zMax: Math.max(baseZ, baseZ + outZ) + spanZ,
+        facadeId: facade.id, // which facade this projection came from -- debugging/inspection only, never read by placement logic itself
     };
 }
 function boxesIntersect(a, b) {
@@ -4009,27 +4010,35 @@ function addBuildingModule(cell, opts) {
 
     // facade surfaces + decoration -- 'street' sides only; party/
     // internal/courtyard sides get no signage/street dressing.
-    for (const s of streetSides) {
-        const ox = s.dx * (hwx + 0.03), oz = s.dz * (hwz + 0.03);
-        const rotY = outwardRotationY(s.dx, s.dz);
-        // decided up front (not just at the point it's actually placed
-        // below) so its facade space can be reserved BEFORE signs are
-        // placed on this same wall -- an architectural feature blocks a
-        // sign spot, not the other way around.
+    //
+    // TWO passes over the same sides, not one. Pass 1 creates every
+    // FacadeSurface and reserves permanent structural fixtures (the fire
+    // escape) on ALL of them; pass 2 does every facade's sign/decoration
+    // search. A single combined loop reserved a structural fixture only
+    // when ITS OWN side came up -- a blade sign on side A (processed
+    // first) could already have checked projectionFits and found a
+    // nearby corner clear, simply because side B's fire escape
+    // (processed later in that same loop) hadn't registered its
+    // world-space volume yet. Two passes means every structural
+    // reservation on every side of this module exists before any side's
+    // decoration search runs at all.
+    const sideFacades = streetSides.map(s => {
         const isFireEscapeFace = fireEscapeSide && fireEscapeSide.dx === s.dx && fireEscapeSide.dz === s.dz;
-
         // a FacadeSurface exists here whether or not a sign ever lands on
         // it -- it's a real piece of architecture (this wall), not a
-        // record of "a sign happened". Persistent and pushed to
-        // buildingFacades unconditionally, BEFORE the sign roll, so any
-        // permanent fixture (the fire escape) is reserved on it no
-        // matter which branch below actually runs.
+        // record of "a sign happened".
         const facade = makeFacade(rect, s.dx, s.dz, 0, height, door, 'street', `${row},${col}`);
-        // the fire escape is a permanent vertical fixture on this wall --
-        // reserve its real footprint (its own tangential width, full
-        // height) before any sign gets a chance to land on top of it.
-        if (isFireEscapeFace) facadeReserve(facade, 'fireEscape', -0.7, 0.7, 0, height);
+        if (isFireEscapeFace) {
+            facadeReserve(facade, 'fireEscape', -0.7, 0.7, 0, height);
+            reserveProjectionVolume(makeProjectionBox(facade, 0, 0, height, 1.3, 0.7));
+        }
         buildingFacades.push(facade);
+        return { s, facade, isFireEscapeFace };
+    });
+
+    for (const { s, facade, isFireEscapeFace } of sideFacades) {
+        const ox = s.dx * (hwx + 0.03), oz = s.dz * (hwz + 0.03);
+        const rotY = outwardRotationY(s.dx, s.dz);
 
         // more than one sign per face -- a real signage-choked facade is
         // layered, not one polite billboard each. Each one reserves real
@@ -4148,12 +4157,10 @@ function addBuildingModule(cell, opts) {
         // height) was already reserved before any sign/hardware roll ran.
         if (isFireEscapeFace) {
             placeRealModel('fireEscape', cx + ox * 1.02, cz + oz * 1.02, rotY);
-            // a real, wide structural projection -- registered in world
-            // space (not just this facade's own u/v) so a blade sign or
-            // awning reserved from a DIFFERENT, perpendicular facade at a
-            // nearby corner can't push its own projection straight
-            // through it.
-            reserveProjectionVolume(makeProjectionBox(facade, 0, 0, height, 1.3, 0.7));
+            // (its world-space projection volume was already registered
+            // above, alongside its facade reservation, before any other
+            // decoration on this or a neighboring facade got a chance to
+            // search around it -- see the comment up there)
             const landings = buildFireEscapeStair(cx + ox * 1.02, cz + oz * 1.02, rotY, isWarehouse ? height : randRange(5, 11));
             if (landings.length) {
                 // the landing closest to floor 1's own height -- the one
@@ -7876,7 +7883,7 @@ window.__boot?.ready();
 window.__debug = {
     scene, camera, THREE,
     setFreecam: (v) => { freecamEnabled = v; },
-    buildingWallSegments, buildingSites, footprintOf, siteIdOf, grid, buildingFacades,
+    buildingWallSegments, buildingSites, footprintOf, siteIdOf, grid, buildingFacades, exteriorDecorationVolumes,
 };
 
 animate();

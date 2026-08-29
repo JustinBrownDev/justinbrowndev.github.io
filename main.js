@@ -2326,7 +2326,28 @@ function findLandingSurface(x, z, feetY, predictedFeetY, verticalVelocity) {
 // functions (addInteriorWall's own door cut, and buildExteriorPerimeter's
 // duplicate jamb-cutting logic) into one. Returns collision segments for
 // the solid parts only -- gaps are genuinely open, not implied doors.
-function buildWallWithGaps(axis, fixedCoord, spanA, spanB, gaps, height, mat, yBase = 0) {
+// remaps a fresh wall BoxGeometry's UVs from local vertex position, so
+// the SAME facade texture (see makeWindowGridTexture -- one texture
+// describes the building's ENTIRE height) reads as one continuous
+// surface across every separately-built wall segment, instead of each
+// segment showing its own independently-squashed 0..1 copy of the whole
+// thing. u0/u1 are this segment's real fraction of the FULL wall span
+// (spanA..spanB, not just this one gap-split piece); v0/v1 are this
+// FLOOR's real fraction of the full building height (not 0..1 of just
+// this floor). Works uniformly on all 6 box faces (the 2 large ones AND
+// the 4 thin jamb/cap edges) since it's driven by real local position,
+// not by which face index happens to be which.
+function remapWallUV(geo, axis, len, height, u0, u1, v0, v1) {
+    const pos = geo.attributes.position, uv = geo.attributes.uv;
+    for (let i = 0; i < pos.count; i++) {
+        const tangentCoord = axis === 'x' ? pos.getZ(i) : pos.getX(i);
+        const tu = tangentCoord / len + 0.5, tv = pos.getY(i) / height + 0.5;
+        uv.setXY(i, u0 + tu * (u1 - u0), v0 + tv * (v1 - v0));
+    }
+    uv.needsUpdate = true;
+}
+
+function buildWallWithGaps(axis, fixedCoord, spanA, spanB, gaps, height, mat, yBase = 0, fullHeight = height) {
     const sorted = gaps.slice().sort((a, b) => a.lo - b.lo);
     const segs = [];
     // real volume, not a zero-thickness plane -- WALL_THICKNESS matches
@@ -2337,13 +2358,21 @@ function buildWallWithGaps(axis, fixedCoord, spanA, spanB, gaps, height, mat, yB
     // door/gap. Built axis-aligned directly (thickness on whichever axis
     // is fixed) instead of a plane + a 90-degree rotation hack -- a box's
     // dimensions can just BE the wall's real footprint.
+    const spanLen = spanB - spanA;
     const addSolid = (a0, a1) => {
         if (a1 - a0 < 0.05) return;
         const len = a1 - a0, mid = (a0 + a1) / 2;
-        const wall = new THREE.Mesh(
-            axis === 'x' ? new THREE.BoxGeometry(WALL_THICKNESS, height, len) : new THREE.BoxGeometry(len, height, WALL_THICKNESS),
-            mat
-        );
+        const geo = axis === 'x' ? new THREE.BoxGeometry(WALL_THICKNESS, height, len) : new THREE.BoxGeometry(len, height, WALL_THICKNESS);
+        // see remapWallUV -- u is this segment's real position within the
+        // FULL span (so a door split doesn't restart the texture on
+        // either side), v is this floor's real position within the full
+        // building height (so floor N shows floor N's own slice of the
+        // window-grid texture, not another squashed copy of the whole
+        // building).
+        remapWallUV(geo, axis, len, height,
+            spanLen > 0 ? (a0 - spanA) / spanLen : 0, spanLen > 0 ? (a1 - spanA) / spanLen : 1,
+            yBase / fullHeight, (yBase + height) / fullHeight);
+        const wall = new THREE.Mesh(geo, mat);
         if (axis === 'x') {
             wall.position.set(fixedCoord, yBase + height / 2, mid);
             segs.push({ x1: fixedCoord, z1: a0, x2: fixedCoord, z2: a1 });
@@ -2373,7 +2402,7 @@ function buildWallWithGaps(axis, fixedCoord, spanA, spanB, gaps, height, mat, yB
 // rooms joined by a doorway). hwx/hwz let a module be a genuine rectangle
 // (needed for wings), not just a square. Returns wall segments for
 // collision.
-function buildExteriorPerimeter(x, z, hwx, hwz, y0, floorHeight, door, mat, openGaps = []) {
+function buildExteriorPerimeter(x, z, hwx, hwz, y0, floorHeight, door, mat, openGaps = [], fullHeight = floorHeight) {
     const doorWidth = 1.5, doorHeight = 2.3;
     const faces = [
         { dx: 0, dz: -1, axis: 'z', fixedCoord: z - hwz, spanA: x - hwx, spanB: x + hwx, along: x },
@@ -2387,7 +2416,7 @@ function buildExteriorPerimeter(x, z, hwx, hwz, y0, floorHeight, door, mat, open
         const isDoorWall = door && f.dx === door.dx && f.dz === door.dz;
         if (isDoorWall) gaps.push({ lo: f.along - doorWidth / 2, hi: f.along + doorWidth / 2 });
         for (const g of openGaps) if (g.dx === f.dx && g.dz === f.dz) gaps.push({ lo: g.lo, hi: g.hi });
-        segments.push(...buildWallWithGaps(f.axis, f.fixedCoord, f.spanA, f.spanB, gaps, floorHeight, mat, y0));
+        segments.push(...buildWallWithGaps(f.axis, f.fixedCoord, f.spanA, f.spanB, gaps, floorHeight, mat, y0, fullHeight));
         if (isDoorWall) {
             // header above the doorway, floor-to-ceiling minus doorHeight
             // -- the gap below it is real open space, no segment there.
@@ -2397,10 +2426,11 @@ function buildExteriorPerimeter(x, z, hwx, hwz, y0, floorHeight, door, mat, open
             // needed, and no seam/z-fight against the real wall it sits
             // flush on top of.
             const lintelH = floorHeight - doorHeight;
-            const lintel = new THREE.Mesh(
-                f.axis === 'x' ? new THREE.BoxGeometry(WALL_THICKNESS, lintelH, doorWidth) : new THREE.BoxGeometry(doorWidth, lintelH, WALL_THICKNESS),
-                mat
-            );
+            const lintelGeo = f.axis === 'x' ? new THREE.BoxGeometry(WALL_THICKNESS, lintelH, doorWidth) : new THREE.BoxGeometry(doorWidth, lintelH, WALL_THICKNESS);
+            remapWallUV(lintelGeo, f.axis, doorWidth, lintelH,
+                (f.along - doorWidth / 2 - f.spanA) / (f.spanB - f.spanA), (f.along + doorWidth / 2 - f.spanA) / (f.spanB - f.spanA),
+                (y0 + doorHeight) / fullHeight, (y0 + doorHeight + lintelH) / fullHeight);
+            const lintel = new THREE.Mesh(lintelGeo, mat);
             if (f.axis === 'x') lintel.position.set(f.fixedCoord, y0 + doorHeight + lintelH / 2, f.along);
             else lintel.position.set(f.along, y0 + doorHeight + lintelH / 2, f.fixedCoord);
             scene.add(lintel);
@@ -2533,8 +2563,14 @@ function addDebugRectOutline(cx, cz, hwx, hwz, y, color) {
 function buildCoreFloor(core, fl, floorCount, floorHeight, door, extMat, shellMat, wingGaps, stairwell) {
     const { cx, cz, hwx, hwz } = core; // no longer assumed square -- see building sites/cell modules
     const y0 = fl * floorHeight;
+    // the module's REAL total height -- see remapWallUV/buildWallWithGaps:
+    // this floor's wall shows its own true vertical slice of the shared
+    // facade texture (which describes the whole building, see
+    // makeWindowGridTexture) instead of every floor independently
+    // restarting the same squashed 0..1 copy of it.
+    const fullHeight = floorCount * floorHeight;
     const segments = [];
-    segments.push(...buildExteriorPerimeter(cx, cz, hwx, hwz, y0, floorHeight, door, extMat, wingGaps));
+    segments.push(...buildExteriorPerimeter(cx, cz, hwx, hwz, y0, floorHeight, door, extMat, wingGaps, fullHeight));
     const { walls } = buildFloorLayout(cx, cz, hwx, hwz, door);
     drawFloorLayout(walls, floorHeight, shellMat, y0, segments);
 

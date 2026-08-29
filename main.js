@@ -226,15 +226,18 @@ const CONFIG = {
         // parity/perimeter math clean.
         cols: 17,
         rows: 17,
-        // the grid alternates block/street pitch by parity: every even
-        // row/col index is a building-anchor cell (blockSize wide) and
-        // every odd index is the connector cell between two anchors --
-        // an alley/street when the maze carves it open, a narrow merged
-        // party-wall neck when it doesn't. Buildings keep their full
-        // blockSize footprint either way; only the odd-index pitch
-        // changed, so streets got narrower without shrinking any building.
-        blockSize: 7,        // world units per building-anchor cell (even row/col)
-        streetWidth: 2.6,    // world units per street/alley cell (odd row/col) -- real narrow-alley width, not just "narrower than blockSize"; see streetSetbackRoll for why this no longer risks a sealed/impassable alley
+        // the grid alternates block/street pitch by parity -- but by
+        // ROOM topology, not naive index parity: the maze DFS (below)
+        // always starts on an (even,even) cell and only ever steps by 2,
+        // so every interior (even,even) cell is a visited room, provably
+        // ALWAYS open. Every solid (building) cell has at least one odd
+        // axis. So streetWidth is handed to EVEN indices (the open
+        // rooms/plazas the maze network is built from) and blockSize to
+        // ODD indices (the building footprint -- see axisPitch). Naming
+        // stays keyed to what each number visually controls, not the
+        // literal parity.
+        blockSize: 7,        // world units per building footprint (odd row/col)
+        streetWidth: 2.6,    // world units per open room/plaza the street network connects through (even row/col) -- real narrow-alley width; see streetSetbackRoll for why this no longer risks a sealed/impassable alley
         loopChance: 0.14,   // chance a redundant wall opens up into a plaza/loop
         buildingMarginMin: 0.5,  // how much smaller than the cell a building footprint is
         buildingMarginMax: 1.4,
@@ -1703,18 +1706,31 @@ function pickNeonForRow(row) {
 
 const GRID_COLS = CONFIG.maze.cols;
 const GRID_ROWS = CONFIG.maze.rows;
-// non-uniform grid pitch: even row/col index = a building-anchor cell
-// (BLOCK wide), odd index = the connector/street cell between two
-// anchors (STREET wide, narrower). CELL stays as an alias for BLOCK --
-// plenty of code below only ever wants "roughly one cell" for cosmetic
-// scatter/culling and never cared which axis or parity it was near; the
-// few places that actually place walls/pavement/doors against a
-// SPECIFIC cell use colHalf(c)/rowHalf(r) (or colSize[c]/rowSize[r])
-// instead, so they get that cell's real width, not the uniform guess.
+// non-uniform grid pitch, keyed off parity -- but NOT "even = building,
+// odd = street" like the maze-carving code below might suggest at a
+// glance. The DFS below always starts at an (even,even) cell and only
+// ever steps by 2, so every interior (even,even) cell is a visited
+// "room" -- provably ALWAYS open (a perfect maze spans every reachable
+// cell; verified empirically across many seeds: 0 solid interior
+// (even,even) cells, ever). Every solid (building) cell therefore has AT
+// LEAST one odd-parity axis, and the single most common building shape
+// is (odd,odd) -- odd on BOTH axes. So "even index" is the OPEN room/
+// plaza pitch and "odd index" is the BUILDING pitch, exactly backwards
+// from an earlier version of this comment (and the constant names
+// below), which handed BLOCK to even and STREET to odd -- silently
+// making every open room block-wide and most buildings street-narrow
+// since the day this two-pitch system was introduced. Only became
+// obvious once STREET shrank far enough from BLOCK to be unmissable.
+// CELL stays as an alias for BLOCK -- plenty of code below only ever
+// wants "roughly one cell" for cosmetic scatter/culling and never cared
+// which axis or parity it was near; the few places that actually place
+// walls/pavement/doors against a SPECIFIC cell use colHalf(c)/rowHalf(r)
+// (or colSize[c]/rowSize[r]) instead, so they get that cell's real
+// width, not the uniform guess.
 const BLOCK = CONFIG.maze.blockSize;
 const STREET = CONFIG.maze.streetWidth;
 const CELL = BLOCK;
-function axisPitch(i) { return i % 2 === 0 ? BLOCK : STREET; }
+function axisPitch(i) { return i % 2 === 0 ? STREET : BLOCK; }
 const colSize = Array.from({ length: GRID_COLS }, (_, i) => axisPitch(i));
 const rowSize = Array.from({ length: GRID_ROWS }, (_, i) => axisPitch(i));
 function prefixEdges(sizes) {
@@ -4451,9 +4467,11 @@ function addBuildingModule(cell, opts) {
 // against the real, current street pitch (STREET) instead of trusting
 // the config bounds blindly -- buildingMarginMax's own randomizer (see
 // randomizeConfig) can jitter as high as 2.4, which was harmless against
-// the old uniform 7-wide cell grid but would swallow most or all of a
-// narrowed alley whole. Capping each side's setback at 30% of STREET
-// guarantees at least 40% of the alley's pitch stays clear no matter how
+// the old uniform 7-wide cell grid but would swallow whole the narrowest
+// axis a building can actually have (a building cell with an even row or
+// col -- see axisPitch -- is STREET-wide, not BLOCK-wide, on that axis).
+// Capping each side's setback at 30% of STREET guarantees at least 40%
+// of even that thinnest possible building axis stays real, no matter how
 // the margin config or the street/block split themselves randomize.
 function streetSetbackRoll() {
     return Math.min(randRange(CONFIG.maze.buildingMarginMin, CONFIG.maze.buildingMarginMax) / 2, STREET * 0.3);

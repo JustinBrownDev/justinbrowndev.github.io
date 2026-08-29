@@ -1,0 +1,67 @@
+Quantitative parameter pass validation
+======================================
+
+Catalog
+-------
+9328 authored literal parameters:
+  main.js                         5427
+  player-physics.js                80
+  city-performance.js              81
+  city-pack asset catalog        3740
+CONFIG numeric leaves             417
+Total numeric knobs              9745 (+ seed editor control)
+Schema                   cf4ad1f9a6ad0a6e
+
+Checks
+------
+node --check main.js: PASS
+node --check player-physics.js: PASS
+node --check city-performance.js: PASS
+node --check vendor/city-pack/asset-catalog.js: PASS
+node --check numeric-parameters.js: PASS
+node --check parameter-editor.js: PASS
+node --check parameter-catalog.js: PASS
+
+player-physics-selftest.mjs: PASS
+  - low-FPS stairs 10/20/144
+  - rooftop landing
+  - low ceilings
+  - wall sliding
+  - ladders
+  - elevated props
+  - streamed/late colliders
+  - rollback
+
+city-performance-selftest.mjs: PASS
+  - 2500 indexed boxes
+  - 500 randomized broadphase queries
+  - no misses / no duplicates
+
+parameter-system-selftest.mjs: PASS
+  - literal URL override at module init
+  - final cfg.* override
+  - LIVE source setter
+  - LIVE CONFIG binding
+  - reload-only staging does not partially mutate live state
+  - reset-to-seeded-baseline
+  - GO URL serialization + seed pinning
+
+parameter-catalog-selftest.mjs: PASS
+  - 9328 rows
+  - unique 12-hex content/context keys
+  - expected scope counts
+
+Full synchronous-boot TDZ audit: PASS
+  - 64 executable boot roots with local calls
+  - 0 hazards
+
+Live generated-setter smoke test: PASS
+  - changed a hashed city-performance runtime literal through numeric-parameters
+  - next invocation observed the changed value immediately
+
+Browser limitation in this container
+------------------------------------
+Chromium is organization-policy-blocked from localhost ("127.0.0.1 is blocked"),
+so the full WebGL page cannot be interactively booted here. The original game's
+browser run remains the authoritative visual/UI test. The JavaScript/module,
+physics, spatial, TDZ, catalog and parameter-state tests above all execute here.

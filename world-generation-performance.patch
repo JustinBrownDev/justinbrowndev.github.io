@@ -1,0 +1,2491 @@
+--- a/main.js
++++ b/main.js
+@@ -1366,7 +1366,7 @@
+ // only here. Climb a real, working stair high enough and it burns
+ // through a genuinely strobing rainbow band (this is what the epilepsy
+ // warning up top is actually for) into a blinding white "heaven" -- see
+-// buildFireEscapeStair and the layer-deck builders below for how you
++// buildFireEscape and the layer-deck builders below for how you
+ // actually get up there.
+ const CAVE_FOG = new THREE.Color(0x140a20);
+ const CAVE_AMBIENT = new THREE.Color(0x2a1040);
+@@ -1592,7 +1592,7 @@
+ // sites were still sparse. A second instance with no path set (every
+ // city-pack call already passes a full relative path) fixes it for good.
+ const cityAssetLoader = new GLTFLoader();
+-const pendingRealModelPlacements = { tyre: [], trashbag: [], manhole: [], sprayCans: [], trashCanReal: [], streetLamp: [], barrelStove: [], ironGate: [], fireEscape: [] };
++const pendingRealModelPlacements = { tyre: [], trashbag: [], manhole: [], sprayCans: [], trashCanReal: [], streetLamp: [], barrelStove: [], ironGate: [] };
+ 
+ function placeRealModel(name, x, z, rotY) {
+     pendingRealModelPlacements[name].push({ x, z, rotY });
+@@ -1602,12 +1602,8 @@
+     gltfLoader.load(file, (gltf) => {
+         const template = gltf.scene;
+         template.scale.setScalar(scale);
+-        for (const req of pendingRealModelPlacements[name]) {
+-            const inst = template.clone();
+-            inst.position.set(req.x, 0, req.z);
+-            inst.rotation.y = req.rotY;
+-            scene.add(inst);
+-        }
++        const requests = pendingRealModelPlacements[name].map(req => ({ ...req, y: 0 }));
++        instantiateCityAssetBatch(template, requests, `real:${name}`);
+     }, undefined, (err) => {
+         // fails soft — a visitor on a flaky connection just doesn't get
+         // this specific prop rather than the whole page breaking.
+@@ -1622,7 +1618,6 @@
+ loadRealModel('streetLamp', 'street_lamp_02.gltf', 1);
+ loadRealModel('barrelStove', 'barrel_stove.gltf', 1);
+ loadRealModel('ironGate', 'large_iron_gate.gltf', 1);
+-loadRealModel('fireEscape', 'modular_fire_escape.gltf', 1.3);
+ 
+ // ---------- generated city-pack model catalog (340 GLBs) ----------
+ // a real, ID-keyed vocabulary (vendor/city-pack/asset-catalog.js, see
+@@ -1641,7 +1636,7 @@
+ 
+ function instantiateCityAsset(template, req) {
+     const inst = template.clone(true);
+-    inst.position.set(req.x, req.y, req.z);
++    inst.position.set(req.x, req.y ?? 0, req.z);
+     inst.rotation.y = req.rotY;
+     if (req.scale !== undefined) {
+         if (typeof req.scale === 'number') inst.scale.setScalar(req.scale);
+@@ -1651,6 +1646,72 @@
+     return inst;
+ }
+ 
++// Most catalog requests are queued while one GLB is loading. Cloning the
++// finished hierarchy N times made repeated shelves/workbenches/props cost N
++// scene nodes and N draw calls. Procedural city-pack assets are static,
++// non-skinned meshes, so collapse each loaded batch into spatially chunked
++// InstancedMeshes. Late one-off requests still use the simple clone path.
++const CITY_ASSET_INSTANCE_CHUNK = 24;
++const _cityAssetReqMatrix = new THREE.Matrix4();
++const _cityAssetLeafMatrix = new THREE.Matrix4();
++const _cityAssetPos = new THREE.Vector3();
++const _cityAssetQuat = new THREE.Quaternion();
++const _cityAssetScale = new THREE.Vector3();
++const _cityAssetEuler = new THREE.Euler();
++function instantiateCityAssetBatch(template, requests, assetId) {
++    if (!requests?.length) return;
++    template.updateMatrixWorld(true);
++    const leaves = [];
++    let batchable = true;
++    template.traverse(obj => {
++        if (obj.isSkinnedMesh || obj.morphTargetInfluences) batchable = false;
++        if (obj.isMesh) {
++            if (!obj.geometry || Array.isArray(obj.material)) batchable = false;
++            leaves.push(obj);
++        }
++    });
++    if (!batchable || !leaves.length || requests.length < 2) {
++        for (const req of requests) instantiateCityAsset(template, req);
++        return;
++    }
++
++    const chunks = new Map();
++    for (const req of requests) {
++        const cx = Math.floor(req.x / CITY_ASSET_INSTANCE_CHUNK);
++        const cz = Math.floor(req.z / CITY_ASSET_INSTANCE_CHUNK);
++        const key = `${cx},${cz}`;
++        let bucket = chunks.get(key);
++        if (!bucket) chunks.set(key, bucket = { cx, cz, requests: [] });
++        bucket.requests.push(req);
++    }
++
++    for (const bucket of chunks.values()) {
++        const originX = bucket.cx * CITY_ASSET_INSTANCE_CHUNK;
++        const originZ = bucket.cz * CITY_ASSET_INSTANCE_CHUNK;
++        for (let leafIndex = 0; leafIndex < leaves.length; leafIndex++) {
++            const leaf = leaves[leafIndex];
++            const mesh = new THREE.InstancedMesh(leaf.geometry, leaf.material, bucket.requests.length);
++            mesh.name = `cityAsset:${assetId}:${bucket.cx},${bucket.cz}:${leafIndex}`;
++            mesh.position.set(originX, 0, originZ);
++            mesh.castShadow = leaf.castShadow;
++            mesh.receiveShadow = leaf.receiveShadow;
++            for (let i = 0; i < bucket.requests.length; i++) {
++                const req = bucket.requests[i];
++                _cityAssetPos.set(req.x - originX, req.y ?? 0, req.z - originZ);
++                _cityAssetEuler.set(0, req.rotY, 0);
++                _cityAssetQuat.setFromEuler(_cityAssetEuler);
++                if (typeof req.scale === 'number') _cityAssetScale.setScalar(req.scale);
++                else _cityAssetScale.set(req.scale?.x ?? 1, req.scale?.y ?? 1, req.scale?.z ?? 1);
++                _cityAssetReqMatrix.compose(_cityAssetPos, _cityAssetQuat, _cityAssetScale);
++                _cityAssetLeafMatrix.multiplyMatrices(_cityAssetReqMatrix, leaf.matrixWorld);
++                mesh.setMatrixAt(i, _cityAssetLeafMatrix);
++            }
++            mesh.instanceMatrix.needsUpdate = true;
++            scene.add(mesh);
++        }
++    }
++}
++
+ // places catalog id `id` (e.g. 'street/bench_02') with its origin at
+ // (x,z). y defaults to 0 (every 'ground'-mount asset's real use case);
+ // pass opts.y for roof/wall/desk-mounted pieces, opts.scale for a
+@@ -1668,7 +1729,7 @@
+     cityAssetPending.set(id, [req]);
+     cityAssetLoader.load('./vendor/city-pack/' + def.file, (gltf) => {
+         cityAssetTemplates.set(id, gltf.scene);
+-        for (const r of cityAssetPending.get(id)) instantiateCityAsset(gltf.scene, r);
++        instantiateCityAssetBatch(gltf.scene, cityAssetPending.get(id), id);
+         cityAssetPending.delete(id);
+     }, undefined, (err) => {
+         console.warn(`[testing] city-pack asset "${id}" didn't load, skipping`, err);
+@@ -1687,6 +1748,163 @@
+     return cityAssetCategoryCache.get(category);
+ }
+ 
++// ---------- semantic room placement ----------
++// The city-pack catalog already says what an object IS and where it mounts.
++// Keep that meaning all the way through placement: floor furniture chooses a
++// real wall slot, wall props back onto that wall, desk/table props sit on a
++// recorded work surface, and ceiling props solve their Y from the ceiling.
++// Wall intervals are reserved per floor so "correct wall" does not become
++// "five shelves occupying the same correct wall".
++const semanticRoomPlacement = new WeakMap();
++function semanticFloorState(rect, yLevel) {
++    let floors = semanticRoomPlacement.get(rect);
++    if (!floors) semanticRoomPlacement.set(rect, floors = new Map());
++    const key = Math.round(yLevel * 1000);
++    let state = floors.get(key);
++    if (!state) floors.set(key, state = { wallUsage: new Map(), supports: [], supportCursor: 0, cornerCursor: Math.floor(rng() * 4) });
++    return state;
++}
++function semanticAssetBounds(def) {
++    const min = def?.boundsMin ?? [-0.3, 0, -0.3];
++    const max = def?.boundsMax ?? [0.3, 0.8, 0.3];
++    const dims = def?.dimensionsXYZ ?? [max[0] - min[0], max[1] - min[1], max[2] - min[2]];
++    return { min, max, dims };
++}
++function semanticUsableSides(rect) {
++    return CELL_SIDE_DEFS.filter(side => {
++        const kind = rect.edgeKinds?.[side.key];
++        return kind !== 'internal' && kind !== 'courtyard';
++    });
++}
++function semanticWallPose(rect, def, yLevel = 0, opts = {}) {
++    const state = semanticFloorState(rect, yLevel);
++    const { min, dims } = semanticAssetBounds(def);
++    const width = Math.max(0.18, dims[0] * (opts.scaleX ?? 1));
++    const depth = Math.max(0.06, dims[2] * (opts.scaleZ ?? 1));
++    const sides = semanticUsableSides(rect);
++    if (!sides.length) return null;
++    const start = Math.floor(rng() * sides.length);
++
++    for (let si = 0; si < sides.length; si++) {
++        const side = sides[(start + si) % sides.length];
++        const tangentHalf = side.dz !== 0 ? rect.hwx : rect.hwz;
++        const avail = tangentHalf - width / 2 - 0.18;
++        if (avail < 0.02) continue;
++        let used = state.wallUsage.get(side.key);
++        if (!used) state.wallUsage.set(side.key, used = []);
++        const candidates = [0, -avail * 0.58, avail * 0.58, -avail, avail];
++        for (const u of candidates) {
++            // Keep the ground-floor entry fan clear.  Upper-floor fire-escape
++            // openings are centered too, so keeping the central slot clear on
++            // that face also avoids putting a shelf across an exterior exit.
++            const isDoorSide = rect.doorSide && rect.doorSide.dx === side.dx && rect.doorSide.dz === side.dz;
++            const isFireSide = rect.fireEscapeSide && rect.fireEscapeSide.dx === side.dx && rect.fireEscapeSide.dz === side.dz;
++            if ((isDoorSide && yLevel < 0.1 || isFireSide && yLevel > 0.1) && Math.abs(u) < 1.0 + width / 2) continue;
++            const lo = u - width / 2, hi = u + width / 2;
++            if (used.some(r => lo - 0.12 < r.hi && r.lo < hi + 0.12)) continue;
++            used.push({ lo, hi });
++            const tx = side.dz !== 0 ? 1 : 0, tz = side.dx !== 0 ? 1 : 0;
++            const wallX = rect.cx + side.dx * (rect.hwx - 0.03);
++            const wallZ = rect.cz + side.dz * (rect.hwz - 0.03);
++            // local +Z faces INTO the room.  Use the actual asymmetric local
++            // bounds: the back-most vertex (minZ) clears the wall by 4cm.
++            const inwardOffset = Math.max(depth * 0.5, -min[2]) + 0.04;
++            return {
++                x: wallX + tx * u - side.dx * inwardOffset,
++                z: wallZ + tz * u - side.dz * inwardOffset,
++                rotY: outwardRotationY(-side.dx, -side.dz),
++                side, u, tx, tz, width, depth,
++            };
++        }
++    }
++    return null;
++}
++function semanticCornerPoint(rect, yLevel = 0, inset = 0.5) {
++    const state = semanticFloorState(rect, yLevel);
++    const corners = [[-1,-1],[1,-1],[1,1],[-1,1]];
++    const [sx, sz] = corners[state.cornerCursor++ % corners.length];
++    return {
++        x: rect.cx + sx * Math.max(0, rect.hwx - inset),
++        z: rect.cz + sz * Math.max(0, rect.hwz - inset),
++        sx, sz,
++    };
++}
++function semanticRecordSupport(rect, yLevel, pose, def) {
++    const kind = def?.kind || '';
++    if (!/(workbench|server_bench|desk|table|bench)/i.test(kind)) return;
++    const state = semanticFloorState(rect, yLevel);
++    const { dims } = semanticAssetBounds(def);
++    // Catalog bounds for a workbench include pegboards/tools above the actual
++    // working plane, so use a human work-surface height rather than maxY.
++    state.supports.push({
++        x: pose.x, z: pose.z, rotY: pose.rotY,
++        y: yLevel + Math.min(0.9, Math.max(0.72, dims[1] * 0.56)),
++    });
++}
++function ensureSemanticSupport(rect, yLevel) {
++    const state = semanticFloorState(rect, yLevel);
++    if (state.supports.length) return state.supports[state.supportCursor++ % state.supports.length];
++    const id = pick(['interior/desk_01', 'interior/desk_02', 'interior/desk_03', 'interior/desk_04']);
++    const def = CITY_ASSET_BY_ID.get(id);
++    const pose = semanticWallPose(rect, def, yLevel);
++    if (!pose) return null;
++    const { min } = semanticAssetBounds(def);
++    placeCityAsset(id, pose.x, pose.z, pose.rotY, { y: yLevel - min[1] });
++    semanticRecordSupport(rect, yLevel, pose, def);
++    return state.supports[state.supportCursor++ % state.supports.length];
++}
++function placeSemanticCityAsset(rect, id, yLevel = 0, opts = {}) {
++    const def = CITY_ASSET_BY_ID.get(id);
++    if (!rect || !def) return null;
++    const { min, max } = semanticAssetBounds(def);
++    const roomHeight = opts.roomHeight ?? rect.floorHeight ?? 3;
++    const mount = opts.mount ?? def.mount ?? 'ground';
++
++    if (/chair/i.test(def.kind || '')) {
++        const state = semanticFloorState(rect, yLevel);
++        if (state.supports.length) {
++            const support = state.supports[state.supportCursor++ % state.supports.length];
++            const inwardX = Math.sin(support.rotY), inwardZ = Math.cos(support.rotY);
++            const x = support.x + inwardX * 0.72, z = support.z + inwardZ * 0.72;
++            const y = yLevel - min[1];
++            // Face back toward the work surface instead of staring at the wall.
++            const rotY = support.rotY + Math.PI;
++            placeCityAsset(id, x, z, rotY, { y, scale: opts.scale });
++            return { x, z, rotY, y, mount: 'floor-by-work-surface' };
++        }
++    }
++
++    if (mount === 'desk' || mount === 'table') {
++        const support = ensureSemanticSupport(rect, yLevel);
++        if (!support) return null;
++        const y = support.y - min[1] + 0.015;
++        placeCityAsset(id, support.x, support.z, support.rotY, { y, scale: opts.scale });
++        return { ...support, y, mount };
++    }
++
++    if (mount === 'ceiling') {
++        const y = yLevel + roomHeight - 0.08 - max[1];
++        const x = rect.cx + randRange(-rect.hwx * 0.25, rect.hwx * 0.25);
++        const z = rect.cz + randRange(-rect.hwz * 0.25, rect.hwz * 0.25);
++        const rotY = pick([0, Math.PI / 2]);
++        placeCityAsset(id, x, z, rotY, { y, scale: opts.scale });
++        return { x, z, rotY, y, mount };
++    }
++
++    const pose = semanticWallPose(rect, def, yLevel, opts);
++    if (!pose) return null;
++    let y;
++    if (mount === 'wall') {
++        const desiredBottom = yLevel + Math.min(1.25, roomHeight * 0.38);
++        y = Math.min(desiredBottom - min[1], yLevel + roomHeight - 0.18 - max[1]);
++    } else {
++        y = yLevel - min[1]; // shelves/workbenches/cabinets sit on the floor
++    }
++    placeCityAsset(id, pose.x, pose.z, pose.rotY, { y, scale: opts.scale });
++    if (mount === 'ground') semanticRecordSupport(rect, yLevel, pose, def);
++    return { ...pose, y, mount };
++}
++
+ // ---------- real photos ----------
+ // his actual site images, resized/recompressed for a texture instead of
+ // print resolution (originals ran 20KB-3.5MB; these are 8-50KB) — the
+@@ -2227,7 +2445,7 @@
+     }, 96, 128);
+ }
+ 
+-function addWantedPoster(x, z, rotY) {
++function addWantedPoster(x, z, rotY, placement = null) {
+     // ~1 in 5 -- scarce enough that finding one still feels like a find,
+     // same logic as everything else in this maze that's actually real.
+     const isPersonal = rng() < 0.2;
+@@ -2246,7 +2464,11 @@
+         new THREE.PlaneGeometry(randRange(0.55, 0.8), randRange(0.75, 1.1)),
+         new THREE.MeshStandardMaterial({ map: tex, roughness: 0.9 })
+     );
+-    plane.position.set(x, randRange(1.3, 2.0), z);
++    const posterH = plane.geometry.parameters.height;
++    const wallTop = placement?.wallHeight ?? 3;
++    const minCenter = 0.8 + posterH / 2;
++    const maxCenter = Math.max(minCenter, Math.min(2.05, wallTop - 0.18 - posterH / 2));
++    plane.position.set(x, randRange(minCenter, maxCenter), z);
+     plane.rotation.y = rotY;
+     scene.add(plane);
+     // only the wiki fallback fodder is swap-eligible for the live random
+@@ -2759,6 +2981,10 @@
+ // ---------- reusable geometry/materials ----------
+ 
+ const skirtBoxGeo = new THREE.BoxGeometry(1, 1, 1);
++// Shared unit plane for the thousands of static floor/ceiling/road plates.
++// Per-object scale preserves the same UV 0..1 behavior without allocating a
++// fresh PlaneGeometry for every room and street cell.
++const unitPlaneGeo = new THREE.PlaneGeometry(1, 1);
+ 
+ // generic one-time vertex jitter — perturbs a geometry's own vertices at
+ // creation so cheap primitives (crates, cans, machines) read as hand-built
+@@ -2766,13 +2992,23 @@
+ // per-frame, and doesn't add a single vertex or draw call.
+ function jitterGeometry(geo, amount) {
+     const pos = geo.attributes.position;
+-    for (let i = 0; i < pos.count; i++) {
+-        pos.setXYZ(
+-            i,
+-            pos.getX(i) + randRange(-amount, amount),
+-            pos.getY(i) + randRange(-amount, amount) * 0.4,
+-            pos.getZ(i) + randRange(-amount, amount)
+-        );
++    const a = pos.array;
++    // BoxGeometry/CylinderGeometry duplicate the same geometric corner for
++    // different faces/UV seams. Jittering those copies independently literally
++    // tears the primitive open. Quantize the ORIGINAL coordinate and reuse one
++    // offset for every duplicate, so the shape stays rough without cracks.
++    const offsets = new Map();
++    for (let i = 0; i < a.length; i += 3) {
++        const ox = a[i], oy = a[i + 1], oz = a[i + 2];
++        const key = `${Math.round(ox * 100000)},${Math.round(oy * 100000)},${Math.round(oz * 100000)}`;
++        let off = offsets.get(key);
++        if (!off) {
++            off = [randRange(-amount, amount), randRange(-amount, amount) * 0.4, randRange(-amount, amount)];
++            offsets.set(key, off);
++        }
++        a[i] = ox + off[0];
++        a[i + 1] = oy + off[1];
++        a[i + 2] = oz + off[2];
+     }
+     pos.needsUpdate = true;
+     geo.computeVertexNormals();
+@@ -3110,8 +3346,9 @@
+ 
+ function addHorizontalPlane(rect, y, mat) {
+     if (rect.hx < 0.05 || rect.hz < 0.05) return;
+-    const plane = new THREE.Mesh(new THREE.PlaneGeometry(rect.hx * 2, rect.hz * 2), mat);
++    const plane = new THREE.Mesh(unitPlaneGeo, mat);
+     plane.rotation.x = -Math.PI / 2;
++    plane.scale.set(rect.hx * 2, rect.hz * 2, 1);
+     plane.position.set(rect.x, y, rect.z);
+     scene.add(plane);
+ }
+@@ -3232,8 +3469,9 @@
+         scene.add(light);
+     }
+     if (fl === 0) {
+-        const floor = new THREE.Mesh(new THREE.PlaneGeometry(hwx * 1.9, hwz * 1.9), sharedInteriorFloorMaterial());
++        const floor = new THREE.Mesh(unitPlaneGeo, sharedInteriorFloorMaterial());
+         floor.rotation.x = -Math.PI / 2;
++        floor.scale.set(hwx * 1.9, hwz * 1.9, 1);
+         floor.position.set(cx, 0.02, cz);
+         scene.add(floor);
+     }
+@@ -3249,19 +3487,30 @@
+ // registered buildingWallSegments entry (the main per-floor loop that
+ // set it runs earlier in addBuilding, before the roof/archetype code
+ // that calls this).
++const rooftopMechanicalRoomMat = new THREE.MeshStandardMaterial({ color: 0x5a5650, roughness: 0.7, metalness: 0.35, side: THREE.DoubleSide });
+ function buildRooftopMechanicalRoom(cx, cz, deckHalf, roofY) {
+     const roomHw = Math.max(0.8, Math.min(deckHalf * 0.5, 1.5));
+     const roomH = 2.3;
+-    const mat = new THREE.MeshStandardMaterial({ color: 0x5a5650, roughness: 0.7, metalness: 0.35, side: THREE.DoubleSide });
++    const mat = rooftopMechanicalRoomMat;
+     const maxOffset = Math.max(0, deckHalf - roomHw - 0.3);
+     const rcx = cx + randRange(-maxOffset, maxOffset), rcz = cz + randRange(-maxOffset, maxOffset);
+     const door = pick([{ dx: 0, dz: -1 }, { dx: 0, dz: 1 }, { dx: -1, dz: 0 }, { dx: 1, dz: 0 }]);
+     const segments = buildExteriorPerimeter(rcx, rcz, roomHw, roomHw, roofY, roomH, door, mat, []);
+     overheadCeilings.push({ x: rcx, z: rcz, hx: roomHw, hz: roomHw, y: roofY + roomH });
+     addHorizontalPlane({ x: rcx, z: rcz, hx: roomHw, hz: roomHw }, roofY + roomH, mat);
+-    // real floor plate at deck level, and a couple of interior pipes/junk
++    // Real floor plate at deck level.  Rooftop-room clutter must inherit that
++    // floor height too: the old generic scatter implicitly used y=0, creating
++    // hidden street-level instances/colliders underneath a room dozens of
++    // metres above them.  Put one compact heap into a real interior corner.
+     addHorizontalPlane({ x: rcx, z: rcz, hx: roomHw, hz: roomHw }, roofY + 0.02, mat);
+-    scatterJunk('indoor', rcx, rcz, 1 + Math.floor(rng() * 2), roomHw * 0.6);
++    pileJunkCluster('indoor', rcx - roomHw * 0.48, rcz - roomHw * 0.48, {
++        baseY: roofY,
++        spread: Math.max(0.3, roomHw * 0.34),
++        backX: 1,
++        backZ: 1,
++        tiers: 2 + (rng() < 0.35 ? 1 : 0),
++        baseCount: 3,
++    });
+     if (dynamicLightsRemaining > 0) {
+         dynamicLightsRemaining--;
+         const light = new THREE.PointLight(0xdfe8e0, 2, roomH * 2.2, 2);
+@@ -3281,12 +3530,13 @@
+ // of a rotated/diagonal walkable strip, and approximating one with a
+ // bounding box would either leave gaps or claim walkable space where
+ // there's no actual bridge deck.
++const catwalkDeckMat = new THREE.MeshStandardMaterial({ color: 0x3a3630, roughness: 0.8, metalness: 0.4 });
++const catwalkRailMat = new THREE.MeshStandardMaterial({ color: 0x1c1c1c, roughness: 0.55, metalness: 0.5 });
++
+ function addCatwalk(a, b) {
+     const y = (a.y + b.y) / 2;
+     const alongX = Math.abs(a.z - b.z) < 0.6; // decks line up on Z -- bridge runs along X
+     const width = 1.1;
+-    const deckMat = new THREE.MeshStandardMaterial({ color: 0x3a3630, roughness: 0.8, metalness: 0.4 });
+-    const railMat = new THREE.MeshStandardMaterial({ color: 0x1c1c1c, roughness: 0.55, metalness: 0.5 });
+ 
+     // span the actual GAP between the two decks' own edges, not their
+     // centers -- using centers here would make the "bridge" overlap deep
+@@ -3300,12 +3550,14 @@
+         const lo = left.x + left.hx, hi = right.x - right.hx;
+         const len = hi - lo;
+         const cz = (a.z + b.z) / 2;
+-        const deck = new THREE.Mesh(new THREE.BoxGeometry(len, 0.12, width), deckMat);
+-        deck.position.set((lo + hi) / 2, y, cz);
++        const deck = new THREE.Mesh(skirtBoxGeo, catwalkDeckMat);
++        deck.scale.set(len, 0.12, width);
++        deck.position.set((lo + hi) / 2, y - 0.06, cz);
+         scene.add(deck);
+         for (const side of [-1, 1]) {
+-            const rail = new THREE.Mesh(new THREE.BoxGeometry(len, 0.5, 0.05), railMat);
+-            rail.position.set((lo + hi) / 2, y + 0.3, cz + side * width / 2);
++            const rail = new THREE.Mesh(skirtBoxGeo, catwalkRailMat);
++            rail.scale.set(len, 0.5, 0.05);
++            rail.position.set((lo + hi) / 2, y + 0.25, cz + side * width / 2);
+             scene.add(rail);
+         }
+         rect = { x: (lo + hi) / 2, z: cz, hx: len / 2, hz: width / 2, y };
+@@ -3314,12 +3566,14 @@
+         const lo = near.z + near.hz, hi = far.z - far.hz;
+         const len = hi - lo;
+         const cx = (a.x + b.x) / 2;
+-        const deck = new THREE.Mesh(new THREE.BoxGeometry(width, 0.12, len), deckMat);
+-        deck.position.set(cx, y, (lo + hi) / 2);
++        const deck = new THREE.Mesh(skirtBoxGeo, catwalkDeckMat);
++        deck.scale.set(width, 0.12, len);
++        deck.position.set(cx, y - 0.06, (lo + hi) / 2);
+         scene.add(deck);
+         for (const side of [-1, 1]) {
+-            const rail = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.5, len), railMat);
+-            rail.position.set(cx + side * width / 2, y + 0.3, (lo + hi) / 2);
++            const rail = new THREE.Mesh(skirtBoxGeo, catwalkRailMat);
++            rail.scale.set(0.05, 0.5, len);
++            rail.position.set(cx + side * width / 2, y + 0.25, (lo + hi) / 2);
+             scene.add(rail);
+         }
+         rect = { x: cx, z: (lo + hi) / 2, hx: width / 2, hz: len / 2, y };
+@@ -3353,7 +3607,8 @@
+             minZ: roof.z - roof.hz, maxZ: roof.z + roof.hz,
+         });
+     }
+-    for (let i = 0; i < rooftopDecks.length && built < 40; i++) {
++    const maxCatwalks = Math.min(120, Math.max(40, Math.ceil(rooftopDecks.length * 0.05)));
++    for (let i = 0; i < rooftopDecks.length && built < maxCatwalks; i++) {
+         const a = rooftopDecks[i];
+         roofIndex.queryBounds({
+             minX: a.x - a.hx - 5.6, maxX: a.x + a.hx + 5.6,
+@@ -3364,7 +3619,7 @@
+         // stable as possible) while still skipping distant roofs entirely.
+         candidates.sort((u, v) => u.__catwalkId - v.__catwalkId);
+         for (const b of candidates) {
+-            if (built >= 40) break;
++            if (built >= maxCatwalks) break;
+             if (b.__catwalkId <= i || a.buildingKey === b.buildingKey) continue;
+             // capped so the catwalk deck (sat at the midpoint height)
+             // never sits more than MAX_STEP_HEIGHT (0.65) off of either
+@@ -3378,12 +3633,13 @@
+             const centerDist = alignedX ? Math.abs(a.x - b.x) : Math.abs(a.z - b.z);
+             const gap = centerDist - ((alignedX ? a.hx : a.hz) + (alignedX ? b.hx : b.hz));
+             if (gap < 0.8 || gap > 5.5) continue;
+-            if (rng() > 0.15) continue;
++            if (rng() > 0.22) continue;
+             addCatwalk(a, b);
+             built++;
+         }
+     }
+     console.log(`[gen] ${built} rooftop catwalks built (${rooftopDecks.length} candidate rooftop decks)`);
++    return built;
+ }
+ 
+ 
+@@ -3549,41 +3805,82 @@
+ // builder -- so exterior fire escapes and the tall vertical-layer
+ // staircases climb exactly like an interior mezzanine already does,
+ // real elevation and real collision, not a new physics system.
+-const _stairStepMatrix = new THREE.Matrix4();
++const stairStepMaterialCache = new Map();
++const stairRailMaterialCache = new Map();
++function cachedStairMaterial(cache, color, rail = false) {
++    const key = color >>> 0;
++    if (!cache.has(key)) cache.set(key, new THREE.MeshStandardMaterial({
++        color: key,
++        roughness: rail ? 0.55 : 0.85,
++        metalness: rail ? 0.5 : 0.35,
++    }));
++    return cache.get(key);
++}
++function appendBoxData(positions, indices, cx, cy, cz, sx, sy, sz) {
++    const base = positions.length / 3;
++    const x0 = cx - sx / 2, x1 = cx + sx / 2;
++    const y0 = cy - sy / 2, y1 = cy + sy / 2;
++    const z0 = cz - sz / 2, z1 = cz + sz / 2;
++    positions.push(
++        x0,y0,z0, x1,y0,z0, x1,y1,z0, x0,y1,z0,
++        x0,y0,z1, x1,y0,z1, x1,y1,z1, x0,y1,z1,
++    );
++    indices.push(
++        base+0,base+2,base+1, base+0,base+3,base+2,
++        base+4,base+5,base+6, base+4,base+6,base+7,
++        base+0,base+4,base+7, base+0,base+7,base+3,
++        base+1,base+2,base+6, base+1,base+6,base+5,
++        base+3,base+7,base+6, base+3,base+6,base+2,
++        base+0,base+1,base+5, base+0,base+5,base+4,
++    );
++}
+ function addStairFlight(axis, along0, along1, cross, y0, y1, opts = {}) {
+     const width = opts.width ?? 0.9;
+     const along = along1 - along0, rise = y1 - y0;
+     const n = Math.max(3, Math.round(Math.abs(rise) / 0.28));
+-    const stepMat = new THREE.MeshStandardMaterial({ color: opts.color ?? 0x2e2a26, roughness: 0.85, metalness: 0.35 });
+-    // every step in one flight is the exact same size (stepDepth doesn't
+-    // vary with i) and purely visual (collision is the single rampRun
+-    // pushed below, not per-step boxes) -- one InstancedMesh per flight
+-    // instead of n separate Mesh objects/geometries/draw calls. A tall
+-    // building's stair core used to mean hundreds of individual step
+-    // meshes city-wide; this collapses each flight to one draw call
+-    // without changing a single visible dimension.
+     const stepDepth = Math.abs(along) / n;
+-    const stepGeo = new THREE.BoxGeometry(axis === 'x' ? stepDepth * 1.05 : width, 0.1, axis === 'x' ? width : stepDepth * 1.05);
+-    const steps = new THREE.InstancedMesh(stepGeo, stepMat, n);
++
++    // One ordinary Mesh per flight, not one InstancedMesh per flight.  That
++    // sounds backwards until the static-world pass: ordinary meshes sharing a
++    // material can be merged ACROSS many flights in the same render chunk,
++    // whereas each tiny InstancedMesh is already a separate immutable draw.
++    // The geometry still contains the same individual floating treads as the
++    // old visual, just packed into one indexed BufferGeometry up front.
++    const positions = [], indices = [];
+     for (let i = 0; i < n; i++) {
+         const tMid = (i + 0.5) / n;
+         const posAlong = along0 + along * tMid;
+         const posY = y0 + rise * tMid;
+-        _stairStepMatrix.makeTranslation(axis === 'x' ? posAlong : cross, posY, axis === 'x' ? cross : posAlong);
+-        steps.setMatrixAt(i, _stairStepMatrix);
++        appendBoxData(
++            positions, indices,
++            axis === 'x' ? posAlong : cross,
++            posY,
++            axis === 'x' ? cross : posAlong,
++            axis === 'x' ? stepDepth * 1.05 : width,
++            0.1,
++            axis === 'x' ? width : stepDepth * 1.05,
++        );
+     }
+-    steps.instanceMatrix.needsUpdate = true;
+-    scene.add(steps);
+-    // railings both sides -- also doubles as the visual tell that this
+-    // one, unlike a decorative-only fire escape, is meant to be climbed
+-    const railMat = new THREE.MeshStandardMaterial({ color: opts.railColor ?? 0x1c1c1c, roughness: 0.55, metalness: 0.5 });
++    const stepGeo = new THREE.BufferGeometry();
++    stepGeo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
++    stepGeo.setIndex(indices);
++    stepGeo.computeVertexNormals();
++    const stepMat = cachedStairMaterial(stairStepMaterialCache, opts.color ?? 0x2e2a26, false);
++    scene.add(new THREE.Mesh(stepGeo, stepMat));
++
++    const railMat = cachedStairMaterial(stairRailMaterialCache, opts.railColor ?? 0x1c1c1c, true);
+     for (const side of [-1, 1]) {
+         const rc = cross + side * (width / 2 + 0.03);
+-        const rail = new THREE.Mesh(new THREE.BoxGeometry(
+-            axis === 'x' ? Math.abs(along) * 1.03 : 0.05, 0.45, axis === 'x' ? 0.05 : Math.abs(along) * 1.03
+-        ), railMat);
++        const rail = new THREE.Mesh(skirtBoxGeo, railMat);
++        rail.scale.set(
++            axis === 'x' ? Math.abs(along) * 1.03 : 0.05,
++            0.45,
++            axis === 'x' ? 0.05 : Math.abs(along) * 1.03,
++        );
+         rail.position.set(
+-            axis === 'x' ? along0 + along / 2 : rc, y0 + rise / 2 + 0.28, axis === 'x' ? rc : along0 + along / 2
++            axis === 'x' ? along0 + along / 2 : rc,
++            y0 + rise / 2 + 0.28,
++            axis === 'x' ? rc : along0 + along / 2,
+         );
+         scene.add(rail);
+     }
+@@ -3592,72 +3889,340 @@
+ 
+ function addLandingPlatform(x, z, halfW, y, opts = {}) {
+     const platform = new THREE.Mesh(
+-        new THREE.BoxGeometry(halfW * 2, 0.1, halfW * 2),
+-        new THREE.MeshStandardMaterial({ color: opts.color ?? 0x352f28, roughness: 0.85, metalness: 0.3 })
++        skirtBoxGeo,
++        cachedStairMaterial(stairStepMaterialCache, opts.color ?? 0x352f28, false)
+     );
+-    platform.position.set(x, y, z);
++    platform.scale.set(halfW * 2, 0.1, halfW * 2);
++    // Keep the rendered top at exactly the support height used by physics.
++    platform.position.set(x, y - 0.05, z);
+     scene.add(platform);
+     elevatedPlatforms.push({ x, z, hx: halfW, hz: halfW, y });
+ }
+ 
+-// a real, climbable fire escape: a switchback of flights zigzagging up
+-// the outside of a wall face, functionally identical to the interior
+-// mezzanine stairs above -- walk onto it and the shared ramp/support solver
+-// actually lifts you. (x, z, rotY) is the same wall-face anchor point the
+-// decorative GLTF model is placed at; this builds alongside it rather
+-// than replacing it, so the detailed model still reads as the fire
+-// escape's silhouette while these plain switchback treads are what
+-// you're actually standing on (they won't pixel-align, and that's a
+-// deliberate tradeoff -- this whole aesthetic is already "crude on
+-// purpose" everywhere else).
+-function buildFireEscapeStair(x, z, rotY, topY) {
+-    const nx = Math.round(Math.sin(rotY)), nz = -Math.round(Math.cos(rotY));
+-    const axis = nx === 0 ? 'x' : 'z';
+-    let along = axis === 'x' ? x + nx * 0.7 : z + nz * 0.7;
+-    const cross = axis === 'x' ? z + nz * 0.7 : x + nx * 0.7;
+-    const flightLen = 1.7, risePerFlight = 2.4;
+-    // the real modular_fire_escape.gltf placed alongside this (same x/z/
+-    // rotY) is one fixed unit, not an infinitely tall repeating structure
+-    // -- its own platforms top out a bit above 5 units. Collision used to
+-    // climb 2-3x higher than the model actually reaches, so most of a
+-    // tall building's "fire escape" was an invisible ramp with no fire
+-    // escape left under your feet -- exactly what made it feel broken.
+-    // Capping it here means the crude switchback treads stay inside the
+-    // model's real visible footprint.
+-    const modelTopY = 5.4;
+-    const clampedTop = Math.min(topY, modelTopY);
+-    let y = 0, dir = 1;
+-    let lastWx = along, lastWz = cross; // tracks the final landing so the bridging ladder below picks up from where the stairs actually end, not the original wall anchor
+-    const landings = []; // {y} -- returned so a balcony can anchor to a real, reachable height
+-    while (y < clampedTop) {
+-        const y1 = Math.min(clampedTop, y + risePerFlight);
+-        const along1 = along + dir * flightLen;
+-        addStairFlight(axis, along, along1, cross, y, y1);
+-        const wx = axis === 'x' ? along1 : cross, wz = axis === 'x' ? cross : along1;
+-        addLandingPlatform(wx, wz, 0.65, y1);
+-        landings.push({ y: y1 });
+-        lastWx = wx; lastWz = wz;
+-        y = y1; along = along1; dir *= -1;
+-    }
+-    // anything taller than the model itself (mainly warehouses, short
+-    // enough their own roof is still in reach) bridges the remaining gap
+-    // with a real ladder instead of pretending the stairs keep going --
+-    // also doubles as the model's own built-in drop-ladder actually doing
+-    // something, not just sitting there as decoration. Anchored to the
+-    // stairs' actual last landing (which has drifted sideways by however
+-    // many switchback flights it took to get there), not the original
+-    // wall-mount point -- a ladder rooted back at the start would be
+-    // stranded off to the side of wherever the stairs actually left you.
+-    if (topY > clampedTop + 0.3) {
+-        // lastWx/lastWz is already out past the wall (the landing's own
+-        // stand-off) -- a small climbStandoff here, not the usual
+-        // against-a-wall default, so the ladder rises right from the
+-        // landing instead of drifting even further out.
+-        addLadder(lastWx, lastWz, rotY, clampedTop, topY, { climbStandoff: 0.15 });
++// One fire escape, one coordinate system, one source of truth.
++//
++// The old city built TWO unrelated escapes at the same facade: a nice GLTF
++// silhouette plus a differently-oriented procedural collision stair.  They
++// could never reliably agree.  This is now the visible model AND the walkable
++// model.  Every full-floor landing is registered as a real support surface and
++// also becomes a candidate anchor for the upper-floor hanging-bridge pass.
++const FIRE_ESCAPE_DEPTH = 1.18;
++const FIRE_ESCAPE_MIN_FACADE_HALF = 1.35;
++const FIRE_ESCAPE_OUTER_CLEARANCE = 0.22;
++const fireEscapeDeckMat = new THREE.MeshStandardMaterial({ color: 0x343538, roughness: 0.62, metalness: 0.72 });
++const fireEscapeRailMat = new THREE.MeshStandardMaterial({ color: 0x17191b, roughness: 0.5, metalness: 0.78 });
++const fireEscapeBraceMat = new THREE.MeshStandardMaterial({ color: 0x25272a, roughness: 0.7, metalness: 0.65 });
++const elevatedBridgeAnchors = []; // full-floor fire-escape landings; populated while buildings are generated
++
++function addFireEscapeDeck(facade, uCenter, y, tangentHalf, depth = FIRE_ESCAPE_DEPTH, opts = {}) {
++    const { tx, tz } = facadeTangent(facade);
++    const nx = facade.normalX, nz = facade.normalZ;
++    const outwardCenter = depth * 0.5 + 0.025;
++    const x = facade.cx + tx * uCenter + nx * outwardCenter;
++    const z = facade.cz + tz * uCenter + nz * outwardCenter;
++    const hx = facade.axisIsX ? tangentHalf : depth / 2;
++    const hz = facade.axisIsX ? depth / 2 : tangentHalf;
++
++    // Thin grating/deck.  Its VISUAL top and physics support are both exactly y.
++    const deck = new THREE.Mesh(skirtBoxGeo, fireEscapeDeckMat);
++    deck.scale.set(hx * 2, 0.09, hz * 2);
++    deck.position.set(x, y - 0.045, z);
++    scene.add(deck);
++    elevatedPlatforms.push({ x, z, hx, hz, y, supportKind: 'fireEscape' });
++
++    // Outer guard rail and two short end rails.  Wall side deliberately stays
++    // open so the landing can actually meet the carved upper-floor opening.
++    const outerX = x + nx * (depth / 2 - 0.015), outerZ = z + nz * (depth / 2 - 0.015);
++    const outerRail = new THREE.Mesh(skirtBoxGeo, fireEscapeRailMat);
++    outerRail.scale.set(facade.axisIsX ? tangentHalf * 2 : 0.045, 0.72, facade.axisIsX ? 0.045 : tangentHalf * 2);
++    outerRail.position.set(outerX, y + 0.36, outerZ);
++    scene.add(outerRail);
++
++    for (const side of [-1, 1]) {
++        const ex = x + tx * side * (tangentHalf - 0.02);
++        const ez = z + tz * side * (tangentHalf - 0.02);
++        const endRail = new THREE.Mesh(skirtBoxGeo, fireEscapeRailMat);
++        endRail.scale.set(facade.axisIsX ? 0.045 : depth * 0.92, 0.72, facade.axisIsX ? depth * 0.92 : 0.045);
++        endRail.position.set(ex + nx * 0.02, y + 0.36, ez + nz * 0.02);
++        scene.add(endRail);
++    }
++
++    // Diagonal-ish wall braces read as something that could carry the deck.
++    // Keep them simple boxes so the static-world merger can batch them cheaply.
++    if (opts.braces !== false && y > 0.4) {
++        for (const side of [-1, 1]) {
++            const braceH = Math.min(0.9, y * 0.22 + 0.3);
++            const brace = new THREE.Mesh(skirtBoxGeo, fireEscapeBraceMat);
++            brace.scale.set(0.055, braceH, 0.055);
++            brace.position.set(
++                facade.cx + tx * side * tangentHalf * 0.72 + nx * depth * 0.44,
++                y - 0.36,
++                facade.cz + tz * side * tangentHalf * 0.72 + nz * depth * 0.44
++            );
++            brace.rotation.z = facade.axisIsX ? side * 0.5 : 0;
++            brace.rotation.x = facade.axisIsX ? 0 : -side * 0.5;
++            scene.add(brace);
++        }
++    }
++    return { x, z, y, hx, hz, u: uCenter };
++}
++
++function fireEscapePreviewFacade(rect, side, height) {
++    const axisIsX = side.dz !== 0;
++    return {
++        id: -1,
++        cx: rect.cx + side.dx * (rect.hwx + 0.03),
++        cz: rect.cz + side.dz * (rect.hwz + 0.03),
++        normalX: side.dx, normalZ: side.dz,
++        axisIsX,
++        half: axisIsX ? rect.hwx : rect.hwz,
++        yMin: 0, yMax: height,
++    };
++}
++
++function fireEscapeSideFits(rect, side, height) {
++    const facade = fireEscapePreviewFacade(rect, side, height);
++    if (facade.half < FIRE_ESCAPE_MIN_FACADE_HALF) return false;
++    const clearance = solidClearanceAhead(facade.cx, facade.cz, side.dx, side.dz);
++    if (Number.isFinite(clearance) && clearance < FIRE_ESCAPE_DEPTH + FIRE_ESCAPE_OUTER_CLEARANCE) return false;
++    // Reserve enough tangent room for the switchback's midpoint landing, not
++    // merely the small door landing.  Existing neighboring projections must
++    // already clear this entire volume before we punch holes in the wall.
++    const tangentHalf = Math.min(facade.half - 0.08, 1.55);
++    return projectionFits(makeProjectionBox(facade, 0, 0, height, FIRE_ESCAPE_DEPTH + 0.08, tangentHalf));
++}
++
++function buildFireEscape(facade, floorHeight, floorCount, buildingKey) {
++    if (!facade || floorCount < 2) return [];
++    const nx = facade.normalX, nz = facade.normalZ;
++    const { tx, tz } = facadeTangent(facade);
++    const axis = facade.axisIsX ? 'x' : 'z'; // flights run along facade tangent
++    const cross = axis === 'x'
++        ? facade.cz + nz * (FIRE_ESCAPE_DEPTH * 0.72)
++        : facade.cx + nx * (FIRE_ESCAPE_DEPTH * 0.72);
++    const centerAlong = axis === 'x' ? facade.cx : facade.cz;
++
++    // Fit the switchback to THIS facade.  Wide walls use the full silhouette;
++    // narrow-but-valid walls shrink it instead of letting stairs hang past a
++    // corner into the neighboring street.
++    const edgeAllowance = Math.max(0.58, Math.min(1.05, facade.half - 0.5));
++    const wallEndU = -Math.min(0.62, edgeAllowance * 0.65);
++    const turnU = edgeAllowance;
++    const fullHalf = Math.min(0.78, facade.half - 0.08);
++    const turnHalf = Math.min(0.5, Math.max(0.38, facade.half - turnU + 0.15));
++    const landings = [];
++
++    // Small ground toe: makes the first ramp's start visually/physically
++    // obvious without blocking the building's ground-floor doorway.
++    const toeX = facade.cx + tx * wallEndU + nx * FIRE_ESCAPE_DEPTH * 0.72;
++    const toeZ = facade.cz + tz * wallEndU + nz * FIRE_ESCAPE_DEPTH * 0.72;
++    addLandingPlatform(toeX, toeZ, 0.34, 0.06, { color: 0x343538 });
++
++    for (let story = 0; story < floorCount; story++) {
++        const y0 = story * floorHeight;
++        const y1 = (story + 1) * floorHeight;
++        const yMid = (y0 + y1) * 0.5;
++        const a0 = centerAlong + wallEndU;
++        const a1 = centerAlong + turnU;
++
++        addStairFlight(axis, a0, a1, cross, Math.max(0.06, y0), yMid, {
++            width: 0.78, color: 0x343538, railColor: 0x17191b,
++        });
++        const turnX = axis === 'x' ? a1 : cross;
++        const turnZ = axis === 'x' ? cross : a1;
++        addLandingPlatform(turnX, turnZ, turnHalf, yMid, { color: 0x343538 });
++        addStairFlight(axis, a1, a0, cross, yMid, y1, {
++            width: 0.78, color: 0x343538, railColor: 0x17191b,
++        });
++
++        const landing = addFireEscapeDeck(facade, 0, y1, fullHalf);
++        landing.story = story + 1;
++        landings.push(landing);
++
++        // Every non-roof full landing is a genuine higher-floor bridge anchor.
++        // The bridge pass consumes only local, indexed candidates later.
++        if (story + 1 < floorCount) {
++            elevatedBridgeAnchors.push({
++                ...landing,
++                normalX: nx, normalZ: nz,
++                tangentX: tx, tangentZ: tz,
++                buildingKey, facadeId: facade.id,
++                floor: story + 1,
++            });
++        }
+     }
+     return landings;
+ }
+ 
++// ---------- upper-floor hanging bridges ----------
++// Fire-escape full landings are already collision-correct exterior access
++// points, so bridges only connect those rather than inventing a second set of
++// magic balcony coordinates.  Pairing is spatially indexed and one anchor is
++// consumed at most once; generation therefore stays local as the city grows.
++const hangingBridgeDeckMat = new THREE.MeshStandardMaterial({ color: 0x50483b, roughness: 0.88, metalness: 0.18 });
++const hangingBridgeCableMat = new THREE.LineBasicMaterial({ color: 0x242526 });
++function hangingBridgeSpanIsOpen(a, b) {
++    const dx = b.x - a.x, dz = b.z - a.z;
++    const dist = Math.hypot(dx, dz);
++    const steps = Math.max(2, Math.ceil(dist / 0.55));
++    // Skip endpoint samples because the landings themselves intentionally
++    // overlap their building envelope by a few centimeters.
++    for (let i = 2; i < steps - 1; i++) {
++        const t = i / steps;
++        const { col, row } = worldToCellIndex(a.x + dx * t, a.z + dz * t);
++        if (grid[row]?.[col]) return false;
++    }
++    return true;
++}
++
++const _hangingProjectionCandidates = [];
++function hangingBridgeClearsDecor(a, b) {
++    const alongX = Math.abs(a.normalX) > 0.5;
++    const width = 0.92;
++    const y = Math.min(a.y, b.y);
++    let xMin, xMax, zMin, zMax;
++    if (alongX) {
++        const left = a.x < b.x ? a : b, right = a.x < b.x ? b : a;
++        xMin = left.x + left.hx; xMax = right.x - right.hx;
++        zMin = (a.z + b.z) * 0.5 - width * 0.62;
++        zMax = (a.z + b.z) * 0.5 + width * 0.62;
++    } else {
++        const near = a.z < b.z ? a : b, far = a.z < b.z ? b : a;
++        zMin = near.z + near.hz; zMax = far.z - far.hz;
++        xMin = (a.x + b.x) * 0.5 - width * 0.62;
++        xMax = (a.x + b.x) * 0.5 + width * 0.62;
++    }
++    if (xMax <= xMin || zMax <= zMin) return false;
++    const box = { xMin, xMax, zMin, zMax, yMin: y - 0.08, yMax: y + 1.08 };
++    exteriorDecorationVolumeIndex.queryBounds({ minX: xMin, maxX: xMax, minZ: zMin, maxZ: zMax }, _hangingProjectionCandidates);
++    for (const v of _hangingProjectionCandidates) {
++        // The bridge is SUPPOSED to leave from the two fire-escape volumes it
++        // connects. Other projecting hardware/signage must clear its deck and
++        // suspension envelope.
++        if (v.facadeId === a.facadeId || v.facadeId === b.facadeId) continue;
++        if (boxesIntersect(box, v)) return false;
++    }
++    return true;
++}
++
++
++function addHangingBridge(a, b, cableBuckets) {
++    const alongX = Math.abs(b.x - a.x) >= Math.abs(b.z - a.z);
++    const width = 0.92;
++    const y = Math.min(a.y, b.y);
++    let x, z, hx, hz, len;
++    if (alongX) {
++        const left = a.x < b.x ? a : b, right = a.x < b.x ? b : a;
++        const lo = left.x + left.hx, hi = right.x - right.hx;
++        len = hi - lo;
++        if (len <= 0.35) return false;
++        x = (lo + hi) * 0.5; z = (a.z + b.z) * 0.5; hx = len * 0.5; hz = width * 0.5;
++    } else {
++        const near = a.z < b.z ? a : b, far = a.z < b.z ? b : a;
++        const lo = near.z + near.hz, hi = far.z - far.hz;
++        len = hi - lo;
++        if (len <= 0.35) return false;
++        x = (a.x + b.x) * 0.5; z = (lo + hi) * 0.5; hx = width * 0.5; hz = len * 0.5;
++    }
++
++    const deck = new THREE.Mesh(skirtBoxGeo, hangingBridgeDeckMat);
++    deck.scale.set(hx * 2, 0.085, hz * 2);
++    deck.position.set(x, y - 0.0425, z);
++    scene.add(deck);
++    elevatedPlatforms.push({ x, z, hx, hz, y, supportKind: 'hangingBridge' });
++
++    // Cable/hanger lines are accumulated by render chunk.  Hundreds of bridge
++    // cable segments therefore become roughly one line draw per visible chunk,
++    // not one object/draw per cable/hanger/bridge.
++    const chunkX = Math.floor(x / 24), chunkZ = Math.floor(z / 24);
++    const key = `${chunkX},${chunkZ}`;
++    let pos = cableBuckets.get(key);
++    if (!pos) cableBuckets.set(key, pos = []);
++    const sideAxisX = alongX ? 0 : 1;
++    const sideAxisZ = alongX ? 1 : 0;
++    const startAlong = alongX ? x - hx : z - hz;
++    const endAlong = alongX ? x + hx : z + hz;
++    const segments = Math.max(5, Math.ceil(len / 0.9));
++    for (const side of [-1, 1]) {
++        let prev = null;
++        for (let i = 0; i <= segments; i++) {
++            const t = i / segments;
++            const along = startAlong + (endAlong - startAlong) * t;
++            const sag = 4 * t * (1 - t); // 0 ends, 1 middle
++            const px = alongX ? along : x + sideAxisX * side * width * 0.58;
++            const pz = alongX ? z + sideAxisZ * side * width * 0.58 : along;
++            const py = y + 1.0 - sag * 0.4;
++            if (prev) pos.push(prev[0], prev[1], prev[2], px, py, pz);
++            // Hangers every other sample. They stop above deck so they never
++            // become visual bars crossing the player's walking plane.
++            if (i > 0 && i < segments && i % 2 === 0) pos.push(px, py, pz, px, y + 0.18, pz);
++            prev = [px, py, pz];
++        }
++    }
++    return true;
++}
++
++function buildHangingBridges() {
++    if (elevatedBridgeAnchors.length < 2) {
++        console.log(`[gen] 0 upper-floor hanging bridges (${elevatedBridgeAnchors.length} landing anchors)`);
++        return 0;
++    }
++    const index = new SpatialHash2D(10);
++    for (let i = 0; i < elevatedBridgeAnchors.length; i++) {
++        const a = elevatedBridgeAnchors[i];
++        a.__bridgeAnchorId = i;
++        index.insert(a, { minX: a.x - 0.1, maxX: a.x + 0.1, minZ: a.z - 0.1, maxZ: a.z + 0.1 });
++    }
++    const used = new Set();
++    const candidates = [];
++    const cableBuckets = new Map();
++    const maxBuilt = Math.min(160, Math.max(18, Math.ceil(elevatedBridgeAnchors.length * 0.22)));
++    let built = 0;
++
++    for (const a of elevatedBridgeAnchors) {
++        if (built >= maxBuilt || used.has(a.__bridgeAnchorId)) continue;
++        index.queryRadius(a.x, a.z, 10.5, candidates);
++        let best = null, bestGap = Infinity;
++        for (const b of candidates) {
++            if (b === a || used.has(b.__bridgeAnchorId) || a.buildingKey === b.buildingKey) continue;
++            // Pair by REAL elevation, not story label. Buildings roll slightly
++            // different floor heights, so 'floor 2' vs 'floor 3' can still be
++            // the physically closest pair. Keep the endpoint delta within the
++            // controller's normal step-up envelope so the flat deck is walkable.
++            if (Math.abs(a.y - b.y) > 0.55) continue;
++            if (a.normalX * b.normalX + a.normalZ * b.normalZ > -0.99) continue; // must face each other
++            const dx = b.x - a.x, dz = b.z - a.z;
++            if (dx * a.normalX + dz * a.normalZ < 0.5) continue;
++            if (-dx * b.normalX - dz * b.normalZ < 0.5) continue;
++            const alongX = Math.abs(a.normalX) > 0.5;
++            if (alongX ? Math.abs(dz) > 0.72 : Math.abs(dx) > 0.72) continue;
++            const span = alongX ? Math.abs(dx) : Math.abs(dz);
++            const supportHalfA = alongX ? a.hx : a.hz;
++            const supportHalfB = alongX ? b.hx : b.hz;
++            const gap = span - supportHalfA - supportHalfB;
++            if (gap < 0.75 || gap > 8.8 || gap >= bestGap) continue;
++            if (!hangingBridgeSpanIsOpen(a, b)) continue;
++            if (!hangingBridgeClearsDecor(a, b)) continue;
++            best = b; bestGap = gap;
++        }
++        if (!best || rng() > 0.68) continue;
++        if (!addHangingBridge(a, best, cableBuckets)) continue;
++        used.add(a.__bridgeAnchorId); used.add(best.__bridgeAnchorId);
++        built++;
++    }
++
++    for (const [key, positions] of cableBuckets) {
++        if (!positions.length) continue;
++        const geo = new THREE.BufferGeometry();
++        geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
++        const cables = new THREE.LineSegments(geo, hangingBridgeCableMat);
++        cables.name = `hangingBridgeCables:${key}`;
++        scene.add(cables);
++    }
++    console.log(`[gen] ${built} upper-floor hanging bridges (${elevatedBridgeAnchors.length} landing anchors, ${cableBuckets.size} cable chunks)`);
++    return built;
++}
++
+ // a real, climbable ladder: thin rails + rungs mounted on a wall face plus
+ // a tight vertical column of support-only samples. player-physics.js turns
+ // those samples into a time-rate-limited climb instead of treating each one
+@@ -3900,6 +4465,51 @@
+ // slice of WALL, while the actual alley-projecting arm was never
+ // checked against anything.
+ const SIGN_WALL_MOUNT_WIDTH = 0.5;
++const SIGN_OPPOSITE_WALL_GAP = 0.35; // leave real air between a blade sign and whatever solid wall is across the alley
++
++// Distance from a real wall point, walking along its outward cardinal normal,
++// to the near boundary of the next SOLID maze cell. This is intentionally
++// conservative: an opposite building is normally inset from that cell edge,
++// so sizing to the cell boundary guarantees the sign cannot clip the future
++// building even if that building has not been generated yet.
++function solidClearanceAhead(x, z, nx, nz) {
++    const sampleX = x + nx * 0.08, sampleZ = z + nz * 0.08;
++    let { col, row } = worldToCellIndex(sampleX, sampleZ);
++    // Facade points sit just outside the shell, but tiny floating-point edge
++    // errors can classify the sample back into its own solid cell. Walk at
++    // most two cells outward to get onto the actual open side before tracing.
++    for (let n = 0; n < 2 && grid[row]?.[col]; n++) { col += nx; row += nz; }
++    for (let steps = 0; steps < Math.max(GRID_COLS, GRID_ROWS); steps++) {
++        if (col < 0 || row < 0 || col >= GRID_COLS || row >= GRID_ROWS) return Infinity;
++        if (grid[row]?.[col]) {
++            if (nx > 0) return Math.max(0, colEdge[col] - GRID_W / 2 - x);
++            if (nx < 0) return Math.max(0, x - (colEdge[col + 1] - GRID_W / 2));
++            if (nz > 0) return Math.max(0, rowEdge[row] - GRID_H / 2 - z);
++            return Math.max(0, z - (rowEdge[row + 1] - GRID_H / 2));
++        }
++        col += nx; row += nz;
++    }
++    return Infinity;
++}
++
++function safeBladeProjectionDepth(x, z, rotY) {
++    const nx = Math.round(Math.sin(rotY)), nz = Math.round(Math.cos(rotY));
++    const clearance = solidClearanceAhead(x, z, nx, nz);
++    return Number.isFinite(clearance) ? Math.max(0, clearance - SIGN_OPPOSITE_WALL_GAP) : Infinity;
++}
++
++function fitBladeDimensions(width, armLength, maxDepth) {
++    if (!Number.isFinite(maxDepth) || width + armLength <= maxDepth) return { width, armLength };
++    if (maxDepth < 0.15) return null;
++    const scale = maxDepth / Math.max(0.001, width + armLength);
++    let w = width * scale, arm = armLength * scale;
++    // Keep enough metal to read as a bracket and enough panel to read as a
++    // sign, but never violate the actual alley constraint to satisfy a min.
++    arm = Math.min(arm, Math.max(0.045, maxDepth * 0.24));
++    w = maxDepth - arm;
++    if (w < 0.09) { w = Math.max(0.085, maxDepth * 0.68); arm = maxDepth - w; }
++    return arm > 0.035 && w > 0.08 ? { width: w, armLength: arm } : null;
++}
+ 
+ // a sign's real, final dimensions, decided BEFORE it's placed anywhere --
+ // shape/aspect first, width/height/armLength together as one linked
+@@ -3908,26 +4518,18 @@
+ // the real world-space alley projection -- and addSign is handed the
+ // same spec so the mesh it builds can never end up a different size (or
+ // project a different depth) than what was reserved.
+-function createSignSpec() {
++function createSignSpec(maxProjectionDepth = Infinity) {
+     const shape = pick(SIGN_SHAPES);
+-    // width/armLength caps used to be flat constants (1.1-2.6 / 0.55-1.0),
+-    // tuned back when the street pitch was a uniform, much wider cell.
+-    // Left alone, a narrow alley (see CONFIG.maze.streetWidth) would
+-    // still roll signs sized for the old wide streets -- most projection
+-    // checks would simply fail outright (spec categorically too big for
+-    // ANY position on this wall) instead of the intended effect: signs
+-    // from either side crowding/staggering to actually fit. Scaling both
+-    // caps to STREET keeps the old sizes on a wide street (min() is a
+-    // no-op there) and shrinks them exactly enough that a single sign
+-    // still always fits its own alley alone, while two full-size signs
+-    // facing each other still contend -- real retries, real staggering.
+-    const width = randRange(0.7, Math.min(2.6, STREET * 0.55));
++    const desiredWidth = randRange(0.7, Math.min(2.6, STREET * 0.65));
++    const desiredArm = randRange(0.28, Math.min(1.0, STREET * 0.3));
++    const fitted = fitBladeDimensions(desiredWidth, desiredArm, maxProjectionDepth);
++    if (!fitted) return null;
++    const { width, armLength } = fitted;
+     const height = width * (shape.h / shape.w);
+-    const armLength = randRange(0.35, Math.min(1.0, STREET * 0.28));
+     return {
+         shape, width, height, armLength,
+-        wallFootprintWidth: SIGN_WALL_MOUNT_WIDTH, // real facade (u-axis) occupancy
+-        projectionDepth: armLength + width, // real world-space (outward) occupancy -- see addSign's panel layout
++        wallFootprintWidth: SIGN_WALL_MOUNT_WIDTH,
++        projectionDepth: armLength + width,
+     };
+ }
+ 
+@@ -3959,7 +4561,8 @@
+         // different height, a smaller roll, a different u) instead of
+         // giving up early and reading as empty instead of crowded.
+         for (let tries = 0; tries < 20; tries++) {
+-            const spec = createSignSpec();
++            const spec = createSignSpec(safeBladeProjectionDepth(facade.cx, facade.cz, facade.rotY));
++            if (!spec) continue;
+             const halfMount = spec.wallFootprintWidth / 2, halfH = spec.height / 2;
+             if (facade.half * 2 < spec.wallFootprintWidth + 0.3) continue; // this wall can't fit even the small mount plate
+             const minCenterY = facade.yMin + SIGN_BOTTOM_CLEARANCE + halfH;
+@@ -4289,7 +4892,7 @@
+ 
+     const rect = computeCellRect(x, z, kinds, streetSetbackX, streetSetbackZ, partySetback, colHalf(col), rowHalf(row));
+     const { cx, cz, hwx, hwz } = rect;
+-    footprintOf[row][col] = { hwx, hwz };
++    footprintOf[row][col] = { cx, cz, hwx, hwz, height, floorCount };
+ 
+     const shellMat = new THREE.MeshStandardMaterial({ color, roughness: 0.9, side: THREE.DoubleSide });
+     const streetSides = CELL_SIDE_DEFS.filter(s => kinds[s.key] === 'street');
+@@ -4302,6 +4905,9 @@
+     // this cell (shouldn't happen, but never silently drop the door).
+     const forcedSide = opts.forceDoorSide && streetSides.find(s => s.dx === opts.forceDoorSide.dc && s.dz === opts.forceDoorSide.dr);
+     const door = forcedSide || (streetSides.length ? pick(streetSides) : null);
++    rect.edgeKinds = kinds;
++    rect.doorSide = door;
++    rect.floorHeight = floorHeight;
+ 
+     // base gaps -- present on qualifying floors: full-width open
+     // connections to same-site neighbors ('internal'), doorway-width
+@@ -4355,26 +4961,25 @@
+         addStairTowerExpression(cx, cz, stairwell.cornerSignX, stairwell.swZ, height, hwx, floorHeight);
+     }
+ 
+-    // upper-floor exterior opening: a real fire escape now connects to
+-    // an actual floor, not just a decorative mesh bolted onto a sealed
+-    // box. The real fire-escape model/collision (buildFireEscapeStair,
+-    // below) tops out around y=5.4 regardless of how tall this building
+-    // is (its landings only ever land in floor 0/1's band) -- so the
+-    // connection this makes is always to floor 1 specifically, a real
+-    // but bounded slice of "upper floors have exterior routes", not
+-    // every floor. Decided BEFORE floors are built so the opening can be
+-    // carved into that one specific floor.
+-    // signature buildings (see buildArtGallery et al.) route their own
+-    // exterior connections through an authored secondary entrance --
+-    // never a random fire escape punched through wherever this roll
+-    // happens to land (spec: "no random fire escape through gallery
+-    // artwork"). null here just means "no fire-escape opening this
+-    // module", same as any other module that lost the coin flip.
+-    const fireEscapeSide = (floorCount >= 2 && !signatureMode) ? pick([...streetSides, null, null]) : null; // null bias -- not every multi-floor module gets one
++    // Pick a fire-escape face only AFTER we know its real facade envelope and
++    // whether its entire projecting stair volume clears already-built exterior
++    // hardware.  The old code punched a floor-1 hole first and discovered
++    // collisions later; it also paired that hole with a fixed-height GLTF.
++    // This single generated escape reaches every upper floor and the roof, so
++    // carve one centered opening in each actual upper-floor wall band.
++    const eligibleFireEscapeSides = (floorCount >= 2 && !signatureMode)
++        ? streetSides.filter(s => fireEscapeSideFits(rect, s, height))
++        : [];
++    const fireEscapeSide = eligibleFireEscapeSides.length
++        ? pick([...eligibleFireEscapeSides, null, null])
++        : null;
++    rect.fireEscapeSide = fireEscapeSide;
+     if (fireEscapeSide) {
+-        baseGaps.push(fireEscapeSide.dx !== 0
+-            ? { dx: fireEscapeSide.dx, dz: 0, lo: cz - 0.8, hi: cz + 0.8, floorOnly: 1 }
+-            : { dx: 0, dz: fireEscapeSide.dz, lo: cx - 0.8, hi: cx + 0.8, floorOnly: 1 });
++        for (let fl = 1; fl < floorCount; fl++) {
++            baseGaps.push(fireEscapeSide.dx !== 0
++                ? { dx: fireEscapeSide.dx, dz: 0, lo: cz - 0.8, hi: cz + 0.8, floorOnly: fl }
++                : { dx: 0, dz: fireEscapeSide.dz, lo: cx - 0.8, hi: cx + 0.8, floorOnly: fl });
++        }
+     }
+ 
+     // exterior sides exposed on THIS floor specifically because a
+@@ -4429,11 +5034,24 @@
+     if (!signatureMode) {
+         maybeAddMezzanine(cx, cz, hw, floorHeight, door);
+         maybeAddElevator(cx, cz, hw, floorHeight, door);
+-        addCrate(cx - hwx * 0.4, cz + hwz * 0.3);
+-        addPottedPlant(cx + hwx * 0.5, cz - hwz * 0.4);
+-        const indoorJunkCount = 2 + Math.floor((1 - buildingContext.maintenance) * 5 + rng() * 3);
+-        scatterJunk('indoor', cx, cz, indoorJunkCount, hw * 0.55);
+-        if (rng() < 0.2 + buildingContext.maintenance * 0.35) addTableWithClutter(cx + randRange(-hwx * 0.35, hwx * 0.35), cz + randRange(-hwz * 0.35, hwz * 0.35));
++
++        // Furniture now has a reason to be where it is. Storage hugs walls;
++        // ordinary room debris collects in an actual corner; the middle of the
++        // room remains circulation instead of a random-prop minefield.
++        if (rng() < 0.62) placeSemanticCityAsset(rect, pick(['interior/shelf_01', 'interior/shelf_02', 'interior/shelf_03']), 0);
++        if (rng() < 0.42) placeSemanticCityAsset(rect, pick(['interior/desk_01', 'interior/desk_02', 'interior/desk_03', 'interior/desk_04']), 0);
++        const crateCorner = semanticCornerPoint(rect, 0, 0.48);
++        addCrate(crateCorner.x, crateCorner.z);
++        const plantCorner = semanticCornerPoint(rect, 0, 0.45);
++        if (rng() < 0.65) addPottedPlant(plantCorner.x, plantCorner.z);
++        const pileCorner = semanticCornerPoint(rect, 0, 0.55);
++        const pileCount = 2 + Math.floor((1 - buildingContext.maintenance) * 5 + rng() * 2);
++        pileJunkCluster('indoor', pileCorner.x, pileCorner.z, {
++            baseCount: Math.max(3, Math.ceil(pileCount * 0.65)),
++            tiers: pileCount >= 6 ? 3 : 2, spill: Math.max(1, Math.floor(pileCount * 0.25)),
++            spread: Math.min(0.75, hw * 0.28),
++        });
++        if (rng() < 0.18) placeSemanticCityAsset(rect, pick(['interior/chair_01', 'interior/chair_02', 'interior/chair_03']), 0);
+     }
+ 
+     // roof -- always the flat top of this module's own real floors. No
+@@ -4502,30 +5120,13 @@
+         // record of "a sign happened".
+         const facade = makeFacade(rect, s.dx, s.dz, 0, height, door, 'street', `${row},${col}`);
+         if (isFireEscapeFace) {
+-            facadeReserve(facade, 'fireEscape', -0.7, 0.7, 0, height);
+-            // KNOWN GAP (pre-existing, root-caused 2026-08-28, not fixed
+-            // here): every other projecting fixture (awnings at ~4451,
+-            // blade signs at ~3861) calls projectionFits(box) before
+-            // reserveProjectionVolume; this is the one path that doesn't.
+-            // fireEscapeSide is chosen, and this building's interior
+-            // floor-1 opening already carved (see baseGaps, well above,
+-            // before this module's own facades even exist), long before
+-            // it's possible to know whether the projection actually
+-            // clears an ALREADY-BUILT neighbor's fixture at a shared
+-            // alley corner -- that's what occasionally trips the
+-            // "world-space projection intersection self-test" (~1 seed
+-            // in 5-10, confirmed present before this pass at both 11x11
+-            // and 17x17, so it's not a regression from anything in this
+-            // session). A real fix means deciding fireEscapeSide AFTER
+-            // this module's own facade/projection-box exists (checking it
+-            // against neighbors) instead of before floors are built --
+-            // real surgery on a path every generic building in the city
+-            // runs through, deliberately not attempted mid-signature-
+-            // location-pass. Guarding the reservation here without also
+-            // being able to retract the already-carved interior opening
+-            // would trade a cosmetic mesh overlap for an actual hole in
+-            // the wall with nothing built outside it, which is worse.
+-            reserveProjectionVolume(makeProjectionBox(facade, 0, 0, height, 1.3, 0.7));
++            const escapeHalf = Math.min(facade.half - 0.02, 1.55);
++            facadeReserve(facade, 'fireEscape', -escapeHalf, escapeHalf, 0, height);
++            // fireEscapeSideFits already proved this volume clears existing
++            // neighboring projections BEFORE any wall opening was carved.
++            reserveProjectionVolume(makeProjectionBox(
++                facade, 0, 0, height, FIRE_ESCAPE_DEPTH + 0.08, escapeHalf
++            ));
+         }
+         buildingFacades.push(facade);
+         return { s, facade, isFireEscapeFace };
+@@ -4660,29 +5261,11 @@
+             placeRealModel('sprayCans', cx + ox * 0.85, cz + oz * 0.85, randRange(0, Math.PI * 2));
+         }
+ 
+-        // the real fire escape -- only on the one side (if any) actually
+-        // wired to a floor-1 interior opening above (fireEscapeSide, see
+-        // isFireEscapeFace above). Its facade footprint (-0.7..0.7, full
+-        // height) was already reserved before any sign/hardware roll ran.
++        // One visible + collision-enabled fire escape.  Its landings are the
++        // exact support surfaces and bridge anchors; no mirrored decorative
++        // model and no unrelated balcony are stacked on top of it anymore.
+         if (isFireEscapeFace) {
+-            placeRealModel('fireEscape', cx + ox * 1.02, cz + oz * 1.02, rotY);
+-            // (its world-space projection volume was already registered
+-            // above, alongside its facade reservation, before any other
+-            // decoration on this or a neighboring facade got a chance to
+-            // search around it -- see the comment up there)
+-            const landings = buildFireEscapeStair(cx + ox * 1.02, cz + oz * 1.02, rotY, isWarehouse ? height : randRange(5, 11));
+-            if (landings.length) {
+-                // the landing closest to floor 1's own height -- the one
+-                // that actually lines up with the real door opening.
+-                const target = floorHeight * 1.5;
+-                const landing = landings.reduce((best, l) => Math.abs(l.y - target) < Math.abs(best.y - target) ? l : best, landings[0]);
+-                const tangentHalf = s.dz !== 0 ? hwx : hwz;
+-                const tangent = (rng() < 0.5 ? -1 : 1) * tangentHalf * 0.55;
+-                const bx = cx + ox + (s.dz !== 0 ? tangent : 0);
+-                const bz = cz + oz + (s.dx !== 0 ? tangent : 0);
+-                facadeReserve(facade, 'balcony', tangent - 0.6, tangent + 0.6, landing.y - 0.3, landing.y + 1.1);
+-                addBalcony(bx, landing.y, bz, rotY, buildingContext.maintenance);
+-            }
++            buildFireEscape(facade, floorHeight, floorCount, `${row},${col}`);
+         } else if (rng() < 0.12 && !isWarehouse) {
+             // buildings without a fire escape on this face still
+             // occasionally get a (purely decorative) balcony -- real
+@@ -4929,9 +5512,16 @@
+         new THREE.PlaneGeometry(0.5, 0.17),
+         new THREE.MeshStandardMaterial({ map: tex, roughness: 0.5, metalness: 0.3 })
+     );
+-    plate.rotation.x = -0.3;
+-    plate.position.set(0, 1.05, 0.02);
+-    g.add(post, plate);
++    plate.rotation.x = -0.28;
++    // The placard is a real little lectern: push the readable plate in
++    // front of the post instead of letting the post run through its pixels.
++    plate.position.set(0, 1.12, 0.18);
++    const arm = new THREE.Mesh(
++        new THREE.BoxGeometry(0.04, 0.04, 0.18),
++        new THREE.MeshStandardMaterial({ color: 0x2c2c2c, roughness: 0.6, metalness: 0.5 })
++    );
++    arm.position.set(0, 1.04, 0.09);
++    g.add(post, arm, plate);
+     g.rotation.y = facingRotY;
+     g.position.set(x, 0, z);
+     scene.add(g);
+@@ -5324,10 +5914,9 @@
+                 break;
+             }
+         }
+-        // intro terminals -- real CRT props, real early object-model facts
+-        for (let i = 0; i < 2; i++) {
+-            placeCityAsset(pick(TERMINAL_MODELS), ox + randRange(-1.2, 1.2), oz + randRange(-1.2, 1.2), randRange(0, Math.PI * 2), { y: 0 });
+-        }
++        // Intro terminals are furniture now, not randomly yawed floor props.
++        const orientationRect = rectByCellKey.get(`${orientation.row},${orientation.col}`);
++        for (let i = 0; i < 2; i++) placeSemanticCityAsset(orientationRect, pick(TERMINAL_MODELS), 0, { roomHeight: floorHeight });
+         const [objTitle, objDesc] = AS400_CONTENT.concepts[1]; // 'OBJECT'
+         addGalleryPlacard(ox + 0.6, oz - 0.6, randRange(0, Math.PI * 2), objTitle, objDesc);
+         console.log(`[signature] AS/400 ARCHIVE: orientation lobby -- ${placedLineage}/${AS400_CONTENT.lineage.length} lineage panels hung`);
+@@ -5337,9 +5926,7 @@
+         const mr = rectByCellKey.get(`${machineRoom.row},${machineRoom.col}`);
+         const jr = Math.min(mr?.hwx ?? 2, mr?.hwz ?? 2) * 0.6;
+         const machineModels = [...RACK_MODELS, 'as400_archive/line_printer_01', 'as400_archive/line_printer_02', 'as400_archive/tape_drive_01', 'as400_archive/tape_drive_02', 'as400_archive/disk_unit_01', 'as400_archive/operator_console_01'];
+-        for (const modelId of machineModels) {
+-            placeCityAsset(modelId, mx + randRange(-jr, jr), mz + randRange(-jr, jr), randRange(0, Math.PI * 2), { y: 0 });
+-        }
++        for (const modelId of machineModels) placeSemanticCityAsset(mr, modelId, 0, { roomHeight: floorHeight });
+         addGalleryPlacard(mx, mz + jr * 0.7, randRange(0, Math.PI * 2), 'MACHINE ROOM', 'real hardware, real heat -- keep clear of the racks');
+         console.log(`[signature] AS/400 ARCHIVE: machine room -- ${machineModels.length} real hardware props placed`);
+     }
+@@ -5368,8 +5955,8 @@
+             }
+             if (placed) { libraryHung++; ci++; }
+         }
+-        const { x: px, z: pz } = cellToWorld(primary.col, primary.row);
+-        for (let i = 0; i < 3; i++) placeCityAsset(pick(['as400_archive/binder_shelf_01', 'as400_archive/binder_shelf_02', 'as400_archive/binder_shelf_03']), px + randRange(-1.6, 1.6), pz + randRange(-1.6, 1.6), randRange(0, Math.PI * 2), { y: floorHeight });
++        const libraryRect = rectByCellKey.get(`${primary.row},${primary.col}`);
++        for (let i = 0; i < 3; i++) placeSemanticCityAsset(libraryRect, pick(['as400_archive/binder_shelf_01', 'as400_archive/binder_shelf_02', 'as400_archive/binder_shelf_03']), floorHeight, { roomHeight: floorHeight });
+     }
+     console.log(`[signature] AS/400 ARCHIVE: reference library -- ${libraryHung}/${AS400_CONTENT.concepts.length} concept panels hung`);
+ 
+@@ -5396,10 +5983,10 @@
+             }
+             if (placed) { commandsHung++; ci++; }
+         }
+-        const { x: px, z: pz } = cellToWorld(primary.col, primary.row);
++        const labRect = rectByCellKey.get(`${primary.row},${primary.col}`);
+         for (let i = 0; i < 4; i++) {
+             const modelId = rng() < 0.5 ? pick(TERMINAL_MODELS) : pick(WORKSTATION_MODELS);
+-            placeCityAsset(modelId, px + randRange(-1.8, 1.8), pz + randRange(-1.8, 1.8), randRange(0, Math.PI * 2), { y: floorHeight * 2 });
++            placeSemanticCityAsset(labRect, modelId, floorHeight * 2, { roomHeight: floorHeight });
+         }
+     }
+     console.log(`[signature] AS/400 ARCHIVE: terminal lab -- ${commandsHung}/${AS400_CONTENT.commands.length} command pages hung, real terminal/workstation props on floor`);
+@@ -5521,8 +6108,9 @@
+     // posts its own throughput/backlog numbers.
+     {
+         const { x: lx, z: lz } = cellToWorld(lobby.col, lobby.row);
+-        placeCityAsset(pick(['interior/desk_01', 'interior/desk_02', 'interior/desk_03', 'interior/desk_04']), lx, lz, randRange(0, Math.PI * 2), { y: 0 });
+-        placeCityAsset(pick(['interior/chair_01', 'interior/chair_02', 'interior/chair_03']), lx + 0.6, lz + 0.4, randRange(0, Math.PI * 2), { y: 0 });
++        const lobbyRect = rectByCellKey.get(`${lobby.row},${lobby.col}`);
++        placeSemanticCityAsset(lobbyRect, pick(['interior/desk_01', 'interior/desk_02', 'interior/desk_03', 'interior/desk_04']), 0, { roomHeight: floorHeight });
++        placeSemanticCityAsset(lobbyRect, pick(['interior/chair_01', 'interior/chair_02', 'interior/chair_03']), 0, { roomHeight: floorHeight });
+         const [t0, s0] = decoyPool[decoyPool.length - 1]; // 'JUSTIN BROWN' / 'see also: 3,529 others' -- the real headline figure
+         addGalleryPlacard(lx - 0.7, lz - 0.6, randRange(0, Math.PI * 2), t0, s0);
+         let hung = 0;
+@@ -5551,12 +6139,12 @@
+         const rowCount = 2 + Math.floor(rng() * 2);
+         for (let i = 0; i < rowCount; i++) {
+             const modelId = rng() < 0.5 ? pick(CABINET_MODELS) : pick(SHELF_MODELS);
+-            const px = cx + randRange(-hw * 0.7, hw * 0.7), pz = cz + randRange(-hw * 0.7, hw * 0.7);
+-            placeCityAsset(modelId, px, pz, randRange(0, Math.PI * 2), { y: 0 });
++            const placed = placeSemanticCityAsset(r, modelId, 0, { roomHeight: floorHeight });
++            if (!placed) continue;
+             stackFixtures++;
+             if (rng() < 0.7) {
+                 const [t, s] = nextDecoy();
+-                addGalleryPlacard(px + 0.4, pz + 0.3, randRange(0, Math.PI * 2), t, s);
++                addGalleryPlacard(placed.x + placed.tx * 0.45, placed.z + placed.tz * 0.45, placed.rotY, t, s);
+                 stackLabels++;
+             }
+         }
+@@ -5583,8 +6171,8 @@
+         }
+         // a locker bank per floor in the primary shaft -- narrower aisles
+         // reads as "deeper into the archive" the higher you climb.
+-        const { x: px, z: pz } = cellToWorld(primary.col, primary.row);
+-        placeCityAsset(pick(LOCKER_MODELS), px + randRange(-1, 1), pz + randRange(-1, 1), randRange(0, Math.PI * 2), { y: fl * floorHeight });
++        const primaryRect = rectByCellKey.get(`${primary.row},${primary.col}`);
++        placeSemanticCityAsset(primaryRect, pick(LOCKER_MODELS), fl * floorHeight, { roomHeight: floorHeight });
+     }
+     console.log(`[signature] JUSTIN BROWN INDEX: ${floorCount - 1} upper floors -- ${upperHung} real decoy/noise panels hung, deeper into the stacks per floor`);
+ 
+@@ -5658,12 +6246,9 @@
+ 
+     const facadesFor = (cell) => cell && rectByCellKey.get(`${cell.row},${cell.col}`)?.streetFacades || [];
+     const placeCluster = (cell, modelIds, count, yLevel = 0) => {
+-        const { x: cx, z: cz } = cellToWorld(cell.col, cell.row);
+         const r = rectByCellKey.get(`${cell.row},${cell.col}`);
+-        const hw = Math.min(r?.hwx ?? 2, r?.hwz ?? 2) * 0.65;
+-        for (let i = 0; i < count; i++) {
+-            placeCityAsset(pick(modelIds), cx + randRange(-hw, hw), cz + randRange(-hw, hw), randRange(0, Math.PI * 2), { y: yLevel });
+-        }
++        if (!r) return;
++        for (let i = 0; i < count; i++) placeSemanticCityAsset(r, pick(modelIds), yLevel, { roomHeight: floorHeight });
+     };
+ 
+     // main workshop -- the primary cell, main fabrication bench + tool
+@@ -5707,9 +6292,9 @@
+     }
+ 
+     // electronics bench -- solder stations + pegboard, a workbench.
++    placeCluster(electronicsBench, ['systems_workshop/workbench_01', 'systems_workshop/workbench_02'], 1, 0);
+     placeCluster(electronicsBench, ['systems_workshop/solder_station_01', 'systems_workshop/solder_station_02', 'systems_workshop/solder_station_03'], 2, 0);
+     placeCluster(electronicsBench, ['systems_workshop/pegboard_01', 'systems_workshop/pegboard_02'], 1, 0);
+-    placeCluster(electronicsBench, ['systems_workshop/workbench_01', 'systems_workshop/workbench_02'], 1, 0);
+ 
+     // rear yard/loading -- industrial props (generic `industrial`
+     // category, not systems_workshop-exclusive -- a loading yard behind
+@@ -5989,6 +6574,53 @@
+ const SIGN_BACKINGS = ['#020202', '#0a0410', '#04120a', '#12040a', '#0a0a02', '#080808'];
+ const SIGN_BORDER_STYLES = ['solid', 'double', 'cut', 'none'];
+ 
++function wrapCanvasLines(ctx, text, maxWidth, maxLines) {
++    const words = String(text ?? '').trim().split(/\s+/).filter(Boolean);
++    if (!words.length) return [''];
++    const lines = [];
++    let line = '';
++    for (const word0 of words) {
++        let word = word0;
++        // Split pathological corpus tokens instead of horizontally crushing
++        // the whole line with fillText(maxWidth).
++        while (ctx.measureText(word).width > maxWidth && word.length > 1) {
++            let cut = word.length - 1;
++            while (cut > 1 && ctx.measureText(word.slice(0, cut) + '-').width > maxWidth) cut--;
++            const piece = word.slice(0, cut) + '-';
++            if (line) { lines.push(line); line = ''; }
++            lines.push(piece);
++            word = word.slice(cut);
++            if (lines.length >= maxLines) return lines.slice(0, maxLines);
++        }
++        const test = line ? `${line} ${word}` : word;
++        if (ctx.measureText(test).width <= maxWidth || !line) line = test;
++        else { lines.push(line); line = word; }
++        if (lines.length >= maxLines) return lines.slice(0, maxLines);
++    }
++    if (line && lines.length < maxLines) lines.push(line);
++    return lines;
++}
++
++function fitCanvasText(ctx, text, maxWidth, maxLines, maxPx, minPx, font, weight = '') {
++    for (let px = Math.max(minPx, Math.floor(maxPx)); px >= minPx; px--) {
++        ctx.font = `${weight ? weight + ' ' : ''}${px}px ${font}`;
++        const lines = wrapCanvasLines(ctx, text, maxWidth, maxLines);
++        if (lines.length <= maxLines && lines.every(line => ctx.measureText(line).width <= maxWidth + 0.5)) return { px, lines };
++    }
++    ctx.font = `${weight ? weight + ' ' : ''}${minPx}px ${font}`;
++    return { px: minPx, lines: wrapCanvasLines(ctx, text, maxWidth, maxLines) };
++}
++
++function drawCanvasLines(ctx, fit, centerX, centerY, lineHeightMul = 1.05) {
++    const lineH = fit.px * lineHeightMul;
++    const startY = centerY - ((fit.lines.length - 1) * lineH) / 2;
++    for (let i = 0; i < fit.lines.length; i++) ctx.fillText(fit.lines[i], centerX, startY + i * lineH);
++}
++
++const signBracketMaterial = new THREE.MeshStandardMaterial({ color: 0x1c1c1c, roughness: 0.6, metalness: 0.6 });
++const signEdgeMaterial = new THREE.MeshStandardMaterial({ color: 0x181818, roughness: 0.5, metalness: 0.6 });
++const signBracketCylinderGeo = new THREE.CylinderGeometry(1, 1, 1, 5);
++
+ function addSign(x, y, z, rotY, title, subtitle, colorHex, flicker = false, widthOverride = null, shapeOverride = null, armLengthOverride = null) {
+     // callers driving real facade occupancy (see placeSignsOnFacade) pass
+     // the EXACT shape/spec that was already reserved -- rolling a fresh
+@@ -6004,6 +6636,18 @@
+     // sign's own text/light color.
+     const borderColorHex = rng() < 0.3 ? pick(CONFIG.neonPalette) : colorHex;
+ 
++    // Resolve the REAL world-space dimensions before allocating the canvas
++    // texture. A too-tight alley now rejects the sign cheaply instead of
++    // building/uploading a texture only to dispose it immediately.
++    let width = widthOverride ?? randRange(1.5, 2.9);
++    let armLength = armLengthOverride ?? randRange(0.55, 1.0);
++    const safeDepth = safeBladeProjectionDepth(x, z, rotY);
++    const fittedWorld = fitBladeDimensions(width, armLength, safeDepth);
++    if (!fittedWorld && Number.isFinite(safeDepth)) return null;
++    if (fittedWorld) { width = fittedWorld.width; armLength = fittedWorld.armLength; }
++    const height = width * (shape.h / shape.w);
++    const panelDepth = randRange(0.06, 0.1);
++
+     const tex = makePixelTexture((ctx, w, h) => {
+         const color = hexToCss(colorHex);
+         ctx.fillStyle = backing;
+@@ -6027,21 +6671,17 @@
+         }
+         ctx.fillStyle = color;
+         ctx.textAlign = 'center';
+-        // font size is a fraction of canvas height, not a fixed px value,
+-        // so it stays proportioned across every shape in SIGN_SHAPES
+-        ctx.font = `bold ${Math.round(h * 0.32)}px ${font}`;
+-        ctx.fillText(title, w / 2, h / 2 - h * 0.08, w - 8);
+-        ctx.font = `${Math.round(h * 0.17)}px ${font}`;
+-        ctx.fillText(subtitle, w / 2, h / 2 + h * 0.24, w - 8);
++        ctx.textBaseline = 'middle';
++        const textW = Math.max(12, w - Math.max(10, borderWidth * 5));
++        const titleFit = fitCanvasText(ctx, title, textW, shape.h > shape.w ? 3 : 2, h * 0.27, 7, font, 'bold');
++        drawCanvasLines(ctx, titleFit, w / 2, h * 0.34, 1.0);
++        const subFit = fitCanvasText(ctx, subtitle, textW, shape.h > shape.w ? 3 : 2, h * 0.135, 6, font);
++        drawCanvasLines(ctx, subFit, w / 2, h * 0.72, 1.05);
+     }, shape.w, shape.h);
+ 
+-    // callers driving real facade occupancy (see placeSignsOnFacade) pass
+-    // an explicit width sized to fit the actual free span they found --
+-    // "pick a size, then hope it fits" is how signs used to end up
+-    // stacked on top of each other.
+-    const width = widthOverride ?? randRange(1.5, 2.9);
+-    const height = width * (shape.h / shape.w);
+-    const panelDepth = randRange(0.06, 0.1);
++    // The facade allocator (for generic signs) and the real-wall clearance
++    // clamp above (for authored/signature signs) now agree on these exact
++    // dimensions before any mesh is created.
+ 
+     // projecting/blade-sign mount: a wall plate, a horizontal arm, and a
+     // diagonal brace back to the wall -- reads as something load-bearing,
+@@ -6059,8 +6699,7 @@
+     // occupancy -- the reserved world-space projection box
+     // (armLength+width, see placeSignsOnFacade) has to describe the same
+     // arm this mesh actually builds.
+-    const armLength = armLengthOverride ?? randRange(0.55, 1.0);
+-    const bracketMat = new THREE.MeshStandardMaterial({ color: 0x1c1c1c, roughness: 0.6, metalness: 0.6 });
++    const bracketMat = signBracketMaterial;
+     const g = new THREE.Group();
+ 
+     const plate = new THREE.Mesh(skirtBoxGeo, bracketMat); // wall-mounted plate the arm actually anchors to
+@@ -6068,10 +6707,8 @@
+     plate.position.set(0, 0, 0.015);
+     g.add(plate);
+ 
+-    const arm = new THREE.Mesh(
+-        jitterGeometry(new THREE.CylinderGeometry(0.03, 0.03, armLength, 5), 0.006),
+-        bracketMat
+-    );
++    const arm = new THREE.Mesh(signBracketCylinderGeo, bracketMat);
++    arm.scale.set(0.03, armLength, 0.03);
+     arm.rotation.x = Math.PI / 2; // long axis: local +Y -> local +Z
+     arm.position.set(0, 0, armLength / 2);
+     g.add(arm);
+@@ -6081,10 +6718,8 @@
+     // real projecting signs almost always have.
+     const braceDrop = armLength * 0.55;
+     const braceLen = Math.hypot(braceDrop, armLength);
+-    const brace = new THREE.Mesh(
+-        jitterGeometry(new THREE.CylinderGeometry(0.02, 0.02, braceLen, 5), 0.004),
+-        bracketMat
+-    );
++    const brace = new THREE.Mesh(signBracketCylinderGeo, bracketMat);
++    brace.scale.set(0.02, braceLen, 0.02);
+     brace.rotation.x = Math.atan2(armLength, braceDrop);
+     brace.position.set(0, -braceDrop / 2, armLength / 2);
+     g.add(brace);
+@@ -6097,7 +6732,7 @@
+     // 2x armLength (routine at the panel's larger random sizes). Anchoring
+     // the near edge instead of the center makes "reaches past the wall,
+     // never into it" true by construction, not by the luck of the roll.
+-    const edgeMat = new THREE.MeshStandardMaterial({ color: 0x181818, roughness: 0.5, metalness: 0.6 });
++    const edgeMat = signEdgeMaterial;
+     const faceMat = new THREE.MeshBasicMaterial({ map: tex });
+     const panel = new THREE.Mesh(skirtBoxGeo, [edgeMat, edgeMat, edgeMat, edgeMat, faceMat, faceMat]);
+     panel.scale.set(width, height, panelDepth);
+@@ -6328,6 +6963,22 @@
+         box.position.set(ux, height + 0.55, uz);
+         scene.add(post, box);
+     }
++    // Roofs accumulate junk at parapet/corner zones too. Optional yMin on
++    // prop colliders keeps this pile physically on the roof instead of making
++    // an invisible obstacle column through the rooms below it.
++    if (footprint > 3 && rng() < chance(0.28) * QUALITY.propDensity) {
++        const sx = rng() < 0.5 ? -1 : 1, sz = rng() < 0.5 ? -1 : 1;
++        const half = footprint / 2;
++        const inset = Math.min(1.0, half * 0.38);
++        const px = x + sx * Math.max(0.2, half - inset);
++        const pz = z + sz * Math.max(0.2, half - inset);
++        const len = Math.SQRT2;
++        pileJunkCluster('rooftop', px, pz, {
++            baseY: height, backX: sx / len, backZ: sz / len,
++            tiers: 2 + Math.floor(rng() * 2), spread: Math.min(0.68, half * 0.35),
++            baseCount: 3 + Math.floor(rng() * 2), spill: 1,
++        });
++    }
+ }
+ 
+ // framed wall poster — client/design work and art pieces. Warm paper tone,
+@@ -6341,28 +6992,38 @@
+ // own blade-sign bracket (perpendicular arm + brace) is a different,
+ // heavier fixture and stays as-is.
+ const STANDOFF_DEPTH = 0.05;
++const standoffBackMaterials = new Map();
++const standoffPegMaterial = new THREE.MeshStandardMaterial({ color: 0x2a2a2a, roughness: 0.5, metalness: 0.7 });
++const standoffPegGeo = new THREE.CylinderGeometry(1, 1, 1, 6);
++function standoffBackMaterial(color) {
++    const key = color ?? 0x18140f;
++    let mat = standoffBackMaterials.get(key);
++    if (!mat) {
++        mat = new THREE.MeshStandardMaterial({ color: key, roughness: 0.7, metalness: 0.3 });
++        standoffBackMaterials.set(key, mat);
++    }
++    return mat;
++}
+ function mountStandoffPanel(x, y, z, rotY, width, height, panelMat, opts = {}) {
+     const g = new THREE.Group();
+-    const backMat = new THREE.MeshStandardMaterial({ color: opts.backColor ?? 0x18140f, roughness: 0.7, metalness: 0.3 });
+-    const back = new THREE.Mesh(new THREE.BoxGeometry(width * 0.92, height * 0.92, 0.015), backMat);
++    const back = new THREE.Mesh(skirtBoxGeo, standoffBackMaterial(opts.backColor));
++    back.scale.set(width * 0.92, height * 0.92, 0.015);
+     back.position.set(0, 0, 0.008);
+     g.add(back);
+ 
+-    const pegMat = new THREE.MeshStandardMaterial({ color: 0x2a2a2a, roughness: 0.5, metalness: 0.7 });
+     const pegR = Math.min(width, height) * 0.03;
+     for (const sx of [-1, 1]) {
+         for (const sy of [-1, 1]) {
+-            const peg = new THREE.Mesh(
+-                jitterGeometry(new THREE.CylinderGeometry(pegR, pegR, STANDOFF_DEPTH, 6), 0.003),
+-                pegMat
+-            );
++            const peg = new THREE.Mesh(standoffPegGeo, standoffPegMaterial);
++            peg.scale.set(pegR, STANDOFF_DEPTH, pegR);
+             peg.rotation.x = Math.PI / 2;
+             peg.position.set(sx * width * 0.38, sy * height * 0.38, STANDOFF_DEPTH / 2);
+             g.add(peg);
+         }
+     }
+ 
+-    const panel = new THREE.Mesh(new THREE.PlaneGeometry(width, height), panelMat);
++    const panel = new THREE.Mesh(unitPlaneGeo, panelMat);
++    panel.scale.set(width, height, 1);
+     panel.position.set(0, 0, STANDOFF_DEPTH + 0.008);
+     g.add(panel);
+ 
+@@ -6791,9 +7452,16 @@
+         new THREE.PlaneGeometry(0.5, 0.17),
+         new THREE.MeshStandardMaterial({ map: tex, roughness: 0.5, metalness: 0.3 })
+     );
+-    plate.rotation.x = -0.3;
+-    plate.position.set(0, 1.05, 0.02);
+-    g.add(post, plate);
++    plate.rotation.x = -0.28;
++    // The placard is a real little lectern: push the readable plate in
++    // front of the post instead of letting the post run through its pixels.
++    plate.position.set(0, 1.12, 0.18);
++    const arm = new THREE.Mesh(
++        new THREE.BoxGeometry(0.04, 0.04, 0.18),
++        new THREE.MeshStandardMaterial({ color: 0x2c2c2c, roughness: 0.6, metalness: 0.5 })
++    );
++    arm.position.set(0, 1.04, 0.09);
++    g.add(post, arm, plate);
+     // face away from the wall it's mounted near, so the readable side
+     // points into the alley rather than a coin-flip
+     g.rotation.y = facingRotY ?? randRange(0, Math.PI * 2);
+@@ -7084,25 +7752,61 @@
+     return 0.1;
+ }
+ 
+-// a sagging cable strung between two building faces across an alley —
+-// the network made literal. Occasionally a bright "fiber" line instead
+-// of dull rubber-black, glowing faintly with data that's never for you.
+-function addOverheadCable(xa, za, xb, zb) {
+-    const midY = randRange(4, 9);
+-    const sagY = midY - randRange(0.4, 1.2);
++// a sagging cable strung between two REAL building faces across an alley.
++// Store it as chunked line segments instead of a unique TubeGeometry + material
++// per wire. On a 61x61 map the old representation could create thousands of
++// tiny geometries/draws for something that is visually only a few pixels wide.
++const overheadCableSegmentBuckets = new Map();
++const overheadCableMaterials = new Map();
++function overheadCableBucket(x, z, styleKey) {
++    const cx = Math.floor(x / 24), cz = Math.floor(z / 24);
++    const key = `${cx},${cz}:${styleKey}`;
++    let bucket = overheadCableSegmentBuckets.get(key);
++    if (!bucket) overheadCableSegmentBuckets.set(key, bucket = { cx, cz, styleKey, positions: [] });
++    return bucket;
++}
++function addOverheadCable(xa, za, heightA, xb, zb, heightB) {
++    // Both endpoints are clamped below the wall's actual roofline. A one-story
++    // receiver can therefore never get a cable terminating on an imaginary
++    // second floor.
++    const topA = Math.max(0, heightA - 0.25), topB = Math.max(0, heightB - 0.25);
++    const minAttach = 2.5;
++    if (topA < minAttach || topB < minAttach) return false;
++    const endYA = randRange(minAttach, Math.min(8.5, topA));
++    const endYB = randRange(minAttach, Math.min(8.5, topB));
++    const sagY = Math.max(2.15, Math.min(endYA, endYB) - randRange(0.4, 1.15));
+     const isFiber = rng() < 0.2;
+-    const curve = new THREE.QuadraticBezierCurve3(
+-        new THREE.Vector3(xa, midY + randRange(-0.4, 0.4), za),
+-        new THREE.Vector3((xa + xb) / 2, sagY, (za + zb) / 2),
+-        new THREE.Vector3(xb, midY + randRange(-0.4, 0.4), zb)
+-    );
+-    const tube = new THREE.Mesh(
+-        new THREE.TubeGeometry(curve, 8, isFiber ? 0.02 : 0.03, 5, false),
+-        isFiber
+-            ? new THREE.MeshBasicMaterial({ color: pick(CONFIG.neonPalette) })
+-            : new THREE.MeshStandardMaterial({ color: 0x0c0c0c, roughness: 0.9 })
+-    );
+-    scene.add(tube);
++    const color = isFiber ? pick(CONFIG.neonPalette) : 0x0c0c0c;
++    const styleKey = String(color);
++    const bucket = overheadCableBucket((xa + xb) * 0.5, (za + zb) * 0.5, styleKey);
++    const positions = bucket.positions;
++    const segs = 8;
++    let px = xa, py = endYA, pz = za;
++    for (let i = 1; i <= segs; i++) {
++        const t = i / segs, omt = 1 - t;
++        const nx = omt * omt * xa + 2 * omt * t * ((xa + xb) * 0.5) + t * t * xb;
++        const ny = omt * omt * endYA + 2 * omt * t * sagY + t * t * endYB;
++        const nz = omt * omt * za + 2 * omt * t * ((za + zb) * 0.5) + t * t * zb;
++        positions.push(px, py, pz, nx, ny, nz);
++        px = nx; py = ny; pz = nz;
++    }
++    if (!overheadCableMaterials.has(styleKey)) overheadCableMaterials.set(styleKey, new THREE.LineBasicMaterial({ color }));
++    return true;
++}
++function finalizeOverheadCables() {
++    let chunks = 0, segments = 0;
++    for (const [key, bucket] of overheadCableSegmentBuckets) {
++        if (!bucket.positions.length) continue;
++        const geo = new THREE.BufferGeometry();
++        geo.setAttribute('position', new THREE.Float32BufferAttribute(bucket.positions, 3));
++        const lines = new THREE.LineSegments(geo, overheadCableMaterials.get(bucket.styleKey));
++        lines.name = `overheadCables:${key}`;
++        scene.add(lines);
++        chunks++;
++        segments += bucket.positions.length / 6;
++    }
++    console.log(`[perf] overhead wiring: ${segments} cable segments collapsed into ${chunks} chunked line draws`);
++    overheadCableSegmentBuckets.clear();
+ }
+ 
+ // a striped shop awning jutting out from a wall face -- reuses the exact
+@@ -7643,13 +8347,15 @@
+     return bucket;
+ }
+ 
+-function spawnJunkInstance(d, x, z) {
++function spawnJunkInstance(d, x, z, opts = {}) {
+     const bucket = junkBucketFor(d.shape, x, z);
+     const { mesh } = bucket;
+     const idx = bucket.count++;
+-    const sx = randRange(...d.size[0]), sy = randRange(...d.size[1]), sz = randRange(...d.size[2]);
+-    _junkPos.set(x - bucket.originX, sy / 2, z - bucket.originZ);
+-    _junkEuler.set(0, randRange(0, Math.PI * 2), 0);
++    const sizeMul = opts.sizeMul ?? 1;
++    const sx = randRange(...d.size[0]) * sizeMul, sy = randRange(...d.size[1]) * sizeMul, sz = randRange(...d.size[2]) * sizeMul;
++    const baseY = opts.baseY ?? 0;
++    _junkPos.set(x - bucket.originX, baseY + sy / 2, z - bucket.originZ);
++    _junkEuler.set(0, opts.rotY ?? randRange(0, Math.PI * 2), 0);
+     _junkQuat.setFromEuler(_junkEuler);
+     _junkScale.set(sx, sy, sz);
+     _junkMatrix.compose(_junkPos, _junkQuat, _junkScale);
+@@ -7658,7 +8364,7 @@
+     mesh.count = bucket.count;
+     mesh.instanceMatrix.needsUpdate = true;
+     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+-    return { radius: Math.max(sx, sz) / 2, height: sy };
++    return { radius: Math.max(sx, sz) / 2, height: baseY + sy, yMin: baseY, localHeight: sy };
+ }
+ 
+ // scatter `count` junk items matching `context` around (x,z) within
+@@ -7687,6 +8393,70 @@
+     }
+ }
+ 
++// Piles use the same cheap chunked junk instances as loose litter, but build
++// real support chains: broad base pieces, then smaller pieces resting on top
++// of previous pieces. The collider's optional yMin mirrors that vertical
++// interval, so stacked/rooftop junk no longer becomes a solid column to y=0.
++const PILE_JUNK_BY_CONTEXT = new Map();
++const pileFriendly = /crate|box|bag|bucket|tire|cinderblock|pallet|spool|newspaper|pizza|bottle|can|toolbox|lid|sheet|cord/i;
++for (const [context, pool] of JUNK_BY_CONTEXT) PILE_JUNK_BY_CONTEXT.set(context, pool.filter(d => pileFriendly.test(d.name)));
++PILE_JUNK_BY_CONTEXT.set('rooftop', JUNK_DESCRIPTORS.filter(d => pileFriendly.test(d.name) && !/large\)/i.test(d.name)));
++
++function pileJunkCluster(context, x, z, opts = {}) {
++    const pool = PILE_JUNK_BY_CONTEXT.get(context) || PILE_JUNK_BY_CONTEXT.get('alley') || [];
++    if (!pool.length) return null;
++    const baseY = opts.baseY ?? 0;
++    const tiers = Math.max(1, opts.tiers ?? (2 + Math.floor(rng() * 3)));
++    const spread = opts.spread ?? 0.75;
++    let bx = opts.backX ?? 0, bz = opts.backZ ?? 0;
++    const bl = Math.hypot(bx, bz);
++    if (bl > 0.001) { bx /= bl; bz /= bl; }
++    const tx = -bz, tz = bx;
++    const supports = [];
++    let topY = baseY;
++
++    const pushPiece = (px, pz, bottomY, sizeMul) => {
++        const piece = spawnJunkInstance(pick(pool), px, pz, { baseY: bottomY, sizeMul });
++        propColliders.push({ x: px, z: pz, radius: piece.radius, yMin: piece.yMin, height: piece.height });
++        supports.push({ x: px, z: pz, radius: piece.radius, top: piece.height });
++        topY = Math.max(topY, piece.height);
++        return piece;
++    };
++
++    const baseCount = Math.max(3, opts.baseCount ?? (3 + Math.floor(rng() * 3)));
++    for (let i = 0; i < baseCount; i++) {
++        const depth = bl > 0.001 ? randRange(-0.12, spread * 0.55) : randRange(-spread * 0.45, spread * 0.45);
++        const side = randRange(-spread * 0.65, spread * 0.65);
++        pushPiece(x + bx * depth + tx * side, z + bz * depth + tz * side, baseY, randRange(0.7, 1.05));
++    }
++
++    let previousTier = supports.slice();
++    for (let tier = 1; tier < tiers; tier++) {
++        const nextTier = [];
++        const count = Math.max(1, Math.ceil(baseCount * Math.pow(0.6, tier)));
++        for (let i = 0; i < count; i++) {
++            const parent = pick(previousTier.length ? previousTier : supports);
++            const inward = bl > 0.001 ? tier * randRange(0.07, 0.16) : 0;
++            const px = parent.x + bx * inward + randRange(-parent.radius * 0.35, parent.radius * 0.35);
++            const pz = parent.z + bz * inward + randRange(-parent.radius * 0.35, parent.radius * 0.35);
++            const before = supports.length;
++            pushPiece(px, pz, parent.top, Math.max(0.48, 0.9 - tier * 0.12));
++            nextTier.push(supports[before]);
++        }
++        previousTier = nextTier;
++    }
++
++    // A few low pieces spill outward from the base instead of making the pile
++    // read as a neat pyramid. Still instanced, still one local collider each.
++    const spill = opts.spill ?? (1 + Math.floor(rng() * 3));
++    for (let i = 0; i < spill; i++) {
++        const outward = bl > 0.001 ? randRange(-spread * 0.8, -spread * 0.2) : randRange(-spread, spread);
++        const side = randRange(-spread, spread);
++        pushPiece(x + bx * outward + tx * side, z + bz * outward + tz * side, baseY, randRange(0.45, 0.75));
++    }
++    return { x, z, baseY, topY, radius: spread };
++}
++
+ function addConstructionZone(x, z) {
+     // barrier
+     const barrierTex = makePixelTexture((ctx, w, h) => {
+@@ -7963,7 +8733,7 @@
+     trafficSign: (x, z, facingRotY) => addTrafficSign(x, z, facingRotY ?? randRange(0, Math.PI * 2)),
+     trafficSignal: (x, z, facingRotY) => addTrafficSignal(x, z, facingRotY ?? randRange(0, Math.PI * 2)),
+     mileMarker: (x, z, facingRotY) => addMileMarker(x, z, facingRotY ?? randRange(0, Math.PI * 2)),
+-    wantedPoster: (x, z, facingRotY) => addWantedPoster(x, z, facingRotY ?? randRange(0, Math.PI * 2)),
++    wantedPoster: (x, z, facingRotY, placement) => addWantedPoster(x, z, facingRotY ?? randRange(0, Math.PI * 2), placement),
+     crate: addCrate,
+     lantern: addLantern,
+     vendingMachine: addVendingMachine,
+@@ -7995,7 +8765,7 @@
+ 
+ // ---------- lay out the grid ----------
+ 
+-const propColliders = []; // {x, z, radius, height} — soft obstacles, blended into collision pass. height === Infinity means "always a wall, never a valid floor to land on" (used for diffuse/non-object footprints like parks and construction zones)
++const propColliders = []; // {x,z,radius,height,yMin?}. `height` is absolute top-Y; yMin defaults to 0. A yMin lets rooftop/stacked debris collide only where it physically exists instead of becoming an invisible column through every floor below. height === Infinity remains an always-wall footprint.
+ const propColliderIndex = new SpatialHash2D(4);
+ const _propOverlapCandidates = [];
+ let maxPropColliderRadius = 0;
+@@ -8080,7 +8850,8 @@
+ validateFacadeOccupancy();
+ addFacadeDebugOverlay();
+ addSignatureDebugOverlay();
+-buildRooftopCatwalks(); // every building's rooftop deck now exists -- an occasional real bridge between nearby ones
++const rooftopCatwalkCount = buildRooftopCatwalks(); // rooftop-to-rooftop shortcuts
++const hangingBridgeCount = buildHangingBridges(); // floor-to-floor suspension bridges use real fire-escape landings
+ bootStatus(`city built, ${GRID_COLS * GRID_ROWS} cells -- placing props/decoration…`);
+ 
+ // ---------- the one true signal ----------
+@@ -8239,9 +9010,10 @@
+ // the middle of a walkway — real alleys put trash cans and machines
+ // against the building, not centered in the path.
+ const WALL_HUGGING_PROPS = new Set([
+-    'trashCan', 'vendingMachine', 'museumPlacard', 'trafficSign', 'mileMarker', 'wantedPoster',
+-    'fenceSegment', 'stickerTag', 'businessCardLitter',
++    'trashCan', 'vendingMachine', 'museumPlacard', 'trafficSign', 'trafficSignal', 'mileMarker', 'wantedPoster',
++    'lantern', 'weeds', 'fenceSegment', 'stickerTag', 'businessCardLitter',
+ ]);
++const ROAD_ONLY_PROPS = new Set(['trafficSign', 'trafficSignal', 'mileMarker', 'manhole']);
+ 
+ // which adjacent cells (if any) are solid walls this cell could hug —
+ // returns unit direction(s) pointing FROM the open cell TOWARD each wall.
+@@ -8253,90 +9025,103 @@
+     return r % s === 0 || c % s === 0;
+ }
+ 
+-function addStreetSurface(c, r, x, z) {
+-    const horizontal = grid[r]?.[c - 1] === false || grid[r]?.[c + 1] === false;
+-    const vertical = grid[r - 1]?.[c] === false || grid[r + 1]?.[c] === false;
+-    const intersection = horizontal && vertical; // a real 4-way crossing -- gets marked crosswalks + stop bars, not just through-lane dashes
++const openSurfacePlaneGeo = unitPlaneGeo;
++const sidewalkMaterial = new THREE.MeshStandardMaterial({ color: 0xc8c2a8, roughness: 0.9 });
++const roadMaterialCache = new Map();
++const alleySurfaceTex = groundTex.clone();
++alleySurfaceTex.wrapS = alleySurfaceTex.wrapT = THREE.RepeatWrapping;
++alleySurfaceTex.repeat.set(1, 1);
++alleySurfaceTex.needsUpdate = true;
++const alleySurfaceMaterial = new THREE.MeshStandardMaterial({ map: alleySurfaceTex, roughness: 1 });
++
++function roadOpenMask(c, r) {
++    return (grid[r - 1]?.[c] === false ? 1 : 0)
++        | (grid[r + 1]?.[c] === false ? 2 : 0)
++        | (grid[r]?.[c - 1] === false ? 4 : 0)
++        | (grid[r]?.[c + 1] === false ? 8 : 0);
++}
++
++function roadMaterialFor(c, r) {
++    const mask = roadOpenMask(c, r);
++    let mat = roadMaterialCache.get(mask);
++    if (mat) return mat;
++    const north = !!(mask & 1), south = !!(mask & 2), west = !!(mask & 4), east = !!(mask & 8);
++    const horizontal = west || east;
++    const vertical = north || south;
++    const intersection = horizontal && vertical;
+     const tex = makePixelTexture((ctx, w, h) => {
+-        ctx.fillStyle = '#1e1e1e'; // asphalt — darker/cleaner than alley pavement
++        ctx.fillStyle = '#1e1e1e';
+         ctx.fillRect(0, 0, w, h);
+         ctx.fillStyle = '#c8c840';
+         if (horizontal) for (let i = 6; i < w; i += 16) ctx.fillRect(i, h / 2 - 1, 8, 2);
+         if (vertical) for (let i = 6; i < h; i += 16) ctx.fillRect(w / 2 - 1, i, 2, 8);
++        if (!intersection) return;
+ 
+-        if (intersection) {
+-            // 4 INDEPENDENT crossings, one per actual approach -- each
+-            // sits near that approach's own outer edge (connecting one
+-            // sidewalk to the opposite one straight across the roadway),
+-            // not a single zebra "+" baked through the center. Only the
+-            // approaches that actually exist get one, so a T-intersection
+-            // gets 3 crossings, never a phantom 4th toward a wall. Stop
+-            // bars sit just outside (further from center than) their own
+-            // crossing, on the vehicle-approach side -- encountered
+-            // first, same order a real driver hits them in. The whole
+-            // middle of the intersection stays open asphalt.
+-            const approaches = [
+-                { open: grid[r - 1]?.[c] === false, edge: 'n' },
+-                { open: grid[r + 1]?.[c] === false, edge: 's' },
+-                { open: grid[r]?.[c - 1] === false, edge: 'w' },
+-                { open: grid[r]?.[c + 1] === false, edge: 'e' },
+-            ];
+-            const crossDepth = 11, edgeGap = 7, span = 34, stripeW = 5, stripeGap = 4;
+-            const barLen = span - 4, barThick = 3;
+-            ctx.fillStyle = '#e8e8dc';
+-            for (const a of approaches) {
+-                if (!a.open) continue;
+-                if (a.edge === 'n' || a.edge === 's') {
+-                    const y0 = a.edge === 'n' ? edgeGap : h - edgeGap - crossDepth;
+-                    for (let sx = w / 2 - span / 2; sx < w / 2 + span / 2; sx += stripeGap + stripeW) {
+-                        ctx.fillRect(sx, y0, stripeW, crossDepth);
+-                    }
+-                } else {
+-                    const x0 = a.edge === 'w' ? edgeGap : w - edgeGap - crossDepth;
+-                    for (let sz = h / 2 - span / 2; sz < h / 2 + span / 2; sz += stripeGap + stripeW) {
+-                        ctx.fillRect(x0, sz, crossDepth, stripeW);
+-                    }
+-                }
+-                if (a.edge === 'n') ctx.fillRect(w / 2 - barLen / 2, edgeGap - barThick - 2, barLen, barThick);
+-                else if (a.edge === 's') ctx.fillRect(w / 2 - barLen / 2, h - edgeGap + 2, barLen, barThick);
+-                else if (a.edge === 'w') ctx.fillRect(edgeGap - barThick - 2, h / 2 - barLen / 2, barThick, barLen);
+-                else ctx.fillRect(w - edgeGap + 2, h / 2 - barLen / 2, barThick, barLen);
++        const approaches = [
++            { open: north, edge: 'n' }, { open: south, edge: 's' },
++            { open: west, edge: 'w' }, { open: east, edge: 'e' },
++        ];
++        const crossDepth = 11, edgeGap = 7, span = 34, stripeW = 5, stripeGap = 4;
++        const barLen = span - 4, barThick = 3;
++        ctx.fillStyle = '#e8e8dc';
++        for (const a of approaches) {
++            if (!a.open) continue;
++            if (a.edge === 'n' || a.edge === 's') {
++                const y0 = a.edge === 'n' ? edgeGap : h - edgeGap - crossDepth;
++                for (let sx = w / 2 - span / 2; sx < w / 2 + span / 2; sx += stripeGap + stripeW) ctx.fillRect(sx, y0, stripeW, crossDepth);
++            } else {
++                const x0 = a.edge === 'w' ? edgeGap : w - edgeGap - crossDepth;
++                for (let sz = h / 2 - span / 2; sz < h / 2 + span / 2; sz += stripeGap + stripeW) ctx.fillRect(x0, sz, crossDepth, stripeW);
+             }
++            if (a.edge === 'n') ctx.fillRect(w / 2 - barLen / 2, edgeGap - barThick - 2, barLen, barThick);
++            else if (a.edge === 's') ctx.fillRect(w / 2 - barLen / 2, h - edgeGap + 2, barLen, barThick);
++            else if (a.edge === 'w') ctx.fillRect(edgeGap - barThick - 2, h / 2 - barLen / 2, barThick, barLen);
++            else ctx.fillRect(w - edgeGap + 2, h / 2 - barLen / 2, barThick, barLen);
+         }
+     }, 64, 64);
+-    // full cell width (a hair OVER it, not under) -- connected street
+-    // cells now share an exact or slightly-overlapping boundary instead
+-    // of each shrinking in from it, so there's no gap for the ground
+-    // plane underneath to show through as a seam/crack. Y offset (below)
+-    // is still what handles z-fighting against the ground plane -- never
+-    // physical X/Z shrinkage.
+-    const road = new THREE.Mesh(
+-        new THREE.PlaneGeometry(colSize[c] * 1.01, rowSize[r] * 1.01),
+-        new THREE.MeshStandardMaterial({ map: tex, roughness: 1 })
+-    );
++    mat = new THREE.MeshStandardMaterial({ map: tex, roughness: 1 });
++    roadMaterialCache.set(mask, mat);
++    return mat;
++}
++
++// Every reachable outdoor cell owns a real visible floor now. Through-roads
++// get asphalt/markings; the remaining maze passages get alley pavement;
++// parks deliberately cover their own cells with grass later/on top.
++function addStreetSurface(c, r, x, z, street = isStreetCell(c, r)) {
++    const road = new THREE.Mesh(openSurfacePlaneGeo, street ? roadMaterialFor(c, r) : alleySurfaceMaterial);
+     road.rotation.x = -Math.PI / 2;
++    road.scale.set(colSize[c] * 1.01, rowSize[r] * 1.01, 1);
+     road.position.set(x, 0.006, z);
+     scene.add(road);
+ 
+-    // real sidewalk strip wherever this street cell actually borders a
+-    // building — a raised, lighter concrete band with a curb lip. Same
+-    // full-width-plus-a-hair rule along its own length so consecutive
+-    // sidewalk cells butt/overlap continuously instead of leaving a gap
+-    // every cell. Width/length are each axis's own local size now (a
+-    // narrow street cell and the wide cell it borders don't share a
+-    // pitch), not a single CELL scalar.
++    if (!street) return;
+     for (const w of wallDirections(c, r)) {
+         const stripWidthX = colSize[c] * 0.18, stripWidthZ = rowSize[r] * 0.18;
+         const stripLenX = colSize[c] * 1.01, stripLenZ = rowSize[r] * 1.01;
+-        const strip = new THREE.Mesh(
+-            new THREE.BoxGeometry(w.dx !== 0 ? stripWidthX : stripLenX, 0.06, w.dz !== 0 ? stripWidthZ : stripLenZ),
+-            new THREE.MeshStandardMaterial({ color: 0xc8c2a8, roughness: 0.9 })
+-        );
++        const sx = w.dx !== 0 ? stripWidthX : stripLenX;
++        const sz = w.dz !== 0 ? stripWidthZ : stripLenZ;
++        const strip = new THREE.Mesh(skirtBoxGeo, sidewalkMaterial);
++        strip.scale.set(sx, 0.06, sz);
+         strip.position.set(x + w.dx * (colHalf(c) - stripWidthX / 2), 0.03, z + w.dz * (rowHalf(r) - stripWidthZ / 2));
+         scene.add(strip);
+     }
+ }
+ 
++function layOpenCellSurfaces() {
++    let roadCells = 0, alleyCells = 0, parkSkipped = 0;
++    for (let r = 1; r < GRID_ROWS - 1; r++) {
++        for (let c = 1; c < GRID_COLS - 1; c++) {
++            if (grid[r][c]) continue;
++            if (parkCells.has(`${c},${r}`)) { parkSkipped++; continue; }
++            const { x, z } = cellToWorld(c, r);
++            const street = isStreetCell(c, r);
++            addStreetSurface(c, r, x, z, street);
++            if (street) roadCells++; else alleyCells++;
++        }
++    }
++    console.log(`[gen] explicit ground surfaces: ${roadCells} road + ${alleyCells} alley cells, ${parkSkipped} parks (shared ${roadMaterialCache.size} road materials + 1 alley material)`);
++}
++
+ // a park bench — reused wherever a park needs one.
+ function addBench(x, z, rotY) {
+     const mat = new THREE.MeshStandardMaterial({ color: 0x5a4530, roughness: 0.9 });
+@@ -8458,6 +9243,58 @@
+     return dirs;
+ }
+ 
++// Exact wall-plane anchor for an open cell and one adjacent solid cell.
++// Unlike the old "0.76 of the open cell half-width" guess, this uses the
++// generated building's actual inset footprint and keeps every wall-hugging
++// object on that plane even when the building is asymmetrically set back.
++function wallAnchorForOpenCell(c, r, w, standoff = 0.02, tangentMargin = 0.15) {
++    const bc = c + w.dx, br = r + w.dz;
++    const fp = footprintOf[br]?.[bc];
++    if (!fp) return null;
++    const outwardX = -w.dx, outwardZ = -w.dz;
++    let wallX = fp.cx, wallZ = fp.cz, tx = 0, tz = 0, lo, hi;
++    const { x: openX, z: openZ } = cellToWorld(c, r);
++    if (w.dx !== 0) {
++        wallX = fp.cx - w.dx * fp.hwx;
++        tx = 0; tz = 1;
++        lo = Math.max(fp.cz - fp.hwz, openZ - rowHalf(r)) + tangentMargin;
++        hi = Math.min(fp.cz + fp.hwz, openZ + rowHalf(r)) - tangentMargin;
++        if (lo > hi) return null;
++        wallZ = randRange(lo, hi);
++    } else {
++        wallZ = fp.cz - w.dz * fp.hwz;
++        tx = 1; tz = 0;
++        lo = Math.max(fp.cx - fp.hwx, openX - colHalf(c)) + tangentMargin;
++        hi = Math.min(fp.cx + fp.hwx, openX + colHalf(c)) - tangentMargin;
++        if (lo > hi) return null;
++        wallX = randRange(lo, hi);
++    }
++    return {
++        x: wallX + outwardX * standoff,
++        z: wallZ + outwardZ * standoff,
++        wallX, wallZ, tx, tz,
++        normalX: outwardX, normalZ: outwardZ,
++        rotY: outwardRotationY(outwardX, outwardZ),
++        wallHeight: fp.height,
++        tangentLo: lo, tangentHi: hi,
++        building: fp,
++    };
++}
++
++function clearSpotAlongWall(anchor, radius) {
++    for (const shift of [0, 0.32, -0.32, 0.62, -0.62]) {
++        let px = anchor.x + anchor.tx * shift, pz = anchor.z + anchor.tz * shift;
++        if (anchor.tx) px = THREE.MathUtils.clamp(px, anchor.tangentLo, anchor.tangentHi);
++        if (anchor.tz) pz = THREE.MathUtils.clamp(pz, anchor.tangentLo, anchor.tangentHi);
++        const blocked = propCandidatesNear(px, pz, radius + 0.1).some(p => {
++            const dx = px - p.x, dz = pz - p.z;
++            return dx * dx + dz * dz < (radius + p.radius + 0.1) ** 2;
++        });
++        if (!blocked) return { ...anchor, x: px, z: pz };
++    }
++    return anchor;
++}
++
+ // a real inside corner: exactly two of this cell's wall directions that
+ // are perpendicular (not opposite) -- the actual geometric nook debris
+ // would realistically accumulate in (building/building around an alley
+@@ -8473,82 +9310,7 @@
+     return null;
+ }
+ 
+-// a single climbable-terrain item -- exactly `targetTop` tall (footprint
+-// jitters for visual variety, height doesn't) so the collider height
+-// (what player-physics.js sees) always exactly matches
+-// what's rendered, and every item within one tier is genuinely
+-// step-across-flat with the others -- the same "no daylight between
+-// geometry and collision" rule the rest of this refactor holds to.
+-const CORNER_PILE_COLORS = [0x6a5a42, 0x8a7858, 0x3a3a3a, 0x5a4a34, 0x707060, 0x4a4438];
+-function addPileCrate(x, z, targetTop) {
+-    const h = targetTop;
+-    const w = randRange(0.45, 0.7), d = randRange(0.45, 0.7);
+-    const mesh = new THREE.Mesh(
+-        jitterGeometry(new THREE.BoxGeometry(w, h, d), 0.04),
+-        new THREE.MeshStandardMaterial({ color: pick(CORNER_PILE_COLORS), roughness: 0.9 })
+-    );
+-    mesh.position.set(x, h / 2, z);
+-    mesh.rotation.y = randRange(0, Math.PI * 2);
+-    scene.add(mesh);
+-    return { radius: Math.max(w, d) / 2, height: h };
+-}
+-
+-// debris genuinely accumulated into a corner -- spreads horizontally
+-// near the floor and grows vertically toward the back/dense end (deeper
+-// into the nook, backed against both walls), in tiers rather than one
+-// big flat-topped collider. The first couple of tiers rise gently enough
+-// to auto-step onto (same max-step rule as stepping onto a single
+-// crate); the later ones are a deliberately bigger rise that needs a
+-// real jump -- a genuine climbable progression, not a ramp in disguise.
+-// Each tier is 2-3 independent crates (independent colliders/walkable
+-// tops), not one wide box, so the pile's silhouette is irregular and it
+-// still reads as accumulated junk up close.
+-// same visual/collision contract as addPileCrate ({radius, height}, a
+-// real GLB instead of a primitive box) -- scaled non-uniformly on Y so
+-// its actual height always lands exactly on targetTop regardless of the
+-// source asset's natural size, same "no daylight between geometry and
+-// collision" rule addPileCrate follows.
+-function addPileAsset(def, x, z, targetTop) {
+-    const [bx0, by0, bz0] = def.boundsMin, [bx1, , bz1] = def.boundsMax;
+-    const naturalH = Math.max(0.05, def.boundsMax[1] - by0);
+-    const scaleY = targetTop / naturalH;
+-    const halfX = Math.max(Math.abs(bx0), Math.abs(bx1));
+-    const halfZ = Math.max(Math.abs(bz0), Math.abs(bz1));
+-    placeCityAsset(def.id, x, z, randRange(0, Math.PI * 2), { y: -by0 * scaleY, scale: { x: 1, y: scaleY, z: 1 } });
+-    return { radius: Math.max(halfX, halfZ), height: targetTop };
+-}
+-const cornerPileAssetPool = cityAssetsByCategory('trash_climbable');
+-
+-function buildCornerPile(x, z, intoX, intoZ, tierCount) {
+-    let height = 0, px = x, pz = z;
+-    for (let i = 0; i < tierCount; i++) {
+-        const rise = i < 2 ? randRange(0.35, 0.6) : randRange(0.75, 0.92);
+-        height += rise;
+-        px += intoX * randRange(0.3, 0.5);
+-        pz += intoZ * randRange(0.3, 0.5);
+-        // ~35% of tiers use one real trash_climbable GLB (an actual
+-        // authored pile/stack shape from the city model pack) instead of
+-        // 2-3 primitive crates -- both read as "junk pile", the real
+-        // assets add silhouette variety boxes can't.
+-        if (cornerPileAssetPool.length && rng() < 0.35) {
+-            const def = pick(cornerPileAssetPool);
+-            const jx = px + randRange(-0.25, 0.25), jz = pz + randRange(-0.25, 0.25);
+-            const { radius, height: realHeight } = addPileAsset(def, jx, jz, height);
+-            propColliders.push({ x: jx, z: jz, radius, height: realHeight });
+-            continue;
+-        }
+-        const itemCount = 2 + Math.floor(rng() * 2);
+-        for (let j = 0; j < itemCount; j++) {
+-            const jx = px + randRange(-0.45, 0.45), jz = pz + randRange(-0.45, 0.45);
+-            const { radius, height: realHeight } = addPileCrate(jx, jz, height);
+-            propColliders.push({ x: jx, z: jz, radius, height: realHeight });
+-        }
+-    }
+-    // loose debris around the base -- tires/bags/scrap, purely cosmetic
+-    // flavor scattered at the pile's foot, not part of the climb itself.
+-    scatterJunk('alley', x + intoX * 0.3, z + intoZ * 0.3, 2 + Math.floor(rng() * 2), 0.9);
+-    return height;
+-}
++// Legacy box-tier corner pile removed: pileJunkCluster above is the single vertical debris system.
+ 
+ // which single axis (if any) this open cell is a straight through-
+ // corridor along -- open neighbors on both sides of exactly one axis.
+@@ -8573,8 +9335,8 @@
+     return axis === 'x' ? [randRange(-spread, spread), side] : [side, randRange(-spread, spread)];
+ }
+ 
+-// reject placements that would overlap something already there — cheap
+-// O(n) scan against everything placed so far. Real streets don't stack
++// reject placements that would overlap something already there — local
++// spatial-hash query, so city growth does not turn this into an O(n) scan. Real streets don't stack
+ // a trash can through a lamp post. Gives up after a few tries rather
+ // than leaving a gap (density matters more than a rare overlap).
+ function findClearSpot(cx, cz, radius, tryOffsets) {
+@@ -8589,6 +9351,8 @@
+     return { x: cx + tryOffsets[0][0], z: cz + tryOffsets[0][1] }; // give up, place anyway
+ }
+ 
++layOpenCellSurfaces();
++
+ // general clutter across all remaining open cells (skip start cell + used plazas)
+ const usedPlazas = new Set(shuffledPlazas.slice(0, plazaCursor).map(([c, r]) => `${c},${r}`));
+ for (let r = 1; r < GRID_ROWS - 1; r++) {
+@@ -8609,87 +9373,140 @@
+         // the real-model clones below aren't free, so all of this still
+         // scales with QUALITY.propDensity like everything else does.
+         const onStreet = isStreetCell(c, r);
+-        const laneAxis = throughAxis(c, r); // null off a straight corridor -- carve-out only applies where there's a single lane to protect
+-        if (onStreet) {
+-            addStreetSurface(c, r, x, z);
+-            if (rng() < 0.45 * QUALITY.propDensity) scatterJunk('street', x, z, 1 + Math.floor(rng() * 3), Math.min(chx, chz) * 0.68, laneAxis);
+-            if (rng() < 0.15 * QUALITY.propDensity) {
+-                const w = wallDirections(c, r);
+-                if (w.length) {
+-                    const dir = pick(w);
+-                    placeRealModel('streetLamp', x + dir.dx * (chx * 0.8), z + dir.dz * (chz * 0.8), randRange(0, Math.PI * 2));
+-                }
++        const laneAxis = throughAxis(c, r);
++        const wallsHere = wallDirections(c, r);
++        let pileSpot = null;
++
++        // Most debris now has a REASON to be where it is. Corners get the
++        // strongest accumulation; a single wall gets a smaller leaning pile;
++        // loose scatter is reduced to the handful of pieces that escaped the
++        // heap. This also keeps the centerline much cleaner on narrow alleys.
++        const corner = findCornerDirs(c, r);
++        if (corner && rng() < (onStreet ? 0.18 : 0.62) * QUALITY.propDensity) {
++            const intoX = corner[0].dx + corner[1].dx, intoZ = corner[0].dz + corner[1].dz;
++            const len = Math.hypot(intoX, intoZ) || 1;
++            const bx = intoX / len, bz = intoZ / len;
++            const reach = Math.min(chx, chz) * 0.34;
++            const px = x + bx * reach, pz = z + bz * reach;
++            const pile = pileJunkCluster(onStreet ? 'street' : 'alley', px, pz, {
++                backX: bx, backZ: bz,
++                tiers: onStreet ? 2 : 2 + Math.floor(rng() * 3),
++                spread: Math.min(0.82, Math.min(chx, chz) * 0.5),
++                baseCount: onStreet ? 3 : 4 + Math.floor(rng() * 2),
++                spill: onStreet ? 1 : 2,
++            });
++            if (pile) pileSpot = pile;
++        } else if (wallsHere.length && rng() < (onStreet ? 0.12 : 0.34) * QUALITY.propDensity) {
++            const w = pick(wallsHere);
++            const wall = wallAnchorForOpenCell(c, r, w, 0.48, 0.3);
++            if (wall) {
++                const pile = pileJunkCluster(onStreet ? 'street' : 'alley', wall.x, wall.z, {
++                    backX: w.dx, backZ: w.dz,
++                    tiers: onStreet ? 1 + Math.floor(rng() * 2) : 2 + Math.floor(rng() * 2),
++                    spread: onStreet ? 0.48 : 0.68,
++                    baseCount: onStreet ? 3 : 4,
++                    spill: 1,
++                });
++                if (pile) pileSpot = pile;
+             }
+-        } else if (rng() < 0.75 * QUALITY.propDensity) {
+-            scatterJunk('alley', x, z, 1 + Math.floor(rng() * 3), Math.min(chx, chz) * 0.6, laneAxis);
+         }
+-        // corner piles: a real inside corner (2 perpendicular walls --
+-        // building/building, building/dead-end, etc.) gets a chance at
+-        // accumulated debris that's actually climbable terrain, not just
+-        // denser scatter. Never on a through-street -- that's thoroughfare,
+-        // not a place junk piles up.
+-        if (!onStreet) {
+-            const corner = findCornerDirs(c, r);
+-            if (corner && rng() < 0.22 * QUALITY.propDensity) {
+-                const intoX = corner[0].dx + corner[1].dx, intoZ = corner[0].dz + corner[1].dz; // toward the nook both walls form
+-                const len = Math.hypot(intoX, intoZ) || 1;
+-                const pileReach = Math.min(chx, chz) * 0.44;
+-                buildCornerPile(x + (intoX / len) * pileReach, z + (intoZ / len) * pileReach, intoX / len, intoZ / len, 2 + Math.floor(rng() * 3));
++
++        // Loose litter is secondary now, not the dominant placement mode.
++        if (onStreet) {
++            if (rng() < 0.16 * QUALITY.propDensity) scatterJunk('street', x, z, 1, Math.min(chx, chz) * 0.62, laneAxis);
++            if (rng() < 0.12 * QUALITY.propDensity && wallsHere.length) {
++                const dir = pick(wallsHere);
++                const lamp = wallAnchorForOpenCell(c, r, dir, 0.5, 0.35);
++                if (lamp) placeRealModel('streetLamp', lamp.x, lamp.z, lamp.rotY);
+             }
++        } else if (rng() < 0.22 * QUALITY.propDensity) {
++            scatterJunk('alley', x, z, 1 + (rng() < 0.2 ? 1 : 0), Math.min(chx, chz) * 0.58, laneAxis);
++        }
++
++        // The expensive scanned models follow the same accumulation point
++        // instead of independently spraying themselves across the cell.
++        const realBaseX = pileSpot?.x ?? x, realBaseZ = pileSpot?.z ?? z;
++        if (rng() < (pileSpot ? 0.08 : 0.015) * QUALITY.propDensity) placeRealModel('tyre', realBaseX + randRange(-0.45, 0.45), realBaseZ + randRange(-0.45, 0.45), randRange(0, Math.PI * 2));
++        if (rng() < (pileSpot ? 0.08 : 0.015) * QUALITY.propDensity) placeRealModel('trashbag', realBaseX + randRange(-0.4, 0.4), realBaseZ + randRange(-0.4, 0.4), randRange(0, Math.PI * 2));
++        if (onStreet && rng() < 0.045 * QUALITY.propDensity) placeRealModel('manhole', x + randRange(-0.5, 0.5), z + randRange(-0.5, 0.5), randRange(0, Math.PI * 2));
++        if (wallsHere.length && rng() < 0.025 * QUALITY.propDensity) {
++            const bin = wallAnchorForOpenCell(c, r, pick(wallsHere), 0.34, 0.3);
++            if (bin) placeRealModel('trashCanReal', bin.x, bin.z, bin.rotY);
+         }
+-        // real scanned props are NOT instanced (each is its own draw
+-        // call) -- sparse by design, and doubly gated on quality tier.
+-        if (rng() < 0.05 * QUALITY.propDensity) placeRealModel('tyre', x + randRange(-1.5, 1.5), z + randRange(-1.5, 1.5), randRange(0, Math.PI * 2));
+-        if (rng() < 0.05 * QUALITY.propDensity) placeRealModel('trashbag', x + randRange(-1.5, 1.5), z + randRange(-1.5, 1.5), randRange(0, Math.PI * 2));
+-        if (rng() < 0.06 * QUALITY.propDensity) placeRealModel('manhole', x + randRange(-0.6, 0.6), z + randRange(-0.6, 0.6), randRange(0, Math.PI * 2));
+-        if (rng() < 0.04 * QUALITY.propDensity) placeRealModel('trashCanReal', x + randRange(-1.4, 1.4), z + randRange(-1.4, 1.4), randRange(0, Math.PI * 2));
+ 
+         // overhead cables: strung across the alley wherever there's a
+         // building directly on both sides (either axis) — the literal
+         // network overhead, independent of ground clutter below it.
+         if (grid[r]?.[c - 1] && grid[r]?.[c + 1]) {
+-            const wa = cellToWorld(c - 1, r), wb = cellToWorld(c + 1, r);
+-            const fa = footprintOf[r][c - 1]?.hwx ?? colHalf(c - 1) * 0.6, fb = footprintOf[r][c + 1]?.hwx ?? colHalf(c + 1) * 0.6;
+-            if (rng() < 0.5) addOverheadCable(wa.x + fa, wa.z, wb.x - fb, wb.z);
++            const a = footprintOf[r][c - 1], b = footprintOf[r][c + 1];
++            if (a && b && rng() < 0.5) {
++                const zLo = Math.max(a.cz - a.hwz, b.cz - b.hwz, z - chz * 0.75);
++                const zHi = Math.min(a.cz + a.hwz, b.cz + b.hwz, z + chz * 0.75);
++                if (zHi - zLo > 0.25) {
++                    const cableZ = randRange(zLo + 0.1, zHi - 0.1);
++                    addOverheadCable(a.cx + a.hwx + 0.01, cableZ, a.height, b.cx - b.hwx - 0.01, cableZ, b.height);
++                }
++            }
+         }
+         if (grid[r - 1]?.[c] && grid[r + 1]?.[c]) {
+-            const wa = cellToWorld(c, r - 1), wb = cellToWorld(c, r + 1);
+-            const fa = footprintOf[r - 1][c]?.hwz ?? rowHalf(r - 1) * 0.6, fb = footprintOf[r + 1][c]?.hwz ?? rowHalf(r + 1) * 0.6;
+-            if (rng() < 0.5) addOverheadCable(wa.x, wa.z + fa, wb.x, wb.z - fb);
++            const a = footprintOf[r - 1][c], b = footprintOf[r + 1][c];
++            if (a && b && rng() < 0.5) {
++                const xLo = Math.max(a.cx - a.hwx, b.cx - b.hwx, x - chx * 0.75);
++                const xHi = Math.min(a.cx + a.hwx, b.cx + b.hwx, x + chx * 0.75);
++                if (xHi - xLo > 0.25) {
++                    const cableX = randRange(xLo + 0.1, xHi - 0.1);
++                    addOverheadCable(cableX, a.cz + a.hwz + 0.01, a.height, cableX, b.cz - b.hwz - 0.01, b.height);
++                }
++            }
+         }
+ 
+-        const t = webAlignment(cellToWorld(c, r).z);
++        const t = webAlignment(z);
+         const gradientMul = THREE.MathUtils.lerp(
+             CONFIG.narrative.darkWeb.propDensityMul, CONFIG.narrative.lightWeb.propDensityMul, t
+         ) * (onStreet ? CONFIG.streets.propDensityMul : 1);
+-        if (rng() > QUALITY.propDensity * gradientMul) continue;
+ 
+         const choice = weightedPick(CONFIG.props.weights);
+         if (choice === 'none') continue;
++        // Placement semantics for the procedural catalog too: roadway hardware
++        // belongs on a roadway, and a signal specifically needs crossing road
++        // approaches rather than appearing halfway down an alley.
++        if (ROAD_ONLY_PROPS.has(choice) && !onStreet) continue;
++        if (choice === 'trafficSignal') {
++            const mask = roadOpenMask(c, r);
++            const horizontal = !!(mask & 4) || !!(mask & 8);
++            const vertical = !!(mask & 1) || !!(mask & 2);
++            if (!horizontal || !vertical) continue;
++        }
++        // Piles are the density now; standalone props are punctuation. Wall
++        // information/decor can stay fairly common, while freestanding things
++        // become much rarer when a heap already owns this cell. This removes
++        // thousands of independent colliders/objects on 61x61 without making
++        // the city look sanitized.
++        const wallBound = WALL_HUGGING_PROPS.has(choice);
++        const singletonChance = Math.min(0.82, QUALITY.propDensity * gradientMul * (wallBound ? 0.36 : 0.18) * (pileSpot && !wallBound ? 0.42 : 1));
++        if (rng() > singletonChance) continue;
+ 
+         let px, pz;
+-        let facingRotY; // only set for wall-hugging props against an actual wall
++        let facingRotY;
++        let placementMeta = null;
+         if (WALL_HUGGING_PROPS.has(choice)) {
+             const walls = wallDirections(c, r);
+             if (walls.length) {
+                 const w = pick(walls);
+-                const perpSize = w.dx !== 0 ? chx : chz, alongSize = w.dx !== 0 ? chz : chx;
+-                const hug = perpSize * randRange(0.68, 0.84); // tight to the actual wall face
+-                const along = randRange(-alongSize * 0.5, alongSize * 0.5); // slide along the wall
+-                const bx = x + w.dx * hug + (w.dx === 0 ? along : 0);
+-                const bz = z + w.dz * hug + (w.dz === 0 ? along : 0);
+-                const spot = findClearSpot(bx, bz, 0.3, [[0, 0], [0.3, 0], [-0.3, 0], [0, 0.3], [0, -0.3]]);
+-                px = spot.x; pz = spot.z;
+-                // face away from the wall it's hugging, into the open alley
+-                // -- outward normal is simply -w (see outwardRotationY).
+-                // This used to be a hand-rolled atan2(-w.dx, w.dz), missing
+-                // the same z-axis negation as every other independently-
+-                // implemented cardinal rotation in this file (see
+-                // outwardRotationY's own comment) -- north/south wall-
+-                // huggers faced INTO their wall instead of away from it;
+-                // east/west were unaffected (z-term is 0 there).
+-                facingRotY = outwardRotationY(-w.dx, -w.dz);
+-            } else {
++                const standoffByType = {
++                    wantedPoster: 0.014, stickerTag: 0.012, businessCardLitter: 0.015,
++                    fenceSegment: 0.05, trafficSign: 0.12, mileMarker: 0.12,
++                    museumPlacard: 0.18, trashCan: 0.28, vendingMachine: 0.34,
++                    lantern: 0.34, trafficSignal: 0.3, weeds: 0.08,
++                };
++                const raw = wallAnchorForOpenCell(c, r, w, standoffByType[choice] ?? 0.2, 0.18);
++                if (raw) {
++                    placementMeta = clearSpotAlongWall(raw, choice === 'vendingMachine' ? 0.38 : 0.3);
++                    px = placementMeta.x; pz = placementMeta.z; facingRotY = placementMeta.rotY;
++                }
++            }
++            if (px === undefined) {
++                if (choice === 'wantedPoster' || choice === 'stickerTag') continue;
+                 px = x + randRange(-chx * 0.56, chx * 0.56);
+                 pz = z + randRange(-chz * 0.56, chz * 0.56);
+             }
+@@ -8703,13 +9520,15 @@
+             px = spot.x; pz = spot.z;
+         }
+ 
+-        const radius = PROP_BUILDERS[choice](px, pz, facingRotY);
++        const radius = PROP_BUILDERS[choice](px, pz, facingRotY, placementMeta);
+         propColliders.push({ x: px, z: pz, radius, height: PROP_HEIGHTS[choice] ?? 1.5 });
+         // a tree means this pocket reads as dense/overgrown — shade it
+         if (choice === 'tree') addThicketShade(x, z);
+     }
+ }
+ 
++finalizeOverheadCables();
++
+ fetchRandomWikiArticles(15); // live random articles start swapping into the static wanted posters
+ 
+ // ---------- player physics ----------
+@@ -8939,47 +9758,10 @@
+     });
+ }
+ 
+-// ---------- adaptive runtime downgrade ----------
+-// static sniffing up top (cores/mem/GPU string) catches most weak
+-// machines before a single triangle is drawn, but not all of them --
+-// thermal throttling, a driver this doesn't recognize, background load.
+-// This is the safety net: watch real sustained frame time and step real
+-// settings down for real, instead of only trusting what the machine
+-// claimed to have. Only steps down, never back up mid-session (a
+-// recovering machine isn't the problem this solves), and only as many
+-// steps as the starting tier has headroom to give -- potato already has
+-// nothing left to cut.
+-let perfStepsLeft = QUALITY === CONFIG.quality.potato ? 0 : QUALITY === CONFIG.quality.mobile ? 1 : 2;
+-let perfWarmup = 3; // seconds before the first check -- let load-in stutter settle
+-let perfWindow = 0, perfFrames = 0;
+-
+-function maybeStepDownQuality(delta) {
+-    return;
+-    if (perfStepsLeft <= 0) return;
+-    if (perfWarmup > 0) { perfWarmup -= delta; return; }
+-    perfWindow += delta; perfFrames++;
+-    if (perfWindow < 4) return; // needs 4s of sustained data per check, not one bad frame
+-    const avgFps = perfFrames / perfWindow;
+-    perfWindow = 0; perfFrames = 0;
+-    if (avgFps >= 40) return; // healthy now; keep the watcher armed for denser chunks later
+-
+-    perfStepsLeft--;
+-    console.log(`[testing] sustained ~${avgFps.toFixed(0)}fps -- stepping render quality down (${perfStepsLeft} steps left)`);
+-    const nextPixelRatio = Math.max(1, renderer.getPixelRatio() - 0.5);
+-    renderer.setPixelRatio(nextPixelRatio);
+-    // EffectComposer owns separate render targets. Changing only the renderer
+-    // pixel ratio left those full-resolution buffers untouched, so the old
+-    // "adaptive resolution" barely reduced post-processing fill cost.
+-    if (composer.setPixelRatio) composer.setPixelRatio(nextPixelRatio);
+-    else {
+-        if ('_pixelRatio' in composer) composer._pixelRatio = nextPixelRatio;
+-        composer.setSize(window.innerWidth, window.innerHeight);
+-    }
+-    if (bloomPass) { composer.removePass(bloomPass); bloomPass = null; }
+-    QUALITY.drawDistance = Math.max(55, QUALITY.drawDistance * 0.85);
+-    staticWorldOptimizer?.setDrawDistance(QUALITY.drawDistance);
+-    for (const mesh of junkMeshes) mesh.count = Math.floor(mesh.count * 0.6);
+-}
++// ---------- runtime quality policy ----------
++// No FPS-triggered quality stepping. Large cities are allowed to finish their
++// startup/driver warm-up and settle naturally; the explicit desktop/mobile/
++// potato profile chosen above remains stable for the whole session.
+ 
+ // ---------- render loop ----------
+ 
+@@ -8994,7 +9776,6 @@
+     renderer.info.reset();
+     const delta = Math.min(CONFIG.movement.maxDeltaSeconds, clock.getDelta());
+     elapsedTime += delta;
+-    maybeStepDownQuality(delta);
+     updateDynamicLightCulling();
+     staticWorldOptimizer?.updateVisibility();
+ 
+@@ -9262,6 +10043,8 @@
+         city: {
+             cols: GRID_COLS, rows: GRID_ROWS, sites: buildingSites.length,
+             rooftopDecks: rooftopDecks.length, propColliders: propColliders.length,
++            rooftopCatwalks: rooftopCatwalkCount, hangingBridges: hangingBridgeCount,
++            fireEscapeBridgeAnchors: elevatedBridgeAnchors.length, roadMaterialPool: roadMaterialCache.size,
+             windowTexturePool: _windowTextureCache.size, buildingMaterialPool: _buildingFacadeMaterialCache.size,
+         },
+     }),
+--- a/player-physics.js
++++ b/player-physics.js
+@@ -339,7 +339,8 @@
+             if (dx * dx + dz * dz >= minDist * minDist) continue;
+ 
+             if (p.height === Infinity) return true;
+-            if (verticalOverlap(bodyBottom, bodyTop, 0, p.height)) return true;
++            const propBottom = p.yMin ?? 0;
++            if (verticalOverlap(bodyBottom, bodyTop, propBottom, p.height)) return true;
+         }
+ 
+         return false;

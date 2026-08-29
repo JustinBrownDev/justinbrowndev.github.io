@@ -185,6 +185,8 @@
             const log = document.getElementById('bootStatusLog');
             const t0 = performance.now();
             const rows = [];
+            const requestedNumericParams = [...new URLSearchParams(location.search).entries()].filter(([key]) =>
+                key === 'seed' || key === 'citySize' || key.startsWith('n.') || key.startsWith('cfg.'));
             function stamp() { return ((performance.now() - t0) / 1000).toFixed(2) + 's'; }
             function push(text, isError) {
                 const row = document.createElement('div');
@@ -214,7 +216,11 @@
             window.addEventListener('unhandledrejection', (e) => {
                 window.__boot.fail('unhandled promise rejection: ' + (e.reason && e.reason.stack ? e.reason.stack : e.reason));
             });
-            window.__boot.status('fetching three.js + noise corpus (large files, first load only -- this can take a while on a slow connection)…');
+            if (requestedNumericParams.length) {
+                const preview = requestedNumericParams.slice(0, 6).map(([k, v]) => `${k}=${v}`).join(' · ');
+                push(`PARAMETERIZED LOAD: ${requestedNumericParams.length} numeric/query value${requestedNumericParams.length === 1 ? '' : 's'} requested${preview ? ' · ' + preview : ''}`);
+            }
+            window.__boot.status('fetching three.js + noise corpus (large files, first load only -- this can take a while on a slow connection)…' + (requestedNumericParams.length ? ` · ${requestedNumericParams.length} parameter value(s) in URL` : ''));
         })();
     </script>
 

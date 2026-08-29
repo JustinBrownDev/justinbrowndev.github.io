@@ -1,0 +1,775 @@
+--- /mnt/data/main-randomized-curated-v2.js	2026-08-29 17:23:44.942779753 +0000
++++ /mnt/data/main-physics.js	2026-08-29 17:35:05.650009270 +0000
+@@ -5,6 +5,7 @@
+ import { UnrealBloomPass } from './vendor/three/addons/postprocessing/UnrealBloomPass.js';
+ import { GLTFLoader } from './vendor/three/addons/loaders/GLTFLoader.js';
+ import { CLAUDE_CITY_ASSETS } from './vendor/city-pack/asset-catalog.js';
++import { createPlayerPhysics } from './player-physics.js';
+ // ~14 MB local corpus (Unicode/MIME/services/protocols/timezones, concrete
+ // + a ~17.9B-combination virtual address space) and a ~48 MB corpus of
+ // real public-data rows fetched at build time (IANA/RFC/OurAirports/
+@@ -712,7 +713,6 @@
+         speed: 4.5, // slower than before — cramped alleys, not a sprint
+         sprintMultiplier: 1.7, // hold Shift -- covers real ground, matters for clearing a gap jump
+         maxDeltaSeconds: 0.1,
+-        collisionIterations: 4, // was 2 -- too few passes to settle cleanly now that alley clutter is this dense; this is what "trash cans feel impossible to walk past" actually was
+     },
+ 
+     desktopControls: {
+@@ -867,7 +867,7 @@
+     // streets
+     c.streets.propDensityMul = jitterClamped(c.streets.propDensityMul, 0.35, 0.25, 0.85);
+ 
+-    // movement feel (maxDeltaSeconds/collisionIterations left alone -- correctness knobs, not feel)
++    // movement feel (maxDeltaSeconds stays put -- the physics module substeps it for correctness)
+     c.movement.speed = jitterClamped(c.movement.speed, 0.2, 3.4, 5.8);
+     c.movement.sprintMultiplier = jitterClamped(c.movement.sprintMultiplier, 0.2, 1.3, 2.2);
+ 
+@@ -2695,16 +2695,15 @@
+ // are stored as line segments and the player collides with each one
+ // individually; only the actual door gap is open. buildingWallSegments
+ // also doubles as the "does this cell have registered collision" map
+-// used by resolveCollisions, replacing the old whole-footprint-square
++// consumed by player-physics.js, replacing the old whole-footprint-square
+ // check for every building cell, not just the special-cased few.
+ // "row,col" -> { floors: [{yMin, yMax, segments: [{x1,z1,x2,z2}, ...]}, ...] }
+ // -- per-floor now, not one shared list + a single topY cutoff: a wall
+-// registered for floor 2 only ever blocks a player whose feet are within
+-// THAT floor's own [yMin,yMax] band (see resolveCollisions), so an upper
+-// floor's (now independently laid-out) walls can never block a lower
+-// floor at the same X/Z, and standing above every registered floor's
+-// yMax means this building can't block you horizontally at all -- out
+-// over the roof/skyline, same as before.
++// registered for floor 2 only blocks when the player's standing body
++// overlaps THAT floor's own [yMin,yMax] band. Upper-floor walls therefore
++// cannot block a lower-floor player who is vertically clear of them, and
++// once the player's feet are on/above the roof the facade below no longer
++// becomes an invisible horizontal blocker.
+ const buildingWallSegments = new Map();
+ const WALL_THICKNESS = 0.12;
+ 
+@@ -2717,10 +2716,10 @@
+ // adjacency the bug report describes.
+ let totalExposedSetbackWalls = 0;
+ 
+-// elevation: mezzanines inside ~30% of building interiors, reached by a
+-// straight (always axis-aligned, never an arbitrary angle) run of steps.
+-// groundHeightAt() below is what actually moves the camera up/down.
+-const elevatedPlatforms = []; // {x,z,hx,hz,y}
++// elevation/support surfaces. `blocksFromBelow:false` marks synthetic
++// support samples (ladder climb points) that are standable but are NOT
++// physical slabs/ceilings. All ordinary floors/decks default to solid.
++const elevatedPlatforms = []; // {x,z,hx,hz,y, blocksFromBelow?, supportKind?}
+ // building rooftops specifically, a subset of elevatedPlatforms tagged
+ // with which building they belong to -- lets a post-generation pass
+ // (buildRooftopCatwalks) find genuine nearby-rooftop pairs to bridge
+@@ -2733,107 +2732,20 @@
+ // also a legitimate floor once you're standing on top of it instead).
+ const overheadCeilings = []; // {x,z,hx,hz,y} -- always blocks upward, never a floor
+ 
+-// feetY (the player's actual current world foot height, from last frame)
+-// is what makes prop-tops (and now platforms/ramps too) work as real
+-// ground rather than either always blocking or always yanking you
+-// upward: a candidate only counts if you're already at/above it within
+-// MAX_STEP_HEIGHT slack, the same rule resolveCollisions uses to decide
+-// whether that same prop is a wall. Picks the tallest valid candidate
+-// under you, not just the first match.
+-//
+-// The platform/ramp gating matters for a real, previously-live bug: a
+-// fire escape's flights reuse the exact same horizontal footprint at
+-// every height (buildFireEscapeStair zigzags in place, it doesn't
+-// actually move sideways), so a landing near the top and a landing near
+-// the bottom can share the same (x,z). Without gating, "tallest matching
+-// candidate" meant walking up to the BASE of a fire escape snapped you
+-// straight to its top landing -- ungated, a match is a match regardless
+-// of how far above you it actually is. Gated, only a landing/ramp height
+-// you've actually climbed within reach of counts.
+-function groundHeightAt(x, z, feetY = Infinity) {
+-    let best = 0; // bare ground
+-    for (const p of elevatedPlatforms) {
+-        if (p.y <= best || p.y > feetY + MAX_STEP_HEIGHT) continue;
+-        if (Math.abs(x - p.x) < p.hx && Math.abs(z - p.z) < p.hz) best = p.y;
+-    }
+-    for (const r of rampRuns) {
+-        const along = r.axis === 'x' ? x : z;
+-        const cross = r.axis === 'x' ? z : x;
+-        if (Math.abs(cross - r.fixedCoord) > r.halfWidth) continue;
+-        const t = (along - r.from) / (r.to - r.from);
+-        if (t < 0 || t > 1) continue;
+-        const y = r.y0 + (r.y1 - r.y0) * t;
+-        if (y > best && y <= feetY + MAX_STEP_HEIGHT) best = y;
+-    }
+-    for (const p of propColliders) {
+-        if (p.height === Infinity) continue; // always a wall, never a floor
+-        if (p.height <= best) continue;
+-        if (p.height > feetY + MAX_STEP_HEIGHT) continue; // too tall to have stepped/landed up onto yet
+-        const dx = x - p.x, dz = z - p.z;
+-        if (dx * dx + dz * dz <= p.radius * p.radius) best = p.height;
+-    }
+-    return best;
+-}
+-
+-// every floor-like surface whose XZ footprint contains (x,z), regardless
+-// of how far away its Y is -- ground plane is always included as the
+-// ultimate backstop. Used only for the airborne landing check below;
+-// walking/auto-step still goes through groundHeightAt's MAX_STEP_HEIGHT
+-// gating above, a genuinely different rule (can you step up onto this
+-// while grounded) from "did you just fall through this while airborne."
+-function surfaceHeightsAt(x, z) {
+-    const ys = [0];
+-    for (const p of elevatedPlatforms) {
+-        if (Math.abs(x - p.x) < p.hx && Math.abs(z - p.z) < p.hz) ys.push(p.y);
+-    }
+-    for (const r of rampRuns) {
+-        const along = r.axis === 'x' ? x : z;
+-        const cross = r.axis === 'x' ? z : x;
+-        if (Math.abs(cross - r.fixedCoord) > r.halfWidth) continue;
+-        const t = (along - r.from) / (r.to - r.from);
+-        if (t < 0 || t > 1) continue;
+-        ys.push(r.y0 + (r.y1 - r.y0) * t);
+-    }
+-    for (const p of propColliders) {
+-        if (p.height === Infinity) continue;
+-        const dx = x - p.x, dz = z - p.z;
+-        if (dx * dx + dz * dz <= p.radius * p.radius) ys.push(p.height);
+-    }
+-    return ys;
+-}
+-
+-// the airborne half of vertical motion: world-Y is authoritative while
+-// airborne (see the big comment on `grounded` near where it's declared)
+-// -- this only ever SNAPS feet Y down onto a surface at the moment of a
+-// real crossing (was at/above it, about to be at/below it, within this
+-// surface's own footprint), never merely because some unrelated surface
+-// now happens to sit within reach of last frame's foot height. Returns
+-// the landing Y, or null if nothing was crossed this frame.
+-const LANDING_EPS = 0.02;
+-function findLandingSurface(x, z, feetY, predictedFeetY, verticalVelocity) {
+-    if (verticalVelocity > 0) return null; // still ascending -- can't land mid-rise
+-    let landing = null;
+-    for (const y of surfaceHeightsAt(x, z)) {
+-        if (feetY >= y - LANDING_EPS && predictedFeetY <= y + LANDING_EPS) {
+-            if (landing === null || y > landing) landing = y; // highest crossed surface -- the first one you'd actually hit falling
+-        }
+-    }
+-    return landing;
+-}
++// Player support/landing queries live in player-physics.js now. Keeping them
++// next to the movement solver is important: support footprint margins, step
++// height, ceiling solidity, and low-FPS substepping must all use the same
++// geometry rules instead of drifting into separate interpretations here.
+ 
+ // a single interior partition wall with one doorway gap -- the building
+ // block the room-layout pass below uses to carve a single floor into
+ // several rooms. axis='x' means a wall of constant x (its normal points
+ // along x), spanning z across [spanA, spanB]; axis='z' is the same thing
+ // rotated 90 degrees. yBase lets the same wall (same XZ layout) be redrawn
+-// at a different floor's height -- every floor in a building shares one
+-// layout (see buildFloorLayout) so the collision segments below stay
+-// correct no matter which floor's Y the player is actually at (collision
+-// is Y-independent -- see resolveCollisions -- so every floor MUST agree
+-// on where the walls are, or an upper floor's wall would silently block
+-// movement on a lower floor with a different layout). Returns collision
+-// segments the same shape buildingWallSegments already expects, so no
+-// other code needs to know interior walls exist at all.
++// at a different floor's height. Each floor registers its own vertical
++// [yMin,yMax] collision band, and player-physics.js tests the player's full
++// standing body against only the bands it actually overlaps. Returns the
++// segment shape buildingWallSegments already expects.
+ // draws a straight wall along `axis` at `fixedCoord`, spanning
+ // [spanA, spanB], with zero or more rectangular gaps left fully open --
+ // doorways, archways into an attached wing module, a stairwell entrance,
+@@ -2866,7 +2778,7 @@
+     const sorted = gaps.slice().sort((a, b) => a.lo - b.lo);
+     const segs = [];
+     // real volume, not a zero-thickness plane -- WALL_THICKNESS matches
+-    // collision exactly (see resolveCollisions), so what you see is what
++    // collision exactly (player-physics.js uses the same thickness), so what you see is what
+     // you bump into. At a grazing angle an infinitely thin PlaneGeometry
+     // all but disappears; a real box always has a visible edge, an
+     // interior face, an exterior face, and real jamb thickness at every
+@@ -3441,7 +3353,7 @@
+ 
+ // ---------- generalized climbable stairs ----------
+ // the exact same primitive maybeAddMezzanine uses above (push a rampRun,
+-// groundHeightAt does the rest every frame) pulled out into a reusable
++// the player-physics ramp solver follows it continuously) pulled out into a reusable
+ // builder -- so exterior fire escapes and the tall vertical-layer
+ // staircases climb exactly like an interior mezzanine already does,
+ // real elevation and real collision, not a new physics system.
+@@ -3498,8 +3410,8 @@
+ 
+ // a real, climbable fire escape: a switchback of flights zigzagging up
+ // the outside of a wall face, functionally identical to the interior
+-// mezzanine stairs above -- walk onto it and groundHeightAt actually
+-// lifts you. (x, z, rotY) is the same wall-face anchor point the
++// mezzanine stairs above -- walk onto it and the shared ramp/support solver
++// actually lifts you. (x, z, rotY) is the same wall-face anchor point the
+ // decorative GLTF model is placed at; this builds alongside it rather
+ // than replacing it, so the detailed model still reads as the fire
+ // escape's silhouette while these plain switchback treads are what
+@@ -3554,23 +3466,15 @@
+     return landings;
+ }
+ 
+-// a real, climbable ladder: thin rails + rungs mounted on a wall face,
+-// climbed the exact same way stacked crates already are -- a tight
+-// column of shallow elevatedPlatforms landings, each within auto-step
+-// range of the last, so walking up to the base and holding forward
+-// climbs you all the way to the top one rung at a time. No new physics
+-// needed, just the existing "step up onto a short prop" rule applied
+-// vertically instead of onto a single crate. (x, z, rotY) is the same
+-// wall-anchor convention every other wall-mounted prop here uses.
++// a real, climbable ladder: thin rails + rungs mounted on a wall face plus
++// a tight vertical column of support-only samples. player-physics.js turns
++// those samples into a time-rate-limited climb instead of treating each one
++// as a physical floor/ceiling. (x, z, rotY) follows the same wall-anchor
++// convention as the other wall-mounted props.
+ //
+-// The actual walkable column is kept well clear of the wall itself --
+-// resolveCollisions won't let the player's center get closer than
+-// PLAYER_RADIUS + WALL_THICKNESS (~0.44) to a wall segment, so a climb
+-// point sitting flush against the wall (like the visual rungs are) could
+-// never actually be reached; the player would be shoved back out before
+-// ever standing in the tiny box groundHeightAt needs them in. climbStandoff
+-// defaults well past that, and the box itself is generous, not the tight
+-// footprint a purely visual prop would need.
++// Keep the climb column clear of the wall's physical half-thickness plus the
++// player radius; a support point flush to the visual rung would be unreachable.
++// climbStandoff intentionally sits farther out and climbHalf is generous.
+ function addLadder(x, z, rotY, y0, y1, opts = {}) {
+     const standoff = opts.standoff ?? 0.22; // visual only -- how flush the rails/rungs read against the wall
+     const climbStandoff = opts.climbStandoff ?? 0.55; // the real, walkable column
+@@ -3605,18 +3509,18 @@
+     g.position.set(x, y0, z);
+     scene.add(g);
+ 
+-    // the actual climb: a tight stack of shallow floor candidates at the
+-    // ladder's (generously offset) standoff point, spaced well under the
+-    // auto-step limit (MAX_STEP_HEIGHT, defined later in this file as
+-    // 0.65 -- kept as a literal here since this runs long before that
+-    // const exists).
++    // the actual climb: a tight stack of shallow SUPPORT candidates at
++    // the ladder's (generously offset) standoff point. They are explicitly
++    // non-solid from below, and player-physics.js rate-limits progression
++    // through them so substepping cannot turn one low-FPS frame into a
++    // multi-rung launch.
+     const climbX = x + Math.sin(rotY) * climbStandoff;
+     const climbZ = z + Math.cos(rotY) * climbStandoff;
+     const stepGap = 0.48;
+     const steps = Math.max(1, Math.ceil(rise / stepGap));
+     for (let i = 1; i <= steps; i++) {
+         const y = y0 + (rise * i) / steps;
+-        elevatedPlatforms.push({ x: climbX, z: climbZ, hx: climbHalf, hz: climbHalf, y });
++        elevatedPlatforms.push({ x: climbX, z: climbZ, hx: climbHalf, hz: climbHalf, y, blocksFromBelow: false, supportKind: 'ladder' });
+     }
+ }
+ 
+@@ -7832,8 +7736,8 @@
+ // hand-authored props don't measure their own real height the way
+ // spawnJunkInstance does (it has the actual scaled mesh dimensions) --
+ // these are reasonable real-world approximations, keyed the same as
+-// PROP_BUILDERS, so resolveCollisions/groundHeightAt can tell "short
+-// enough to auto-step or jump onto" from "an actual wall" for every prop,
++// PROP_BUILDERS, so player-physics.js can tell "short enough to auto-step
++// or jump onto" from "an actual wall" for every prop,
+ // not just junk. Missing keys fall back to a generic mid-height guess.
+ const PROP_HEIGHTS = {
+     trashCan: 0.85, trafficCone: 0.6, trafficSign: 1.9, trafficSignal: 2.9,
+@@ -8303,7 +8207,7 @@
+ 
+ // a single climbable-terrain item -- exactly `targetTop` tall (footprint
+ // jitters for visual variety, height doesn't) so the collider height
+-// (what groundHeightAt/resolveCollisions see) always exactly matches
++// (what player-physics.js sees) always exactly matches
+ // what's rendered, and every item within one tier is genuinely
+ // step-across-flat with the others -- the same "no daylight between
+ // geometry and collision" rule the rest of this refactor holds to.
+@@ -8325,7 +8229,7 @@
+ // near the floor and grows vertically toward the back/dense end (deeper
+ // into the nook, backed against both walls), in tiers rather than one
+ // big flat-topped collider. The first couple of tiers rise gently enough
+-// to auto-step onto (same MAX_STEP_HEIGHT logic as stepping onto a single
++// to auto-step onto (same max-step rule as stepping onto a single
+ // crate); the later ones are a deliberately bigger rise that needs a
+ // real jump -- a genuine climbable progression, not a ramp in disguise.
+ // Each tier is 2-3 independent crates (independent colliders/walkable
+@@ -8540,211 +8444,41 @@
+ 
+ fetchRandomWikiArticles(15); // live random articles start swapping into the static wanted posters
+ 
+-// ---------- player collision ----------
+-
+-const PLAYER_RADIUS = CONFIG.camera.playerRadius;
++// ---------- player physics ----------
+ 
++// World lookup stays in main because it belongs to the non-uniform city grid;
++// the actual movement/collision policy lives in player-physics.js.
+ function worldToCell(x, z) {
+-    return worldToCellIndex(x, z); // non-uniform grid -- see worldToCellIndex
+-}
+-
+-// where segment (p1->p2) crosses segment (q1->q2), as t along p1->p2, or
+-// null if they don't cross within both segments' bounds.
+-function segmentCrossing(p1x, p1z, p2x, p2z, q1x, q1z, q2x, q2z) {
+-    const rx = p2x - p1x, rz = p2z - p1z;
+-    const sx = q2x - q1x, sz = q2z - q1z;
+-    const denom = rx * sz - rz * sx;
+-    if (Math.abs(denom) < 1e-9) return null; // parallel (or degenerate) -- can't cross
+-    const t = ((q1x - p1x) * sz - (q1z - p1z) * sx) / denom;
+-    const u = ((q1x - p1x) * rz - (q1z - p1z) * rx) / denom;
+-    if (t < 0 || t > 1 || u < 0 || u > 1) return null;
+-    return t;
+-}
+-
+-// hard topological guarantee for the maze seal specifically (see
+-// mazeSealWalls, built right after maze generation): radius-based push-
+-// out alone (same model every other wall in the game uses) can only ever
+-// react to the CURRENT distance to a wall, not the path just travelled --
+-// a single frame's raw movement landing past a thin wall's push-out
+-// radius on the far side gets resolved comfortably onto that wrong side,
+-// not bounced back, because push-out has no memory of which side the
+-// player approached from. Ordinary walking speed never gets remotely
+-// close to triggering this (per-frame movement is a small fraction of
+-// the push-out radius), but a lag spike combined with a high jittered
+-// sprintMultiplier can, in principle, produce a single frame large
+-// enough to jump clean over it -- and "squeeze between two buildings"
+-// is exactly the bug this whole system exists to close, so it gets a
+-// real swept check on top of the radius push-out, not just the same
+-// best-effort model as everything else. Clamps the travelled segment to
+-// stop just short of any seal it would otherwise cross.
+-function enforceMazeSeal(prevX, prevZ, position) {
+-    for (const seg of mazeSealWalls) {
+-        if (Math.abs(position.x - (seg.x1 + seg.x2) / 2) > CELL && Math.abs(position.z - (seg.z1 + seg.z2) / 2) > CELL) continue;
+-        const t = segmentCrossing(prevX, prevZ, position.x, position.z, seg.x1, seg.z1, seg.x2, seg.z2);
+-        if (t === null) continue;
+-        const stopT = Math.max(0, t - 0.02); // stop just short of the seal, not exactly on it
+-        position.x = prevX + (position.x - prevX) * stopT;
+-        position.z = prevZ + (position.z - prevZ) * stopT;
+-    }
+-}
+-
+-function resolveCollisions(position, feetY = Infinity) {
+-    const { col, row } = worldToCell(position.x, position.z);
+-
+-    // real per-wall collision: every building module has registered wall
+-    // segments per floor (see buildCoreFloor/addBuildingModule and the
+-    // buildingWallSegments comment) -- only the actual solid walls
+-    // block, door/archway gaps genuinely don't, and each floor's walls
+-    // only apply within their own Y band.
+-    for (let dr = -1; dr <= 1; dr++) {
+-        for (let dc = -1; dc <= 1; dc++) {
+-            const c = col + dc, r = row + dr;
+-            if (!grid[r]?.[c]) continue; // out of bounds or open cell — nothing solid
+-            const walls = buildingWallSegments.get(`${r},${c}`);
+-            if (!walls) continue;
+-            // once you're at/above where the real walls actually stop
+-            // (topY), this building can't block you horizontally at all
+-            // -- you're above its walled structure, out over the roof/
+-            // skyline, the same as if there were no building here.
+-            // height-aware now: a wall only blocks while feetY is within
+-            // the specific floor it was registered for, so an upper
+-            // floor's (now independently laid-out) walls never block a
+-            // lower floor at the same X/Z, and standing above every
+-            // registered floor's yMax means this building can't block
+-            // you horizontally at all -- out over the roof/skyline.
+-            for (const floor of walls.floors) {
+-                if (feetY < floor.yMin - 0.05 || feetY >= floor.yMax - 0.05) continue;
+-                for (const seg of floor.segments) {
+-                    const sdx = seg.x2 - seg.x1, sdz = seg.z2 - seg.z1;
+-                    const len2 = sdx * sdx + sdz * sdz;
+-                    let t = len2 > 1e-9 ? ((position.x - seg.x1) * sdx + (position.z - seg.z1) * sdz) / len2 : 0;
+-                    t = Math.max(0, Math.min(1, t));
+-                    const cx = seg.x1 + sdx * t, cz = seg.z1 + sdz * t;
+-                    const dx = position.x - cx, dz = position.z - cz;
+-                    const distSq = dx * dx + dz * dz;
+-                    const minDist = PLAYER_RADIUS + WALL_THICKNESS;
+-                    if (distSq < minDist * minDist) {
+-                        const dist = Math.sqrt(distSq) || 0.0001;
+-                        const push = (minDist - dist) / dist;
+-                        position.x += dx * push;
+-                        position.z += dz * push;
+-                    }
+-                }
+-            }
+-        }
+-    }
+-
+-    // maze topology seal: guaranteed-impassable boundary between two
+-    // cells the DFS/loop-carve never connected, independent of whatever
+-    // building/decoration geometry is actually inset nearby (see where
+-    // mazeSealWalls is built, right after maze generation). Same segment
+-    // push-out math as building walls, gated the same feetY-vs-height
+-    // way so it never interferes with genuine rooftop traversal.
+-    for (const seg of mazeSealWalls) {
+-        if (feetY >= seg.yMax - 0.05) continue;
+-        // cheap reject before the real distance math -- most of these
+-        // 150-250ish segments are nowhere near the player on any given frame
+-        if (Math.abs(position.x - (seg.x1 + seg.x2) / 2) > CELL || Math.abs(position.z - (seg.z1 + seg.z2) / 2) > CELL) continue;
+-        const sdx = seg.x2 - seg.x1, sdz = seg.z2 - seg.z1;
+-        const len2 = sdx * sdx + sdz * sdz;
+-        let t = len2 > 1e-9 ? ((position.x - seg.x1) * sdx + (position.z - seg.z1) * sdz) / len2 : 0;
+-        t = Math.max(0, Math.min(1, t));
+-        const cx = seg.x1 + sdx * t, cz = seg.z1 + sdz * t;
+-        const dx = position.x - cx, dz = position.z - cz;
+-        const distSq = dx * dx + dz * dz;
+-        const minDist = PLAYER_RADIUS + WALL_THICKNESS;
+-        if (distSq < minDist * minDist) {
+-            const dist = Math.sqrt(distSq) || 0.0001;
+-            const push = (minDist - dist) / dist;
+-            position.x += dx * push;
+-            position.z += dz * push;
+-        }
+-    }
+-
+-    // soft props: simple circle-circle push-out -- skipped entirely for a
+-    // prop short enough to auto-step (or one you're already standing
+-    // at/above the top of), the same feetY/MAX_STEP_HEIGHT rule
+-    // groundHeightAt uses to decide whether that same prop counts as
+-    // real floor. This is the actual "climb on top of a crate/car" half
+-    // of the parkour physics -- groundHeightAt alone would just have you
+-    // hovering at ground level next to it, still blocked here.
+-    for (const p of propColliders) {
+-        if (p.height !== Infinity && p.height <= feetY + MAX_STEP_HEIGHT) continue;
+-        const dx = position.x - p.x;
+-        const dz = position.z - p.z;
+-        const minDist = p.radius + PLAYER_RADIUS;
+-        const distSq = dx * dx + dz * dz;
+-        if (distSq > 0 && distSq < minDist * minDist) {
+-            const dist = Math.sqrt(distSq);
+-            const push = (minDist - dist) / dist;
+-            position.x += dx * push;
+-            position.z += dz * push;
+-        }
+-    }
+-
+-    // outer safety clamp (perimeter is solid anyway, this is just a backstop)
+-    const half = GRID_W / 2 - 0.5;
+-    position.x = Math.max(-half, Math.min(half, position.x));
+-    position.z = Math.max(-half, Math.min(half, position.z));
++    return worldToCellIndex(x, z);
+ }
+ 
+-// ---------- movement: shared state ----------
++// ---------- movement: shared input state ----------
+ 
+ const move = { forward: false, back: false, left: false, right: false, sprint: false, flyUp: false, flyDown: false };
+-// freecam: no gravity, no wall collision -- fly anywhere to look around.
+-// Toggled with F. Space/C fly up/down (Space still buffers a jump too,
+-// harmless since freecam ignores it).
+ let freecamEnabled = false;
+-let touchMoveVec = { x: 0, y: 0 }; // from joystick, x = strafe, y = forward
+-const velocity = new THREE.Vector3();
+-
+-// jump: a real arc on top of groundHeightAt, not a snap -- rises while
+-// airborne, gravity pulls it back down, and it can never end up below
+-// whatever the ground/stair/platform height under you actually is (so
+-// jumping mid-staircase just hops you along the same climb, it can't
+-// clip you through anything).
+-let verticalVelocity = 0;
+-// world-Y is authoritative while airborne (see the big comment in
+-// animate() where this is consumed) -- `grounded` is the only state that
+-// decides which of the two vertical-motion rules applies this frame.
+-// There used to be a `heightAboveFloor` riding on top of a freshly
+-// re-queried `floorY` every single frame, airborne or not; that let a
+-// support-surface swap while airborne (drifting over a different,
+-// unrelated platform) add its Y on top of the stale offset and produce
+-// an apparent super-launch. Landing is now a real crossing check
+-// (findLandingSurface), not "some surface came within reach."
+-let grounded = true;
+-const JUMP_SPEED = 5.5;
+-const GRAVITY = -16;
+-// walking off the edge of a mezzanine/fire-escape/rooftop while GROUNDED:
+-// small height changes (a stair riser, a curb, a continuous ramp) still
+-// snap immediately (ordinary auto-step); only a drop bigger than this
+-// counts as walking off a real ledge and becomes airborne instead.
+-const STEP_DOWN_TOLERANCE = 0.5;
+-
+-// ---- parkour physics: coyote time, jump buffering, real auto-step ----
+-// MAX_STEP_HEIGHT is the one number both resolveCollisions and
+-// groundHeightAt check against propColliders' real (or estimated) height:
+-// short enough to clear -> walk straight up onto it, no jump needed
+-// (Minecraft's own ~0.6-block stepHeight); tall enough -> a real wall
+-// until you jump, at which point the same rule lets you land on its top
+-// mid-air once you're high enough, not just at ground level. This is
+-// what turns crates/cars/junk piles into real jump-on-able terrain
+-// instead of flat circular walls.
+-const MAX_STEP_HEIGHT = 0.65;
+-// jump buffering: a press slightly before landing still fires the
+-// instant you touch down, instead of being silently dropped because you
+-// were mid-air for one more frame than expected.
+-let jumpBufferTimer = 0;
+-const JUMP_BUFFER_TIME = 0.15;
+-// coyote time: jump still works for a brief window after walking off a
+-// ledge with no jump queued yet -- forgives the one-frame-too-late press
+-// that reads as "obviously should have worked" on a real platform.
+-let coyoteTimer = 0;
+-const COYOTE_TIME = 0.12;
+-// head-bonk clearance: how far below a mezzanine underside/roof cap the
+-// camera stops, so it reads as bumping your head, not clipping into the mesh.
+-const HEAD_CLEARANCE = 0.15;
++let touchMoveVec = { x: 0, y: 0 };
++const velocity = new THREE.Vector3(); // normalized local input, not integrated motion
++const _moveForwardWorld = new THREE.Vector3();
++const _moveRightWorld = new THREE.Vector3();
++
++// Correctness knobs are centralized here and passed once to the controller.
++// The solver further subdivides every render delta, so these are world/body
++// semantics rather than frame-rate-dependent patches.
++const PHYSICS_TUNING = {
++    bodyHeight: CONFIG.camera.eyeHeight + 0.15,
++    headClearance: 0.15,
++    maxStepHeight: 0.65,
++    stepDownTolerance: 0.5,
++    jumpSpeed: 5.5,
++    gravity: -16,
++    maxFallSpeed: 30,
++    coyoteTime: 0.12,
++    jumpBufferTime: 0.15,
++    maxSubstepSeconds: 1 / 90,
++    maxHorizontalSubstep: Math.max(0.07, CONFIG.camera.playerRadius * 0.45),
++    maxVerticalSubstep: 0.12,
++    maxSubsteps: 32,
++};
+ 
+ const spawn = cellToWorld(spawnCol, spawnRow);
+ camera.position.set(spawn.x, CONFIG.camera.eyeHeight, spawn.z);
+@@ -8766,6 +8500,23 @@
+     }
+ }
+ 
++const playerPhysics = createPlayerPhysics({
++    position: camera.position,
++    eyeHeight: CONFIG.camera.eyeHeight,
++    playerRadius: CONFIG.camera.playerRadius,
++    wallThickness: WALL_THICKNESS,
++    worldToCell,
++    grid,
++    buildingWallSegments,
++    mazeSealWalls,
++    propColliders,
++    elevatedPlatforms,
++    rampRuns,
++    overheadCeilings,
++    boundsHalf: GRID_W / 2 - 0.5,
++    ...PHYSICS_TUNING,
++});
++
+ // ---------- desktop controls ----------
+ 
+ const controls = new PointerLockControls(camera, renderer.domElement);
+@@ -8809,19 +8560,17 @@
+         case 'KeyD': case 'ArrowRight': move.right = true; break;
+         case 'ShiftLeft': case 'ShiftRight': move.sprint = true; break;
+         case 'Space':
+-            jumpBufferTimer = JUMP_BUFFER_TIME; // buffered, not fired directly -- animate() consumes it once actually grounded (or still in coyote time)
++            playerPhysics.bufferJump(); // consumed by fixed/substepped physics, not by the render frame directly
+             move.flyUp = true; // freecam only -- ignored otherwise
+             e.preventDefault(); // don't let the page scroll while locked
+             break;
+         case 'KeyC': move.flyDown = true; break;
+         case 'KeyF':
+             freecamEnabled = !freecamEnabled;
+-            // clean physics state whichever way this toggled -- exiting
+-            // freecam always starts airborne rather than assuming
+-            // grounded, since freecam can leave the player floating
+-            // anywhere; the next frame's real landing check (not an
+-            // assumption) sorts out whatever's actually below them.
+-            verticalVelocity = 0; grounded = false;
++            // Freecam may place the camera anywhere. On exit, hand the real
++            // pose back to the solver as airborne; it will land by an actual
++            // surface crossing rather than assuming a floor or depenetrating.
++            if (!freecamEnabled) playerPhysics.syncFromPosition({ forceAirborne: true, resetVelocity: true });
+             showHint(freecamEnabled ? 'freecam: space up · C down · F to exit' : 'freecam off');
+             fadeHint(2000);
+             break;
+@@ -8987,47 +8736,37 @@
+     const forwardInput = (move.forward ? 1 : 0) - (move.back ? 1 : 0) - touchMoveVec.y;
+     const rightInput = (move.right ? 1 : 0) - (move.left ? 1 : 0) + touchMoveVec.x;
+ 
++    // Normalize local input first; speed is units/second. The old controller
++    // multiplied by render-frame delta before collision and then tried to
++    // repair the final position. playerPhysics.step() receives a velocity and
++    // performs its own bounded substeps, so 20 FPS and 144 FPS visit the same
++    // intermediate support/collision states.
+     velocity.set(rightInput, 0, -forwardInput);
+     if (velocity.lengthSq() > 1) velocity.normalize();
+-    const speedMul = move.sprint ? CONFIG.movement.sprintMultiplier : 1; // held Shift -- full air control still applies mid-jump, this just covers more ground per second
+-    velocity.multiplyScalar(CONFIG.movement.speed * speedMul * delta);
++    const localRight = velocity.x;
++    const localForward = -velocity.z;
++    const speedMul = move.sprint ? CONFIG.movement.sprintMultiplier : 1;
++    const moveSpeed = CONFIG.movement.speed * speedMul;
++    const inputActive = controls.isLocked || IS_TOUCH;
+ 
+-    // captured before horizontal movement -- enforceMazeSeal (below, after
+-    // the freecam early-return) needs the actual travelled segment, not
+-    // just the post-move point, so a fast single frame can't hop clean
+-    // over a maze seal's radius-based push-out the way any thin-line
+-    // collider can if the raw step is big enough (a lag spike, a jittered
+-    // sprintMultiplier roll, or just bad luck) to land past it before
+-    // push-out ever sees it on the near side.
+-    const prevPlayerX = camera.position.x, prevPlayerZ = camera.position.z;
+-
+-    if (controls.isLocked || IS_TOUCH) {
+-        controls.moveRight(velocity.x);
+-        controls.moveForward(-velocity.z);
+-    }
+-
+-    if ((controls.isLocked || IS_TOUCH) && velocity.lengthSq() > 0.0001) {
++    if (inputActive && velocity.lengthSq() > 0.0001) {
+         footstepTimer -= delta;
+         if (footstepTimer <= 0) {
+             playFootstep();
+-            footstepTimer = 0.38; // roughly a walking cadence
++            footstepTimer = 0.38;
+         }
+     } else {
+         footstepTimer = 0;
+     }
+ 
+-    // last frame's actual foot height, before this frame's ground/gravity
+-    // update touches it -- both resolveCollisions and groundHeightAt use
+-    // this (against MAX_STEP_HEIGHT) to decide "auto-step/landable" vs
+-    // "solid wall" per prop, so both sides of that decision agree.
+-    const feetY = camera.position.y - CONFIG.camera.eyeHeight;
+-
+-    // freecam: no wall collision, no gravity/floor-snapping -- WASD still
+-    // moves horizontally (already applied above via controls.moveRight/
+-    // moveForward), Space/C fly straight up/down. Skips the rest of the
+-    // physics for this frame entirely rather than fighting it.
+     if (freecamEnabled) {
+-        const flySpeed = CONFIG.movement.speed * (move.sprint ? CONFIG.movement.sprintMultiplier : 1) * 1.6;
++        // Freecam deliberately bypasses the controller. It still uses the same
++        // local input basis as before, just without collision or gravity.
++        if (inputActive) {
++            controls.moveRight(localRight * moveSpeed * delta);
++            controls.moveForward(localForward * moveSpeed * delta);
++        }
++        const flySpeed = moveSpeed * 1.6;
+         const vertical = (move.flyUp ? 1 : 0) - (move.flyDown ? 1 : 0);
+         camera.position.y += vertical * flySpeed * delta;
+         updateWebGradient(camera.position.z, camera.position.y, elapsedTime);
+@@ -9035,102 +8774,28 @@
+         composer.render();
+         return;
+     }
+-    // hard maze-topology guarantee, before the ordinary radius-based
+-    // push-out below -- see enforceMazeSeal's own comment.
+-    enforceMazeSeal(prevPlayerX, prevPlayerZ, camera.position);
+-    for (let i = 0; i < CONFIG.movement.collisionIterations; i++) {
+-        resolveCollisions(camera.position, feetY);
+-    }
+ 
+-    // real elevation: standing on a mezzanine, climbing its stairs, or
+-    // standing on top of a crate/car/junk pile all actually change eye
+-    // height now, not just X/Z collision. Jump is layered on top as a
+-    // genuine arc, not an instant hop.
+-    //
+-    // World-Y is authoritative here, not "floor + offset": `grounded`
+-    // decides which of two entirely different rules applies this frame,
+-    // and the two rules never fight each other over the same frame.
+-    //   - grounded: groundHeightAt is safe to re-query every frame,
+-    //     because "grounded" already means we're resting on SOME real
+-    //     surface, so re-resolving exactly which surface is under the
+-    //     new (post-horizontal-move) x/z is ordinary floor-following,
+-    //     not a surprise mid-air reassignment. A big drop here means we
+-    //     walked off a real ledge; become airborne, preserve position.
+-    //   - airborne: camera.position.y only ever changes by integrating
+-    //     verticalVelocity, or by a genuine LANDING -- feetY was at/above
+-    //     some surface's top, the predicted new feetY is at/below it,
+-    //     within that surface's own footprint (findLandingSurface). A
+-    //     surface merely coming into "reach" under an unrelated x/z the
+-    //     player drifted over can never move camera.position.y by
+-    //     itself; only an actual crossing can. This is what the old
+-    //     model got wrong -- it re-picked a support surface from
+-    //     scratch every frame (groundHeightAt) and added the stale
+-    //     airborne offset on top of whatever that surface's height was,
+-    //     so a support-surface swap while airborne could add its own
+-    //     rise on top of the existing offset instead of just continuing
+-    //     the fall/rise in place.
+-    coyoteTimer = grounded ? COYOTE_TIME : Math.max(0, coyoteTimer - delta);
+-    jumpBufferTimer = Math.max(0, jumpBufferTimer - delta);
+-    if (jumpBufferTimer > 0 && (grounded || coyoteTimer > 0)) {
+-        verticalVelocity = JUMP_SPEED;
+-        grounded = false;
+-        jumpBufferTimer = 0;
+-        coyoteTimer = 0;
+-    }
+-
+-    let nextFeetY;
+-    if (grounded) {
+-        const surfaceY = groundHeightAt(camera.position.x, camera.position.z, feetY);
+-        if (surfaceY < feetY - STEP_DOWN_TOLERANCE) {
+-            // the floor under our current x/z just dropped a lot --
+-            // walked off a real ledge. Preserve position this frame;
+-            // gravity (below) carries it down for real starting next.
+-            grounded = false;
+-            nextFeetY = feetY;
+-        } else {
+-            nextFeetY = surfaceY; // ordinary walk / auto-step onto a curb, stair riser, ramp, low prop
+-        }
+-    }
+-    if (!grounded) {
+-        verticalVelocity += GRAVITY * delta;
+-        const predictedFeetY = feetY + verticalVelocity * delta;
+-        const landing = findLandingSurface(camera.position.x, camera.position.z, feetY, predictedFeetY, verticalVelocity);
+-        if (landing !== null) {
+-            nextFeetY = landing;
+-            verticalVelocity = 0;
+-            grounded = true;
+-        } else {
+-            nextFeetY = predictedFeetY; // world-stable fall/rise -- unaffected by whatever unrelated surface merely sits underneath
+-        }
+-    }
+-    camera.position.y = nextFeetY + CONFIG.camera.eyeHeight;
++    let wishVelocityX = 0;
++    let wishVelocityZ = 0;
++    if (inputActive && velocity.lengthSq() > 0.0001) {
++        camera.getWorldDirection(_moveForwardWorld);
++        _moveForwardWorld.y = 0;
++        if (_moveForwardWorld.lengthSq() > 1e-8) _moveForwardWorld.normalize();
++        else _moveForwardWorld.set(0, 0, -1);
++
++        _moveRightWorld.crossVectors(_moveForwardWorld, camera.up);
++        if (_moveRightWorld.lengthSq() > 1e-8) _moveRightWorld.normalize();
++        else _moveRightWorld.set(1, 0, 0);
++
++        wishVelocityX = (_moveRightWorld.x * localRight + _moveForwardWorld.x * localForward) * moveSpeed;
++        wishVelocityZ = (_moveRightWorld.z * localRight + _moveForwardWorld.z * localForward) * moveSpeed;
++    }
++
++    // This single call owns X/Z collision, support changes, stairs/ramps,
++    // ledges, jump/gravity, ceiling bonks, landing, and emergency rollback.
++    // No later code is allowed to push the player to a different pose.
++    playerPhysics.step(delta, wishVelocityX, wishVelocityZ);
+ 
+-    // ceiling clamp: a mezzanine's underside (approached from below) and
+-    // every building's own ground-floor roof cap both block upward
+-    // movement the same way a floor blocks downward movement -- a real
+-    // head-bonk, not a clip-through. elevatedPlatforms double as floors
+-    // once you're standing at/above them, so those are only a ceiling
+-    // while you're genuinely still underneath. Only stops upward
+-    // velocity, same as before -- bonking your head doesn't make you
+-    // "grounded," you're still falling next frame.
+-    for (const c of elevatedPlatforms) {
+-        if (Math.abs(camera.position.x - c.x) >= c.hx || Math.abs(camera.position.z - c.z) >= c.hz) continue;
+-        if (camera.position.y - CONFIG.camera.eyeHeight >= c.y - 0.01) continue; // at/above it -- that's the floor, not a ceiling, from here
+-        const maxEyeY = c.y - HEAD_CLEARANCE;
+-        if (camera.position.y > maxEyeY) {
+-            camera.position.y = maxEyeY;
+-            if (verticalVelocity > 0) verticalVelocity = 0;
+-        }
+-    }
+-    for (const c of overheadCeilings) { // a ceiling for whoever's in the room below it -- not for someone standing on/above the roof itself (a warehouse's own walkable roof shares this same footprint)
+-        if (Math.abs(camera.position.x - c.x) >= c.hx || Math.abs(camera.position.z - c.z) >= c.hz) continue;
+-        if (camera.position.y - CONFIG.camera.eyeHeight >= c.y - 0.01) continue;
+-        const maxEyeY = c.y - HEAD_CLEARANCE;
+-        if (camera.position.y > maxEyeY) {
+-            camera.position.y = maxEyeY;
+-            if (verticalVelocity > 0) verticalVelocity = 0;
+-        }
+-    }
+     updateWebGradient(camera.position.z, camera.position.y, elapsedTime);
+     updateRain(delta);
+ 

@@ -167,17 +167,30 @@ const CONFIG = {
     // everywhere, so only genuinely emissive signage should glow, not
     // sunlit concrete.
     quality: {
+        // 17x17 world-width pass: floor/hero-floor caps are UNCHANGED on
+        // purpose (this is a wider-not-taller pass -- see maze.cols/rows
+        // below). propDensity/skyJunkCount/floatingPlatformClusters are
+        // interpolated 60% of the way from the 11x11 numbers toward this
+        // project's own real historical 21x21 numbers (t=(17-11)/(21-11)
+        // =0.6) rather than re-derived from scratch -- that's a real prior
+        // tuning pass, not a guess. Per-cell multipliers (propDensity)
+        // move DOWN slightly at t=0.6 (2.8 -> 2.5): the map itself now
+        // supplies more area, so less artificial per-cell compensation is
+        // needed to read as dense. Pure-overdraw globals (skyJunkCount,
+        // floatingPlatformClusters) move up, but sub-linearly vs. the
+        // ~2.4x area growth (11x11->17x17) -- "more city" should not mean
+        // "quadratically more sky clutter."
         desktop: {
             maxPixelRatio: 2,
             antialias: true,
             bloom: { strength: 0.55, radius: 0.4, threshold: 0.88 },
             drawDistance: 380,
             maxDynamicLights: 40,
-            propDensity: 2.8, // bumped alongside the smaller map -- a bit denser per cell, not just "the same stuff in less space"
-            skyJunkCount: 2000, // map area dropped to ~1/4 -- cut hard so the sky doesn't quadruple in density on its own
-            floatingPlatformClusters: 13, // real colliders + individual meshes, unlike sky junk -- kept modest on purpose
+            propDensity: 2.5,
+            skyJunkCount: 3900,
+            floatingPlatformClusters: 26,
             maxEnterableFloors: 10, // every floor is real/walkable now -- no decorative tower above this cap, just a shorter real building
-            maxHeroFloors: 16,
+            maxHeroFloors: 16, // UNCHANGED -- wider map, not taller buildings
         },
         mobile: {
             maxPixelRatio: 1.5,
@@ -185,11 +198,11 @@ const CONFIG = {
             bloom: { strength: 0.4, radius: 0.35, threshold: 0.9 },
             drawDistance: 260,
             maxDynamicLights: 18,
-            propDensity: 1.6,
-            skyJunkCount: 500,
-            floatingPlatformClusters: 6,
+            propDensity: 1.45,
+            skyJunkCount: 980,
+            floatingPlatformClusters: 12,
             maxEnterableFloors: 7,
-            maxHeroFloors: 11,
+            maxHeroFloors: 11, // UNCHANGED
         },
         // auto-selected on low core-count/low-memory machines (touch or
         // not -- see detectWeakGPU below), or forced with ?quality=low.
@@ -201,11 +214,11 @@ const CONFIG = {
             bloom: null,
             drawDistance: 180,
             maxDynamicLights: 6,
-            propDensity: 0.36,
-            skyJunkCount: 55, // token amount -- the "buried in noise" read still needs to exist, just barely
-            floatingPlatformClusters: 2,
+            propDensity: 0.32,
+            skyJunkCount: 105, // token amount -- the "buried in noise" read still needs to exist, just barely
+            floatingPlatformClusters: 3,
             maxEnterableFloors: 4,
-            maxHeroFloors: 6,
+            maxHeroFloors: 6, // UNCHANGED
         },
     },
 
@@ -214,13 +227,17 @@ const CONFIG = {
     // either solid (a building) or open (an alley). A perimeter ring is
     // always solid so the maze is naturally walled in — no invisible clamp.
     maze: {
-        // ~1/4 the total footprint of the old 21x21 (11x11 is the nearest
-        // odd size -- the DFS carve below moves in steps of 2, so an odd
-        // grid is what keeps the parity/perimeter math clean) plus a
-        // slightly tighter building margin below, so it also reads denser
-        // per block, not just smaller overall.
-        cols: 11,
-        rows: 11,
+        // World-width pass: wider again after the 11x11 compression that
+        // forced the real-floors/real-stairs/real-facade work. This is
+        // ~2.4x the 11x11 footprint (about 55% of the way back to the old
+        // 21x21) -- MORE CITY (more blocks, more routes, more buildings,
+        // more room for signature locations to sit apart from each other),
+        // not taller buildings: CONFIG.buildings/CONFIG.quality's floor
+        // counts are untouched by this change. Stays odd -- the DFS carve
+        // below moves in steps of 2, so an odd grid is what keeps the
+        // parity/perimeter math clean.
+        cols: 17,
+        rows: 17,
         cellSize: 7,        // world units per grid cell
         loopChance: 0.14,   // chance a redundant wall opens up into a plaza/loop
         buildingMarginMin: 0.5,  // how much smaller than the cell a building footprint is
@@ -603,20 +620,26 @@ const CONFIG = {
             weeds: 3.5,
             none: 0.03, // turned down further -- almost nothing gets to be empty
         },
-        // scaled down alongside the ~1/4-size map -- these all draw from
-        // the same shrunk plazaCells pool in this fixed order, so leaving
-        // the old (21x21-tuned) counts here would let the categories
-        // early in the list (statues, constructionZones...) starve every
-        // category listed after them out of a plaza entirely.
+        // 17x17 pass: interpolated the same 60%-toward-the-old-21x21-
+        // numbers way as CONFIG.quality's skyJunkCount/floatingPlatform-
+        // Clusters (see there) -- there's a genuinely bigger plazaCells
+        // pool to draw from now, but "special encounter" counts are
+        // exactly the category that should scale slower than raw area
+        // (more of these than 11x11 had, nowhere near proportional to the
+        // ~2.4x area gain). These still draw from the same plazaCells pool
+        // in this fixed order, so an early category (statues,
+        // constructionZones...) can still starve a later one out of a
+        // plaza if the pool runs dry -- just less likely now that there's
+        // more pool to begin with.
         maxSpecialFeatures: {
-            statues: 2,
-            constructionZones: 2,
-            crimeScenes: 1,
-            newsstands: 2,
-            phoneBooths: 2,
-            atmKiosks: 2,
-            parks: 2,
-            megaBillboards: 2,
+            statues: 4,
+            constructionZones: 4,
+            crimeScenes: 2,
+            newsstands: 3,
+            phoneBooths: 3,
+            atmKiosks: 3,
+            parks: 4,
+            megaBillboards: 3,
         },
     },
 

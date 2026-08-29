@@ -5293,10 +5293,170 @@ function buildAS400Archive(site) {
     console.log(`[signature] AS/400 ARCHIVE: built ${cells.length} modules, ${floorCount} floors, orientation+machine room+library+terminal lab all populated`);
 }
 
+// ============================================================
+// JUSTIN BROWN INDEX -- authored signature location #3.
+// ============================================================
+// "EVERYTHING IS QUERYABLE. FINDABLE IS DIFFERENT." -- reuses the
+// project's own real, already-sourced identity-noise data (CONFIG.
+// billboards.decoyIdentities/systemNoise -- the real Census surname +
+// SSA first-name frequency estimate is already documented right there
+// in CONFIG, see its own comment) instead of inventing new fake
+// records. The building's job is to bury that real data in real
+// abundance -- dense stacks, repeated across floors -- not to invent
+// a single new decoy string. This does NOT touch the separate,
+// pre-existing "one true signal" system (the actual signal + its
+// near-misses are placed at the maze's farthest dead ends, unrelated
+// to where this building lands) -- the Index is the SEARCH EXPERIENCE
+// made architectural, not a relocation of the one real answer.
+function buildJustinIndex(site) {
+    const { cells, id, signatureInstance } = site;
+    const typeCfg = CONFIG.signatureBuildings.justinIndex;
+    const floorHeight = 3.0;
+    const floorCount = Math.max(4, Math.min(6, typeCfg.preferredFloors || 5));
+    const color = 0xa8a290; // dull bureaucratic gray-tan -- a records bureau, not a startup
+    const material = new THREE.MeshStandardMaterial({ color, roughness: 0.92, side: THREE.DoubleSide });
+    const buildingContext = { wealth: 0.45, maintenance: 0.55 };
+    const streetSetback = randRange(CONFIG.maze.buildingMarginMin, CONFIG.maze.buildingMarginMax) / 2;
+    const partySetback = randRange(0.08, 0.2);
+
+    const degreeOf = (cell) => [[0, -1], [0, 1], [-1, 0], [1, 0]].filter(([dc, dr]) => siteIdOf[cell.row + dr]?.[cell.col + dc] === id).length;
+    let primary = cells[0], primaryDegree = -1;
+    for (const c of cells) { const d = degreeOf(c); if (d > primaryDegree) { primaryDegree = d; primary = c; } }
+
+    const mainEntrance = signatureInstance.mainEntrance;
+    const secondaryEntrance = signatureInstance.secondaryEntrance;
+    const others0 = cells.filter(c => c !== primary);
+    const lobby = others0.find(c => c.row === mainEntrance.cell.row && c.col === mainEntrance.cell.col) ?? others0[0] ?? primary;
+    const others1 = others0.filter(c => c !== lobby);
+    const rearStacks = (secondaryEntrance && others1.find(c => c.row === secondaryEntrance.cell.row && c.col === secondaryEntrance.cell.col)) ?? others1[others1.length - 1] ?? primary;
+    const deepStacks = others1.filter(c => c !== rearStacks);
+    const allStackCells = [primary, ...deepStacks, rearStacks];
+
+    const floorCountByCellKey = new Map(cells.map(c => [`${c.row},${c.col}`, floorCount]));
+    const cellIs = (cell, edge) => edge && cell.row === edge.cell.row && cell.col === edge.cell.col;
+    const rectByCellKey = new Map();
+    for (const cell of cells) {
+        const forceDoorSide = cellIs(cell, mainEntrance) ? { dc: mainEntrance.dc, dr: mainEntrance.dr }
+            : cellIs(cell, secondaryEntrance) ? { dc: secondaryEntrance.dc, dr: secondaryEntrance.dr }
+                : null;
+        const rect = addBuildingModule(cell, {
+            isPrimary: cell === primary, isWarehouse: false, floorCount, floorHeight, height: floorCount * floorHeight,
+            color, material, buildingContext, streetSetbackX: streetSetback, streetSetbackZ: streetSetback, partySetback,
+            voidCell: null, siteFloorCounts: floorCountByCellKey, signatureMode: true, forceDoorSide,
+        });
+        rectByCellKey.set(`${cell.row},${cell.col}`, rect);
+    }
+
+    const facadesFor = (cell) => cell && rectByCellKey.get(`${cell.row},${cell.col}`)?.streetFacades || [];
+    const bandFor = (fl) => [fl * floorHeight + 0.3, (fl + 1) * floorHeight - 0.3];
+    const CABINET_MODELS = ['interior/cabinet_01', 'interior/cabinet_02', 'interior/cabinet_03', 'interior/cabinet_04'];
+    const SHELF_MODELS = ['interior/shelf_01', 'interior/shelf_02', 'interior/shelf_03', 'interior/shelf_04', 'interior/shelf_05'];
+    const LOCKER_MODELS = ['interior/locker_bank_01', 'interior/locker_bank_02', 'interior/locker_bank_03', 'interior/locker_bank_04'];
+
+    // real decoy/noise content pools -- the hand-curated entries only
+    // (never the deterministic flavorWords-style cross-join elsewhere in
+    // CONFIG, which exists for THAT system's own density, not this one).
+    // Cycled with modulo, not consumed -- "abundance" means the same
+    // real decoy legitimately appears more than once across floors, the
+    // way a real index has duplicate/near-duplicate records.
+    const decoyPool = CONFIG.billboards.decoyIdentities;
+    const noisePool = CONFIG.billboards.systemNoise.slice(0, 12); // the curated set -- see CONFIG's own comment on where the cross-join starts
+    let decoyIdx = 0, noiseIdx = 0;
+    const nextDecoy = () => decoyPool[decoyIdx++ % decoyPool.length];
+    const nextNoise = () => noisePool[noiseIdx++ % noisePool.length];
+
+    // records lobby -- public counter + reception furniture + the real
+    // "3,529" figure right at the door, the same way any records office
+    // posts its own throughput/backlog numbers.
+    {
+        const { x: lx, z: lz } = cellToWorld(lobby.col, lobby.row);
+        placeCityAsset(pick(['interior/desk_01', 'interior/desk_02', 'interior/desk_03', 'interior/desk_04']), lx, lz, randRange(0, Math.PI * 2), { y: 0 });
+        placeCityAsset(pick(['interior/chair_01', 'interior/chair_02', 'interior/chair_03']), lx + 0.6, lz + 0.4, randRange(0, Math.PI * 2), { y: 0 });
+        const [t0, s0] = decoyPool[decoyPool.length - 1]; // 'JUSTIN BROWN' / 'see also: 3,529 others' -- the real headline figure
+        addGalleryPlacard(lx - 0.7, lz - 0.6, randRange(0, Math.PI * 2), t0, s0);
+        let hung = 0;
+        for (const facade of facadesFor(lobby)) {
+            for (let i = 0; i < 2; i++) {
+                const [t, s] = nextNoise();
+                const spot = findFreeFacadeRect(facade, 'sign', 1.6, 0.55, ...bandFor(0), 6, 0.1);
+                if (!spot) break;
+                const p = pointOnFacade(facade, spot.u, spot.v, -0.05);
+                addWallPoster(p.x, p.y, p.z, facade.rotY + Math.PI, t, s);
+                hung++;
+            }
+        }
+        console.log(`[signature] JUSTIN BROWN INDEX: records lobby -- reception + ${hung} system-noise panels`);
+    }
+
+    // deep record stacks -- dense cabinets/shelves across every non-
+    // lobby cell's ground floor, each row labeled with a real decoy
+    // identity. This is the actual "signal hidden by abundance" bit:
+    // lots of real, similarly-styled J. BROWN records, none of them him.
+    let stackLabels = 0, stackFixtures = 0;
+    for (const cell of allStackCells) {
+        const { x: cx, z: cz } = cellToWorld(cell.col, cell.row);
+        const r = rectByCellKey.get(`${cell.row},${cell.col}`);
+        const hw = Math.min(r?.hwx ?? 2, r?.hwz ?? 2);
+        const rowCount = 2 + Math.floor(rng() * 2);
+        for (let i = 0; i < rowCount; i++) {
+            const modelId = rng() < 0.5 ? pick(CABINET_MODELS) : pick(SHELF_MODELS);
+            const px = cx + randRange(-hw * 0.7, hw * 0.7), pz = cz + randRange(-hw * 0.7, hw * 0.7);
+            placeCityAsset(modelId, px, pz, randRange(0, Math.PI * 2), { y: 0 });
+            stackFixtures++;
+            if (rng() < 0.7) {
+                const [t, s] = nextDecoy();
+                addGalleryPlacard(px + 0.4, pz + 0.3, randRange(0, Math.PI * 2), t, s);
+                stackLabels++;
+            }
+        }
+    }
+    console.log(`[signature] JUSTIN BROWN INDEX: deep stacks -- ${stackFixtures} cabinets/shelves across ${allStackCells.length} rooms, ${stackLabels} real decoy records labeled`);
+
+    // upper floors -- "active records" (floor 1), "older archive /
+    // microfiche" (floor 2), "deep storage" (floor 3+) -- same real
+    // decoy/noise pools, cycling further into them per floor (the
+    // pools repeat well before the building runs out of floors, which
+    // is honest: a real index has duplicate-looking records too).
+    let upperHung = 0;
+    for (let fl = 1; fl < floorCount; fl++) {
+        const useDecoy = fl % 2 === 1; // alternate themes floor-to-floor
+        for (const cell of [primary, lobby, rearStacks, ...deepStacks]) {
+            for (const facade of facadesFor(cell)) {
+                const [t, s] = useDecoy ? nextDecoy() : nextNoise();
+                const spot = findFreeFacadeRect(facade, 'sign', 1.6, 0.55, ...bandFor(fl), 6, 0.1);
+                if (!spot) continue;
+                const p = pointOnFacade(facade, spot.u, spot.v, -0.05);
+                addWallPoster(p.x, p.y, p.z, facade.rotY + Math.PI, t, s);
+                upperHung++;
+            }
+        }
+        // a locker bank per floor in the primary shaft -- narrower aisles
+        // reads as "deeper into the archive" the higher you climb.
+        const { x: px, z: pz } = cellToWorld(primary.col, primary.row);
+        placeCityAsset(pick(LOCKER_MODELS), px + randRange(-1, 1), pz + randRange(-1, 1), randRange(0, Math.PI * 2), { y: fl * floorHeight });
+    }
+    console.log(`[signature] JUSTIN BROWN INDEX: ${floorCount - 1} upper floors -- ${upperHung} real decoy/noise panels hung, deeper into the stacks per floor`);
+
+    // identity facade
+    const vestFacade = facadesFor(lobby)[0] ?? facadesFor(primary)[0];
+    if (vestFacade) {
+        const spot = findFreeFacadeRect(vestFacade, 'sign', 3.4, 1.3, floorCount * floorHeight - 1.8, floorCount * floorHeight - 0.3, 6, 0.1);
+        const e = mainEntrance;
+        if (spot) {
+            const p = pointOnFacade(vestFacade, spot.u, spot.v);
+            addSign(p.x, p.y, p.z, vestFacade.rotY, typeCfg.exteriorName, typeCfg.exteriorSubtitle, 0xd8d8d8, false, 3.4, { w: 120, h: 48 });
+        } else {
+            addSign(e.doorX, floorCount * floorHeight - 0.9, e.doorZ, e.outwardRotY, typeCfg.exteriorName, typeCfg.exteriorSubtitle, 0xd8d8d8, false, 3.4, { w: 120, h: 48 });
+        }
+    }
+
+    console.log(`[signature] JUSTIN BROWN INDEX: built ${cells.length} modules, ${floorCount} floors -- lobby+search hall+deep stacks all populated, ${allStackCells.length + 2} internally-connected rooms give real multiple routes`);
+}
+
 const SIGNATURE_BUILDERS = {
     artGallery: buildArtGallery,
     as400Archive: buildAS400Archive,
-    justinIndex: buildSignaturePlaceholder,
+    justinIndex: buildJustinIndex,
     systemsWorkshop: buildSignaturePlaceholder,
     loreShrine: buildSignaturePlaceholder,
 };

@@ -3454,17 +3454,37 @@ function findFreeFacadeRect(facade, type, width, height, vMin, vMax, attempts = 
 const SIGN_BOTTOM_CLEARANCE = 2.0;
 const SIGN_TOP_MARGIN = 0.3;
 
+// addSign builds a PROJECTING/BLADE sign -- a wall plate, an arm running
+// outward, and a panel mounted past the arm's tip so the panel's own
+// "width" dimension extends further OUTWARD still (see addSign: the
+// panel is rotated 90 degrees off the wall so it reads to someone
+// walking the sidewalk, not standing dead-on in front of it). Its real
+// facade footprint (how much WALL frontage it actually consumes) is just
+// the small mounting plate; its real bulk (armLength + width) sticks out
+// into the alley, not sideways along the wall. Treating the whole
+// panel width as facade-tangent occupancy (the old behavior) reserved
+// the wrong axis entirely -- a wide sign wrongly ate a wide horizontal
+// slice of WALL, while the actual alley-projecting arm was never
+// checked against anything.
+const SIGN_WALL_MOUNT_WIDTH = 0.5;
+
 // a sign's real, final dimensions, decided BEFORE it's placed anywhere --
-// shape/aspect first, width/height together from that one aspect, never
-// two independently-rolled numbers. Placement (placeSignsOnFacade) then
-// reserves exactly this footprint; addSign is handed the same spec so
-// the mesh it builds can never end up a different size than what was
-// reserved.
+// shape/aspect first, width/height/armLength together as one linked
+// spec, never independently-rolled numbers. Placement (placeSignsOnFacade)
+// then reserves exactly this footprint -- both the small facade mount AND
+// the real world-space alley projection -- and addSign is handed the
+// same spec so the mesh it builds can never end up a different size (or
+// project a different depth) than what was reserved.
 function createSignSpec() {
     const shape = pick(SIGN_SHAPES);
     const width = randRange(1.1, 2.6);
     const height = width * (shape.h / shape.w);
-    return { shape, width, height };
+    const armLength = randRange(0.55, 1.0);
+    return {
+        shape, width, height, armLength,
+        wallFootprintWidth: SIGN_WALL_MOUNT_WIDTH, // real facade (u-axis) occupancy
+        projectionDepth: armLength + width, // real world-space (outward) occupancy -- see addSign's panel layout
+    };
 }
 
 // tries `count` signs on one facade. Each one rolls its own real spec
@@ -3491,22 +3511,33 @@ function placeSignsOnFacade(facade, count, row) {
         let chosen = null;
         for (let tries = 0; tries < 10; tries++) {
             const spec = createSignSpec();
-            const halfW = spec.width / 2, halfH = spec.height / 2;
-            if (facade.half * 2 < spec.width + 0.3) continue; // this wall can't fit anything this wide at all
+            const halfMount = spec.wallFootprintWidth / 2, halfH = spec.height / 2;
+            if (facade.half * 2 < spec.wallFootprintWidth + 0.3) continue; // this wall can't fit even the small mount plate
             const minCenterY = facade.yMin + SIGN_BOTTOM_CLEARANCE + halfH;
             const maxCenterY = facade.yMax - SIGN_TOP_MARGIN - halfH;
             if (minCenterY > maxCenterY) continue; // this sign's real height doesn't fit this facade at all -- not this wall's problem to solve by floating outside it
             const centerY = randRange(minCenterY, maxCenterY);
-            const u = randRange(-facade.half + halfW, facade.half - halfW);
-            if (facadeFits(facade, 'sign', u - halfW, u + halfW, centerY - halfH, centerY + halfH, 0.3)) { chosen = { spec, u, centerY }; break; }
+            const u = randRange(-facade.half + halfMount, facade.half - halfMount);
+            if (!facadeFits(facade, 'sign', u - halfMount, u + halfMount, centerY - halfH, centerY + halfH, 0.3)) continue;
+            // the real bulk of a blade sign is its outward projection
+            // (armLength+width), not its facade footprint -- checked in
+            // WORLD SPACE (see exteriorDecorationVolumes) since a
+            // perpendicular facade at a nearby corner could be about to
+            // push something into this exact same alley volume without
+            // this facade's own u/v occupancy ever knowing.
+            const box = makeProjectionBox(facade, u, centerY - halfH, spec.height, spec.projectionDepth, halfMount + 0.15);
+            if (!projectionFits(box)) continue;
+            chosen = { spec, u, centerY, box };
+            break;
         }
-        if (chosen === null) continue; // correct to skip -- wall is full, or genuinely too short for any tried spec
-        const { spec, u, centerY } = chosen;
-        facadeReserve(facade, 'sign', u - spec.width / 2, u + spec.width / 2, centerY - spec.height / 2, centerY + spec.height / 2);
+        if (chosen === null) continue; // correct to skip -- wall (or the alley space in front of it) is full, or genuinely too short for any tried spec
+        const { spec, u, centerY, box } = chosen;
+        facadeReserve(facade, 'sign', u - spec.wallFootprintWidth / 2, u + spec.wallFootprintWidth / 2, centerY - spec.height / 2, centerY + spec.height / 2);
+        reserveProjectionVolume(box);
         const p = pointOnFacade(facade, u, centerY);
         const content = pickSignContent(p.x, p.z);
         const neon = pickNeonForRow(row);
-        addSign(p.x, p.y, p.z, facade.rotY, content.title, content.subtitle, neon, content.flicker, spec.width, spec.shape);
+        addSign(p.x, p.y, p.z, facade.rotY, content.title, content.subtitle, neon, content.flicker, spec.width, spec.shape, spec.armLength);
         placed++;
     }
     return placed;
@@ -3593,6 +3624,37 @@ function pointOnFacade(facade, u, y, outwardOffset = 0) {
         z: facade.cz + tz * u + facade.normalZ * outwardOffset,
     };
 }
+
+// world-space occupancy for anything that projects meaningfully outward
+// from its wall -- a facade's own u/v occupancy only knows about THAT
+// facade; it can't catch two projections from DIFFERENT facades (the
+// classic case: two perpendicular walls meeting at a corner, each
+// pushing something out into the same shared alley volume) clipping
+// through each other. Every wall in this city is cardinal (normal is
+// always a unit axis vector), so an exact oriented box IS already an
+// axis-aligned box -- no separating-axis math needed, just min/max per
+// axis. Conservative is fine here (see the spec's "conservative boxes
+// are fine" -- this never needs to be pixel-exact, just non-overlapping).
+const exteriorDecorationVolumes = [];
+function makeProjectionBox(facade, u, yBase, height, outwardDepth, tangentHalfWidth) {
+    const { tx, tz } = facadeTangent(facade);
+    const baseX = facade.cx + tx * u, baseZ = facade.cz + tz * u;
+    const outX = facade.normalX * outwardDepth, outZ = facade.normalZ * outwardDepth;
+    const spanX = tx ? tangentHalfWidth : 0.05, spanZ = tz ? tangentHalfWidth : 0.05;
+    return {
+        xMin: Math.min(baseX, baseX + outX) - spanX, xMax: Math.max(baseX, baseX + outX) + spanX,
+        yMin: yBase, yMax: yBase + height,
+        zMin: Math.min(baseZ, baseZ + outZ) - spanZ, zMax: Math.max(baseZ, baseZ + outZ) + spanZ,
+    };
+}
+function boxesIntersect(a, b) {
+    return a.xMin < b.xMax && b.xMin < a.xMax && a.yMin < b.yMax && b.yMin < a.yMax && a.zMin < b.zMax && b.zMin < a.zMax;
+}
+function projectionFits(box) {
+    for (const v of exteriorDecorationVolumes) if (boxesIntersect(box, v)) return false;
+    return true;
+}
+function reserveProjectionVolume(box) { exteriorDecorationVolumes.push(box); }
 
 // the actual buildable rectangle for one cell -- independent per-side
 // setbacks (0 for a same-site neighbor, a small shared value for a
@@ -3908,14 +3970,24 @@ function addBuildingModule(cell, opts) {
                 addPipeCluster(p.x, p.z, rotY, height, buildingContext.maintenance);
             }
         }
-        // awnings -- hardware, low over the ground floor.
+        // awnings -- hardware, low over the ground floor. Also registers a
+        // (shallow -- an awning only really projects ~0.3*width outward,
+        // see addAwning) world-space volume, same reasoning as blade
+        // signs: a corner where two facades both push something into the
+        // same alley shouldn't rely on either one's own facade occupancy
+        // alone to catch it.
         if (rng() < 0.42) {
             const awningWidth = randRange(1.6, 2.4);
+            const awningHeight = awningWidth * 0.45;
             const awningY = Math.max(2.4, floorHeight + 0.2);
-            const spot = findFreeFacadeRect(facade, 'awning', awningWidth, awningWidth * 0.45, awningY - 0.4, awningY + 0.4);
+            const spot = findFreeFacadeRect(facade, 'awning', awningWidth, awningHeight, awningY - 0.4, awningY + 0.4);
             if (spot) {
-                const p = pointOnFacade(facade, spot.u, spot.v);
-                addAwning(p.x, p.y, p.z, rotY, awningWidth);
+                const box = makeProjectionBox(facade, spot.u, spot.v - awningHeight / 2, awningHeight, awningWidth * 0.35, awningWidth / 2);
+                if (projectionFits(box)) {
+                    reserveProjectionVolume(box);
+                    const p = pointOnFacade(facade, spot.u, spot.v);
+                    addAwning(p.x, p.y, p.z, rotY, awningWidth);
+                }
             }
         }
         // security cameras -- small hardware fixture, watches the street.
@@ -3972,6 +4044,12 @@ function addBuildingModule(cell, opts) {
         // height) was already reserved before any sign/hardware roll ran.
         if (isFireEscapeFace) {
             placeRealModel('fireEscape', cx + ox * 1.02, cz + oz * 1.02, rotY);
+            // a real, wide structural projection -- registered in world
+            // space (not just this facade's own u/v) so a blade sign or
+            // awning reserved from a DIFFERENT, perpendicular facade at a
+            // nearby corner can't push its own projection straight
+            // through it.
+            reserveProjectionVolume(makeProjectionBox(facade, 0, 0, height, 1.3, 0.7));
             const landings = buildFireEscapeStair(cx + ox * 1.02, cz + oz * 1.02, rotY, isWarehouse ? height : randRange(5, 11));
             if (landings.length) {
                 // the landing closest to floor 1's own height -- the one
@@ -4126,7 +4204,7 @@ const SIGN_FONTS = [
 const SIGN_BACKINGS = ['#020202', '#0a0410', '#04120a', '#12040a', '#0a0a02', '#080808'];
 const SIGN_BORDER_STYLES = ['solid', 'double', 'cut', 'none'];
 
-function addSign(x, y, z, rotY, title, subtitle, colorHex, flicker = false, widthOverride = null, shapeOverride = null) {
+function addSign(x, y, z, rotY, title, subtitle, colorHex, flicker = false, widthOverride = null, shapeOverride = null, armLengthOverride = null) {
     // callers driving real facade occupancy (see placeSignsOnFacade) pass
     // the EXACT shape/spec that was already reserved -- rolling a fresh
     // one here independently is how the reserved footprint and the
@@ -4192,7 +4270,11 @@ function addSign(x, y, z, rotY, title, subtitle, colorHex, flicker = false, widt
     // someone standing dead-on in front of the wall. Both the front and
     // back faces carry the texture, so it still reads from either
     // approach direction.
-    const armLength = randRange(0.55, 1.0);
+    // matches createSignSpec's armLength when a caller drives real facade
+    // occupancy -- the reserved world-space projection box
+    // (armLength+width, see placeSignsOnFacade) has to describe the same
+    // arm this mesh actually builds.
+    const armLength = armLengthOverride ?? randRange(0.55, 1.0);
     const bracketMat = new THREE.MeshStandardMaterial({ color: 0x1c1c1c, roughness: 0.6, metalness: 0.6 });
     const g = new THREE.Group();
 
@@ -6229,6 +6311,21 @@ const propColliders = []; // {x, z, radius, height} — soft obstacles, blended 
         }
     }
     console.log(`[testing] facade occupancy bounds self-test: ${facadeBoundsViolations === 0 ? 'PASS' : `FAIL (${facadeBoundsViolations} violations)`} across ${buildingFacades.length} facades`);
+
+    // HARD TEST: no two registered world-space projection volumes
+    // (blade sign arms/panels, awnings, fire escapes) actually intersect
+    // -- catches exactly the cross-facade corner case a facade's own u/v
+    // occupancy can't see (two perpendicular walls both projecting into
+    // the same shared alley volume). O(n^2) but n is only ever a few
+    // hundred projecting fixtures citywide -- a one-time boot check, not
+    // a per-frame cost.
+    let projectionIntersections = 0;
+    for (let i = 0; i < exteriorDecorationVolumes.length; i++) {
+        for (let j = i + 1; j < exteriorDecorationVolumes.length; j++) {
+            if (boxesIntersect(exteriorDecorationVolumes[i], exteriorDecorationVolumes[j])) projectionIntersections++;
+        }
+    }
+    console.log(`[testing] world-space projection intersection self-test: ${projectionIntersections === 0 ? 'PASS' : `FAIL (${projectionIntersections} intersecting pairs)`} across ${exteriorDecorationVolumes.length} registered projections`);
 }
 
 mountContentCards(); // real site content claims leftover wall faces

@@ -37,6 +37,12 @@ const KEEP_RADIUS = GENERATE_RADIUS + 2;
 const MAX_INSTANCES = hardware.low ? 2400 : hardware.mobile ? 4200 : 6500;
 const PIXEL_BUDGET = hardware.low ? 1_150_000 : hardware.mobile ? 1_750_000 : 2_600_000;
 const DPR_CAP = hardware.low ? 1 : hardware.mobile ? 1.25 : 1.5;
+const params = new URLSearchParams(location.search);
+const requestedSeed = Number(params.get("seed"));
+const WORLD_SEED = Number.isFinite(requestedSeed)
+  ? requestedSeed >>> 0
+  : crypto.getRandomValues(new Uint32Array(1))[0];
+const TARGET_CHUNKS = (GENERATE_RADIUS * 2 + 1) ** 2;
 
 const player = { x: 0, y: EYE_HEIGHT, z: 0, yaw: 0, pitch: 0 };
 const keys = new Uint8Array(256);
@@ -324,6 +330,7 @@ function startWorker() {
   if (workerStarted) return;
   workerStarted = true;
   worker = new Worker("./world-worker.js");
+  worker.postMessage({ type: "init", seed: WORLD_SEED });
   worker.onmessage = ({ data }) => {
     if (!data || data.type !== "chunk" || !(data.data instanceof Float32Array)) return;
     if (Math.max(Math.abs(data.cx - currentChunkX), Math.abs(data.cz - currentChunkZ)) > KEEP_RADIUS) {
@@ -414,8 +421,9 @@ function updateHud(now) {
   const fps = Math.min(999, 1000 / Math.max(1, frameMsEma));
   statusEl.textContent =
     `FPS ${fps.toFixed(0)}  DPR ${effectiveDpr.toFixed(2)}\n` +
-    `DRAW 1  INST ${instanceCount}  CHUNKS ${chunks.size}\n` +
-    `BOOT ${firstFrameMs.toFixed(0)}ms  WORLD ${workerStarted ? "STREAM" : "IDLE"}`;
+    `DRAW 1  INST ${instanceCount}  CHUNKS ${Math.min(chunks.size, TARGET_CHUNKS)}/${TARGET_CHUNKS}\n` +
+    `BOOT ${firstFrameMs.toFixed(0)}ms  WORLD ${workerStarted ? (chunks.size >= TARGET_CHUNKS ? "READY" : "STREAM") : "IDLE"}\n` +
+    `SEED ${WORLD_SEED}  compare with ?seed=${WORLD_SEED}`;
 }
 
 function draw(now) {
@@ -460,7 +468,7 @@ document.addEventListener("pointerlockchange", () => {
 
 document.addEventListener("mousemove", (event) => {
   if (document.pointerLockElement !== canvas) return;
-  player.yaw -= event.movementX * 0.00215;
+  player.yaw += event.movementX * 0.00215;
   player.pitch -= event.movementY * 0.00215;
   player.pitch = Math.max(-1.42, Math.min(1.42, player.pitch));
 });

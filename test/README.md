@@ -30,3 +30,17 @@ Production systems should return as independent lazy modules, not as a monolith.
 - decorative UI after interaction or idle time.
 
 The performance contract is that none of those systems may delay the base renderer, pointer lock, movement, or the nearest geometry stream.
+
+## Seed and parity contract
+
+`/test/` accepts `?seed=<integer>`, displays the active seed in the HUD, and
+generates every chunk from that seed plus its coordinates. Chunk results are
+therefore identical regardless of worker timing, camera route, or load order.
+The worker releases one nearest-first chunk every 28 ms so the world can be
+seen filling in while movement and rendering continue.
+
+The current test renderer and production renderer still use different world
+description algorithms. A shared seed makes each independently repeatable; it
+does not yet make their geometry identical. True production parity requires
+moving production's finite maze/building-site description into this worker and
+having both renderers consume that same description.

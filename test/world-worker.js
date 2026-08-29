@@ -9,9 +9,11 @@ let focusX = 0;
 let focusZ = 0;
 let paused = false;
 let pumping = false;
+let worldSeed = 1;
+const STREAM_INTERVAL_MS = 28;
 
 function hash32(x, z) {
-  let h = Math.imul(x | 0, 0x45d9f3b) ^ Math.imul(z | 0, 0x119de1f3) ^ 0x9e3779b9;
+  let h = Math.imul(x | 0, 0x45d9f3b) ^ Math.imul(z | 0, 0x119de1f3) ^ worldSeed;
   h ^= h >>> 16;
   h = Math.imul(h, 0x7feb352d);
   h ^= h >>> 15;
@@ -81,11 +83,18 @@ function pump() {
   postMessage({ type: "chunk", cx, cz, data }, [data.buffer]);
 
   pumping = false;
-  if (!paused && queue.length) setTimeout(pump, 0);
+  // Deliberately yield between chunks. The nearest city arrives first and
+  // remains visibly progressive without ever stealing the render/input frame.
+  if (!paused && queue.length) setTimeout(pump, STREAM_INTERVAL_MS);
 }
 
 onmessage = ({ data }) => {
   if (!data || typeof data.type !== "string") return;
+
+  if (data.type === "init") {
+    worldSeed = data.seed >>> 0 || 1;
+    return;
+  }
 
   if (data.type === "pause") {
     paused = !!data.value;

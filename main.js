@@ -11,26 +11,24 @@ import { CLAUDE_CITY_ASSETS } from './vendor/city-pack/asset-catalog.js';
 // GeoNames/NOAA/USGS). See build_local_noise_pack.py and
 // fetch_massive_public_noise.py to regenerate either. NOISE_SOURCES.md
 // has the attribution this data is fetched under.
-import {
-    UNICODE_NOISE, MIME_NOISE, SERVICE_NOISE, PROTOCOL_NOISE, TIMEZONE_NOISE, INDEX_STATUS_NOISE,
-    NOISE_ACTIONS,
-    pickMassiveNoisePair, MASSIVE_NOISE_META,
-} from './noise-data-hard.js';
-import {
-    IANA_PORTS_NOISE, IANA_TLDS_NOISE, RFC_INDEX_NOISE,
-    OURAIRPORTS_AIRPORTS_NOISE, OURAIRPORTS_FREQUENCIES_NOISE, OURAIRPORTS_RUNWAYS_NOISE, OURAIRPORTS_NAVAIDS_NOISE,
-    GEONAMES_CITIES500_NOISE,
-    NOAA_GHCND_STATIONS_NOISE, USGS_EARTHQUAKES_MONTH_NOISE,
-    REMOTE_NOISE_META,
-} from './noise-data-remote.js';
+//
+// Fetched as dynamic imports, kicked off immediately (same network start
+// time as a static import) but NOT awaited here -- a static import would
+// force the whole module graph, including this ~62MB of noise, to finish
+// downloading AND parsing before a single line of main.js runs, which is
+// most of this app's actual startup cost and has nothing to do with
+// getting a renderer on screen. The `await` for these lives much further
+// down (right after the renderer/lighting exist), so the canvas, camera,
+// and scene are all real and something can already be drawn while this
+// is still in flight. Maze layout/spawn point never depend on this data
+// (see the RNG section above) -- only sign/prop TEXT does.
+const noiseHardPromise = import('./noise-data-hard.js');
+const noiseRemotePromise = import('./noise-data-remote.js');
 // ~3,300 deduplicated human-voiced fragments (found-poetry lines, overheard
 // hardware-store speech, in-universe maze commentary) built from
 // noise-poetry-corpus.csv -- the "verbal" district, a warmer voice than the
 // registry data above. See build_poetry_noise_pack.py / NOISE_SOURCES.md.
-import {
-    POETRY_SHORT_NOISE, POETRY_MEDIUM_NOISE, POETRY_PAIRS_NOISE,
-    pickPoetryTag, POETRY_NOISE_META,
-} from './noise-data-poetry.js';
+const noisePoetryPromise = import('./noise-data-poetry.js');
 
 // ---------- boot diagnostics ----------
 // window.__boot (defined inline in index.html, before this module even
@@ -169,17 +167,13 @@ const CONFIG = {
     quality: {
         // 17x17 world-width pass: floor/hero-floor caps are UNCHANGED on
         // purpose (this is a wider-not-taller pass -- see maze.cols/rows
-        // below). propDensity/skyJunkCount/floatingPlatformClusters are
-        // interpolated 60% of the way from the 11x11 numbers toward this
-        // project's own real historical 21x21 numbers (t=(17-11)/(21-11)
-        // =0.6) rather than re-derived from scratch -- that's a real prior
-        // tuning pass, not a guess. Per-cell multipliers (propDensity)
-        // move DOWN slightly at t=0.6 (2.8 -> 2.5): the map itself now
-        // supplies more area, so less artificial per-cell compensation is
-        // needed to read as dense. Pure-overdraw globals (skyJunkCount,
-        // floatingPlatformClusters) move up, but sub-linearly vs. the
-        // ~2.4x area growth (11x11->17x17) -- "more city" should not mean
-        // "quadratically more sky clutter."
+        // below). propDensity is interpolated 60% of the way from the
+        // 11x11 numbers toward this project's own real historical 21x21
+        // numbers (t=(17-11)/(21-11)=0.6) rather than re-derived from
+        // scratch -- that's a real prior tuning pass, not a guess. The
+        // per-cell multiplier moves DOWN slightly at t=0.6 (2.8 -> 2.5):
+        // the map itself now supplies more area, so less artificial
+        // per-cell compensation is needed to read as dense.
         desktop: {
             maxPixelRatio: 2,
             antialias: true,
@@ -187,8 +181,6 @@ const CONFIG = {
             drawDistance: 380,
             maxDynamicLights: 40,
             propDensity: 2.5,
-            skyJunkCount: 3900,
-            floatingPlatformClusters: 26,
             maxEnterableFloors: 10, // every floor is real/walkable now -- no decorative tower above this cap, just a shorter real building
             maxHeroFloors: 16, // UNCHANGED -- wider map, not taller buildings
         },
@@ -199,8 +191,6 @@ const CONFIG = {
             drawDistance: 260,
             maxDynamicLights: 18,
             propDensity: 1.45,
-            skyJunkCount: 980,
-            floatingPlatformClusters: 12,
             maxEnterableFloors: 7,
             maxHeroFloors: 11, // UNCHANGED
         },
@@ -215,8 +205,6 @@ const CONFIG = {
             drawDistance: 180,
             maxDynamicLights: 6,
             propDensity: 0.32,
-            skyJunkCount: 105, // token amount -- the "buried in noise" read still needs to exist, just barely
-            floatingPlatformClusters: 3,
             maxEnterableFloors: 4,
             maxHeroFloors: 6, // UNCHANGED
         },
@@ -238,7 +226,15 @@ const CONFIG = {
         // parity/perimeter math clean.
         cols: 17,
         rows: 17,
-        cellSize: 7,        // world units per grid cell
+        // the grid alternates block/street pitch by parity: every even
+        // row/col index is a building-anchor cell (blockSize wide) and
+        // every odd index is the connector cell between two anchors --
+        // an alley/street when the maze carves it open, a narrow merged
+        // party-wall neck when it doesn't. Buildings keep their full
+        // blockSize footprint either way; only the odd-index pitch
+        // changed, so streets got narrower without shrinking any building.
+        blockSize: 7,        // world units per building-anchor cell (even row/col)
+        streetWidth: 4.5,    // world units per street/alley cell (odd row/col) -- narrower than blockSize on purpose
         loopChance: 0.14,   // chance a redundant wall opens up into a plaza/loop
         buildingMarginMin: 0.5,  // how much smaller than the cell a building footprint is
         buildingMarginMax: 1.4,
@@ -677,9 +673,9 @@ const CONFIG = {
             none: 0.03, // turned down further -- almost nothing gets to be empty
         },
         // 17x17 pass: interpolated the same 60%-toward-the-old-21x21-
-        // numbers way as CONFIG.quality's skyJunkCount/floatingPlatform-
-        // Clusters (see there) -- there's a genuinely bigger plazaCells
-        // pool to draw from now, but "special encounter" counts are
+        // numbers way as CONFIG.quality's propDensity (see there) --
+        // there's a genuinely bigger plazaCells pool to draw from now,
+        // but "special encounter" counts are
         // exactly the category that should scale slower than raw area
         // (more of these than 11x11 had, nowhere near proportional to the
         // ~2.4x area gain). These still draw from the same plazaCells pool
@@ -697,26 +693,6 @@ const CONFIG = {
             parks: 4,
             megaBillboards: 3,
         },
-    },
-
-    // ---------------- airborne junk: fills the sky, ignores gravity ----------------
-    // the ground-level junk system above is deliberately grounded and
-    // situational (tagged to a real feature, placed with a collider).
-    // This is the same "poorly made, spawned by the hundreds" idea with
-    // every rule dropped except "you can still walk": no footprint check,
-    // no collision, no precomputed shapes -- it's the maze's own
-    // information-glut premise made physical, drifting through and
-    // between the towers instead of sitting on a shelf. Pure extra draw
-    // calls, so counts (CONFIG.quality.*.skyJunkCount) scale hard per tier.
-    skyJunk: {
-        heightMin: 2.2,       // never at your literal feet
-        heightMax: 260,       // past even hero-tower rooflines
-        heightBias: 1.7,      // >1 skews the range toward the low/mid band -- reads as "thick between the buildings," not a thin haze way up top
-        streetClearance: 3.0, // courtesy headroom over open/walkable cells so it isn't spawning directly in your face mid-step -- none of this collides regardless of where it lands
-        stretchMin: 0.35,
-        stretchMax: 2.4,      // each axis scaled independently and separately from the others -- nothing here should read as a "real object" with a normal silhouette
-        sizeMin: 0.2,
-        sizeMax: 2.2,
     },
 
     // every 4th row/col that's actually open becomes a through-street
@@ -767,10 +743,351 @@ const SEED = urlSeed !== null ? Number(urlSeed) : Math.floor(Math.random() * 2 *
 const rng = mulberry32(SEED);
 console.log(`[testing] maze seed = ${SEED}  (reload with ?seed=${SEED} to get this exact layout)`);
 
+// the noise corpus itself (NOISE_DISTRICTS, pickCityNoisePair, etc.) is
+// defined further down, right after the renderer exists -- see
+// "massive information-noise corpus" below. Maze/site layout above and
+// config randomization/quality/scene setup below never touch it.
+
+// ---------- config randomization ----------
+// the seed above only ever touched geometry (maze layout, spawn point).
+// Everything tunable in CONFIG -- colors, fog, intensities, chances,
+// densities, movement feel -- now rides the same seeded RNG, so a plain
+// reload gives you a different mood, not just a different floor plan.
+// ?seed=X freezes the exact layout AND the exact tuning that came with
+// it, same guarantee as before. Content (word lists, real sourced data,
+// nav copy) and stability-critical numbers (collision radii, clip
+// planes, the potato-tier perf floor) are deliberately left alone --
+// this only touches the knobs that are purely look-and-feel.
+function jitter(base, pct) {
+    return base * (1 + (rng() * 2 - 1) * pct);
+}
+function jitterClamped(base, pct, lo, hi) {
+    return Math.min(hi, Math.max(lo, jitter(base, pct)));
+}
+function jitterInt(base, pct, lo, hi) {
+    return Math.round(jitterClamped(base, pct, lo, hi));
+}
+const _hsl = { h: 0, s: 0, l: 0 };
+function shiftHue(hex, degRange, satPct = 0.15, lightPct = 0.12) {
+    const c = new THREE.Color(hex);
+    c.getHSL(_hsl);
+    let h = _hsl.h + (rng() * 2 - 1) * (degRange / 360);
+    h = ((h % 1) + 1) % 1;
+    const s = Math.min(1, Math.max(0, jitter(_hsl.s, satPct)));
+    const l = Math.min(1, Math.max(0, jitter(_hsl.l, lightPct)));
+    c.setHSL(h, s, l);
+    return c.getHex();
+}
+function randomizeConfig() {
+    const c = CONFIG;
+
+    // scene mood
+    c.scene.backgroundColor = shiftHue(c.scene.backgroundColor, 30);
+    c.scene.fogColor = shiftHue(c.scene.fogColor, 30);
+    c.scene.fogDensity = jitterClamped(c.scene.fogDensity, 0.4, 0.008, 0.035);
+
+    // light-web / dark-web poles
+    for (const pole of [c.narrative.lightWeb, c.narrative.darkWeb]) {
+        pole.fogColor = shiftHue(pole.fogColor, 25);
+        pole.ambientColor = shiftHue(pole.ambientColor, 25);
+        pole.fogDensity = jitterClamped(pole.fogDensity, 0.35, 0.01, 0.04);
+        pole.ambientIntensity = jitterClamped(pole.ambientIntensity, 0.3, 0.6, 3.2);
+        pole.hemiIntensity = jitterClamped(pole.hemiIntensity, 0.3, 0.3, 1.6);
+        pole.signChance = jitterClamped(pole.signChance, 0.15, 0.55, 1);
+        pole.propDensityMul = jitterClamped(pole.propDensityMul, 0.3, 0.5, 1.8);
+    }
+
+    // camera feel (near/far/eyeHeight/playerRadius stay put -- collision code assumes them)
+    c.camera.fov = jitterInt(c.camera.fov, 0.12, 62, 92);
+
+    // lighting
+    c.lighting.ambientColor = shiftHue(c.lighting.ambientColor, 20);
+    c.lighting.ambientIntensity = jitterClamped(c.lighting.ambientIntensity, 0.3, 0.9, 3);
+    c.lighting.moonColor = shiftHue(c.lighting.moonColor, 20);
+    c.lighting.moonIntensity = jitterClamped(c.lighting.moonIntensity, 0.3, 0.6, 2);
+    c.lighting.fillColor = shiftHue(c.lighting.fillColor, 20);
+    c.lighting.fillIntensity = jitterClamped(c.lighting.fillIntensity, 0.35, 0.2, 1.2);
+    c.lighting.moonPosition.x = jitter(c.lighting.moonPosition.x, 0.6);
+    c.lighting.moonPosition.y = jitterClamped(c.lighting.moonPosition.y, 0.3, 40, 110);
+    c.lighting.moonPosition.z = jitter(c.lighting.moonPosition.z, 0.6);
+    c.lighting.signLight.intensity = jitterClamped(c.lighting.signLight.intensity, 0.3, 2.5, 9);
+    c.lighting.signLight.distance = jitterClamped(c.lighting.signLight.distance, 0.3, 5, 14);
+
+    // quality knobs -- mild jitter only, and never the structural bits
+    // (antialias on/off, bloom present/null, pixel ratio, draw distance,
+    // light count, enterable-floor count) that the perf tiers exist to
+    // guarantee.
+    for (const tier of [c.quality.desktop, c.quality.mobile, c.quality.potato]) {
+        if (tier.bloom) {
+            tier.bloom.strength = jitterClamped(tier.bloom.strength, 0.25, 0.2, 1.1);
+            tier.bloom.radius = jitterClamped(tier.bloom.radius, 0.25, 0.2, 0.7);
+            tier.bloom.threshold = jitterClamped(tier.bloom.threshold, 0.08, 0.75, 0.97);
+        }
+        tier.propDensity = jitterClamped(tier.propDensity, 0.25, tier.propDensity * 0.5, tier.propDensity * 1.6);
+    }
+
+    // maze shape (cols/rows/blockSize/streetWidth left alone -- they size the whole grid, incl. the perimeter wall math)
+    c.maze.loopChance = jitterClamped(c.maze.loopChance, 0.4, 0.05, 0.28);
+    c.maze.buildingMarginMin = jitterClamped(c.maze.buildingMarginMin, 0.3, 0.3, 0.9);
+    c.maze.buildingMarginMax = jitterClamped(c.maze.buildingMarginMax, 0.3, 1.3, 2.4);
+
+    // buildings -- floorCountWeights/heroFloorCountWeights are left as
+    // fixed distributions (jittering individual bucket weights isn't
+    // worth the complexity; per-building variety already comes from
+    // weightedPick + rng against them every reload).
+    c.buildings.heroTowerChance = jitterClamped(c.buildings.heroTowerChance, 0.4, 0.03, 0.16);
+    c.buildings.roughness = jitterClamped(c.buildings.roughness, 0.1, 0.75, 1);
+    c.buildings.palette = c.buildings.palette.map(hex => shiftHue(hex, 15, 0.1, 0.08));
+    c.buildings.curb.height = jitterClamped(c.buildings.curb.height, 0.3, 0.06, 0.2);
+    c.buildings.curb.overhang = jitterClamped(c.buildings.curb.overhang, 0.3, 0.2, 0.55);
+    c.buildings.curb.color = shiftHue(c.buildings.curb.color, 15);
+
+    // signage palettes (neonPalette/neonWarm/neonCool) are left untouched --
+    // every use is a random pick() already, and hue-shifting curated,
+    // named colors ("white", "gold", "maroon"...) would just drift them
+    // off their own labels for no visible gain.
+
+    // billboards -- visual tuning, not the copy itself (border width etc.
+    // is rolled per-sign now, see SIGN_SHAPES/SIGN_FONTS near addSign)
+    for (const k of Object.keys(c.billboards.contentWeights)) {
+        c.billboards.contentWeights[k] = jitterClamped(c.billboards.contentWeights[k], 0.35, 1, 10);
+    }
+
+    // prop spawn weights & feature caps
+    for (const k of Object.keys(c.props.weights)) {
+        c.props.weights[k] = jitterClamped(c.props.weights[k], 0.4, 0.01, c.props.weights[k] * 2 + 1);
+    }
+    for (const k of Object.keys(c.props.maxSpecialFeatures)) {
+        c.props.maxSpecialFeatures[k] = jitterInt(c.props.maxSpecialFeatures[k], 0.3, 1, c.props.maxSpecialFeatures[k] * 2);
+    }
+
+    // streets
+    c.streets.propDensityMul = jitterClamped(c.streets.propDensityMul, 0.35, 0.25, 0.85);
+
+    // movement feel (maxDeltaSeconds/collisionIterations left alone -- correctness knobs, not feel)
+    c.movement.speed = jitterClamped(c.movement.speed, 0.2, 3.4, 5.8);
+    c.movement.sprintMultiplier = jitterClamped(c.movement.sprintMultiplier, 0.2, 1.3, 2.2);
+
+    // controls
+    c.desktopControls.pointerSpeed = jitterClamped(c.desktopControls.pointerSpeed, 0.25, 2.2, 4.4);
+    c.touchControls.lookSensitivity = jitterClamped(c.touchControls.lookSensitivity, 0.25, 0.0022, 0.0055);
+}
+randomizeConfig();
+console.log('[testing] config randomized from seed -- reload for a new mood, or pin ?seed= to freeze it too.');
+// full randomized knob dump -- if a particular reload's mood/density/feel
+// is a keeper, this (plus the ?seed= in the very first log line) is
+// everything needed to narrow the jitter ranges toward it. Logged as a
+// real object (not just a JSON string) so devtools can expand it.
+console.log('[config] full randomized CONFIG:', CONFIG);
+console.log('[config] key tunables -- propDensity(desktop/mobile/potato):', CONFIG.quality.desktop.propDensity.toFixed(2), CONFIG.quality.mobile.propDensity.toFixed(2), CONFIG.quality.potato.propDensity.toFixed(2),
+    '| buildingMargin:', CONFIG.maze.buildingMarginMin.toFixed(2), '-', CONFIG.maze.buildingMarginMax.toFixed(2),
+    '| loopChance:', CONFIG.maze.loopChance.toFixed(2),
+    '| moveSpeed/sprint:', CONFIG.movement.speed.toFixed(2), CONFIG.movement.sprintMultiplier.toFixed(2));
+
+// ---------- device detection & active quality profile ----------
+
+const IS_TOUCH = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+
+// auto-detect weak hardware and drop to the potato tier. This USED to be
+// gated on IS_TOUCH ("the profile most likely to actually be shitty
+// hardware") which was wrong -- a low-core/low-RAM laptop with a mouse is
+// exactly as weak as a low-core/low-RAM phone, and was silently getting
+// full desktop settings it can't run. Two independent signals now, either
+// one is enough: reported cores/memory (works whenever the browser
+// exposes it), and the actual GL renderer string (catches integrated/
+// software rasterizers regardless of what navigator.hardwareConcurrency
+// claims -- a laptop can report 8 cores and still have a GPU that can't
+// hold 60fps). ?quality=low|high overrides the auto-detect either
+// direction for testing.
+const forcedQuality = new URLSearchParams(location.search).get('quality');
+// ?debugFootprints=1 -- draws a top-down wireframe overlay per building:
+// the full parcel envelope (dim), the actual generated core+wings union
+// (bright), and a marker on any real courtyard void -- flown over with
+// freecam (F), this is the literal "gray box overhead" test: if the
+// bright outline is a plain centered square on most buildings, the
+// footprint generator has failed. Purely additive lines, zero effect on
+// collision/gameplay when off (the default).
+const DEBUG_FOOTPRINTS = new URLSearchParams(location.search).get('debugFootprints') === '1';
+// ?debugFacades=1 -- every real FacadeSurface as a colored rectangle
+// (green = a normal street facade, cyan = an exposed-setback facade
+// created by a same-site neighbor stopping short -- the height-mismatch
+// bug's own regression signal made visible), a magenta arrow for its
+// outward normal (walk all 4 cardinal sides -- an arrow pointing through
+// the building means the rotation math is wrong), a smaller colored
+// rectangle per occupied region (door=blue, sign/poster=orange,
+// fireEscape=red, hardware=purple, overlay=green), and a purple
+// wireframe box per registered world-space projection volume. See
+// addFacadeDebugOverlay, called once generation finishes.
+const DEBUG_FACADES = new URLSearchParams(location.search).get('debugFacades') === '1';
+// ?debugSignatures=1 -- every reserved signature site (see
+// reserveSignatureSites) as a colored cell outline + a marker at its
+// main/secondary entrance. See addSignatureDebugOverlay.
+const DEBUG_SIGNATURES = new URLSearchParams(location.search).get('debugSignatures') === '1';
+// ?landmark=artGallery|as400Archive|justinIndex|systemsWorkshop|loreShrine
+// -- spawn just outside that signature's main entrance instead of a
+// random maze cell. Applied once generation finishes (see camera.position
+// near the render-loop setup) -- a no-op with a loud console warning if
+// that signature didn't get reserved this seed (spacing/entrance
+// constraints can disable one; see reserveSignatureSites).
+const urlLandmark = new URLSearchParams(location.search).get('landmark');
+const cores = navigator.hardwareConcurrency || 4;
+const mem = navigator.deviceMemory || 4; // not supported in all browsers; defaults optimistic
+
+function detectWeakGPU() {
+    try {
+        const probe = document.createElement('canvas');
+        const gl = probe.getContext('webgl') || probe.getContext('experimental-webgl');
+        if (!gl) return true; // no WebGL at all is as weak as it gets
+        const info = gl.getExtension('WEBGL_debug_renderer_info');
+        const rendererStr = String(info ? gl.getParameter(info.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER)).toLowerCase();
+        // integrated/software rasterizers -- common on "shitty laptop",
+        // rare on anything with a real discrete GPU (gaming desktop/laptop)
+        return /intel|swiftshader|llvmpipe|software|basic render|mali-4|adreno [23]0/.test(rendererStr);
+    } catch {
+        return false; // detection failing shouldn't itself downgrade a fine machine
+    }
+}
+const looksLikePotato = cores <= 4 || mem <= 2 || detectWeakGPU();
+
+const QUALITY = forcedQuality === 'high' ? CONFIG.quality.desktop
+    : forcedQuality === 'low' ? CONFIG.quality.potato
+    : looksLikePotato ? CONFIG.quality.potato
+    : IS_TOUCH ? CONFIG.quality.mobile
+    : CONFIG.quality.desktop;
+
+// ---------- basic setup ----------
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(CONFIG.scene.backgroundColor);
+scene.fog = new THREE.FogExp2(CONFIG.scene.fogColor, CONFIG.scene.fogDensity);
+
+// ---------- dynamic light distance culling ----------
+// generation hands out real THREE.PointLights greedily, in whatever
+// order buildings/props happen to get built in -- first-come-first-
+// served against a flat per-tier cap (dynamicLightsRemaining, further
+// down). That order has nothing to do with where the player actually
+// ends up, so a far corner of the map can burn the entire light budget
+// while the block the player spawns into gets none. Rather than touch
+// every one of the ~20 call sites that create a light mid-generation,
+// this hooks scene.add itself -- every PointLight that's ever added,
+// from anywhere, gets registered here for free. updateDynamicLightCulling
+// (called once a frame from animate) then keeps only the
+// QUALITY.maxDynamicLights closest to the camera actually active
+// (.visible=true); a light with visible=false costs the renderer
+// nothing -- it's skipped during shading entirely, not just dimmed.
+// Actual GPU lighting cost per frame stays capped at exactly the same
+// number as before; the difference is WHICH lights that budget goes to.
+const allDynamicLights = [];
+const _origSceneAdd = scene.add.bind(scene);
+scene.add = function (...objs) {
+    for (const o of objs) if (o && o.isPointLight) allDynamicLights.push(o);
+    return _origSceneAdd(...objs);
+};
+let _lightCullTick = 0;
+function updateDynamicLightCulling() {
+    // throttled -- lights don't need per-frame precision, and re-sorting
+    // hundreds of lights every single frame would burn back the CPU time
+    // this is supposed to be saving.
+    if (++_lightCullTick % 10 !== 0) return;
+    const cap = QUALITY.maxDynamicLights;
+    if (allDynamicLights.length <= cap) return; // nothing to cull
+    const px = camera.position.x, py = camera.position.y, pz = camera.position.z;
+    for (const l of allDynamicLights) {
+        const dx = l.position.x - px, dy = l.position.y - py, dz = l.position.z - pz;
+        l._cullDistSq = dx * dx + dy * dy + dz * dz;
+    }
+    allDynamicLights.sort((a, b) => a._cullDistSq - b._cullDistSq);
+    for (let i = 0; i < allDynamicLights.length; i++) allDynamicLights[i].visible = i < cap;
+}
+
+const camera = new THREE.PerspectiveCamera(
+    CONFIG.camera.fov,
+    window.innerWidth / window.innerHeight,
+    CONFIG.camera.near,
+    QUALITY.drawDistance
+);
+camera.rotation.order = 'YXZ';
+
+// powerPreference nudges laptops with switchable graphics (integrated +
+// discrete) toward the discrete GPU instead of whatever the browser
+// defaults to -- free to ask for, no downside on single-GPU machines.
+const renderer = new THREE.WebGLRenderer({ antialias: QUALITY.antialias, powerPreference: 'high-performance' });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, QUALITY.maxPixelRatio));
+renderer.setSize(window.innerWidth, window.innerHeight);
+document.body.appendChild(renderer.domElement);
+
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));
+// potato tier skips bloom entirely -- the blur passes cost real GPU time
+// even at low strength, not just a visual reduction.
+let bloomPass = null;
+if (QUALITY.bloom) {
+    bloomPass = new UnrealBloomPass(
+        new THREE.Vector2(window.innerWidth, window.innerHeight),
+        QUALITY.bloom.strength,
+        QUALITY.bloom.radius,
+        QUALITY.bloom.threshold
+    );
+    composer.addPass(bloomPass);
+}
+
+window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    composer.setSize(window.innerWidth, window.innerHeight);
+});
+
+// ---------- lighting ----------
+
+const ambientLight = new THREE.AmbientLight(CONFIG.lighting.ambientColor, CONFIG.lighting.ambientIntensity);
+scene.add(ambientLight);
+const hemiLight = new THREE.HemisphereLight(CONFIG.lighting.fillColor, 0x9a8a68, CONFIG.lighting.fillIntensity);
+scene.add(hemiLight);
+const sun = new THREE.DirectionalLight(CONFIG.lighting.moonColor, CONFIG.lighting.moonIntensity);
+sun.position.set(CONFIG.lighting.moonPosition.x, CONFIG.lighting.moonPosition.y, CONFIG.lighting.moonPosition.z);
+scene.add(sun);
+
+// generation-time pool is deliberately bigger than QUALITY.maxDynamicLights
+// (the RUNTIME active cap, enforced per-frame by updateDynamicLightCulling
+// above) -- more real lights spread across the whole city gives the
+// distance culler something to actually choose from near the player,
+// instead of whichever handful happened to generate first. Only the
+// closest maxDynamicLights are ever lit at once, so the per-frame GPU
+// cost is unchanged; this just stops far corners of the map from
+// permanently starving the block the player is actually standing in.
+let dynamicLightsRemaining = QUALITY.maxDynamicLights * 3;
+
 // ---------- massive information-noise corpus ----------
 // this never touches CONFIG.siteContent / PERSONAL_WANTED_FACTS / real
 // contact cards / photo-backed content -- that's the scarce signal this
 // whole maze is about. Everything below is the noise it's buried in.
+//
+// The renderer/camera/lighting above already exist, so this is the
+// first real paint opportunity -- one empty-but-lit frame beats a
+// frozen/blank tab for however long the ~62MB fetch+parse below takes.
+// The `await` is what actually blocks; everything before it (maze
+// topology, spawn point, scene/renderer/lighting) already ran without
+// waiting on any of this.
+bootStatus(`renderer ready at ${bootElapsed()} -- waiting on noise corpus (large first-load download+parse)…`);
+renderer.render(scene, camera);
+const [noiseHardModule, noiseRemoteModule, noisePoetryModule] = await Promise.all([noiseHardPromise, noiseRemotePromise, noisePoetryPromise]);
+const {
+    UNICODE_NOISE, MIME_NOISE, SERVICE_NOISE, PROTOCOL_NOISE, TIMEZONE_NOISE, INDEX_STATUS_NOISE,
+    NOISE_ACTIONS, pickMassiveNoisePair, MASSIVE_NOISE_META,
+} = noiseHardModule;
+const {
+    IANA_PORTS_NOISE, IANA_TLDS_NOISE, RFC_INDEX_NOISE,
+    OURAIRPORTS_AIRPORTS_NOISE, OURAIRPORTS_FREQUENCIES_NOISE, OURAIRPORTS_RUNWAYS_NOISE, OURAIRPORTS_NAVAIDS_NOISE,
+    GEONAMES_CITIES500_NOISE,
+    NOAA_GHCND_STATIONS_NOISE, USGS_EARTHQUAKES_MONTH_NOISE,
+    REMOTE_NOISE_META,
+} = noiseRemoteModule;
+const {
+    POETRY_SHORT_NOISE, POETRY_MEDIUM_NOISE, POETRY_PAIRS_NOISE,
+    pickPoetryTag, POETRY_NOISE_META,
+} = noisePoetryModule;
+bootStatus(`noise corpus ready at ${bootElapsed()} -- placing buildings/signs/props…`);
 console.log(`[noise] local corpus: ${MASSIVE_NOISE_META.concreteRows.toLocaleString()} concrete rows, ${Number(MASSIVE_NOISE_META.virtualRows).toLocaleString()} virtual combinations`);
 console.log(`[noise] remote corpus: ${REMOTE_NOISE_META.rows.toLocaleString()} rows fetched ${REMOTE_NOISE_META.generatedUtc}`);
 for (const [key, m] of Object.entries(REMOTE_NOISE_META.sources)) {
@@ -865,282 +1182,6 @@ function pickCityNoisePair(rng, worldX, worldZ) {
 function pickNetworkNoise(rng) {
     return stylizeNoisePair(rng, pickFromPools(rng, NOISE_DISTRICTS.network));
 }
-
-// ---------- config randomization ----------
-// the seed above only ever touched geometry (maze layout, spawn point).
-// Everything tunable in CONFIG -- colors, fog, intensities, chances,
-// densities, movement feel -- now rides the same seeded RNG, so a plain
-// reload gives you a different mood, not just a different floor plan.
-// ?seed=X freezes the exact layout AND the exact tuning that came with
-// it, same guarantee as before. Content (word lists, real sourced data,
-// nav copy) and stability-critical numbers (collision radii, clip
-// planes, the potato-tier perf floor) are deliberately left alone --
-// this only touches the knobs that are purely look-and-feel.
-function jitter(base, pct) {
-    return base * (1 + (rng() * 2 - 1) * pct);
-}
-function jitterClamped(base, pct, lo, hi) {
-    return Math.min(hi, Math.max(lo, jitter(base, pct)));
-}
-function jitterInt(base, pct, lo, hi) {
-    return Math.round(jitterClamped(base, pct, lo, hi));
-}
-const _hsl = { h: 0, s: 0, l: 0 };
-function shiftHue(hex, degRange, satPct = 0.15, lightPct = 0.12) {
-    const c = new THREE.Color(hex);
-    c.getHSL(_hsl);
-    let h = _hsl.h + (rng() * 2 - 1) * (degRange / 360);
-    h = ((h % 1) + 1) % 1;
-    const s = Math.min(1, Math.max(0, jitter(_hsl.s, satPct)));
-    const l = Math.min(1, Math.max(0, jitter(_hsl.l, lightPct)));
-    c.setHSL(h, s, l);
-    return c.getHex();
-}
-function randomizeConfig() {
-    const c = CONFIG;
-
-    // scene mood
-    c.scene.backgroundColor = shiftHue(c.scene.backgroundColor, 30);
-    c.scene.fogColor = shiftHue(c.scene.fogColor, 30);
-    c.scene.fogDensity = jitterClamped(c.scene.fogDensity, 0.4, 0.008, 0.035);
-
-    // light-web / dark-web poles
-    for (const pole of [c.narrative.lightWeb, c.narrative.darkWeb]) {
-        pole.fogColor = shiftHue(pole.fogColor, 25);
-        pole.ambientColor = shiftHue(pole.ambientColor, 25);
-        pole.fogDensity = jitterClamped(pole.fogDensity, 0.35, 0.01, 0.04);
-        pole.ambientIntensity = jitterClamped(pole.ambientIntensity, 0.3, 0.6, 3.2);
-        pole.hemiIntensity = jitterClamped(pole.hemiIntensity, 0.3, 0.3, 1.6);
-        pole.signChance = jitterClamped(pole.signChance, 0.15, 0.55, 1);
-        pole.propDensityMul = jitterClamped(pole.propDensityMul, 0.3, 0.5, 1.8);
-    }
-
-    // camera feel (near/far/eyeHeight/playerRadius stay put -- collision code assumes them)
-    c.camera.fov = jitterInt(c.camera.fov, 0.12, 62, 92);
-
-    // lighting
-    c.lighting.ambientColor = shiftHue(c.lighting.ambientColor, 20);
-    c.lighting.ambientIntensity = jitterClamped(c.lighting.ambientIntensity, 0.3, 0.9, 3);
-    c.lighting.moonColor = shiftHue(c.lighting.moonColor, 20);
-    c.lighting.moonIntensity = jitterClamped(c.lighting.moonIntensity, 0.3, 0.6, 2);
-    c.lighting.fillColor = shiftHue(c.lighting.fillColor, 20);
-    c.lighting.fillIntensity = jitterClamped(c.lighting.fillIntensity, 0.35, 0.2, 1.2);
-    c.lighting.moonPosition.x = jitter(c.lighting.moonPosition.x, 0.6);
-    c.lighting.moonPosition.y = jitterClamped(c.lighting.moonPosition.y, 0.3, 40, 110);
-    c.lighting.moonPosition.z = jitter(c.lighting.moonPosition.z, 0.6);
-    c.lighting.signLight.intensity = jitterClamped(c.lighting.signLight.intensity, 0.3, 2.5, 9);
-    c.lighting.signLight.distance = jitterClamped(c.lighting.signLight.distance, 0.3, 5, 14);
-
-    // quality knobs -- mild jitter only, and never the structural bits
-    // (antialias on/off, bloom present/null, pixel ratio, draw distance,
-    // light count, enterable-floor count) that the perf tiers exist to
-    // guarantee.
-    for (const tier of [c.quality.desktop, c.quality.mobile, c.quality.potato]) {
-        if (tier.bloom) {
-            tier.bloom.strength = jitterClamped(tier.bloom.strength, 0.25, 0.2, 1.1);
-            tier.bloom.radius = jitterClamped(tier.bloom.radius, 0.25, 0.2, 0.7);
-            tier.bloom.threshold = jitterClamped(tier.bloom.threshold, 0.08, 0.75, 0.97);
-        }
-        tier.propDensity = jitterClamped(tier.propDensity, 0.25, tier.propDensity * 0.5, tier.propDensity * 1.6);
-        tier.skyJunkCount = jitterInt(tier.skyJunkCount, 0.3, Math.round(tier.skyJunkCount * 0.5), Math.round(tier.skyJunkCount * 1.6));
-        tier.floatingPlatformClusters = jitterInt(tier.floatingPlatformClusters, 0.3, Math.round(tier.floatingPlatformClusters * 0.5), Math.round(tier.floatingPlatformClusters * 1.6));
-    }
-
-    // maze shape (cols/rows/cellSize left alone -- they size the whole grid, incl. the perimeter wall math)
-    c.maze.loopChance = jitterClamped(c.maze.loopChance, 0.4, 0.05, 0.28);
-    c.maze.buildingMarginMin = jitterClamped(c.maze.buildingMarginMin, 0.3, 0.3, 0.9);
-    c.maze.buildingMarginMax = jitterClamped(c.maze.buildingMarginMax, 0.3, 1.3, 2.4);
-
-    // buildings -- floorCountWeights/heroFloorCountWeights are left as
-    // fixed distributions (jittering individual bucket weights isn't
-    // worth the complexity; per-building variety already comes from
-    // weightedPick + rng against them every reload).
-    c.buildings.heroTowerChance = jitterClamped(c.buildings.heroTowerChance, 0.4, 0.03, 0.16);
-    c.buildings.roughness = jitterClamped(c.buildings.roughness, 0.1, 0.75, 1);
-    c.buildings.palette = c.buildings.palette.map(hex => shiftHue(hex, 15, 0.1, 0.08));
-    c.buildings.curb.height = jitterClamped(c.buildings.curb.height, 0.3, 0.06, 0.2);
-    c.buildings.curb.overhang = jitterClamped(c.buildings.curb.overhang, 0.3, 0.2, 0.55);
-    c.buildings.curb.color = shiftHue(c.buildings.curb.color, 15);
-
-    // signage palettes (neonPalette/neonWarm/neonCool) are left untouched --
-    // every use is a random pick() already, and hue-shifting curated,
-    // named colors ("white", "gold", "maroon"...) would just drift them
-    // off their own labels for no visible gain.
-
-    // billboards -- visual tuning, not the copy itself (border width etc.
-    // is rolled per-sign now, see SIGN_SHAPES/SIGN_FONTS near addSign)
-    for (const k of Object.keys(c.billboards.contentWeights)) {
-        c.billboards.contentWeights[k] = jitterClamped(c.billboards.contentWeights[k], 0.35, 1, 10);
-    }
-
-    // prop spawn weights & feature caps
-    for (const k of Object.keys(c.props.weights)) {
-        c.props.weights[k] = jitterClamped(c.props.weights[k], 0.4, 0.01, c.props.weights[k] * 2 + 1);
-    }
-    for (const k of Object.keys(c.props.maxSpecialFeatures)) {
-        c.props.maxSpecialFeatures[k] = jitterInt(c.props.maxSpecialFeatures[k], 0.3, 1, c.props.maxSpecialFeatures[k] * 2);
-    }
-
-    // airborne junk
-    c.skyJunk.heightMin = jitterClamped(c.skyJunk.heightMin, 0.3, 1, 4);
-    c.skyJunk.heightMax = jitterClamped(c.skyJunk.heightMax, 0.2, 200, 320);
-    c.skyJunk.heightBias = jitterClamped(c.skyJunk.heightBias, 0.3, 1.1, 2.4);
-    c.skyJunk.streetClearance = jitterClamped(c.skyJunk.streetClearance, 0.3, 2, 4.5);
-    c.skyJunk.stretchMin = jitterClamped(c.skyJunk.stretchMin, 0.3, 0.15, 0.6);
-    c.skyJunk.stretchMax = jitterClamped(c.skyJunk.stretchMax, 0.3, 1.6, 3.2);
-    c.skyJunk.sizeMin = jitterClamped(c.skyJunk.sizeMin, 0.3, 0.1, 0.4);
-    c.skyJunk.sizeMax = jitterClamped(c.skyJunk.sizeMax, 0.3, 1.4, 3);
-
-    // streets
-    c.streets.propDensityMul = jitterClamped(c.streets.propDensityMul, 0.35, 0.25, 0.85);
-
-    // movement feel (maxDeltaSeconds/collisionIterations left alone -- correctness knobs, not feel)
-    c.movement.speed = jitterClamped(c.movement.speed, 0.2, 3.4, 5.8);
-    c.movement.sprintMultiplier = jitterClamped(c.movement.sprintMultiplier, 0.2, 1.3, 2.2);
-
-    // controls
-    c.desktopControls.pointerSpeed = jitterClamped(c.desktopControls.pointerSpeed, 0.25, 2.2, 4.4);
-    c.touchControls.lookSensitivity = jitterClamped(c.touchControls.lookSensitivity, 0.25, 0.0022, 0.0055);
-}
-randomizeConfig();
-console.log('[testing] config randomized from seed -- reload for a new mood, or pin ?seed= to freeze it too.');
-// full randomized knob dump -- if a particular reload's mood/density/feel
-// is a keeper, this (plus the ?seed= in the very first log line) is
-// everything needed to narrow the jitter ranges toward it. Logged as a
-// real object (not just a JSON string) so devtools can expand it.
-console.log('[config] full randomized CONFIG:', CONFIG);
-console.log('[config] key tunables -- propDensity(desktop/mobile/potato):', CONFIG.quality.desktop.propDensity.toFixed(2), CONFIG.quality.mobile.propDensity.toFixed(2), CONFIG.quality.potato.propDensity.toFixed(2),
-    '| skyJunkCount:', CONFIG.quality.desktop.skyJunkCount, CONFIG.quality.mobile.skyJunkCount, CONFIG.quality.potato.skyJunkCount,
-    '| buildingMargin:', CONFIG.maze.buildingMarginMin.toFixed(2), '-', CONFIG.maze.buildingMarginMax.toFixed(2),
-    '| loopChance:', CONFIG.maze.loopChance.toFixed(2),
-    '| moveSpeed/sprint:', CONFIG.movement.speed.toFixed(2), CONFIG.movement.sprintMultiplier.toFixed(2));
-
-// ---------- device detection & active quality profile ----------
-
-const IS_TOUCH = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
-
-// auto-detect weak hardware and drop to the potato tier. This USED to be
-// gated on IS_TOUCH ("the profile most likely to actually be shitty
-// hardware") which was wrong -- a low-core/low-RAM laptop with a mouse is
-// exactly as weak as a low-core/low-RAM phone, and was silently getting
-// full desktop settings it can't run. Two independent signals now, either
-// one is enough: reported cores/memory (works whenever the browser
-// exposes it), and the actual GL renderer string (catches integrated/
-// software rasterizers regardless of what navigator.hardwareConcurrency
-// claims -- a laptop can report 8 cores and still have a GPU that can't
-// hold 60fps). ?quality=low|high overrides the auto-detect either
-// direction for testing.
-const forcedQuality = new URLSearchParams(location.search).get('quality');
-// ?debugFootprints=1 -- draws a top-down wireframe overlay per building:
-// the full parcel envelope (dim), the actual generated core+wings union
-// (bright), and a marker on any real courtyard void -- flown over with
-// freecam (F), this is the literal "gray box overhead" test: if the
-// bright outline is a plain centered square on most buildings, the
-// footprint generator has failed. Purely additive lines, zero effect on
-// collision/gameplay when off (the default).
-const DEBUG_FOOTPRINTS = new URLSearchParams(location.search).get('debugFootprints') === '1';
-// ?debugFacades=1 -- every real FacadeSurface as a colored rectangle
-// (green = a normal street facade, cyan = an exposed-setback facade
-// created by a same-site neighbor stopping short -- the height-mismatch
-// bug's own regression signal made visible), a magenta arrow for its
-// outward normal (walk all 4 cardinal sides -- an arrow pointing through
-// the building means the rotation math is wrong), a smaller colored
-// rectangle per occupied region (door=blue, sign/poster=orange,
-// fireEscape=red, hardware=purple, overlay=green), and a purple
-// wireframe box per registered world-space projection volume. See
-// addFacadeDebugOverlay, called once generation finishes.
-const DEBUG_FACADES = new URLSearchParams(location.search).get('debugFacades') === '1';
-// ?debugSignatures=1 -- every reserved signature site (see
-// reserveSignatureSites) as a colored cell outline + a marker at its
-// main/secondary entrance. See addSignatureDebugOverlay.
-const DEBUG_SIGNATURES = new URLSearchParams(location.search).get('debugSignatures') === '1';
-// ?landmark=artGallery|as400Archive|justinIndex|systemsWorkshop|loreShrine
-// -- spawn just outside that signature's main entrance instead of a
-// random maze cell. Applied once generation finishes (see camera.position
-// near the render-loop setup) -- a no-op with a loud console warning if
-// that signature didn't get reserved this seed (spacing/entrance
-// constraints can disable one; see reserveSignatureSites).
-const urlLandmark = new URLSearchParams(location.search).get('landmark');
-const cores = navigator.hardwareConcurrency || 4;
-const mem = navigator.deviceMemory || 4; // not supported in all browsers; defaults optimistic
-
-function detectWeakGPU() {
-    try {
-        const probe = document.createElement('canvas');
-        const gl = probe.getContext('webgl') || probe.getContext('experimental-webgl');
-        if (!gl) return true; // no WebGL at all is as weak as it gets
-        const info = gl.getExtension('WEBGL_debug_renderer_info');
-        const rendererStr = String(info ? gl.getParameter(info.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER)).toLowerCase();
-        // integrated/software rasterizers -- common on "shitty laptop",
-        // rare on anything with a real discrete GPU (gaming desktop/laptop)
-        return /intel|swiftshader|llvmpipe|software|basic render|mali-4|adreno [23]0/.test(rendererStr);
-    } catch {
-        return false; // detection failing shouldn't itself downgrade a fine machine
-    }
-}
-const looksLikePotato = cores <= 4 || mem <= 2 || detectWeakGPU();
-
-const QUALITY = forcedQuality === 'high' ? CONFIG.quality.desktop
-    : forcedQuality === 'low' ? CONFIG.quality.potato
-    : looksLikePotato ? CONFIG.quality.potato
-    : IS_TOUCH ? CONFIG.quality.mobile
-    : CONFIG.quality.desktop;
-
-// ---------- basic setup ----------
-
-const scene = new THREE.Scene();
-scene.background = new THREE.Color(CONFIG.scene.backgroundColor);
-scene.fog = new THREE.FogExp2(CONFIG.scene.fogColor, CONFIG.scene.fogDensity);
-
-const camera = new THREE.PerspectiveCamera(
-    CONFIG.camera.fov,
-    window.innerWidth / window.innerHeight,
-    CONFIG.camera.near,
-    QUALITY.drawDistance
-);
-camera.rotation.order = 'YXZ';
-
-// powerPreference nudges laptops with switchable graphics (integrated +
-// discrete) toward the discrete GPU instead of whatever the browser
-// defaults to -- free to ask for, no downside on single-GPU machines.
-const renderer = new THREE.WebGLRenderer({ antialias: QUALITY.antialias, powerPreference: 'high-performance' });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, QUALITY.maxPixelRatio));
-renderer.setSize(window.innerWidth, window.innerHeight);
-document.body.appendChild(renderer.domElement);
-
-const composer = new EffectComposer(renderer);
-composer.addPass(new RenderPass(scene, camera));
-// potato tier skips bloom entirely -- the blur passes cost real GPU time
-// even at low strength, not just a visual reduction.
-let bloomPass = null;
-if (QUALITY.bloom) {
-    bloomPass = new UnrealBloomPass(
-        new THREE.Vector2(window.innerWidth, window.innerHeight),
-        QUALITY.bloom.strength,
-        QUALITY.bloom.radius,
-        QUALITY.bloom.threshold
-    );
-    composer.addPass(bloomPass);
-}
-
-window.addEventListener('resize', () => {
-    camera.aspect = window.innerWidth / window.innerHeight;
-    camera.updateProjectionMatrix();
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    composer.setSize(window.innerWidth, window.innerHeight);
-});
-
-// ---------- lighting ----------
-
-const ambientLight = new THREE.AmbientLight(CONFIG.lighting.ambientColor, CONFIG.lighting.ambientIntensity);
-scene.add(ambientLight);
-const hemiLight = new THREE.HemisphereLight(CONFIG.lighting.fillColor, 0x9a8a68, CONFIG.lighting.fillIntensity);
-scene.add(hemiLight);
-const sun = new THREE.DirectionalLight(CONFIG.lighting.moonColor, CONFIG.lighting.moonIntensity);
-sun.position.set(CONFIG.lighting.moonPosition.x, CONFIG.lighting.moonPosition.y, CONFIG.lighting.moonPosition.z);
-scene.add(sun);
-
-let dynamicLightsRemaining = QUALITY.maxDynamicLights;
 
 // ---------- light-web / dark-web gradient ----------
 // there's no teleport between the two poles — the player walks the
@@ -1662,15 +1703,50 @@ function pickNeonForRow(row) {
 
 const GRID_COLS = CONFIG.maze.cols;
 const GRID_ROWS = CONFIG.maze.rows;
-const CELL = CONFIG.maze.cellSize;
-const GRID_W = GRID_COLS * CELL;
-const GRID_H = GRID_ROWS * CELL;
+// non-uniform grid pitch: even row/col index = a building-anchor cell
+// (BLOCK wide), odd index = the connector/street cell between two
+// anchors (STREET wide, narrower). CELL stays as an alias for BLOCK --
+// plenty of code below only ever wants "roughly one cell" for cosmetic
+// scatter/culling and never cared which axis or parity it was near; the
+// few places that actually place walls/pavement/doors against a
+// SPECIFIC cell use colHalf(c)/rowHalf(r) (or colSize[c]/rowSize[r])
+// instead, so they get that cell's real width, not the uniform guess.
+const BLOCK = CONFIG.maze.blockSize;
+const STREET = CONFIG.maze.streetWidth;
+const CELL = BLOCK;
+function axisPitch(i) { return i % 2 === 0 ? BLOCK : STREET; }
+const colSize = Array.from({ length: GRID_COLS }, (_, i) => axisPitch(i));
+const rowSize = Array.from({ length: GRID_ROWS }, (_, i) => axisPitch(i));
+function prefixEdges(sizes) {
+    const edges = [0];
+    for (const s of sizes) edges.push(edges[edges.length - 1] + s);
+    return edges;
+}
+const colEdge = prefixEdges(colSize); // colEdge[i] = left edge of cell i, colEdge[i+1] = right edge
+const rowEdge = prefixEdges(rowSize);
+const GRID_W = colEdge[GRID_COLS];
+const GRID_H = rowEdge[GRID_ROWS];
+function colHalf(c) { return colSize[c] / 2; }
+function rowHalf(r) { return rowSize[r] / 2; }
 
 function cellToWorld(col, row) {
     return {
-        x: (col - (GRID_COLS - 1) / 2) * CELL,
-        z: (row - (GRID_ROWS - 1) / 2) * CELL,
+        x: (colEdge[col] + colEdge[col + 1]) / 2 - GRID_W / 2,
+        z: (rowEdge[row] + rowEdge[row + 1]) / 2 - GRID_H / 2,
     };
+}
+
+// inverse of cellToWorld -- which cell CONTAINS this world position
+// (not "nearest center", the actual containing cell, which matters once
+// cells aren't all the same width). GRID_COLS/ROWS are small (17), so a
+// linear scan every frame is cheap; no need for a binary search.
+function worldToCellIndex(x, z) {
+    const wx = x + GRID_W / 2, wz = z + GRID_H / 2;
+    let col = GRID_COLS - 1;
+    for (let i = 0; i < GRID_COLS; i++) { if (wx < colEdge[i + 1]) { col = i; break; } }
+    let row = GRID_ROWS - 1;
+    for (let i = 0; i < GRID_ROWS; i++) { if (wz < rowEdge[i + 1]) { row = i; break; } }
+    return { col, row };
 }
 
 // a real 140-year DJIA jag, plotted year (x) against log(value) (y) —
@@ -2188,7 +2264,7 @@ function reserveSignatureSites(unclaimedSet) {
         for (const c of cells) siteIdOf[c.row][c.col] = id;
         const toEntrance = (edge) => {
             const { x: cx, z: cz } = cellToWorld(edge.cell.col, edge.cell.row);
-            const doorX = cx + edge.dc * CELL / 2, doorZ = cz + edge.dr * CELL / 2;
+            const doorX = cx + edge.dc * colHalf(edge.cell.col), doorZ = cz + edge.dr * rowHalf(edge.cell.row);
             // the neighboring open cell's own CENTER, not an arbitrary
             // offset from the door -- exactly the same "safe interior of
             // an open cell" point the normal random spawn already uses
@@ -2357,15 +2433,17 @@ for (let r = 0; r < GRID_ROWS; r++) {
         const { x: cx, z: cz } = cellToWorld(c, r);
         // east boundary, (c,r)-(c+1,r) -- only between two DIFFERENT buildings
         if (c + 1 < GRID_COLS && grid[r]?.[c] && grid[r]?.[c + 1] && siteIdOf[r][c] !== siteIdOf[r][c + 1]) {
-            const bx = cx + CELL / 2;
-            mazeSealWalls.push({ x1: bx, z1: cz - CELL / 2, x2: bx, z2: cz + CELL / 2, yMin: 0, yMax: MAZE_SEAL_HEIGHT });
-            for (let i = 0; i < 4; i++) addFenceSegment(bx, cz - CELL / 2 + (i + 0.5) * (CELL / 4), Math.PI / 2);
+            const bx = cx + colHalf(c);
+            const rh = rowHalf(r);
+            mazeSealWalls.push({ x1: bx, z1: cz - rh, x2: bx, z2: cz + rh, yMin: 0, yMax: MAZE_SEAL_HEIGHT });
+            for (let i = 0; i < 4; i++) addFenceSegment(bx, cz - rh + (i + 0.5) * (rh / 2), Math.PI / 2);
         }
         // south boundary, (c,r)-(c,r+1) -- only between two DIFFERENT buildings
         if (r + 1 < GRID_ROWS && grid[r]?.[c] && grid[r + 1]?.[c] && siteIdOf[r][c] !== siteIdOf[r + 1][c]) {
-            const bz = cz + CELL / 2;
-            mazeSealWalls.push({ x1: cx - CELL / 2, z1: bz, x2: cx + CELL / 2, z2: bz, yMin: 0, yMax: MAZE_SEAL_HEIGHT });
-            for (let i = 0; i < 4; i++) addFenceSegment(cx - CELL / 2 + (i + 0.5) * (CELL / 4), bz, 0);
+            const bz = cz + rowHalf(r);
+            const ch = colHalf(c);
+            mazeSealWalls.push({ x1: cx - ch, z1: bz, x2: cx + ch, z2: bz, yMin: 0, yMax: MAZE_SEAL_HEIGHT });
+            for (let i = 0; i < 4; i++) addFenceSegment(cx - ch + (i + 0.5) * (ch / 2), bz, 0);
         }
     }
 }
@@ -3221,23 +3299,31 @@ function maybeAddElevator(x, z, hw, groundFloorHeight, door) {
 // builder -- so exterior fire escapes and the tall vertical-layer
 // staircases climb exactly like an interior mezzanine already does,
 // real elevation and real collision, not a new physics system.
+const _stairStepMatrix = new THREE.Matrix4();
 function addStairFlight(axis, along0, along1, cross, y0, y1, opts = {}) {
     const width = opts.width ?? 0.9;
     const along = along1 - along0, rise = y1 - y0;
     const n = Math.max(3, Math.round(Math.abs(rise) / 0.28));
     const stepMat = new THREE.MeshStandardMaterial({ color: opts.color ?? 0x2e2a26, roughness: 0.85, metalness: 0.35 });
+    // every step in one flight is the exact same size (stepDepth doesn't
+    // vary with i) and purely visual (collision is the single rampRun
+    // pushed below, not per-step boxes) -- one InstancedMesh per flight
+    // instead of n separate Mesh objects/geometries/draw calls. A tall
+    // building's stair core used to mean hundreds of individual step
+    // meshes city-wide; this collapses each flight to one draw call
+    // without changing a single visible dimension.
+    const stepDepth = Math.abs(along) / n;
+    const stepGeo = new THREE.BoxGeometry(axis === 'x' ? stepDepth * 1.05 : width, 0.1, axis === 'x' ? width : stepDepth * 1.05);
+    const steps = new THREE.InstancedMesh(stepGeo, stepMat, n);
     for (let i = 0; i < n; i++) {
         const tMid = (i + 0.5) / n;
         const posAlong = along0 + along * tMid;
         const posY = y0 + rise * tMid;
-        const stepDepth = Math.abs(along) / n;
-        const step = new THREE.Mesh(
-            new THREE.BoxGeometry(axis === 'x' ? stepDepth * 1.05 : width, 0.1, axis === 'x' ? width : stepDepth * 1.05),
-            stepMat
-        );
-        step.position.set(axis === 'x' ? posAlong : cross, posY, axis === 'x' ? cross : posAlong);
-        scene.add(step);
+        _stairStepMatrix.makeTranslation(axis === 'x' ? posAlong : cross, posY, axis === 'x' ? cross : posAlong);
+        steps.setMatrixAt(i, _stairStepMatrix);
     }
+    steps.instanceMatrix.needsUpdate = true;
+    scene.add(steps);
     // railings both sides -- also doubles as the visual tell that this
     // one, unlike a decorative-only fire escape, is meant to be climbed
     const railMat = new THREE.MeshStandardMaterial({ color: opts.railColor ?? 0x1c1c1c, roughness: 0.55, metalness: 0.5 });
@@ -3452,236 +3538,6 @@ function addBalcony(x, y, z, rotY, maintenance = 0.5) {
     elevatedPlatforms.push({ x: wx, z: wz, hx: width / 2 * 0.9, hz: depth / 2 * 0.9, y });
 }
 
-// the one true vertical secret: a real, climbable staircase that just
-// keeps going, all the way up into the white-fog "heaven" band
-// (LAYER_Y.heavenBase is only 20 -- this clears it by 7x and keeps
-// climbing). One exists in the entire map, planted on a reserved plaza
-// cell (real open room on every side, unlike a boxed-in dead end), with
-// nothing marking it from a distance -- it has to be stumbled onto and
-// then actually committed to. Built from the exact same primitives as
-// every other stair here (addStairFlight/addLandingPlatform), just run
-// for dozens of flights instead of 2-3.
-//
-// The path is a genuine random walk around a central mast, not a fixed
-// repeating shape -- every flight continues straight, turns left, or
-// turns right (never doubles straight back on itself), weighted to
-// wander back toward a comfortable radius band whenever it's drifted
-// too close to the mast or too far from it, so the whole thing still
-// generally wraps the mast (and whatever real buildings happen to be
-// nearby) without ever tracing the same clean square twice.
-// ascent palette: one continuous gradient from grimy industrial at the
-// bottom to pale/warm/gold near the top -- NOT a hue cycle. `t` is
-// normalized ascent (y / topHeight); every material/light call below
-// samples the same gradient at its own height, so the whole structure
-// reads as one architectural progression, not a rainbow.
-const HEAVEN_BOTTOM_STEP = new THREE.Color(0x3a3228), HEAVEN_TOP_STEP = new THREE.Color(0xdcd2ba);
-const HEAVEN_BOTTOM_RAIL = new THREE.Color(0x161616), HEAVEN_TOP_RAIL = new THREE.Color(0xe0c078);
-const HEAVEN_BOTTOM_LIGHT = new THREE.Color(0xaab0b8), HEAVEN_TOP_LIGHT = new THREE.Color(0xfff2d0);
-function heavenAscentColors(t) {
-    return {
-        step: HEAVEN_BOTTOM_STEP.clone().lerp(HEAVEN_TOP_STEP, t).getHex(),
-        rail: HEAVEN_BOTTOM_RAIL.clone().lerp(HEAVEN_TOP_RAIL, t).getHex(),
-        light: HEAVEN_BOTTOM_LIGHT.clone().lerp(HEAVEN_TOP_LIGHT, t).getHex(),
-    };
-}
-
-// a real arch a climber walks straight through -- opening centered
-// exactly on the landing it's built onto, so it can only ever frame the
-// route, never block it. Two posts plus a lintel; more refined (thinner,
-// paler) the higher it sits.
-function addAscentArch(x, z, y, t) {
-    const colors = heavenAscentColors(t);
-    const width = 1.6, postH = 2.3, postR = THREE.MathUtils.lerp(0.09, 0.05, t);
-    const mat = new THREE.MeshStandardMaterial({
-        color: colors.rail, roughness: THREE.MathUtils.lerp(0.7, 0.25, t), metalness: THREE.MathUtils.lerp(0.5, 0.75, t),
-    });
-    for (const side of [-1, 1]) {
-        const post = new THREE.Mesh(jitterGeometry(new THREE.CylinderGeometry(postR, postR, postH, 8), 0.01), mat);
-        post.position.set(x + side * width / 2, y + postH / 2, z);
-        scene.add(post);
-    }
-    const lintel = new THREE.Mesh(jitterGeometry(new THREE.BoxGeometry(width + postR * 2, postR * 2, postR * 2), 0.005), mat);
-    lintel.position.set(x, y + postH, z);
-    scene.add(lintel);
-    if (t > 0.5 && dynamicLightsRemaining > 0) {
-        // a hanging light under the arch, higher up only -- the
-        // "occasional larger rest platform" band already reads busy
-        // enough lower down without one under every arch too.
-        dynamicLightsRemaining--;
-        const light = new THREE.PointLight(colors.light, 3, 6, 2);
-        light.position.set(x, y + postH - 0.3, z);
-        scene.add(light);
-    }
-}
-
-// the one true vertical secret: a real, climbable staircase that just
-// keeps going, all the way up into the white-fog "heaven" band
-// (LAYER_Y.heavenBase is only 20 -- this clears it by 7x and keeps
-// climbing). One exists in the entire map, planted on a reserved plaza
-// cell (real open room on every side, unlike a boxed-in dead end), with
-// nothing marking it from a distance -- it has to be stumbled onto and
-// then actually committed to. Built from the exact same primitives as
-// every other stair here (addStairFlight/addLandingPlatform), just run
-// for dozens of flights instead of 2-3.
-//
-// The path is a genuine random walk around a central mast, not a fixed
-// repeating shape -- every flight continues straight, turns left, or
-// turns right (never doubles straight back on itself), weighted to
-// wander back toward a comfortable radius band whenever it's drifted
-// too close to the mast or too far from it, so the whole thing still
-// generally wraps the mast (and whatever real buildings happen to be
-// nearby) without ever tracing the same clean square twice.
-//
-// The climb itself changes character as it goes: grimy industrial at
-// the bottom (dark battered steel, utility-white light), continuously
-// warmer/paler toward pale gold near the top, with occasional real
-// rest/observation landings (not just identical turn squares) and a
-// couple of walk-through arches -- an architectural ascent, not a
-// palette swap.
-function buildStairwayToHeaven(cx, cz) {
-    const topHeight = 150;
-    const minRadius = 1.5, maxRadius = 3.4;
-
-    const mastMat = new THREE.MeshStandardMaterial({ color: 0x24221e, roughness: 0.5, metalness: 0.65 });
-    const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.24, topHeight, 8), mastMat);
-    mast.position.set(cx, topHeight / 2, cz);
-    scene.add(mast);
-
-    // a real cable run and a couple of graffiti tags near the base --
-    // the bottom of the climb should still feel like it belongs to the
-    // grimy city it rises out of.
-    if (dynamicLightsRemaining > 0) {
-        dynamicLightsRemaining--;
-        const baseLight = new THREE.PointLight(0xaab0b8, 2.5, 6, 2);
-        baseLight.position.set(cx, 2.2, cz);
-        scene.add(baseLight);
-    }
-    addGraffitiTag(cx + minRadius * 0.7, 1.2, cz + minRadius * 0.7, randRange(0, Math.PI * 2));
-
-    const dirs = [[1, 0], [0, 1], [-1, 0], [0, -1]]; // +x, +z, -x, -z
-    let dirIdx = Math.floor(rng() * 4);
-    let px = cx + dirs[dirIdx][0] * randRange(minRadius, maxRadius);
-    let pz = cz + dirs[dirIdx][1] * randRange(minRadius, maxRadius);
-    let y = 0;
-    let lastX = px, lastZ = pz, lastLandingHalf = 0.75;
-    let archesBuilt = 0;
-    while (y < topHeight) {
-        const segLen = randRange(1.6, 3.2);
-        const risePerSide = randRange(2.4, 3.4);
-        const [dx, dz] = dirs[dirIdx];
-        const nx = px + dx * segLen, nz = pz + dz * segLen;
-        const y1 = Math.min(topHeight, y + risePerSide);
-        const tMid = ((y + y1) / 2) / topHeight;
-        const colors = heavenAscentColors(tMid);
-        if (dx !== 0) {
-            addStairFlight('x', px, nx, pz, y, y1, { width: 1.0, color: colors.step, railColor: colors.rail });
-        } else {
-            addStairFlight('z', pz, nz, px, y, y1, { width: 1.0, color: colors.step, railColor: colors.rail });
-        }
-
-        // occasional real rest/observation landing -- substantially
-        // bigger than the usual turn square, more likely the higher the
-        // climb has already gone (the view earns the pause). Still
-        // exactly where the flight actually ends, same as every other
-        // landing here -- bigger, never offset.
-        const isRestLanding = rng() < 0.1 + tMid * 0.22;
-        const landingHalf = isRestLanding ? randRange(1.6, 2.3) : 0.75;
-        addLandingPlatform(nx, nz, landingHalf, y1, { color: colors.step });
-        lastLandingHalf = landingHalf;
-
-        // decoration lives on the landing's outer edge (away from the
-        // mast), never the walkable center the flight/next flight
-        // actually connects through -- it can dress the route, it can
-        // never be in it.
-        const outDirX = Math.sign(nx - cx) || 1, outDirZ = Math.sign(nz - cz) || 1;
-        const decorX = nx + outDirX * landingHalf * 0.65, decorZ = nz + outDirZ * landingHalf * 0.65;
-        if (tMid < 0.3 && rng() < 0.35) {
-            addGraffitiTag(decorX, y1 + 0.9, decorZ, randRange(0, Math.PI * 2));
-        } else if (tMid > 0.35 && isRestLanding) {
-            // a small planter box -- lighter metals/stone and real
-            // greenery the higher this goes, same idea as a real
-            // elevated garden terrace.
-            const planter = new THREE.Mesh(
-                jitterGeometry(new THREE.BoxGeometry(0.5, 0.35, 0.5), 0.03),
-                new THREE.MeshStandardMaterial({ color: colors.step, roughness: 0.8 })
-            );
-            planter.position.set(decorX, y1 + 0.18, decorZ);
-            scene.add(planter);
-            const bush = new THREE.Mesh(
-                new THREE.SphereGeometry(0.28, 6, 5),
-                new THREE.MeshStandardMaterial({ color: 0x3a6a3a, roughness: 0.9 })
-            );
-            bush.position.set(decorX, y1 + 0.5, decorZ);
-            scene.add(bush);
-        }
-        if (isRestLanding) {
-            // fabric banner between the landing and the mast -- reads as
-            // ceremonial/architectural higher up, purely decorative,
-            // hung well above head height so it never reads as a wall.
-            const banner = new THREE.Mesh(
-                new THREE.PlaneGeometry(0.6, 1.4),
-                new THREE.MeshStandardMaterial({ color: colors.rail, roughness: 0.6, side: THREE.DoubleSide })
-            );
-            banner.position.set((nx + cx) / 2, y1 + 2.6, (nz + cz) / 2);
-            banner.rotation.y = Math.atan2(nx - cx, nz - cz);
-            scene.add(banner);
-            if (dynamicLightsRemaining > 0) {
-                dynamicLightsRemaining--;
-                const light = new THREE.PointLight(colors.light, 2 + tMid * 2.5, 8, 2);
-                light.position.set(nx, y1 + 1.6, nz);
-                scene.add(light);
-            }
-        }
-
-        // two walk-through arches on the climb -- right at the
-        // "heaven" threshold, and again nearing the very top -- built
-        // ON the landing so their opening is centered on the route by
-        // construction, not just placed nearby.
-        const crossedHeaven = y < LAYER_Y.heavenBase && y1 >= LAYER_Y.heavenBase;
-        const nearTop = y1 >= topHeight * 0.92 && archesBuilt < 2;
-        if ((crossedHeaven || nearTop) && archesBuilt < 2) {
-            addAscentArch(nx, nz, y1, tMid);
-            archesBuilt++;
-        }
-
-        px = nx; pz = nz; y = y1;
-        lastX = px; lastZ = pz;
-
-        // next direction: anything but reversing straight back over the
-        // flight just built, weighted toward whichever options keep the
-        // path inside the radius band -- soft, not absolute, so it still
-        // reads as a real wander instead of snapping to a perfect ring.
-        const reverseIdx = (dirIdx + 2) % 4;
-        const candidates = dirs.map((d, i) => i).filter(i => i !== reverseIdx);
-        const weights = candidates.map(i => {
-            const [cdx, cdz] = dirs[i];
-            const tx = px + cdx * segLen, tz = pz + cdz * segLen;
-            const dist = Math.hypot(tx - cx, tz - cz);
-            const penalty = dist < minRadius ? (minRadius - dist) : dist > maxRadius ? (dist - maxRadius) : 0;
-            return Math.max(0.2, 1 - penalty * 0.8);
-        });
-        const total = weights.reduce((a, b) => a + b, 0);
-        let r = rng() * total;
-        dirIdx = candidates[candidates.length - 1];
-        for (let i = 0; i < candidates.length; i++) {
-            r -= weights[i];
-            if (r <= 0) { dirIdx = candidates[i]; break; }
-        }
-    }
-
-    // the payoff -- a real light and a real sign, so finding this and
-    // actually climbing all the way up gets you something at the top,
-    // not just a ledge that stops. Pale/gold/luminous, matching the top
-    // of the ascent gradient rather than a flat white.
-    if (dynamicLightsRemaining > 0) {
-        dynamicLightsRemaining--;
-        const light = new THREE.PointLight(0xfff2d0, 5, 40, 2);
-        light.position.set(lastX, topHeight + 1.5, lastZ);
-        scene.add(light);
-    }
-    const signRotY = Math.atan2(lastX - cx, lastZ - cz) + Math.PI; // faces back toward the mast, readable standing on the top landing
-    addSign(lastX, topHeight + 1.6, lastZ, signRotY, 'THE TOP', 'nothing up here but you', 0xfff2d0, false);
-}
 
 // ---------- facade surfaces: real, occupancy-tracked wall segments ----------
 // replaces "4 imaginary faces, place a sign dead-center" -- which is
@@ -4057,7 +3913,7 @@ function addSignatureDebugOverlay() {
         const color = SIGNATURE_DEBUG_COLORS[inst.type] ?? 0xffffff;
         for (const cell of inst.cells) {
             const { x, z } = cellToWorld(cell.col, cell.row);
-            addDebugRectOutline(x, z, CELL / 2 - 0.15, CELL / 2 - 0.15, 0.2, color);
+            addDebugRectOutline(x, z, colHalf(cell.col) - 0.15, rowHalf(cell.row) - 0.15, 0.2, color);
         }
         for (const entrance of [inst.mainEntrance, inst.secondaryEntrance]) {
             if (!entrance) continue;
@@ -4083,12 +3939,12 @@ function addSignatureDebugOverlay() {
 // cells get EXACTLY flush (zero-gap) shared edges this way -- that flush
 // merge, not a family/wing system, is what makes an L-shaped SITE read
 // as a genuinely L-shaped BUILDING (each arm a full cell wide/deep).
-function computeCellRect(x, z, kinds, streetSetbackX, streetSetbackZ, partySetback) {
+function computeCellRect(x, z, kinds, streetSetbackX, streetSetbackZ, partySetback, hwxFull, hwzFull) {
     const setbackFor = (kind, streetSetback) => kind === 'internal' ? 0 : kind === 'party' ? partySetback : streetSetback;
-    const zMin = z - CELL / 2 + setbackFor(kinds.N, streetSetbackZ);
-    const zMax = z + CELL / 2 - setbackFor(kinds.S, streetSetbackZ);
-    const xMin = x - CELL / 2 + setbackFor(kinds.W, streetSetbackX);
-    const xMax = x + CELL / 2 - setbackFor(kinds.E, streetSetbackX);
+    const zMin = z - hwzFull + setbackFor(kinds.N, streetSetbackZ);
+    const zMax = z + hwzFull - setbackFor(kinds.S, streetSetbackZ);
+    const xMin = x - hwxFull + setbackFor(kinds.W, streetSetbackX);
+    const xMax = x + hwxFull - setbackFor(kinds.E, streetSetbackX);
     return { cx: (xMin + xMax) / 2, cz: (zMin + zMax) / 2, hwx: (xMax - xMin) / 2, hwz: (zMax - zMin) / 2 };
 }
 
@@ -4100,7 +3956,8 @@ function computeCellRect(x, z, kinds, streetSetbackX, streetSetbackZ, partySetba
 // of its neighboring modules (see 'courtyard' in edgeKindForSite).
 function buildCourtyardVoid(cell) {
     const { x: cx, z: cz } = cellToWorld(cell.col, cell.row);
-    const half = CELL / 2 - 0.3;
+    const halfX = colHalf(cell.col) - 0.3, halfZ = rowHalf(cell.row) - 0.3;
+    const half = Math.min(halfX, halfZ); // used only for isotropic prop offsets/spread below
     const paverTex = makePixelTexture((ctx, w, h) => {
         ctx.fillStyle = '#8a8270';
         ctx.fillRect(0, 0, w, h);
@@ -4108,7 +3965,7 @@ function buildCourtyardVoid(cell) {
         for (let i = 0; i < w; i += 12) { ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, h); ctx.stroke(); }
         for (let i = 0; i < h; i += 12) { ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(w, i); ctx.stroke(); }
     }, 96, 96);
-    const pavers = new THREE.Mesh(new THREE.PlaneGeometry(half * 2, half * 2), new THREE.MeshStandardMaterial({ map: paverTex, roughness: 0.9 }));
+    const pavers = new THREE.Mesh(new THREE.PlaneGeometry(halfX * 2, halfZ * 2), new THREE.MeshStandardMaterial({ map: paverTex, roughness: 0.9 }));
     pavers.rotation.x = -Math.PI / 2;
     pavers.position.set(cx, 0.015, cz);
     scene.add(pavers);
@@ -4134,12 +3991,12 @@ function addSiteDebugOverlay(cells, builtModules, voidCell) {
     if (!DEBUG_FOOTPRINTS) return;
     for (const cell of cells) {
         const { x, z } = cellToWorld(cell.col, cell.row);
-        addDebugRectOutline(x, z, CELL / 2, CELL / 2, 0.15, 0x3355aa);
+        addDebugRectOutline(x, z, colHalf(cell.col), rowHalf(cell.row), 0.15, 0x3355aa);
     }
     for (const m of builtModules) addDebugRectOutline(m.cx, m.cz, m.hwx, m.hwz, 0.16, 0x00ff88);
     if (voidCell) {
         const { x, z } = cellToWorld(voidCell.col, voidCell.row);
-        addDebugRectOutline(x, z, CELL / 2 - 0.3, CELL / 2 - 0.3, 0.17, 0xff33cc);
+        addDebugRectOutline(x, z, colHalf(voidCell.col) - 0.3, rowHalf(voidCell.row) - 0.3, 0.17, 0xff33cc);
     }
 }
 
@@ -4154,7 +4011,7 @@ function addBuildingModule(cell, opts) {
     const kinds = {};
     for (const s of CELL_SIDE_DEFS) kinds[s.key] = edgeKindForSite(cell, s.dz, s.dx, voidCell);
 
-    const rect = computeCellRect(x, z, kinds, streetSetbackX, streetSetbackZ, partySetback);
+    const rect = computeCellRect(x, z, kinds, streetSetbackX, streetSetbackZ, partySetback, colHalf(col), rowHalf(row));
     const { cx, cz, hwx, hwz } = rect;
     footprintOf[row][col] = { hwx, hwz };
 
@@ -4976,7 +4833,7 @@ function buildArtGallery(site) {
         const organicTV = ART_GALLERY_CATALOG.find(p => p.id === 'organicTV');
         const target = voidCell ?? primary;
         const { x: tx, z: tz } = cellToWorld(target.col, target.row);
-        const jitterR = voidCell ? (CELL / 2 - 1.1) : Math.min(rectByCellKey.get(`${target.row},${target.col}`)?.hwx ?? 2, rectByCellKey.get(`${target.row},${target.col}`)?.hwz ?? 2) * 0.5;
+        const jitterR = voidCell ? (Math.min(colHalf(target.col), rowHalf(target.row)) - 1.1) : Math.min(rectByCellKey.get(`${target.row},${target.col}`)?.hwx ?? 2, rectByCellKey.get(`${target.row},${target.col}`)?.hwz ?? 2) * 0.5;
         const px = tx + randRange(-jitterR, jitterR), pz = tz + randRange(-jitterR, jitterR);
         placeCityAsset(pick(['art_gallery/pedestal_01', 'art_gallery/pedestal_02', 'art_gallery/pedestal_03', 'art_gallery/pedestal_04']), px, pz, randRange(0, Math.PI * 2));
         const sculpture = new THREE.Mesh(
@@ -6848,31 +6705,6 @@ function addOverheadCable(xa, za, xb, zb) {
     scene.add(tube);
 }
 
-// a fabric canopy tarp strung across an alley between two building
-// faces -- real dense market alleys are often covered like this. Always
-// axis-aligned (our grid only ever has cardinal-direction spans between
-// adjacent cells), so the plane's own width/depth are set directly in
-// world axes instead of composing rotations.
-function addCanopyTarp(xa, za, xb, zb) {
-    const spanAlongX = Math.abs(xb - xa) > Math.abs(zb - za);
-    const length = (spanAlongX ? Math.abs(xb - xa) : Math.abs(zb - za)) * 0.92;
-    const crossWidth = CELL * 0.75;
-    const tex = makePixelTexture((ctx, w, h) => {
-        const base = pick(['#8a3838', '#38588a', '#8a7838', '#3a5c2e']);
-        ctx.fillStyle = base;
-        ctx.fillRect(0, 0, w, h);
-        ctx.fillStyle = 'rgba(255,255,255,0.22)';
-        for (let i = 0; i < w; i += 12) ctx.fillRect(i, 0, 6, h);
-    }, 64, 32);
-    const tarp = new THREE.Mesh(
-        new THREE.PlaneGeometry(spanAlongX ? length : crossWidth, spanAlongX ? crossWidth : length),
-        new THREE.MeshStandardMaterial({ map: tex, roughness: 0.95, side: THREE.DoubleSide })
-    );
-    tarp.rotation.x = -Math.PI / 2; // horizontal, no second rotation needed
-    tarp.position.set((xa + xb) / 2, randRange(3.2, 4.2), (za + zb) / 2);
-    scene.add(tarp);
-}
-
 // a striped shop awning jutting out from a wall face -- reuses the exact
 // same outward-normal formula (sin/cos of rotY) that addSign already
 // uses for its point-light offset, rather than re-deriving the direction.
@@ -7419,230 +7251,6 @@ function scatterJunk(context, x, z, count, spread, axis = null) {
     }
 }
 
-// ---------- airborne junk: fills the sky, ignores gravity ----------
-// everything above this line is grounded and situational -- tagged to a
-// real feature, given a collider, placed with intent. This is the
-// opposite: pure noise, spawned across the whole map footprint and the
-// whole height range with no relationship to buildings, features, or
-// each other. No precomputed shape catalog either (unlike JUNK_BASE_KINDS
-// above) -- every piece is a randomly, independently stretched primitive,
-// textured with a gradient/noise map (never a flat solid fill) and tinted
-// with the same warm/cool split as everything else in the maze. None of
-// it has a collider, which is what makes the density safe: there is no
-// amount of this that can trap you, so there's no reason to hold back.
-const SKY_SHAPES = ['shard', 'chunk', 'pipe', 'spike', 'blob', 'loop'];
-const SKY_JUNK_CAPACITY = 900; // per shape -- generous headroom above any single tier's actual skyJunkCount
-const skyJunkMeshes = {};
-const skyJunkCounts = {};
-const _skyMatrix = new THREE.Matrix4();
-const _skyPos = new THREE.Vector3();
-const _skyQuat = new THREE.Quaternion();
-const _skyEuler = new THREE.Euler();
-const _skyScale = new THREE.Vector3();
-const _skyColor = new THREE.Color();
-
-// one small gradient/noise texture per shape -- a "look" (torn signage,
-// rust, cable, static, smog, tangled wire), never a solid fill. instance
-// color (below) only tints this on top, it never replaces it.
-function makeSkyJunkTexture(kind) {
-    return makePixelTexture((ctx, w, h) => {
-        switch (kind) {
-            case 'shard': { // torn ad/signage fragment
-                const g = ctx.createLinearGradient(0, 0, w, h);
-                g.addColorStop(0, '#0a0a0a');
-                g.addColorStop(0.5, hexToCss(pick(CONFIG.neonPalette)));
-                g.addColorStop(1, '#0a0a0a');
-                ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
-                ctx.globalAlpha = 0.3;
-                for (let i = 0; i < 40; i++) {
-                    ctx.fillStyle = rng() < 0.5 ? '#000000' : '#ffffff';
-                    ctx.fillRect(Math.floor(rng() * w), Math.floor(rng() * h), 1, 1);
-                }
-                ctx.globalAlpha = 1;
-                break;
-            }
-            case 'chunk': { // rust / concrete debris
-                const g = ctx.createLinearGradient(0, 0, 0, h);
-                g.addColorStop(0, '#3a2c20'); g.addColorStop(1, '#141210');
-                ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
-                for (let i = 0; i < 30; i++) {
-                    ctx.fillStyle = `rgba(0,0,0,${rng() * 0.4})`;
-                    ctx.fillRect(Math.floor(rng() * w), Math.floor(rng() * h), 2, 1);
-                }
-                break;
-            }
-            case 'pipe': { // scrap metal / cable
-                const g = ctx.createLinearGradient(0, 0, w, 0);
-                g.addColorStop(0, '#1c1c1c'); g.addColorStop(0.5, '#4a4438'); g.addColorStop(1, '#1c1c1c');
-                ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
-                ctx.strokeStyle = 'rgba(255,255,255,0.15)'; ctx.lineWidth = 1;
-                for (let i = 0; i < 4; i++) {
-                    const y = rng() * h;
-                    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
-                }
-                break;
-            }
-            case 'spike': { // static / glitch shard
-                for (let y = 0; y < h; y++) {
-                    ctx.fillStyle = rng() < 0.15 ? hexToCss(pick(CONFIG.neonPalette)) : `rgb(${10 + y},${10 + y},${14 + y})`;
-                    ctx.fillRect(0, y, w, 1);
-                }
-                break;
-            }
-            case 'blob': { // smog / particulate wisp -- paired with a transparent material below
-                const g = ctx.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, w / 2);
-                g.addColorStop(0, 'rgba(210,210,210,0.9)'); g.addColorStop(1, 'rgba(210,210,210,0)');
-                ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
-                break;
-            }
-            case 'loop': { // tangled wire
-                const g = ctx.createLinearGradient(0, 0, w, h);
-                g.addColorStop(0, '#0c0c0c'); g.addColorStop(1, '#241c14');
-                ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
-                ctx.strokeStyle = 'rgba(255,220,120,0.3)'; ctx.lineWidth = 1;
-                for (let i = 0; i < 3; i++) {
-                    ctx.beginPath(); ctx.moveTo(rng() * w, 0); ctx.lineTo(rng() * w, h); ctx.stroke();
-                }
-                break;
-            }
-        }
-    }, 24, 24);
-}
-
-for (const shape of SKY_SHAPES) {
-    let geo;
-    switch (shape) {
-        case 'shard': geo = new THREE.PlaneGeometry(1, 1); break;
-        case 'chunk': geo = jitterGeometry(new THREE.BoxGeometry(1, 1, 1), 0.08); break;
-        case 'pipe': geo = jitterGeometry(new THREE.CylinderGeometry(0.5, 0.5, 1, 6), 0.06); break;
-        case 'spike': geo = jitterGeometry(new THREE.ConeGeometry(0.5, 1, 6), 0.06); break;
-        case 'blob': geo = new THREE.SphereGeometry(0.5, 6, 5); break;
-        case 'loop': geo = new THREE.TorusGeometry(0.4, 0.13, 4, 8); break;
-    }
-    const isBlob = shape === 'blob';
-    const mesh = new THREE.InstancedMesh(geo, new THREE.MeshStandardMaterial({
-        map: makeSkyJunkTexture(shape),
-        roughness: 0.95,
-        side: THREE.DoubleSide, // flat shards tumble to face-on with the camera constantly -- backface culling would just make them flicker invisible
-        transparent: isBlob,
-        opacity: isBlob ? 0.55 : 1,
-        depthWrite: !isBlob,
-    }), SKY_JUNK_CAPACITY);
-    mesh.count = 0;
-    // instances are spread across the entire map at every height -- a
-    // single bounding-sphere frustum cull would either always pass
-    // (wasting nothing) or, worse, cull the whole mesh from certain
-    // angles even though most instances are still on-screen.
-    mesh.frustumCulled = false;
-    scene.add(mesh);
-    skyJunkMeshes[shape] = mesh;
-    skyJunkCounts[shape] = 0;
-}
-
-// ---------- floating platforms: a real, climbable sky layer ----------
-// distinct from the airborne junk below on purpose: that stuff is dense,
-// tumbling, and deliberately collision-free -- pure atmosphere. This is
-// the opposite trade: sparse, always upright (so it actually has a flat
-// top), and every single one is a real elevatedPlatforms entry you can
-// stand on. Laid out as loose ascending chains -- each next platform a
-// plausible jump away from the last, never a bigger vertical rise than
-// JUMP_RISE, so climbing one chain start-to-finish is always physically
-// possible, not just visually implied. This is what makes "the city" a
-// real multi-layer thing: ground, rooftops (warehouses), and this.
-const JUMP_RISE = 0.85; // conservative under the real jump apex (~0.94 at JUMP_SPEED=5.5/GRAVITY=-16) -- margin for the horizontal hop eating some of the arc
-function spawnFloatingPlatformCluster(baseX, baseZ) {
-    let x = baseX, z = baseZ;
-    let y = randRange(LAYER_Y.caveTop - 1, LAYER_Y.caveTop + 4);
-    const count = 3 + Math.floor(rng() * 5); // 3-7 platforms per chain
-    for (let i = 0; i < count; i++) {
-        const w = randRange(1.4, 2.6), d = randRange(1.4, 2.6), h = randRange(0.3, 0.5);
-        const mat = new THREE.MeshStandardMaterial({ color: pick(CONFIG.buildings.palette), roughness: 0.85 });
-        const plat = new THREE.Mesh(jitterGeometry(new THREE.BoxGeometry(w, h, d), 0.04), mat);
-        plat.rotation.y = randRange(0, Math.PI * 2);
-        plat.position.set(x, y, z);
-        scene.add(plat);
-        // real floor -- the same elevatedPlatforms mechanism a mezzanine
-        // or a warehouse roof uses, not a cosmetic-only mesh
-        elevatedPlatforms.push({ x, z, hx: w / 2, hz: d / 2, y: y + h / 2 });
-
-        if (rng() < 0.3 && dynamicLightsRemaining > 0) {
-            dynamicLightsRemaining--;
-            const light = new THREE.PointLight(pick(CONFIG.neonPalette), 2.5, 5, 2);
-            light.position.set(x, y + h / 2 + 0.4, z);
-            scene.add(light);
-        }
-
-        // next platform: a real jump away -- short horizontal hop, rise
-        // capped at JUMP_RISE, so the chain is always climbable in
-        // sequence rather than requiring a leap of faith.
-        const angle = randRange(0, Math.PI * 2);
-        const dist = randRange(1.6, 2.6);
-        x += Math.cos(angle) * dist;
-        z += Math.sin(angle) * dist;
-        y += randRange(0.35, JUMP_RISE);
-    }
-}
-
-// spawns `count` pieces of pure airborne noise across the whole map
-// footprint and the whole height range. The only concession to "normal"
-// is a courtesy clearance kept over open/walkable cells near ground
-// level, purely so it isn't spawning directly in your face mid-step --
-// cosmetic, not physical, since nothing here can ever block movement
-// regardless of where it lands.
-function spawnSkyJunk(count) {
-    const cfg = CONFIG.skyJunk;
-    for (let i = 0; i < count; i++) {
-        const x = randRange(-GRID_W / 2, GRID_W / 2);
-        const z = randRange(-GRID_H / 2, GRID_H / 2);
-
-        // rides the same light-web/dark-web density gradient every
-        // ground-level system already does -- thicker air toward the
-        // loud south pole, thinner (never clear) toward the quiet north.
-        const t = webAlignment(z);
-        const gradientMul = THREE.MathUtils.lerp(CONFIG.narrative.darkWeb.propDensityMul, CONFIG.narrative.lightWeb.propDensityMul, t);
-        if (rng() > gradientMul) continue;
-
-        let y = cfg.heightMin + (cfg.heightMax - cfg.heightMin) * (rng() ** cfg.heightBias);
-
-        // concentrated low on purpose (heightBias already skews this way),
-        // and thinned out hard above the heaven threshold -- the vistas
-        // that layer promises need actual open sightlines, not more haze.
-        if (y > LAYER_Y.heavenBase && rng() < 0.85) continue;
-
-        const { col, row } = worldToCell(x, z);
-        if (grid[row]?.[col] === false && y < cfg.streetClearance) y = cfg.streetClearance + rng() * 2;
-
-        const shape = pick(SKY_SHAPES);
-        const idx = skyJunkCounts[shape];
-        if (idx >= SKY_JUNK_CAPACITY) continue;
-        skyJunkCounts[shape] = idx + 1;
-
-        const s = randRange(cfg.sizeMin, cfg.sizeMax);
-        _skyScale.set(
-            s * randRange(cfg.stretchMin, cfg.stretchMax),
-            s * randRange(cfg.stretchMin, cfg.stretchMax),
-            s * randRange(cfg.stretchMin, cfg.stretchMax)
-        );
-        _skyPos.set(x, y, z);
-        // tumbles freely on all 3 axes -- gravity doesn't get a vote
-        _skyEuler.set(randRange(0, Math.PI * 2), randRange(0, Math.PI * 2), randRange(0, Math.PI * 2));
-        _skyQuat.setFromEuler(_skyEuler);
-        _skyMatrix.compose(_skyPos, _skyQuat, _skyScale);
-
-        const mesh = skyJunkMeshes[shape];
-        mesh.setMatrixAt(idx, _skyMatrix);
-        // same warm/cool split every other signal in the maze rides (t computed above)
-        mesh.setColorAt(idx, _skyColor.set(rng() < t ? pick(CONFIG.neonWarm) : pick(CONFIG.neonCool)));
-        mesh.count = idx + 1;
-    }
-    for (const shape of SKY_SHAPES) {
-        skyJunkMeshes[shape].instanceMatrix.needsUpdate = true;
-        if (skyJunkMeshes[shape].instanceColor) skyJunkMeshes[shape].instanceColor.needsUpdate = true;
-    }
-    const total = SKY_SHAPES.reduce((sum, shape) => sum + skyJunkCounts[shape], 0);
-    console.log(`[testing] sky junk: ${total} instances spawned (requested ${count})`);
-}
-
 function addConstructionZone(x, z) {
     // barrier
     const barrierTex = makePixelTexture((ctx, w, h) => {
@@ -8084,18 +7692,8 @@ bootStatus(`city built, ${GRID_COLS * GRID_ROWS} cells -- placing props/decorati
     });
 }
 
-// one plaza cell reserved up front, before the general shuffle below
-// hands cells out to statues/parks/etc -- guarantees the Stairway to
-// Heaven always gets a spot with real open room around it (a dead end's
-// own building is boxed in on 3 sides by definition, no room for
-// anything to wrap around) instead of competing for leftovers. Falls
-// back to spawn's own cell on the rare maze with no plazas at all.
-const heavenCell = plazaCells.length ? pick(plazaCells) : [spawnCol, spawnRow];
-
 // special features placed on plaza cells (wider open junctions)
-const shuffledPlazas = [...plazaCells]
-    .filter(c => c[0] !== heavenCell[0] || c[1] !== heavenCell[1])
-    .sort(() => rng() - 0.5);
+const shuffledPlazas = [...plazaCells].sort(() => rng() - 0.5);
 let plazaCursor = 0;
 function nextPlazaCell() {
     return plazaCursor < shuffledPlazas.length ? shuffledPlazas[plazaCursor++] : null;
@@ -8158,7 +7756,7 @@ for (let i = 0; i < CONFIG.props.maxSpecialFeatures.parks; i++) {
     // park, so there was never anything for a collider here to actually
     // keep clear of. Its real trees/bench still push their own small
     // colliders inside addPark.
-    addPark(x, z);
+    addPark(x, z, cell[0], cell[1]);
     parkCells.add(`${cell[0]},${cell[1]}`);
 }
 for (let i = 0; i < CONFIG.props.maxSpecialFeatures.megaBillboards; i++) {
@@ -8171,20 +7769,12 @@ for (let i = 0; i < CONFIG.props.maxSpecialFeatures.megaBillboards; i++) {
     propColliders.push({ x, z, radius: r, height: Infinity });
 }
 
-// the one, findable Stairway to Heaven -- see buildStairwayToHeaven's own
-// comment. heavenCell was reserved before any of the loops above touched
-// plazaCells, so this always gets a real spot.
-{
-    const { x, z } = cellToWorld(heavenCell[0], heavenCell[1]);
-    buildStairwayToHeaven(x, z);
-}
-
 // every plaza gets a bright pool of light, regardless of whether it also
 // hosts a statue/landmark — open areas are lit, full stop.
 for (const [pc, pr] of plazaCells) {
     const { x, z } = cellToWorld(pc, pr);
     addPlazaGlow(x, z);
-    if (rng() < 0.85 * QUALITY.propDensity) scatterJunk('plaza', x, z, 1 + Math.floor(rng() * 3), CELL * 0.4);
+    if (rng() < 0.85 * QUALITY.propDensity) scatterJunk('plaza', x, z, 1 + Math.floor(rng() * 3), Math.min(colHalf(pc), rowHalf(pr)) * 0.8);
 }
 
 // props that realistically sit against a wall rather than floating in
@@ -8263,7 +7853,7 @@ function addStreetSurface(c, r, x, z) {
     // is still what handles z-fighting against the ground plane -- never
     // physical X/Z shrinkage.
     const road = new THREE.Mesh(
-        new THREE.PlaneGeometry(CELL * 1.01, CELL * 1.01),
+        new THREE.PlaneGeometry(colSize[c] * 1.01, rowSize[r] * 1.01),
         new THREE.MeshStandardMaterial({ map: tex, roughness: 1 })
     );
     road.rotation.x = -Math.PI / 2;
@@ -8274,15 +7864,17 @@ function addStreetSurface(c, r, x, z) {
     // building — a raised, lighter concrete band with a curb lip. Same
     // full-width-plus-a-hair rule along its own length so consecutive
     // sidewalk cells butt/overlap continuously instead of leaving a gap
-    // every CELL units.
+    // every cell. Width/length are each axis's own local size now (a
+    // narrow street cell and the wide cell it borders don't share a
+    // pitch), not a single CELL scalar.
     for (const w of wallDirections(c, r)) {
-        const stripWidth = CELL * 0.18;
-        const stripLen = CELL * 1.01;
+        const stripWidthX = colSize[c] * 0.18, stripWidthZ = rowSize[r] * 0.18;
+        const stripLenX = colSize[c] * 1.01, stripLenZ = rowSize[r] * 1.01;
         const strip = new THREE.Mesh(
-            new THREE.BoxGeometry(w.dx !== 0 ? stripWidth : stripLen, 0.06, w.dz !== 0 ? stripWidth : stripLen),
+            new THREE.BoxGeometry(w.dx !== 0 ? stripWidthX : stripLenX, 0.06, w.dz !== 0 ? stripWidthZ : stripLenZ),
             new THREE.MeshStandardMaterial({ color: 0xc8c2a8, roughness: 0.9 })
         );
-        strip.position.set(x + w.dx * (CELL / 2 - stripWidth / 2), 0.03, z + w.dz * (CELL / 2 - stripWidth / 2));
+        strip.position.set(x + w.dx * (colHalf(c) - stripWidthX / 2), 0.03, z + w.dz * (rowHalf(r) - stripWidthZ / 2));
         scene.add(strip);
     }
 }
@@ -8361,7 +7953,13 @@ function addMegaBillboard(x, z) {
     return 1.4;
 }
 
-function addPark(x, z) {
+function addPark(x, z, col = null, row = null) {
+    // parks only ever land on plaza cells (nextPlazaCell), which can sit
+    // on either grid parity -- use this cell's own real half-extents
+    // when known, falling back to the uniform BLOCK guess for any other
+    // caller that doesn't have a col/row handy.
+    const hwx = col !== null ? colHalf(col) : BLOCK / 2;
+    const hwz = row !== null ? rowHalf(row) : BLOCK / 2;
     const grassTex = makePixelTexture((ctx, w, h) => {
         ctx.fillStyle = '#3a5c2e';
         ctx.fillRect(0, 0, w, h);
@@ -8372,7 +7970,7 @@ function addPark(x, z) {
         }
     }, 96, 96);
     const grass = new THREE.Mesh(
-        new THREE.PlaneGeometry(CELL * 0.95, CELL * 0.95),
+        new THREE.PlaneGeometry(hwx * 2 * 0.95, hwz * 2 * 0.95),
         new THREE.MeshStandardMaterial({ map: grassTex, roughness: 1 })
     );
     grass.rotation.x = -Math.PI / 2;
@@ -8381,16 +7979,16 @@ function addPark(x, z) {
 
     const clusterCount = 4 + Math.floor(rng() * 3);
     for (let i = 0; i < clusterCount; i++) {
-        const px = x + randRange(-CELL * 0.38, CELL * 0.38);
-        const pz = z + randRange(-CELL * 0.38, CELL * 0.38);
+        const px = x + randRange(-hwx * 0.76, hwx * 0.76);
+        const pz = z + randRange(-hwz * 0.76, hwz * 0.76);
         addTree(px, pz);
         propColliders.push({ x: px, z: pz, radius: 0.25, height: PROP_HEIGHTS.tree });
     }
     const benchAngle = randRange(0, Math.PI * 2);
     addBench(x + Math.cos(benchAngle) * 1.4, z + Math.sin(benchAngle) * 1.4, benchAngle + Math.PI / 2);
-    scatterJunk('park', x, z, 4, CELL * 0.4);
-    if (rng() < 0.4) placeRealModel('ironGate', x, z - CELL * 0.42, 0); // a real wrought-iron entrance gate on the park's north edge
-    return CELL * 0.5;
+    scatterJunk('park', x, z, 4, Math.min(hwx, hwz) * 0.8);
+    if (rng() < 0.4) placeRealModel('ironGate', x, z - hwz * 0.84, 0); // a real wrought-iron entrance gate on the park's north edge
+    return Math.min(hwx, hwz);
 }
 
 function wallDirections(c, r) {
@@ -8543,6 +8141,11 @@ for (let r = 1; r < GRID_ROWS - 1; r++) {
         if (parkCells.has(`${c},${r}`)) continue; // already laid down as grass
 
         const { x, z } = cellToWorld(c, r);
+        // this cell's own real half-extents -- an odd row/col is a
+        // narrower street cell now, so anything scattered/offset here
+        // uses ITS size, not a uniform guess, or clutter overflows a
+        // narrow street straight into the buildings flanking it.
+        const chx = colHalf(c), chz = rowHalf(r);
         // scatterJunk itself is cheap (instanced — a handful of draw
         // calls total regardless of count), but propColliders growth and
         // the real-model clones below aren't free, so all of this still
@@ -8551,16 +8154,16 @@ for (let r = 1; r < GRID_ROWS - 1; r++) {
         const laneAxis = throughAxis(c, r); // null off a straight corridor -- carve-out only applies where there's a single lane to protect
         if (onStreet) {
             addStreetSurface(c, r, x, z);
-            if (rng() < 0.45 * QUALITY.propDensity) scatterJunk('street', x, z, 1 + Math.floor(rng() * 3), CELL * 0.34, laneAxis);
+            if (rng() < 0.45 * QUALITY.propDensity) scatterJunk('street', x, z, 1 + Math.floor(rng() * 3), Math.min(chx, chz) * 0.68, laneAxis);
             if (rng() < 0.15 * QUALITY.propDensity) {
                 const w = wallDirections(c, r);
                 if (w.length) {
                     const dir = pick(w);
-                    placeRealModel('streetLamp', x + dir.dx * (CELL * 0.4), z + dir.dz * (CELL * 0.4), randRange(0, Math.PI * 2));
+                    placeRealModel('streetLamp', x + dir.dx * (chx * 0.8), z + dir.dz * (chz * 0.8), randRange(0, Math.PI * 2));
                 }
             }
         } else if (rng() < 0.75 * QUALITY.propDensity) {
-            scatterJunk('alley', x, z, 1 + Math.floor(rng() * 3), CELL * 0.3, laneAxis);
+            scatterJunk('alley', x, z, 1 + Math.floor(rng() * 3), Math.min(chx, chz) * 0.6, laneAxis);
         }
         // corner piles: a real inside corner (2 perpendicular walls --
         // building/building, building/dead-end, etc.) gets a chance at
@@ -8572,7 +8175,8 @@ for (let r = 1; r < GRID_ROWS - 1; r++) {
             if (corner && rng() < 0.22 * QUALITY.propDensity) {
                 const intoX = corner[0].dx + corner[1].dx, intoZ = corner[0].dz + corner[1].dz; // toward the nook both walls form
                 const len = Math.hypot(intoX, intoZ) || 1;
-                buildCornerPile(x + (intoX / len) * CELL * 0.22, z + (intoZ / len) * CELL * 0.22, intoX / len, intoZ / len, 2 + Math.floor(rng() * 3));
+                const pileReach = Math.min(chx, chz) * 0.44;
+                buildCornerPile(x + (intoX / len) * pileReach, z + (intoZ / len) * pileReach, intoX / len, intoZ / len, 2 + Math.floor(rng() * 3));
             }
         }
         // real scanned props are NOT instanced (each is its own draw
@@ -8587,15 +8191,13 @@ for (let r = 1; r < GRID_ROWS - 1; r++) {
         // network overhead, independent of ground clutter below it.
         if (grid[r]?.[c - 1] && grid[r]?.[c + 1]) {
             const wa = cellToWorld(c - 1, r), wb = cellToWorld(c + 1, r);
-            const fa = footprintOf[r][c - 1]?.hwx ?? CELL * 0.3, fb = footprintOf[r][c + 1]?.hwx ?? CELL * 0.3;
+            const fa = footprintOf[r][c - 1]?.hwx ?? colHalf(c - 1) * 0.6, fb = footprintOf[r][c + 1]?.hwx ?? colHalf(c + 1) * 0.6;
             if (rng() < 0.5) addOverheadCable(wa.x + fa, wa.z, wb.x - fb, wb.z);
-            if (rng() < 0.48) addCanopyTarp(wa.x + fa, wa.z, wb.x - fb, wb.z);
         }
         if (grid[r - 1]?.[c] && grid[r + 1]?.[c]) {
             const wa = cellToWorld(c, r - 1), wb = cellToWorld(c, r + 1);
-            const fa = footprintOf[r - 1][c]?.hwz ?? CELL * 0.3, fb = footprintOf[r + 1][c]?.hwz ?? CELL * 0.3;
+            const fa = footprintOf[r - 1][c]?.hwz ?? rowHalf(r - 1) * 0.6, fb = footprintOf[r + 1][c]?.hwz ?? rowHalf(r + 1) * 0.6;
             if (rng() < 0.5) addOverheadCable(wa.x, wa.z + fa, wb.x, wb.z - fb);
-            if (rng() < 0.48) addCanopyTarp(wa.x, wa.z + fa, wb.x, wb.z - fb);
         }
 
         const t = webAlignment(cellToWorld(c, r).z);
@@ -8613,8 +8215,9 @@ for (let r = 1; r < GRID_ROWS - 1; r++) {
             const walls = wallDirections(c, r);
             if (walls.length) {
                 const w = pick(walls);
-                const hug = CELL * randRange(0.34, 0.42); // tight to the actual wall face
-                const along = randRange(-CELL * 0.25, CELL * 0.25); // slide along the wall
+                const perpSize = w.dx !== 0 ? chx : chz, alongSize = w.dx !== 0 ? chz : chx;
+                const hug = perpSize * randRange(0.68, 0.84); // tight to the actual wall face
+                const along = randRange(-alongSize * 0.5, alongSize * 0.5); // slide along the wall
                 const bx = x + w.dx * hug + (w.dx === 0 ? along : 0);
                 const bz = z + w.dz * hug + (w.dz === 0 ? along : 0);
                 const spot = findClearSpot(bx, bz, 0.3, [[0, 0], [0.3, 0], [-0.3, 0], [0, 0.3], [0, -0.3]]);
@@ -8629,11 +8232,11 @@ for (let r = 1; r < GRID_ROWS - 1; r++) {
                 // east/west were unaffected (z-term is 0 there).
                 facingRotY = outwardRotationY(-w.dx, -w.dz);
             } else {
-                px = x + randRange(-CELL * 0.28, CELL * 0.28);
-                pz = z + randRange(-CELL * 0.28, CELL * 0.28);
+                px = x + randRange(-chx * 0.56, chx * 0.56);
+                pz = z + randRange(-chz * 0.56, chz * 0.56);
             }
         } else {
-            const jitter = CELL * 0.28;
+            const jitter = Math.min(chx, chz) * 0.56;
             const spot = findClearSpot(x, z, 0.35, [
                 laneOffset(jitter, laneAxis),
                 laneOffset(jitter, laneAxis),
@@ -8651,107 +8254,12 @@ for (let r = 1; r < GRID_ROWS - 1; r++) {
 
 fetchRandomWikiArticles(15); // live random articles start swapping into the static wanted posters
 
-// the sky, filled last so it can spawn straight through anything already
-// placed -- see CONFIG.quality.*.skyJunkCount for the per-tier amount.
-bootStatus(`props placed -- filling the sky (${QUALITY.skyJunkCount} junk + noise-corpus text shards)…`);
-spawnSkyJunk(QUALITY.skyJunkCount);
-
-// ---------- airborne information layer ----------
-// skyJunk above is pure geometry -- this is a separate population of
-// text-bearing shards so the sky itself reads as query output, not just
-// debris. The corpus behind it is enormous, but render cost stays fixed:
-// a small cache of real textures (TEXT_SHARD_CACHE_SIZE), reused across
-// however many shard meshes get placed. None of these are colliders.
-const TEXT_SHARD_CACHE_SIZE = QUALITY === CONFIG.quality.desktop ? 512 : QUALITY === CONFIG.quality.mobile ? 160 : 48;
-// counts cut down alongside the ~1/4-size map -- same reasoning as
-// skyJunkCount above, so the sky doesn't end up ~4x denser just because
-// the map got smaller.
-const TEXT_SHARD_COUNT = QUALITY === CONFIG.quality.desktop ? 850 : QUALITY === CONFIG.quality.mobile ? 210 : 25;
-
-function makeNoiseShardTexture(title, subtitle) {
-    const neon = hexToCss(pick(CONFIG.neonPalette));
-    const font = pickTextFont();
-    return makePixelTexture((ctx, w, h) => {
-        ctx.fillStyle = '#050505';
-        ctx.fillRect(0, 0, w, h);
-        ctx.strokeStyle = neon + '55';
-        ctx.strokeRect(0.5, 0.5, w - 1, h - 1);
-        ctx.fillStyle = neon;
-        ctx.textAlign = 'center';
-        ctx.font = `bold 8px ${font}`;
-        ctx.fillText(title, w / 2, h / 2 - 3, w - 6);
-        ctx.font = `6px ${font}`;
-        ctx.fillStyle = '#cfd6d6';
-        ctx.fillText(subtitle, w / 2, h / 2 + 8, w - 6);
-    }, 112, 32);
-}
-
-const textShardMaterials = [];
-for (let i = 0; i < TEXT_SHARD_CACHE_SIZE; i++) {
-    const [title, subtitle] = pickAnyNoisePair(rng);
-    textShardMaterials.push(new THREE.MeshBasicMaterial({
-        map: makeNoiseShardTexture(title, subtitle),
-        transparent: true, side: THREE.DoubleSide, depthWrite: false,
-    }));
-}
-console.log(`[noise] ${textShardMaterials.length} airborne text-shard textures cached`);
-
-const textShardGeo = new THREE.PlaneGeometry(1, 1);
-function spawnTextShards(count) {
-    let placed = 0;
-    for (let i = 0; i < count; i++) {
-        const x = randRange(-GRID_W / 2, GRID_W / 2);
-        const z = randRange(-GRID_H / 2, GRID_H / 2);
-
-        // same light-web/dark-web density gradient as skyJunk/regular props
-        const t = webAlignment(z);
-        const gradientMul = THREE.MathUtils.lerp(CONFIG.narrative.darkWeb.propDensityMul, CONFIG.narrative.lightWeb.propDensityMul, t);
-        if (rng() > gradientMul) continue;
-
-        let y = CONFIG.skyJunk.heightMin + (CONFIG.skyJunk.heightMax - CONFIG.skyJunk.heightMin) * (rng() ** CONFIG.skyJunk.heightBias);
-        if (y > LAYER_Y.heavenBase && rng() < 0.85) continue;
-
-        const { col, row } = worldToCell(x, z);
-        if (grid[row]?.[col] === false && y < CONFIG.skyJunk.streetClearance) y = CONFIG.skyJunk.streetClearance + rng() * 2;
-
-        const mesh = new THREE.Mesh(textShardGeo, textShardMaterials[Math.floor(rng() * textShardMaterials.length)]);
-        // some tiny/illegible from the ground, some big enough to read
-        // only once you've climbed close -- both are intentional.
-        const s = randRange(0.25, 1.7);
-        mesh.scale.set(s * 1.75, s * 0.5, 1);
-        mesh.position.set(x, y, z);
-        mesh.rotation.set(randRange(0, Math.PI * 2), randRange(0, Math.PI * 2), randRange(0, Math.PI * 2));
-        scene.add(mesh);
-        placed++;
-    }
-    console.log(`[noise] ${placed} airborne text shards spawned (requested ${count})`);
-}
-spawnTextShards(TEXT_SHARD_COUNT);
-
-// real climbable platform chains, one per pick, each starting over an
-// open (non-building) cell so the base of a chain isn't spawning inside
-// a tower's silhouette -- see CONFIG.quality.*.floatingPlatformClusters
-// for the per-tier count.
-for (let i = 0; i < QUALITY.floatingPlatformClusters; i++) {
-    let col, row, tries = 0;
-    do {
-        col = 1 + Math.floor(rng() * (GRID_COLS - 2));
-        row = 1 + Math.floor(rng() * (GRID_ROWS - 2));
-        tries++;
-    } while (grid[row][col] && tries < 20);
-    const { x, z } = cellToWorld(col, row);
-    spawnFloatingPlatformCluster(x, z);
-}
-
 // ---------- player collision ----------
 
 const PLAYER_RADIUS = CONFIG.camera.playerRadius;
 
 function worldToCell(x, z) {
-    return {
-        col: Math.round(x / CELL + (GRID_COLS - 1) / 2),
-        row: Math.round(z / CELL + (GRID_ROWS - 1) / 2),
-    };
+    return worldToCellIndex(x, z); // non-uniform grid -- see worldToCellIndex
 }
 
 // where segment (p1->p2) crosses segment (q1->q2), as t along p1->p2, or
@@ -9156,7 +8664,6 @@ function maybeStepDownQuality(delta) {
     renderer.setPixelRatio(Math.max(1, renderer.getPixelRatio() - 0.5));
     if (bloomPass) { composer.removePass(bloomPass); bloomPass = null; }
     for (const shape in junkMeshes) junkMeshes[shape].count = Math.floor(junkMeshes[shape].count * 0.6);
-    for (const shape in skyJunkMeshes) skyJunkMeshes[shape].count = Math.floor(skyJunkMeshes[shape].count * 0.4);
 }
 
 // ---------- render loop ----------
@@ -9171,6 +8678,7 @@ function animate() {
     const delta = Math.min(CONFIG.movement.maxDeltaSeconds, clock.getDelta());
     elapsedTime += delta;
     maybeStepDownQuality(delta);
+    updateDynamicLightCulling();
 
     for (const f of flickerLights) {
         f.light.intensity = f.mode === 'blink'

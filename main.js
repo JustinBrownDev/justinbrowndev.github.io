@@ -5453,11 +5453,151 @@ function buildJustinIndex(site) {
     console.log(`[signature] JUSTIN BROWN INDEX: built ${cells.length} modules, ${floorCount} floors -- lobby+search hall+deep stacks all populated, ${allStackCells.length + 2} internally-connected rooms give real multiple routes`);
 }
 
+// ============================================================
+// SYSTEMS WORKSHOP -- authored signature location #4.
+// ============================================================
+// Looks USED, not curated -- an irregular industrial compound, not a
+// museum. Real content where it exists: CONFIG.siteContent.codeProjects
+// (his actual documented builds -- TRAFFIC BLASTER, CYBERDECK, EMP
+// GENERATOR, MC COMPUTER...) gets a genuine home in the computer-lab
+// corner instead of floating on a random building elsewhere in the
+// city, the same "give real content a real room" move the Art Gallery
+// and AS/400 Archive already made.
+function buildSystemsWorkshop(site) {
+    const { cells, id, signatureInstance } = site;
+    const typeCfg = CONFIG.signatureBuildings.systemsWorkshop;
+    const floorHeight = 3.0;
+    const floorCount = Math.max(2, Math.min(3, typeCfg.preferredFloors || 2));
+    const color = 0x9a9484; // grimy concrete/beige -- used, not showroom
+    const material = new THREE.MeshStandardMaterial({ color, roughness: 0.95, side: THREE.DoubleSide });
+    const buildingContext = { wealth: 0.35, maintenance: 0.4 }; // low maintenance -- reads lived-in, not polished
+    const streetSetback = randRange(CONFIG.maze.buildingMarginMin, CONFIG.maze.buildingMarginMax) / 2;
+    const partySetback = randRange(0.08, 0.2);
+
+    const degreeOf = (cell) => [[0, -1], [0, 1], [-1, 0], [1, 0]].filter(([dc, dr]) => siteIdOf[cell.row + dr]?.[cell.col + dc] === id).length;
+    let primary = cells[0], primaryDegree = -1;
+    for (const c of cells) { const d = degreeOf(c); if (d > primaryDegree) { primaryDegree = d; primary = c; } }
+
+    const mainEntrance = signatureInstance.mainEntrance;
+    const secondaryEntrance = signatureInstance.secondaryEntrance;
+    const others0 = cells.filter(c => c !== primary);
+    const frontShop = others0.find(c => c.row === mainEntrance.cell.row && c.col === mainEntrance.cell.col) ?? others0[0] ?? primary;
+    const others1 = others0.filter(c => c !== frontShop);
+    // rear yard/loading -- the cell touching the service edge (spec:
+    // "REAR YARD" + "loading/service access").
+    const rearYard = (secondaryEntrance && others1.find(c => c.row === secondaryEntrance.cell.row && c.col === secondaryEntrance.cell.col)) ?? others1[others1.length - 1] ?? primary;
+    const remaining = others1.filter(c => c !== rearYard);
+    const computerLab = remaining[0] ?? primary;
+    const electronicsBench = remaining[1] ?? frontShop;
+
+    const floorCountByCellKey = new Map(cells.map(c => [`${c.row},${c.col}`, floorCount]));
+    const cellIs = (cell, edge) => edge && cell.row === edge.cell.row && cell.col === edge.cell.col;
+    const rectByCellKey = new Map();
+    for (const cell of cells) {
+        const forceDoorSide = cellIs(cell, mainEntrance) ? { dc: mainEntrance.dc, dr: mainEntrance.dr }
+            : cellIs(cell, secondaryEntrance) ? { dc: secondaryEntrance.dc, dr: secondaryEntrance.dr }
+                : null;
+        const rect = addBuildingModule(cell, {
+            isPrimary: cell === primary, isWarehouse: false, floorCount, floorHeight, height: floorCount * floorHeight,
+            color, material, buildingContext, streetSetbackX: streetSetback, streetSetbackZ: streetSetback, partySetback,
+            voidCell: null, siteFloorCounts: floorCountByCellKey, signatureMode: true, forceDoorSide,
+        });
+        rectByCellKey.set(`${cell.row},${cell.col}`, rect);
+    }
+
+    const facadesFor = (cell) => cell && rectByCellKey.get(`${cell.row},${cell.col}`)?.streetFacades || [];
+    const placeCluster = (cell, modelIds, count, yLevel = 0) => {
+        const { x: cx, z: cz } = cellToWorld(cell.col, cell.row);
+        const r = rectByCellKey.get(`${cell.row},${cell.col}`);
+        const hw = Math.min(r?.hwx ?? 2, r?.hwz ?? 2) * 0.65;
+        for (let i = 0; i < count; i++) {
+            placeCityAsset(pick(modelIds), cx + randRange(-hw, hw), cz + randRange(-hw, hw), randRange(0, Math.PI * 2), { y: yLevel });
+        }
+    };
+
+    // main workshop -- the primary cell, main fabrication bench + tool
+    // wall + 3D printer area (spec: "main fabrication bench", "3D
+    // printer area", "tool wall"). Clutter kept OFF the through-path by
+    // biasing placement toward the edges (0.65 * halfwidth, not the
+    // full footprint) rather than the exact center where foot traffic
+    // actually crosses the room -- same "clutter belongs against
+    // walls/in corners, not the walking line" rule the spec asks for.
+    placeCluster(primary, ['systems_workshop/workbench_01', 'systems_workshop/workbench_02', 'systems_workshop/workbench_03', 'systems_workshop/workbench_04', 'systems_workshop/workbench_05'], 2, 0);
+    placeCluster(primary, ['systems_workshop/pegboard_01', 'systems_workshop/pegboard_02', 'systems_workshop/pegboard_03', 'systems_workshop/pegboard_04'], 2, 0);
+    placeCluster(primary, ['systems_workshop/3d_printer_01', 'systems_workshop/3d_printer_02', 'systems_workshop/3d_printer_03', 'systems_workshop/3d_printer_04'], 2, 0);
+    placeCluster(primary, ['systems_workshop/tool_chest_01', 'systems_workshop/tool_chest_02', 'systems_workshop/tool_chest_03', 'systems_workshop/tool_chest_04'], 1, 0);
+
+    // front shop -- street-facing, less dense (a real shop still needs a
+    // walkable entry), a couple of tool chests and a parts rack.
+    placeCluster(frontShop, ['systems_workshop/tool_chest_01', 'systems_workshop/tool_chest_02'], 1, 0);
+    placeCluster(frontShop, ['systems_workshop/parts_rack_01', 'systems_workshop/parts_rack_02', 'systems_workshop/parts_rack_03'], 1, 0);
+
+    // computer lab -- server bench + cable carts, and his real documented
+    // code projects on the wall (addTerminalPlaque -- the same green-CRT
+    // readable-page primitive the AS/400 Archive uses, appropriate here
+    // too: this is a real computer-focused room).
+    placeCluster(computerLab, ['systems_workshop/server_bench_01', 'systems_workshop/server_bench_02', 'systems_workshop/server_bench_03'], 2, 0);
+    placeCluster(computerLab, ['systems_workshop/cable_cart_01', 'systems_workshop/cable_cart_02'], 1, 0);
+    let codeHung = 0;
+    for (const [title, subtitle] of CONFIG.siteContent.codeProjects) {
+        let placed = false;
+        for (const cell of [computerLab, primary, frontShop]) {
+            for (const facade of facadesFor(cell)) {
+                const spot = findFreeFacadeRect(facade, 'sign', 1.9, 0.71, 0.3, floorHeight - 0.3, 6, 0.1);
+                if (!spot) continue;
+                const p = pointOnFacade(facade, spot.u, spot.v, -0.05);
+                addTerminalPlaque(p.x, p.y, p.z, facade.rotY + Math.PI, title, subtitle);
+                placed = true;
+                break;
+            }
+            if (placed) break;
+        }
+        if (placed) codeHung++;
+    }
+
+    // electronics bench -- solder stations + pegboard, a workbench.
+    placeCluster(electronicsBench, ['systems_workshop/solder_station_01', 'systems_workshop/solder_station_02', 'systems_workshop/solder_station_03'], 2, 0);
+    placeCluster(electronicsBench, ['systems_workshop/pegboard_01', 'systems_workshop/pegboard_02'], 1, 0);
+    placeCluster(electronicsBench, ['systems_workshop/workbench_01', 'systems_workshop/workbench_02'], 1, 0);
+
+    // rear yard/loading -- industrial props (generic `industrial`
+    // category, not systems_workshop-exclusive -- a loading yard behind
+    // an electronics shop plausibly has generic drums/cable spools/an
+    // electrical cabinet, not more workbenches).
+    placeCluster(rearYard, ['industrial/cable_spool_01', 'industrial/cable_spool_02', 'industrial/cable_spool_03', 'industrial/cable_spool_04'], 2, 0);
+    placeCluster(rearYard, ['industrial/electrical_cabinet_01', 'industrial/electrical_cabinet_02'], 1, 0);
+    placeCluster(rearYard, ['industrial/drum_cluster_01', 'industrial/drum_cluster_02', 'industrial/drum_cluster_03'], 1, 0);
+
+    // mezzanine storage -- floor 1 (this building's upper floor) reads
+    // as overflow storage, reached by the same real stair core every
+    // multi-floor module gets (spec: "main floor -> utility stairs ->
+    // mezzanine storage -> roof").
+    if (floorCount > 1) {
+        placeCluster(primary, ['systems_workshop/parts_rack_01', 'systems_workshop/parts_rack_02', 'systems_workshop/parts_rack_03'], 2, floorHeight);
+        placeCluster(computerLab, ['interior/shelf_01', 'interior/shelf_02', 'interior/shelf_03'], 2, floorHeight);
+    }
+
+    // identity facade
+    const vestFacade = facadesFor(frontShop)[0] ?? facadesFor(primary)[0];
+    if (vestFacade) {
+        const spot = findFreeFacadeRect(vestFacade, 'sign', 3.0, 1.1, floorCount * floorHeight - 1.4, floorCount * floorHeight - 0.3, 6, 0.1);
+        const e = mainEntrance;
+        if (spot) {
+            const p = pointOnFacade(vestFacade, spot.u, spot.v);
+            addSign(p.x, p.y, p.z, vestFacade.rotY, typeCfg.exteriorName, typeCfg.exteriorSubtitle, 0xffa64d, false, 3.0, { w: 120, h: 48 });
+        } else {
+            addSign(e.doorX, floorCount * floorHeight - 0.9, e.doorZ, e.outwardRotY, typeCfg.exteriorName, typeCfg.exteriorSubtitle, 0xffa64d, false, 3.0, { w: 120, h: 48 });
+        }
+    }
+
+    console.log(`[signature] SYSTEMS WORKSHOP: built ${cells.length} modules, ${floorCount} floors -- main workshop+front shop+computer lab+electronics bench+rear yard populated, ${codeHung}/${CONFIG.siteContent.codeProjects.length} real code projects on display`);
+}
+
 const SIGNATURE_BUILDERS = {
     artGallery: buildArtGallery,
     as400Archive: buildAS400Archive,
     justinIndex: buildJustinIndex,
-    systemsWorkshop: buildSignaturePlaceholder,
+    systemsWorkshop: buildSystemsWorkshop,
     loreShrine: buildSignaturePlaceholder,
 };
 function buildSignatureSite(site) {

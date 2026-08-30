@@ -26,6 +26,8 @@ ok(signatures.includes("yield { phase: 'signature-art-piece'"), 'art gallery mus
 ok(signatures.includes("yield { phase: 'signature-index-stack-fixture'"), 'Justin Index must yield between stack fixtures');
 ok(signatures.includes("yield { phase: 'signature-workshop-fixture'"), 'Systems Workshop must yield between fixtures');
 ok(signatures.includes("yield { phase: 'signature-lore-cycle-stage'") && signatures.includes("yield { phase: 'signature-lore-tool'"), 'Lore Shrine must yield between dense exhibits');
+ok(main.includes('function runWithUnifiedSignatureSite(site, work)'), 'progressive signature builders must scope their active unified-site context per scheduler turn');
+ok(main.includes('? runWithUnifiedSignatureSite(site, () => job.stepper.step())'), 'signature scheduler turns must restore the correct site before resuming an interleaved generator');
 
 const optimizerAt = main.indexOf('createProgressiveStaticWorldOptimizer({');
 const physicsAt = main.indexOf('playerPhysics = createPlayerPhysics({');

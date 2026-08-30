@@ -2002,6 +2002,16 @@ const {
 let activeUnifiedSignatureSite = null;
 let signatureContentSiteSteps = null;
 
+function runWithUnifiedSignatureSite(site, work) {
+    const previous = activeUnifiedSignatureSite;
+    activeUnifiedSignatureSite = site;
+    try {
+        return work();
+    } finally {
+        activeUnifiedSignatureSite = previous;
+    }
+}
+
 function* unifiedSignatureModuleAdapterSteps(cell, opts = {}) {
     const site = activeUnifiedSignatureSite;
     const payload = site ? unifiedSpawnFabricPayloads.get(site.id) : null;
@@ -2487,7 +2497,9 @@ function stepAuthoredBuildingJob(job) {
     let addedRoots = [];
     let deferredVisualPhase = false;
     try {
-        step = job.stepper.step();
+        step = site.signatureType
+            ? runWithUnifiedSignatureSite(site, () => job.stepper.step())
+            : job.stepper.step();
     } finally {
         addedRoots = _generationAddedRoots;
         _generationAddedRoots = null;

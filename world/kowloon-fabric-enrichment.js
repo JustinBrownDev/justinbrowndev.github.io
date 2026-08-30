@@ -334,26 +334,67 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0 } = {}) {
         return tasks;
     }
 
+    const DETAIL_KIND_PRIORITY = Object.freeze({
+        sign: 0, awning: 0, graffiti: 0, flyer: 0,
+        pipe: 1, ivy: 1, security: 1, 'elevator-hardware': 1,
+        'roof-clutter': 2, 'roof-topper': 2,
+        marker: 3, 'spray-cans': 3,
+        'interior-prop': 4,
+    });
+
+    function detailPriority(kind) {
+        if (String(kind).startsWith('plaza-')) return 2;
+        return DETAIL_KIND_PRIORITY[kind] ?? 3;
+    }
+
+    function layerTasksAcrossEntities(tasks) {
+        const byEntity = new Map();
+        for (const task of tasks) {
+            const id = String(task.entityId ?? '');
+            if (!byEntity.has(id)) byEntity.set(id, []);
+            byEntity.get(id).push(task);
+        }
+        const queues = [...byEntity.entries()]
+            .sort((a, b) => a[0].localeCompare(b[0]))
+            .map(([, queue]) => queue.sort((a, b) =>
+                detailPriority(a.kind) - detailPriority(b.kind)
+                || a.kind.localeCompare(b.kind)
+                || (a.seed >>> 0) - (b.seed >>> 0)));
+        const layered = [];
+        for (let layer = 0; ; layer++) {
+            let emitted = 0;
+            for (const queue of queues) {
+                if (layer >= queue.length) continue;
+                layered.push(queue[layer]);
+                emitted++;
+            }
+            if (!emitted) break;
+        }
+        return { tasks: layered, firstPassTaskCount: queues.filter(queue => queue.length).length };
+    }
+
     function plan(chunk, entities) {
         const tasks = [];
         for (const entity of entities || []) {
             if (entity.kind === 'building' || entity.kind === 'district-landmark') tasks.push(...planBuildingTasks(chunk, entity));
             else if (entity.kind === 'plaza') tasks.push(...planPlazaTasks(chunk, entity));
         }
-        tasks.sort((a, b) => {
-            const ai = String(a.entityId), bi = String(b.entityId);
-            return ai.localeCompare(bi) || a.kind.localeCompare(b.kind) || (a.seed >>> 0) - (b.seed >>> 0);
-        });
+        // PLAYER-CENTERED VISIBLE CONVERGENCE: preserve the exact deterministic
+        // detail corpus, but publish it in layers across entities. A nearby block
+        // therefore acquires one readable/exterior feature per building/plaza
+        // before the scheduler spends deep turns on any single tower.
+        const layered = layerTasksAcrossEntities(tasks);
         return {
-            phase: tasks.length ? DETAIL_PHASE.STRUCTURAL_READY : DETAIL_PHASE.READY,
-            tasks,
+            phase: layered.tasks.length ? DETAIL_PHASE.STRUCTURAL_READY : DETAIL_PHASE.READY,
+            tasks: layered.tasks,
+            firstPassTaskCount: layered.firstPassTaskCount,
             cursor: 0,
             completed: 0,
             failures: 0,
             worstStepMs: 0,
             totalStepMs: 0,
             startedAt: 0,
-            completedAt: tasks.length ? 0 : performance.now(),
+            completedAt: layered.tasks.length ? 0 : performance.now(),
         };
     }
 

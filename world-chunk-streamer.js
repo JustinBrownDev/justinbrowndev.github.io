@@ -359,38 +359,67 @@ export function createWorldChunkStreamer({
         return false;
     }
 
+    function semanticFirstPassTarget(chunk) {
+        const target = Number(chunk?.payload?.refinement?.firstPassTaskCount);
+        return Number.isFinite(target) && target >= 0 ? target : null;
+    }
+
+    function chunkVisibleFirstPassComplete(chunk) {
+        if (!chunk || chunk.state !== CHUNK_STATE.READY || !chunk.payload) return false;
+        const semanticTarget = semanticFirstPassTarget(chunk);
+        if (semanticTarget !== null) {
+            return (Number(chunk.payload.refinement?.cursor) || 0) >= semanticTarget;
+        }
+        if (!chunkNeedsRefinement(chunk)) return true;
+        return chunk.refinementTurns >= minimumVisibleRefinementTurns;
+    }
+
     function nearestRefinableChunk(center = playerChunkCoords()) {
         if (refineAfterPrefetchReady && !readyWithinRadius(prefetchRadiusChunks).complete) return null;
         let best = null;
         let bestVisibilityRank = Infinity;
         let bestFloorRank = Infinity;
+        let bestSemanticFocus = false;
         let bestSerial = Infinity;
         let bestPriority = Infinity;
         for (const chunk of chunks.values()) {
             if (!chunkNeedsRefinement(chunk)) continue;
             if (ringDistance(chunk, center) > prefetchRadiusChunks) continue;
             const visibilityRank = shouldBeVisible(chunk, center) ? 0 : 1;
-            // Before deep convergence, give every visible chunk a small first layer
-            // of detail. Within that layer distance/heading still wins, so the world
-            // grows outward rather than round-robin smearing across the horizon.
-            const floorRank = visibilityRank === 0
-                && minimumVisibleRefinementTurns > 0
-                && chunk.refinementTurns < minimumVisibleRefinementTurns ? 0 : 1;
+            const firstPassPending = visibilityRank === 0 && !chunkVisibleFirstPassComplete(chunk);
+            const floorRank = firstPassPending ? 0 : 1;
+            const semanticFocus = firstPassPending && semanticFirstPassTarget(chunk) !== null;
             const serial = chunk.lastRefinedSerial || 0;
             const priority = chunkPriorityScore(chunk);
-            if (
-                visibilityRank < bestVisibilityRank ||
-                (visibilityRank === bestVisibilityRank && (
-                    floorRank < bestFloorRank ||
-                    (floorRank === bestFloorRank && (
-                        priority < bestPriority ||
-                        (priority === bestPriority && (serial < bestSerial || (serial === bestSerial && chunk.key < best?.key)))
-                    ))
-                ))
-            ) {
+
+            let better = false;
+            if (visibilityRank < bestVisibilityRank) better = true;
+            else if (visibilityRank === bestVisibilityRank) {
+                if (floorRank < bestFloorRank) better = true;
+                else if (floorRank === bestFloorRank) {
+                    if (semanticFocus !== bestSemanticFocus) better = semanticFocus;
+                    else if (semanticFocus) {
+                        // Real chunk payloads declare a semantic first pass. Finish
+                        // the nearest/forward block's first visible layer before
+                        // smearing microscopic turns across the whole horizon.
+                        better = priority < bestPriority
+                            || (priority === bestPriority && (serial < bestSerial
+                                || (serial === bestSerial && chunk.key < best?.key)));
+                    } else {
+                        // Distance/heading remains authoritative even for generic
+                        // refiners. The player's nearest/forward block converges
+                        // before fairness can smear work across the horizon.
+                        better = priority < bestPriority
+                            || (priority === bestPriority && (serial < bestSerial
+                                || (serial === bestSerial && chunk.key < best?.key)));
+                    }
+                }
+            }
+            if (better) {
                 best = chunk;
                 bestVisibilityRank = visibilityRank;
                 bestFloorRank = floorRank;
+                bestSemanticFocus = semanticFocus;
                 bestSerial = serial;
                 bestPriority = priority;
             }
@@ -780,7 +809,7 @@ export function createWorldChunkStreamer({
                 ready++;
                 const pending = chunkNeedsRefinement(chunk);
                 if (pending) pendingChunks++;
-                if (pending && chunk.refinementTurns < minimumVisibleRefinementTurns) floorPendingChunks++;
+                if (!chunkVisibleFirstPassComplete(chunk)) floorPendingChunks++;
             }
         }
         return {
@@ -869,6 +898,7 @@ export function createWorldChunkStreamer({
         playerChunkCoords,
         nearestQueuedChunk,
         nearestRefinableChunk,
+        chunkVisibleFirstPassComplete,
         refineOne,
         buildSpawnChunk,
         markChunkReady,

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {
   CHUNK_STATE,
+  WORLD_SPACE_STATE,
   createWorldChunkStreamer,
   deterministicChunkSeed,
   worldWeirdnessAt,
@@ -38,7 +39,8 @@ position.x = 0;
 const spawn = streamer.markChunkReady(0, 0, { authored: true });
 assert.equal(spawn.state, CHUNK_STATE.READY);
 assert.equal(streamer.isWorldPositionAvailable(0, 0), true);
-assert.equal(streamer.isWorldPositionAvailable(40, 0), false);
+assert.equal(streamer.classifyWorldPosition(40, 0).state, WORLD_SPACE_STATE.UNKNOWN, 'unbuilt neighboring space must be unknown, not solid');
+assert.equal(streamer.isWorldPositionAvailable(40, 0), true, 'compatibility availability must allow movement into unknown procedural space');
 
 streamer.ensureNeighborhood();
 const nearest = streamer.nearestQueuedChunk();

@@ -26,6 +26,12 @@ export const CHUNK_STATE = Object.freeze({
     FAILED: 'failed',
 });
 
+export const WORLD_SPACE_STATE = Object.freeze({
+    AUTHORITATIVE: 'authoritative',
+    UNKNOWN: 'unknown',
+    FORBIDDEN: 'forbidden',
+});
+
 export function createWorldChunkStreamer({
     chunkSize,
     worldSeed = 0,
@@ -214,14 +220,23 @@ export function createWorldChunkStreamer({
 
     function nearestQueuedChunk() {
         let best = null;
+        let bestDemandPriority = -Infinity;
         let bestScore = Infinity;
         let bestDistance = Infinity;
         for (const chunk of chunks.values()) {
             if (chunk.state !== CHUNK_STATE.QUEUED && chunk.state !== CHUNK_STATE.PLANNED) continue;
+            const demandPriority = Number(chunk.demandPriority) || 0;
             const score = chunkPriorityScore(chunk);
             const d = chunkDistanceSq(chunk);
-            if (score < bestScore || (score === bestScore && (d < bestDistance || (d === bestDistance && chunk.key < best?.key)))) {
+            if (
+                demandPriority > bestDemandPriority ||
+                (demandPriority === bestDemandPriority && (
+                    score < bestScore ||
+                    (score === bestScore && (d < bestDistance || (d === bestDistance && chunk.key < best?.key)))
+                ))
+            ) {
                 best = chunk;
+                bestDemandPriority = demandPriority;
                 bestScore = score;
                 bestDistance = d;
             }
@@ -495,9 +510,83 @@ export function createWorldChunkStreamer({
         return chunks.get(keyOf(x, z))?.state === CHUNK_STATE.READY;
     }
 
-    function isWorldPositionAvailable(x, z) {
+    // STREAMING / SANITY HANDOFF:
+    // Unknown procedural space is not a wall. Readiness and physical prohibition
+    // are different authority states. The player is allowed onto provisional
+    // baseline support while the destination chunk is pulled to the front of work.
+    // Keep the broader scheduling order from the player-centered write-up in mind:
+    // survival -> next movement -> near field -> predictive corridor -> horizon -> everything else.
+    function classifyWorldPosition(x, z) {
         const c = coordsForWorld(x, z);
-        return isChunkReady(c.x, c.z);
+        const chunk = chunks.get(keyOf(c.x, c.z));
+        if (chunk?.state === CHUNK_STATE.READY) {
+            return {
+                state: WORLD_SPACE_STATE.AUTHORITATIVE,
+                chunkKey: chunk.key,
+                provisionalSupportY: null,
+            };
+        }
+        return {
+            state: WORLD_SPACE_STATE.UNKNOWN,
+            chunkKey: keyOf(c.x, c.z),
+            provisionalSupportY: 0,
+        };
+    }
+
+    function requestWorldPosition(x, z, {
+        headingX = null,
+        headingZ = null,
+        reason = 'player-frontier',
+        neighborhood = 1,
+    } = {}) {
+        const c = coordsForWorld(x, z);
+        const radius = Math.max(0, Math.floor(Number(neighborhood) || 0));
+        const requested = [];
+        const mark = (cx, cz, priority) => {
+            const chunk = ensureChunk(cx, cz);
+            if (chunk.state === CHUNK_STATE.PLANNED || chunk.state === CHUNK_STATE.UNLOADED) {
+                state(chunk, CHUNK_STATE.QUEUED);
+            }
+            if (chunk.state === CHUNK_STATE.QUEUED || chunk.state === CHUNK_STATE.PLANNED) {
+                chunk.demandPriority = Math.max(Number(chunk.demandPriority) || 0, priority);
+                chunk.demandReason = reason;
+                requested.push(chunk.key);
+            }
+            return chunk;
+        };
+
+        // Destination occupancy is the hard deadline. Nearby cells are insurance
+        // against turning; one forward cell is predictive travel-corridor work.
+        mark(c.x, c.z, 3);
+        for (let dz = -radius; dz <= radius; dz++) {
+            for (let dx = -radius; dx <= radius; dx++) {
+                if (!dx && !dz) continue;
+                mark(c.x + dx, c.z + dz, 1);
+            }
+        }
+
+        let hx = Number(headingX);
+        let hz = Number(headingZ);
+        if (!Number.isFinite(hx) || !Number.isFinite(hz)) {
+            const h = typeof getPlayerHeading === 'function' ? getPlayerHeading() : null;
+            hx = Number(h?.x) || 0;
+            hz = Number(h?.z) || 0;
+        }
+        if (Math.abs(hx) > Math.abs(hz) && hx) mark(c.x + Math.sign(hx), c.z, 2);
+        else if (hz) mark(c.x, c.z + Math.sign(hz), 2);
+
+        return { chunkKey: keyOf(c.x, c.z), requested };
+    }
+
+    // Compatibility shim for the existing physics caller. Historically false meant
+    // "solid". It now means only truly forbidden space; procedural unknown is
+    // traversable and simultaneously demands its chunk.
+    function isWorldPositionAvailable(x, z) {
+        const classification = classifyWorldPosition(x, z);
+        if (classification.state === WORLD_SPACE_STATE.UNKNOWN) {
+            requestWorldPosition(x, z, { reason: 'player-frontier', neighborhood: 1 });
+        }
+        return classification.state !== WORLD_SPACE_STATE.FORBIDDEN;
     }
 
     function getChunkAtWorld(x, z) {
@@ -627,6 +716,8 @@ export function createWorldChunkStreamer({
         updateVisibility,
         isChunkReady,
         isChunkVisible: (x, z) => !!chunks.get(keyOf(x, z))?.visible,
+        classifyWorldPosition,
+        requestWorldPosition,
         isWorldPositionAvailable,
         getChunkAtWorld,
         readyWithinRadius,

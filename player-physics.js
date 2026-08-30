@@ -424,8 +424,17 @@ export function createPlayerPhysics(options) {
      
      
      
+    // SANITY HANDOFF: already-valid player occupancy outranks late procedural
+    // geometry. Owned collision is staged against the current capsule; conflicting
+    // primitives stay non-authoritative until the player leaves them. This prevents
+    // streamed geometry from using historical lastSafe as its normal activation path.
+    // Render-unit parity is intentionally a later layer; this first landing protects
+    // controller authority without changing world-generation content or seeds.
     const ownedWorld = new Map();
     const ownedCompactionThreshold = Math.max(8, options.ownedCompactionThreshold ?? 48);
+    let lastDeferredRetryX = Infinity;
+    let lastDeferredRetryZ = Infinity;
+    let lastDeferredRetryFeetY = Infinity;
 
     function normalizedOwnedData(data = {}) {
         return {
@@ -444,26 +453,117 @@ export function createPlayerPhysics(options) {
         ];
     }
 
-    function indexOwnedRecord(record) {
-        const add = (list, index, boundsFor) => {
-            for (const item of list) {
-                item.__physicsOwner = record.ownerId;
-                item.__physicsDisabled = !record.active;
-                if (record.active) insertSpatialItem(index, item, boundsFor);
-            }
-        };
-        add(record.data.platforms, platformIndex, platformBounds);
-        add(record.data.ceilings, ceilingIndex, ceilingBounds);
-        add(record.data.ramps, rampIndex, rampBounds);
-        add(record.data.props, propIndex, propBounds);
-        add(record.data.mazeWalls, mazeIndex, mazeBounds);
+    function ownedEntries(data) {
+        return [
+            ...data.platforms.map(item => ({ kind: 'platforms', item, indexed: false, activationState: 'staged' })),
+            ...data.ceilings.map(item => ({ kind: 'ceilings', item, indexed: false, activationState: 'staged' })),
+            ...data.ramps.map(item => ({ kind: 'ramps', item, indexed: false, activationState: 'staged' })),
+            ...data.props.map(item => ({ kind: 'props', item, indexed: false, activationState: 'staged' })),
+            ...data.mazeWalls.map(item => ({ kind: 'mazeWalls', item, indexed: false, activationState: 'staged' })),
+        ];
     }
 
-     
-     
-     
-     
-     
+    function ownedIndexForKind(kind) {
+        if (kind === 'platforms') return platformIndex;
+        if (kind === 'ceilings') return ceilingIndex;
+        if (kind === 'ramps') return rampIndex;
+        if (kind === 'props') return propIndex;
+        if (kind === 'mazeWalls') return mazeIndex;
+        throw new Error(`unknown owned physics kind: ${kind}`);
+    }
+
+    function ownedBoundsForKind(kind) {
+        if (kind === 'platforms') return platformBounds;
+        if (kind === 'ceilings') return ceilingBounds;
+        if (kind === 'ramps') return rampBounds;
+        if (kind === 'props') return propBounds;
+        if (kind === 'mazeWalls') return mazeBounds;
+        throw new Error(`unknown owned physics kind: ${kind}`);
+    }
+
+    function ownedEntryOverlapsCurrentCapsule(entry) {
+        const item = entry.item;
+        const x = position.x;
+        const z = position.z;
+        const bodyBottom = feetY;
+        const bodyTop = feetY + bodyHeight;
+
+        if (entry.kind === 'platforms' || entry.kind === 'ceilings') {
+            if (!rectContains(item, x, z, playerRadius)) return false;
+            if (!Number.isFinite(item.y)) return true;
+            return item.y > bodyBottom + CONTACT_EPS && item.y < bodyTop - CONTACT_EPS;
+        }
+
+        if (entry.kind === 'ramps') {
+            const y = rampHeightAt(item, x, z, playerRadius);
+            if (y === null) return false;
+            if (!Number.isFinite(y)) return true;
+            return y > bodyBottom + CONTACT_EPS && y < bodyTop - CONTACT_EPS;
+        }
+
+        if (entry.kind === 'props') {
+            const minDist = item.radius + playerRadius;
+            const dx = x - item.x;
+            const dz = z - item.z;
+            if (dx * dx + dz * dz >= minDist * minDist) return false;
+            const yMin = item.yMin ?? 0;
+            const yMax = item.height ?? Infinity;
+            return verticalOverlap(bodyBottom, bodyTop, yMin, yMax);
+        }
+
+        if (entry.kind === 'mazeWalls') {
+            const yMin = item.yMin ?? -Infinity;
+            const yMax = item.yMax ?? Infinity;
+            if (!verticalOverlap(bodyBottom, bodyTop, yMin, yMax)) return false;
+            const minWallDistSq = (playerRadius + wallThickness * __qp45) ** __qp46;
+            return distanceSqToSegment(x, z, item) < minWallDistSq;
+        }
+
+        return false;
+    }
+
+    function activateOwnedEntry(record, entry) {
+        const item = entry.item;
+        item.__physicsOwner = record.ownerId;
+        item.__physicsDisabled = false;
+        if (!entry.indexed) {
+            insertSpatialItem(ownedIndexForKind(entry.kind), item, ownedBoundsForKind(entry.kind));
+            entry.indexed = true;
+        }
+        entry.activationState = 'active';
+    }
+
+    function deferOwnedEntry(record, entry) {
+        entry.item.__physicsOwner = record.ownerId;
+        entry.item.__physicsDisabled = true;
+        entry.activationState = 'deferred-player-overlap';
+    }
+
+    function stageOwnedRecord(record) {
+        record.active = true;
+        let deferredItems = 0;
+        for (const entry of record.entries) {
+            if (ownedEntryOverlapsCurrentCapsule(entry)) {
+                deferOwnedEntry(record, entry);
+                deferredItems++;
+            } else {
+                activateOwnedEntry(record, entry);
+            }
+        }
+        record.activationState = deferredItems ? 'deferred-player-overlap' : 'active';
+        record.deferredReason = deferredItems ? 'player-capsule-overlap' : null;
+        return { deferredItems, activationState: record.activationState };
+    }
+
+    function indexOwnedRecord(record) {
+        for (const entry of record.entries) {
+            entry.indexed = false;
+            if (record.active && entry.activationState === 'active' && entry.item.__physicsDisabled !== true) {
+                activateOwnedEntry(record, entry);
+            }
+        }
+    }
+
     function compactOwnedWorld() {
         let removedOwners = 0, removedItems = 0;
         for (const [ownerId, record] of ownedWorld) {
@@ -493,23 +593,35 @@ export function createPlayerPhysics(options) {
         if (ownerId === undefined || ownerId === null) throw new Error('registerOwnedWorld requires ownerId');
         const existing = ownedWorld.get(ownerId);
         if (existing) {
-            for (const item of existing.items) item.__physicsDisabled = false;
-            existing.active = true;
+            stageOwnedRecord(existing);
             return existing;
         }
 
         const ownedData = normalizedOwnedData(data);
-        const record = { ownerId, data: ownedData, items: ownedItems(ownedData), active: true };
-        indexOwnedRecord(record);
+        const record = {
+            ownerId,
+            data: ownedData,
+            items: ownedItems(ownedData),
+            entries: ownedEntries(ownedData),
+            active: true,
+            activationState: 'staged',
+            deferredReason: null,
+        };
         ownedWorld.set(ownerId, record);
+        stageOwnedRecord(record);
         return record;
     }
 
     function unregisterOwnedWorld(ownerId) {
         const record = ownedWorld.get(ownerId);
         if (!record) return false;
-        for (const item of record.items) item.__physicsDisabled = true;
+        for (const entry of record.entries) {
+            entry.item.__physicsDisabled = true;
+            entry.activationState = 'inactive';
+        }
         record.active = false;
+        record.activationState = 'inactive';
+        record.deferredReason = null;
 
         let inactiveOwners = 0;
         for (const candidate of ownedWorld.values()) if (!candidate.active) inactiveOwners++;
@@ -517,13 +629,54 @@ export function createPlayerPhysics(options) {
         return true;
     }
 
+    function retryDeferredOwnedWorld({ force = false } = {}) {
+        const before = ownedWorldStats();
+        if (!before.deferredItems) return { activatedItems: 0, pendingItems: 0, ...before };
+
+        const movedEnough = !Number.isFinite(lastDeferredRetryX)
+            || Math.hypot(position.x - lastDeferredRetryX, position.z - lastDeferredRetryZ) >= playerRadius
+            || Math.abs(feetY - lastDeferredRetryFeetY) >= playerRadius;
+        if (!force && !movedEnough) return { activatedItems: 0, pendingItems: before.deferredItems, ...before };
+
+        lastDeferredRetryX = position.x;
+        lastDeferredRetryZ = position.z;
+        lastDeferredRetryFeetY = feetY;
+        let activatedItems = 0;
+        let pendingItems = 0;
+        for (const record of ownedWorld.values()) {
+            if (!record.active) continue;
+            let recordPending = 0;
+            for (const entry of record.entries) {
+                if (entry.activationState !== 'deferred-player-overlap') continue;
+                if (ownedEntryOverlapsCurrentCapsule(entry)) {
+                    pendingItems++;
+                    recordPending++;
+                    continue;
+                }
+                activateOwnedEntry(record, entry);
+                activatedItems++;
+            }
+            record.activationState = recordPending ? 'deferred-player-overlap' : 'active';
+            record.deferredReason = recordPending ? 'player-capsule-overlap' : null;
+        }
+        return { activatedItems, pendingItems, ...ownedWorldStats() };
+    }
+
     function ownedWorldStats() {
-        let activeOwners = 0, activeItems = 0, totalItems = 0;
+        let activeOwners = 0, activeItems = 0, totalItems = 0, deferredItems = 0, deferredOwners = 0;
         for (const record of ownedWorld.values()) {
             totalItems += record.items.length;
             if (!record.active) continue;
             activeOwners++;
-            activeItems += record.items.length;
+            let ownerDeferred = false;
+            for (const entry of record.entries) {
+                if (entry.activationState === 'active' && entry.item.__physicsDisabled !== true) activeItems++;
+                else if (entry.activationState === 'deferred-player-overlap') {
+                    deferredItems++;
+                    ownerDeferred = true;
+                }
+            }
+            if (ownerDeferred) deferredOwners++;
         }
         return {
             owners: ownedWorld.size,
@@ -531,6 +684,8 @@ export function createPlayerPhysics(options) {
             inactiveOwners: ownedWorld.size - activeOwners,
             activeItems,
             totalItems,
+            deferredItems,
+            deferredOwners,
             compactionThreshold: ownedCompactionThreshold,
         };
     }
@@ -830,6 +985,7 @@ export function createPlayerPhysics(options) {
 
         for (let i = __qp72; i < count; i++) simulateSubstep(dt, wishVelocityX, wishVelocityZ);
         position.y = feetY + eyeHeight;
+        retryDeferredOwnedWorld();
         return getState();
     }
 
@@ -876,6 +1032,7 @@ export function createPlayerPhysics(options) {
         coyoteTimer = grounded ? coyoteTime : __qp78;
         jumpBufferTimer = __qp79;
         position.y = feetY + eyeHeight;
+        retryDeferredOwnedWorld({ force: true });
         return getState();
     }
 
@@ -902,6 +1059,7 @@ export function createPlayerPhysics(options) {
         syncDynamicWorld,
         registerOwnedWorld,
         unregisterOwnedWorld,
+        retryDeferredOwnedWorld,
         compactOwnedWorld,
         ownedWorldStats,
         getState,

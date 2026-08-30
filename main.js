@@ -1216,7 +1216,6 @@ let buildGalleryArtPanel = null;
 let buildSignatureSite = null;
 let buildSignatureSiteSteps = null;
 let signageSystem = null;
-let addFenceSegment;
 const adornmentSystem = createAdornmentSystem({ CONFIG, camera, scene, pick, randRange, rng });
 const {
     adornmentLoadQueue,
@@ -1643,30 +1642,6 @@ function addWantedPoster(x, z, rotY, placement = null) {
  
  
  
-function fetchRandomWikiArticles(count) {
-    for (let i = QP[680]; i < count; i++) {
-        adornmentLoadQueue.enqueue({
-            key: `wiki:${i}`,
-             
-             
-             
-            priority: Number.MAX_SAFE_INTEGER,
-            run: async () => {
-                const response = await fetch('https://en.wikipedia.org/api/rest_v1/page/random/summary');
-                return response.ok ? response.json() : null;
-            },
-        }).then(data => {
-            if (!data?.title || !wantedPosterMeshes.length) return;
-            const mesh = pick(wantedPosterMeshes);
-            mesh.material.map = makeWantedTexture(
-                data.title.toUpperCase(),
-                (data.description || 'wikipedia article').slice(QP[681], QP[682])
-            );
-            mesh.material.needsUpdate = true;
-        }).catch(() => {});  
-    }
-}
-
 function addFissureCrack(x, z) {
     const crack = new THREE.Mesh(
         new THREE.PlaneGeometry(randRange(QP[683], QP[684]), randRange(QP[685], QP[686])),
@@ -1740,7 +1715,6 @@ const mazeSealWalls = [];
  
  
  
-const MAZE_SEAL_HEIGHT = QP[853];
 
  
 
@@ -1865,7 +1839,6 @@ const {
     addCrate,
     addLantern,
     addVendingMachine,
-    addFenceSegment: streetAddFenceSegment,
     addMuseumPlacard,
     addStickerTag,
     addWallFlyer,
@@ -1929,27 +1902,10 @@ const {
     rng,
     unseededPick,
 });
-addFenceSegment = streetAddFenceSegment;
-for (let r = QP[854]; r < GRID_ROWS; r++) {
-    for (let c = QP[855]; c < GRID_COLS; c++) {
-        const { x: cx, z: cz } = cellToWorld(c, r);
-         
-        if (c + QP[856] < GRID_COLS && grid[r]?.[c] && grid[r]?.[c + QP[857]] && siteIdOf[r][c] !== siteIdOf[r][c + QP[858]]) {
-            const bx = cx + colHalf(c);
-            const rh = rowHalf(r);
-            mazeSealWalls.push({ x1: bx, z1: cz - rh, x2: bx, z2: cz + rh, yMin: QP[859], yMax: MAZE_SEAL_HEIGHT });
-            for (let i = QP[860]; i < QP[861]; i++) addFenceSegment(bx, cz - rh + (i + QP[862]) * (rh / QP[863]), Math.PI / QP[864]);
-        }
-         
-        if (r + QP[865] < GRID_ROWS && grid[r]?.[c] && grid[r + QP[866]]?.[c] && siteIdOf[r][c] !== siteIdOf[r + QP[867]][c]) {
-            const bz = cz + rowHalf(r);
-            const ch = colHalf(c);
-            mazeSealWalls.push({ x1: cx - ch, z1: bz, x2: cx + ch, z2: bz, yMin: QP[868], yMax: MAZE_SEAL_HEIGHT });
-            for (let i = QP[869]; i < QP[870]; i++) addFenceSegment(cx - ch + (i + QP[871]) * (ch / QP[872]), bz, QP[873]);
-        }
-    }
-}
-console.log(`[testing] maze topology: ${mazeSealWalls.length} cell boundaries sealed -- squeezing between adjacent buildings is no longer physically possible (same-site internal edges correctly excluded)`);
+// Unified building geometry is the only inter-site collision authority.
+// Synthetic maze-seal walls/fence planes are intentionally gone: if there is
+// visible clearance between neighboring buildings, the player may use it.
+console.log('[testing] maze topology: synthetic inter-site seal walls retired; visible unified fabric defines passage collision');
 signageSystem = createSignageSystem({
     CONFIG,
     QUALITY,
@@ -2727,39 +2683,17 @@ function finishAuthoredPostStructurePipeline() {
 function maybeStartAuthoredPostStructurePipeline() {
     if (authoredPostStructureStarted || authoredBuildingJobs.length) return false;
     authoredPostStructureStarted = true;
-    authoredPostStructureJobs.push(
-        {
-            id: 'narrative-dead-ends',
-            structural: false,
-            stepper: createStableStreamingRngStepper('authored:narrative-dead-ends', () => placeNarrativeDeadEndBillboardSteps()),
+    authoredPostStructureJobs.push({
+        id: 'kowloon-cross-site-links',
+        structural: true,
+        ownedWorldStructural: true,
+        onComplete: value => {
+            rooftopCatwalkCount = value?.guarded ?? QP[1015];
+            hangingBridgeCount = value?.hanging ?? QP[1015];
         },
-        {
-            id: 'content-cards',
-            structural: false,
-            stepper: createStableStreamingRngStepper('authored:content-cards', () => mountContentCardSteps()),
-        },
-        {
-            id: 'facade-validation',
-            structural: false,
-            stepper: createStableStreamingRngStepper('authored:facade-validation', () => authoredPostOneShotSteps('facade-validation', () => {
-                validateFacadeOccupancy();
-                addFacadeDebugOverlay();
-                addSignatureDebugOverlay();
-                return QP[1024];
-            })),
-        },
-        {
-            id: 'kowloon-cross-site-links',
-            structural: true,
-            ownedWorldStructural: true,
-            onComplete: value => {
-                rooftopCatwalkCount = value?.guarded ?? QP[1015];
-                hangingBridgeCount = value?.hanging ?? QP[1015];
-            },
-            stepper: createStableStreamingRngStepper('authored:kowloon-links', () => buildUnifiedAuthoredRelationshipSteps()),
-        },
-    );
-    console.log(`[stream-perf] authored relationship queue armed with ${authoredPostStructureJobs.length} resumable phases; outer render ring retains priority`);
+        stepper: createStableStreamingRngStepper('authored:kowloon-links', () => buildUnifiedAuthoredRelationshipSteps()),
+    });
+    console.log('[stream-perf] authored post-structure lane contains only shared-fabric cross-site links');
     return true;
 }
 
@@ -2807,276 +2741,12 @@ bootStatus(`minimum-safe spawn ready; ${authoredBuildingJobs.length} authored si
  
  
  
-function* placeNarrativeDeadEndBillboardSteps() {
-    const dist = new Map();
-    const key = (c, r) => `${c},${r}`;
-    dist.set(key(spawnCol, spawnRow), QP[4735]);
-    const queue = [[spawnCol, spawnRow]];
-    for (let qHead = QP[4736]; qHead < queue.length; qHead++) {
-        const [c, r] = queue[qHead];
-        const d = dist.get(key(c, r));
-        for (const [dc, dr] of [[QP[4737], QP[4738]], [QP[4739], QP[4740]], [QP[4741], QP[4742]], [QP[4743], QP[4744]]]) {
-            const nc = c + dc, nr = r + dr;
-            if (grid[nr]?.[nc] === false && !dist.has(key(nc, nr))) {
-                dist.set(key(nc, nr), d + QP[4745]);
-                queue.push([nc, nr]);
-            }
-        }
-    }
-
-     
-     
-     
-     
-    const deadEnds = [];
-    for (const [k, d] of dist) {
-        const [c, r] = k.split(',').map(Number);
-        if (openNeighborCount(c, r) === QP[4746]) deadEnds.push({ c, r, d });
-    }
-    deadEnds.sort((a, b) => b.d - a.d);
-
-    const placements = [CONFIG.billboards.signal, ...CONFIG.billboards.nearMissSignals];
-    for (let i = QP[4735]; i < placements.length; i++) {
-        const content = placements[i];
-        const cell = deadEnds[i];
-        if (!cell) {
-            yield { phase: 'narrative-billboard', index: i, total: placements.length, placed: false };
-            continue;
-        }
-        const { c: sc, r: sr } = cell;
-        let placed = false;
-        for (const [dc, dr] of [[QP[4747], QP[4748]], [QP[4749], QP[4750]], [QP[4751], QP[4752]], [QP[4753], QP[4754]]]) {
-            const bc = sc + dc, br = sr + dr;
-            if (!grid[br]?.[bc]) continue;  
-             
-             
-             
-             
-             
-             
-            const moduleKey = `${br},${bc}`;
-            const facade = buildingFacades.find(f => f.moduleKey === moduleKey && f.dx === -dc && f.dz === -dr);
-            if (!facade) continue;
-            const spot = findFreeFacadeRect(facade, i === QP[4755] ? 'photo' : 'sign', i === QP[4756] ? QP[4757] : QP[4758], i === QP[4759] ? QP[4760] * (QP[4761] / QP[4762]) : QP[4763], facade.yMin + QP[4764], Math.min(facade.yMax - QP[4765], facade.yMin + QP[4766]));
-            if (!spot) continue;
-            const p = pointOnFacade(facade, spot.u, spot.v);
-            if (i === QP[4767]) {
-                 
-                 
-                 
-                 
-                placePhotoPoster('portrait', p.x, p.y, p.z, facade.rotY, content.title, content.subtitle, { width: QP[4768], frameColor: '#ffffff' });
-            } else {
-                addSign(p.x, p.y, p.z, facade.rotY, content.title, content.subtitle, content.color);
-            }
-            placed = true;
-            break;
-        }
-        yield { phase: 'narrative-billboard', index: i, total: placements.length, placed };
-    }
-    return placements.length;
-}
-
-
-function placeNarrativeDeadEndBillboards() {
-    const iterator = placeNarrativeDeadEndBillboardSteps();
-    let step = iterator.next();
-    while (!step.done) step = iterator.next();
-    return step.value;
-}
-
- 
-const shuffledPlazas = [...plazaCells].sort(() => rng() - QP[4769]);
-let plazaCursor = QP[4770];
-function nextPlazaCell() {
-    return plazaCursor < shuffledPlazas.length ? shuffledPlazas[plazaCursor++] : null;
-}
-
-// Reserve the authored plaza program up front, but do not construct it during
-// bootstrap. Reservation fixes identity and park ownership deterministically;
-// execution is a nearest-player background queue after the live streamer owns
-// the frame loop.
+// Legacy spawn-only special-feature roulette is retired. Plaza cells below are
+// admitted into KowloonFabricEngine.buildAuthoredPlaza() and refine normally.
 const parkCells = new Set();
-const specialPlazaJobs = [];
-let specialPlazaJobsTotal = QP[1015];
-let specialPlazaJobsCompleted = QP[1015];
-let specialPlazaWorstMs = QP[1015];
-// Ground scatter was visually overwhelming spawn. Keep structural/facade richness
-// intact and trim only loose junk / pile incidence by a modest 28 percent.
-const SPAWN_GROUND_CLUTTER_SCALE = 0.72;
+// Compatibility for dormant legacy plaza helpers; no runtime scheduler calls them.
+const SPAWN_GROUND_CLUTTER_SCALE = 0;
 
-function* specialPlazaOneShotSteps(run) {
-    yield { phase: 'plaza-job-ready' };
-    return run();
-}
-
-function reserveSpecialPlazaJob(kind, cell, ordinal, structural, run, stepsFactory = null) {
-    if (!cell) return false;
-    specialPlazaJobs.push({
-        id: `${kind}:${cell[QP[4772]]},${cell[QP[4773]]}:${ordinal}`,
-        kind,
-        c: cell[QP[4772]],
-        r: cell[QP[4773]],
-        structural,
-        run,
-        stepsFactory,
-        stepper: null,
-    });
-    specialPlazaJobsTotal++;
-    return true;
-}
-
-for (let i = QP[4771]; i < CONFIG.props.maxSpecialFeatures.statues; i++) {
-    const cell = nextPlazaCell();
-    if (!cell) break;
-    reserveSpecialPlazaJob('statue', cell, i, false, () => {
-        const { x, z } = cellToWorld(cell[QP[4772]], cell[QP[4773]]);
-        const r = addStatue(x, z);
-        propColliders.push({ x, z, radius: r, height: QP[4774] });
-    });
-}
-for (let i = QP[4775]; i < CONFIG.props.maxSpecialFeatures.constructionZones; i++) {
-    const cell = nextPlazaCell();
-    if (!cell) break;
-    reserveSpecialPlazaJob('construction-zone', cell, i, false, () => {
-        const { x, z } = cellToWorld(cell[QP[4776]], cell[QP[4777]]);
-        const r = addConstructionZone(x, z);
-        propColliders.push({ x, z, radius: r, height: Infinity });
-    });
-}
-for (let i = QP[4778]; i < CONFIG.props.maxSpecialFeatures.crimeScenes; i++) {
-    const cell = nextPlazaCell();
-    if (!cell) break;
-    reserveSpecialPlazaJob('crime-scene', cell, i, false, () => {
-        const { x, z } = cellToWorld(cell[QP[4779]], cell[QP[4780]]);
-        addCrimeScene(x, z);
-    });
-}
-for (let i = QP[4781]; i < CONFIG.props.maxSpecialFeatures.newsstands; i++) {
-    const cell = nextPlazaCell();
-    if (!cell) break;
-    reserveSpecialPlazaJob('newsstand', cell, i, false, () => {
-        const { x, z } = cellToWorld(cell[QP[4782]], cell[QP[4783]]);
-        const r = addNewsstand(x, z, plazaFacingRotY(cell[QP[4784]], cell[QP[4785]]));
-        propColliders.push({ x, z, radius: r, height: QP[4786] });
-    });
-}
-for (let i = QP[4787]; i < CONFIG.props.maxSpecialFeatures.phoneBooths; i++) {
-    const cell = nextPlazaCell();
-    if (!cell) break;
-    reserveSpecialPlazaJob('phone-booth', cell, i, false, () => {
-        const { x, z } = cellToWorld(cell[QP[4788]], cell[QP[4789]]);
-        const r = addPhoneBooth(x, z);
-        propColliders.push({ x, z, radius: r, height: QP[4790] });
-    });
-}
-for (let i = QP[4791]; i < CONFIG.props.maxSpecialFeatures.atmKiosks; i++) {
-    const cell = nextPlazaCell();
-    if (!cell) break;
-    reserveSpecialPlazaJob('atm-kiosk', cell, i, false, () => {
-        const { x, z } = cellToWorld(cell[QP[4792]], cell[QP[4793]]);
-        const r = addAtmKiosk(x, z, plazaFacingRotY(cell[QP[4794]], cell[QP[4795]]));
-        propColliders.push({ x, z, radius: r, height: QP[4796] });
-    });
-}
-for (let i = QP[4797]; i < CONFIG.props.maxSpecialFeatures.parks; i++) {
-    const cell = nextPlazaCell();
-    if (!cell) break;
-    parkCells.add(`${cell[QP[4802]]},${cell[QP[4803]]}`);
-    reserveSpecialPlazaJob('park', cell, i, false, () => {
-        const { x, z } = cellToWorld(cell[QP[4798]], cell[QP[4799]]);
-        addPark(x, z, cell[QP[4800]], cell[QP[4801]]);
-    }, () => {
-        const { x, z } = cellToWorld(cell[QP[4798]], cell[QP[4799]]);
-        return addParkSteps(x, z, cell[QP[4800]], cell[QP[4801]]);
-    });
-}
-for (let i = QP[4804]; i < CONFIG.props.maxSpecialFeatures.megaBillboards; i++) {
-    const cell = nextPlazaCell();
-    if (!cell) break;
-    reserveSpecialPlazaJob('mega-billboard', cell, i, false, () => {
-        const { x, z } = cellToWorld(cell[QP[4805]], cell[QP[4806]]);
-        const supportColliders = addMegaBillboard(x, z);
-        // SANITY HANDOFF: change semantics first, ownership second. This authored
-        // plaza object can stay in the global prop registry for this release, but
-        // its physical silhouette must match the two visible finite support legs.
-        propColliders.push(...supportColliders);
-    });
-}
-
-for (const [pc, pr] of plazaCells) {
-    const cell = [pc, pr];
-    reserveSpecialPlazaJob('plaza-atmosphere', cell, QP[1015], false, () => {
-        const { x, z } = cellToWorld(pc, pr);
-        addPlazaGlow(x, z);
-        if (rng() < QP[4807] * QUALITY.propDensity * SPAWN_GROUND_CLUTTER_SCALE) {
-            const junkCount = Math.max(1, Math.floor((QP[4808] + Math.floor(rng() * QP[4809])) * SPAWN_GROUND_CLUTTER_SCALE));
-            scatterJunk('plaza', x, z, junkCount, Math.min(colHalf(pc), rowHalf(pr)) * QP[4810]);
-        }
-    });
-}
-
-function sortSpecialPlazaJobsNearPlayer() {
-    specialPlazaJobs.sort((a, b) => {
-        const ap = cellToWorld(a.c, a.r), bp = cellToWorld(b.c, b.r);
-        const adx = ap.x - camera.position.x, adz = ap.z - camera.position.z;
-        const bdx = bp.x - camera.position.x, bdz = bp.z - camera.position.z;
-        return (adx * adx + adz * adz) - (bdx * bdx + bdz * bdz) || a.id.localeCompare(b.id);
-    });
-}
-
-function specialPlazaJobGroundReady(job) {
-    const pos = cellToWorld(job.c, job.r);
-    return groundSurfaceSystem.isWorldPositionReady(pos.x, pos.z);
-}
-
-function promoteNearestGroundReadySpecialPlazaJob() {
-    sortSpecialPlazaJobsNearPlayer();
-    const readyIndex = specialPlazaJobs.findIndex(specialPlazaJobGroundReady);
-    if (readyIndex < 0) return false;
-    if (readyIndex > 0) specialPlazaJobs.unshift(...specialPlazaJobs.splice(readyIndex, 1));
-    return true;
-}
-
-function pumpSpecialPlazaJobs({ maxJobs = QP[1024], maxMillis = QP[1] } = {}) {
-    if (!specialPlazaJobs.length) return { jobs: QP[1015], pending: QP[1015], ms: QP[1015], worstMs: specialPlazaWorstMs };
-    if (!promoteNearestGroundReadySpecialPlazaJob()) {
-        return { jobs: QP[1015], pending: specialPlazaJobs.length, ms: QP[1015], worstMs: specialPlazaWorstMs };
-    }
-    const started = performance.now();
-    let steps = QP[1015];
-    let jobs = QP[1015];
-    while (specialPlazaJobs.length && steps < maxJobs) {
-        if (steps > QP[1015] && performance.now() - started >= maxMillis) break;
-        const job = specialPlazaJobs[QP[1015]];
-        if (!job.stepper) {
-            const iteratorFactory = job.stepsFactory || (() => specialPlazaOneShotSteps(job.run));
-            job.stepper = createStableStreamingRngStepper(`plaza:${job.id}`, iteratorFactory);
-        }
-        const stepStarted = performance.now();
-        const collidersBefore = propColliders.length;
-        const result = job.stepper.step();
-        const colliderDelta = propColliders.length - collidersBefore;
-        const stepMs = performance.now() - stepStarted;
-        specialPlazaWorstMs = Math.max(specialPlazaWorstMs, stepMs);
-        steps++;
-        runtimeLatency.record('plaza.live-job', stepMs, { id: job.id, kind: job.kind, phase: result.value?.phase || (result.done ? 'complete' : 'step'), structural: job.structural, colliderDelta, pending: specialPlazaJobs.length });
-        if (colliderDelta > QP[1015]) playerPhysics.syncDynamicWorld();
-        if (stepMs > QP[8]) console.warn(`[latency] plaza.live-job ${stepMs.toFixed(QP[1])}ms · ${job.id}`);
-        if (result.done) {
-            specialPlazaJobs.shift();
-            specialPlazaJobsCompleted++;
-            jobs++;
-        }
-    }
-    return { steps, jobs, pending: specialPlazaJobs.length, ms: performance.now() - started, worstMs: specialPlazaWorstMs };
-}
-
-const WALL_HUGGING_PROPS = new Set([
-    'trashCan', 'vendingMachine', 'museumPlacard', 'trafficSign', 'trafficSignal', 'mileMarker', 'wantedPoster',
-    'lantern', 'weeds', 'fenceSegment', 'stickerTag', 'businessCardLitter',
-]);
-const ROAD_ONLY_PROPS = new Set(['trafficSign', 'trafficSignal', 'mileMarker', 'manhole']);
 
  
  
@@ -3097,6 +2767,48 @@ const groundSurfaceSystem = createGroundSurfaceSystem({
 const { isStreetCell, roadOpenMask, prepareOpenCellSurfaces, pumpOpenCellSurfaces, ensureOpenCellSurfaceNeighborhood, isWorldPositionReady: isSpawnGroundPositionReady, layOpenCellSurfaces } = groundSurfaceSystem;
 _spawnGroundPositionReady = isSpawnGroundPositionReady;
 
+// Spawn plazas are now thin adapters into the universal chunk enrichment path.
+// Admission waits for each plaza's real ground patch, then common fabric owns
+// rendering, progressive refinement, reservations, and late collision.
+const authoredSpawnPlazaAdmissions = plazaCells.map(([c, r]) => ({ c, r, key: `plaza:${c},${r}` }));
+const authoredSpawnPlazaTotal = authoredSpawnPlazaAdmissions.length;
+let authoredSpawnPlazasAdmitted = 0;
+function sortAuthoredSpawnPlazaAdmissionsNearPlayer() {
+    authoredSpawnPlazaAdmissions.sort((a, b) => {
+        const ap = cellToWorld(a.c, a.r), bp = cellToWorld(b.c, b.r);
+        const adx = ap.x - camera.position.x, adz = ap.z - camera.position.z;
+        const bdx = bp.x - camera.position.x, bdz = bp.z - camera.position.z;
+        return (adx * adx + adz * adz) - (bdx * bdx + bdz * bdz) || a.key.localeCompare(b.key);
+    });
+}
+function pumpAuthoredSpawnPlazaAdmissions({ maxPlazas = 1 } = {}) {
+    if (!authoredSpawnPlazaAdmissions.length) return { admitted: 0, pending: 0 };
+    sortAuthoredSpawnPlazaAdmissionsNearPlayer();
+    let admitted = 0;
+    while (authoredSpawnPlazaAdmissions.length && admitted < maxPlazas) {
+        const readyIndex = authoredSpawnPlazaAdmissions.findIndex(job => {
+            const p = cellToWorld(job.c, job.r);
+            return isSpawnGroundPositionReady(p.x, p.z);
+        });
+        if (readyIndex < 0) break;
+        const [job] = authoredSpawnPlazaAdmissions.splice(readyIndex, 1);
+        const payload = cityFabricEngine.buildAuthoredPlaza({
+            col: job.c, row: job.r, cellToWorld, colHalf, rowHalf,
+            ownerId: `spawn-plaza:${SEED}:${job.c},${job.r}`,
+            weirdness: Math.max(CONFIG.maze.loopChance, CONFIG.narrative.darkWeb.signChance),
+            detailDensity: 0.72,
+        });
+        cityFabricEngine.commit(payload.chunk, payload);
+        unifiedSpawnFabricPayloads.set(job.key, payload);
+        if (cityFabricEngine.hasPendingRefinement(payload.chunk, payload)) unifiedSpawnFabricRefinementQueue.push(payload);
+        authoredSpawnPlazasAdmitted++;
+        admitted++;
+    }
+    return { admitted, pending: authoredSpawnPlazaAdmissions.length };
+}
+console.log(`[kowloon] ${authoredSpawnPlazaTotal} authored spawn plazas reserved for common-engine progressive admission`);
+
+
 function maybeMarkSpawnDistrictStructuresComplete() {
     if (_spawnDistrictStructuresComplete) return true;
     if (authoredBuildingJobs.length) return false;
@@ -3104,7 +2816,7 @@ function maybeMarkSpawnDistrictStructuresComplete() {
     if (groundSurfaceSystem.stats().pendingChunks) return false;
     _spawnDistrictStructuresComplete = true;
     const groundStats = groundSurfaceSystem.stats();
-    console.log(`[stream-perf] authored spawn district structurally complete in live runtime · ground=${groundStats.readyChunks}/${groundStats.totalChunks}; plaza content continues independently (${specialPlazaJobsCompleted}/${specialPlazaJobsTotal})`);
+    console.log(`[stream-perf] authored spawn district structurally complete in live runtime · ground=${groundStats.readyChunks}/${groundStats.totalChunks}; common plazas admitted=${authoredSpawnPlazasAdmitted}/${authoredSpawnPlazaTotal}`);
     return true;
 }
 
@@ -3385,355 +3097,19 @@ await testYieldNow('minimum-safe ground ready · deferring remaining streets/all
  
  
  
-const usedPlazas = new Set(shuffledPlazas.slice(QP[5071], plazaCursor).map(([c, r]) => `${c},${r}`));
-const CLUTTER_MACRO_SPAN = QP[5072];
-const clutterMacroCache = new Map();
+// Legacy weighted open-cell random-prop authority removed. Common Kowloon
+// enrichment is now the sole ordinary street/facade decoration generator.
 
-function clutterMacroValue(mx, mz) {
-    const key = `${mx},${mz}`;
-    let value = clutterMacroCache.get(key);
-    if (value !== undefined) return value;
-    const lr = localRng(hashString32(`${SEED}:clutter-district:${mx}:${mz}`));
-    const roll = lr();
-     
-     
-     
-    if (roll < QP[5073]) value = QP[5074] + lr() * QP[5075];           
-    else if (roll > QP[5076]) value = QP[5077] + lr() * QP[5078];     
-    else value = QP[5079] + lr() * QP[5080];                      
-    clutterMacroCache.set(key, value);
-    return value;
-}
-
-function districtClutterDensity(c, r) {
-    const gx = c / CLUTTER_MACRO_SPAN, gz = r / CLUTTER_MACRO_SPAN;
-    const x0 = Math.floor(gx), z0 = Math.floor(gz);
-    let tx = gx - x0, tz = gz - z0;
-    tx = tx * tx * (QP[5081] - QP[5082] * tx);  
-    tz = tz * tz * (QP[5083] - QP[5084] * tz);
-    const a = THREE.MathUtils.lerp(clutterMacroValue(x0, z0), clutterMacroValue(x0 + QP[5085], z0), tx);
-    const b = THREE.MathUtils.lerp(clutterMacroValue(x0, z0 + QP[5086]), clutterMacroValue(x0 + QP[5087], z0 + QP[5088]), tx);
-    return THREE.MathUtils.clamp(THREE.MathUtils.lerp(a, b, tz), QP[5089], QP[5090]);
-}
-
-function decorateOpenCell(c, r) {
-    if (grid[r]?.[c]) return false;
-    if (c === spawnCol && r === spawnRow) return false;
-    const cellKey = `${c},${r}`;
-    if (usedPlazas.has(cellKey) || parkCells.has(cellKey)) return false;
-
-    const { x, z } = cellToWorld(c, r);
-    const chx = colHalf(c), chz = rowHalf(r);
-    const onStreet = isStreetCell(c, r);
-    const laneAxis = throughAxis(c, r);
-    const wallsHere = wallDirections(c, r);
-    const districtDensity = districtClutterDensity(c, r);
-    const localDensity = QUALITY.propDensity * districtDensity * SPAWN_GROUND_CLUTTER_SCALE;
-    const pileScale = THREE.MathUtils.clamp(districtDensity, QP[5091], QP[5092]);
-    let pileSpot = null;
-
-     
-     
-     
-    const corner = findCornerDirs(c, r);
-    const cornerChance = Math.min(QP[5093], (onStreet ? QP[5094] : QP[5095]) * localDensity);
-    const wallChance = Math.min(QP[5096], (onStreet ? QP[5097] : QP[5098]) * localDensity);
-    if (corner && rng() < cornerChance) {
-        const intoX = corner[QP[5099]].dx + corner[QP[5100]].dx, intoZ = corner[QP[5101]].dz + corner[QP[5102]].dz;
-        const len = Math.hypot(intoX, intoZ) || QP[5103];
-        const bx = intoX / len, bz = intoZ / len;
-        const reach = Math.min(chx, chz) * QP[5104];
-        const px = x + bx * reach, pz = z + bz * reach;
-        const dirtyBonus = districtDensity > QP[5105] ? QP[5106] + Math.floor((districtDensity - QP[5107]) * QP[5108]) : QP[5109];
-        const pile = pileJunkCluster(onStreet ? 'street' : 'alley', px, pz, {
-            backX: bx, backZ: bz,
-            tiers: Math.min(QP[5110], (onStreet ? QP[5111] : QP[5112]) + dirtyBonus + (rng() < QP[5113] * pileScale ? QP[5114] : QP[5115])),
-            spread: Math.min(QP[5116], Math.min(chx, chz) * (QP[5117] + QP[5118] * pileScale)),
-            baseCount: Math.min(QP[5119], (onStreet ? QP[5120] : QP[5121]) + Math.floor(QP[5122] * pileScale)),
-            spill: Math.min(QP[5123], Math.floor(QP[5124] + pileScale)),
-        });
-        if (pile) pileSpot = pile;
-    } else if (wallsHere.length && rng() < wallChance) {
-        const w = pick(wallsHere);
-        const wall = wallAnchorForOpenCell(c, r, w, QP[5125], QP[5126]);
-        if (wall) {
-            const dirtyBonus = districtDensity > QP[5127] ? QP[5128] : QP[5129];
-            const pile = pileJunkCluster(onStreet ? 'street' : 'alley', wall.x, wall.z, {
-                backX: w.dx, backZ: w.dz,
-                tiers: Math.min(QP[5130], (onStreet ? QP[5131] : QP[5132]) + dirtyBonus + (rng() < QP[5133] * pileScale ? QP[5134] : QP[5135])),
-                spread: Math.min(QP[5136], (onStreet ? QP[5137] : QP[5138]) * pileScale),
-                baseCount: Math.min(QP[5139], (onStreet ? QP[5140] : QP[5141]) + Math.floor(pileScale)),
-                spill: districtDensity > QP[5142] ? QP[5143] + (rng() < QP[5144] ? QP[5145] : QP[5146]) : QP[5147],
-            });
-            if (pile) pileSpot = pile;
-        }
-    }
-
-     
-     
-    const looseDensity = Math.sqrt(Math.max(QP[5148], districtDensity));
-    if (onStreet) {
-        if (rng() < Math.min(QP[5149], QP[5150] * QUALITY.propDensity * looseDensity * SPAWN_GROUND_CLUTTER_SCALE)) {
-            scatterJunk('street', x, z, QP[5151], Math.min(chx, chz) * QP[5152], laneAxis);
-        }
-        if (rng() < Math.min(QP[5153], QP[5154] * QUALITY.propDensity * looseDensity) && wallsHere.length) {
-            const dir = pick(wallsHere);
-            const lamp = wallAnchorForOpenCell(c, r, dir, QP[5155], QP[5156]);
-            if (lamp) placeRealModel('streetLamp', lamp.x, lamp.z, lamp.rotY);
-        }
-    } else if (rng() < Math.min(QP[5157], QP[5158] * QUALITY.propDensity * looseDensity * SPAWN_GROUND_CLUTTER_SCALE)) {
-        scatterJunk('alley', x, z, QP[5159] + (districtDensity > QP[5160] && rng() < QP[5161] ? QP[5162] : QP[5163]), Math.min(chx, chz) * QP[5164], laneAxis);
-    }
-
-     
-     
-     
-    if (pileSpot && districtDensity > QP[5165]) {
-        const accentChance = Math.min(QP[5166], QP[5167] + (districtDensity - QP[5168]) * QP[5169]) * QUALITY.propDensity;
-        if (rng() < accentChance) placeRealModel('tyre', pileSpot.x + randRange(QP[5170], QP[5171]), pileSpot.z + randRange(QP[5172], QP[5173]), randRange(QP[5174], Math.PI * QP[5175]));
-        if (rng() < accentChance) placeRealModel('trashbag', pileSpot.x + randRange(QP[5176], QP[5177]), pileSpot.z + randRange(QP[5178], QP[5179]), randRange(QP[5180], Math.PI * QP[5181]));
-    }
-    if (onStreet && rng() < Math.min(QP[5182], QP[5183] * QUALITY.propDensity * looseDensity)) {
-        placeRealModel('manhole', x + randRange(QP[5184], QP[5185]), z + randRange(QP[5186], QP[5187]), randRange(QP[5188], Math.PI * QP[5189]));
-    }
-    if (wallsHere.length && districtDensity > QP[5190] && rng() < Math.min(QP[5191], QP[5192] * localDensity)) {
-        const bin = wallAnchorForOpenCell(c, r, pick(wallsHere), QP[5193], QP[5194]);
-        if (bin) placeRealModel('trashCanReal', bin.x, bin.z, bin.rotY);
-    }
-
-     
-     
-    const wireChance = THREE.MathUtils.clamp(QP[5195] + districtDensity * QP[5196], QP[5197], QP[5198]);
-    if (grid[r]?.[c - QP[5199]] && grid[r]?.[c + QP[5200]]) {
-        const a = footprintOf[r][c - QP[5201]], b = footprintOf[r][c + QP[5202]];
-        if (a && b && rng() < wireChance) {
-            const zLo = Math.max(a.cz - a.hwz, b.cz - b.hwz, z - chz * QP[5203]);
-            const zHi = Math.min(a.cz + a.hwz, b.cz + b.hwz, z + chz * QP[5204]);
-            if (zHi - zLo > QP[5205]) {
-                const cableZ = randRange(zLo + QP[5206], zHi - QP[5207]);
-                addOverheadCable(a.cx + a.hwx + QP[5208], cableZ, a.height, b.cx - b.hwx - QP[5209], cableZ, b.height);
-            }
-        }
-    }
-    if (grid[r - QP[5210]]?.[c] && grid[r + QP[5211]]?.[c]) {
-        const a = footprintOf[r - QP[5212]][c], b = footprintOf[r + QP[5213]][c];
-        if (a && b && rng() < wireChance) {
-            const xLo = Math.max(a.cx - a.hwx, b.cx - b.hwx, x - chx * QP[5214]);
-            const xHi = Math.min(a.cx + a.hwx, b.cx + b.hwx, x + chx * QP[5215]);
-            if (xHi - xLo > QP[5216]) {
-                const cableX = randRange(xLo + QP[5217], xHi - QP[5218]);
-                addOverheadCable(cableX, a.cz + a.hwz + QP[5219], a.height, cableX, b.cz - b.hwz - QP[5220], b.height);
-            }
-        }
-    }
-
-    const t = webAlignment(z);
-    const gradientMul = THREE.MathUtils.lerp(
-        CONFIG.narrative.darkWeb.propDensityMul, CONFIG.narrative.lightWeb.propDensityMul, t
-    ) * (onStreet ? CONFIG.streets.propDensityMul : QP[5221]);
-
-    const choice = weightedPick(CONFIG.props.weights);
-    if (choice === 'none') return true;
-    if (ROAD_ONLY_PROPS.has(choice) && !onStreet) return true;
-    if (choice === 'trafficSignal') {
-        const mask = roadOpenMask(c, r);
-        const horizontal = !!(mask & QP[5222]) || !!(mask & QP[5223]);
-        const vertical = !!(mask & QP[5224]) || !!(mask & QP[5225]);
-        if (!horizontal || !vertical) return true;
-    }
-
-    const wallBound = WALL_HUGGING_PROPS.has(choice);
-    const districtSingletonMul = THREE.MathUtils.clamp(QP[5226] + districtDensity * QP[5227], QP[5228], QP[5229]);
-    const singletonChance = Math.min(QP[5230],
-        QUALITY.propDensity * gradientMul * districtSingletonMul
-        * (wallBound ? QP[5231] : QP[5232]) * (pileSpot && !wallBound ? QP[5233] : QP[5234]));
-    if (rng() > singletonChance) return true;
-
-    let px, pz;
-    let facingRotY;
-    let placementMeta = null;
-    if (WALL_HUGGING_PROPS.has(choice)) {
-        if (wallsHere.length) {
-            const w = pick(wallsHere);
-            const standoffByType = {
-                wantedPoster: QP[5235], stickerTag: QP[5236], businessCardLitter: QP[5237],
-                fenceSegment: QP[5238], trafficSign: QP[5239], mileMarker: QP[5240],
-                museumPlacard: QP[5241], trashCan: QP[5242], vendingMachine: QP[5243],
-                lantern: QP[5244], trafficSignal: QP[5245], weeds: QP[5246],
-            };
-            const raw = wallAnchorForOpenCell(c, r, w, standoffByType[choice] ?? QP[5247], QP[5248]);
-            if (raw) {
-                placementMeta = clearSpotAlongWall(raw, choice === 'vendingMachine' ? QP[5249] : QP[5250]);
-                px = placementMeta.x; pz = placementMeta.z; facingRotY = placementMeta.rotY;
-            }
-        }
-        if (px === undefined) {
-            if (choice === 'wantedPoster' || choice === 'stickerTag') return true;
-            px = x + randRange(-chx * QP[5251], chx * QP[5252]);
-            pz = z + randRange(-chz * QP[5253], chz * QP[5254]);
-        }
-    } else {
-        const jitter = Math.min(chx, chz) * QP[5255];
-        const spot = findClearSpot(x, z, QP[5256], [
-            laneOffset(jitter, laneAxis),
-            laneOffset(jitter, laneAxis),
-            [QP[5257], QP[5258]],
-        ]);
-        px = spot.x; pz = spot.z;
-    }
-
-    const radius = PROP_BUILDERS[choice](px, pz, facingRotY, placementMeta);
-    propColliders.push({ x: px, z: pz, radius, height: PROP_HEIGHTS[choice] ?? QP[5259] });
-    if (choice === 'tree') addThicketShade(x, z);
-    return true;
-}
-
-const DECOR_SECTOR_SPAN = QP[5260];
-const decorationSectorMap = new Map();
-const decorationSectors = [];
-function decorationSectorFor(c, r) {
-    const sx = Math.floor(c / DECOR_SECTOR_SPAN), sz = Math.floor(r / DECOR_SECTOR_SPAN);
-    const key = `${sx},${sz}`;
-    let sector = decorationSectorMap.get(key);
-    if (!sector) {
-        sector = { key, sx, sz, cells: [], cursor: QP[5261], status: 'pending', centerX: QP[5262], centerZ: QP[5263] };
-        decorationSectorMap.set(key, sector);
-        decorationSectors.push(sector);
-    }
-    return sector;
-}
-for (let r = QP[5264]; r < GRID_ROWS - QP[5265]; r++) {
-    for (let c = QP[5266]; c < GRID_COLS - QP[5267]; c++) {
-        if (grid[r][c]) continue;
-        if (c === spawnCol && r === spawnRow) continue;
-        const key = `${c},${r}`;
-        if (usedPlazas.has(key) || parkCells.has(key)) continue;
-        decorationSectorFor(c, r).cells.push([c, r]);
-    }
-}
-for (const sector of decorationSectors) {
-    const c = Math.min(GRID_COLS - QP[5268], Math.max(QP[5269], sector.sx * DECOR_SECTOR_SPAN + DECOR_SECTOR_SPAN * QP[5270]));
-    const r = Math.min(GRID_ROWS - QP[5271], Math.max(QP[5272], sector.sz * DECOR_SECTOR_SPAN + DECOR_SECTOR_SPAN * QP[5273]));
-    const pos = cellToWorld(Math.floor(c), Math.floor(r));
-    sector.centerX = pos.x; sector.centerZ = pos.z;
-}
-
-let initialDecorationCells = QP[5274];
-let initialDecorationSectors = QP[5275];
-const initialDecorationCount = Math.min(QP[1024], decorationSectors.length);
-const initialDecorationOrder = decorationSectors.slice().sort((a, b) => {
-    const adx = a.centerX - camera.position.x, adz = a.centerZ - camera.position.z;
-    const bdx = b.centerX - camera.position.x, bdz = b.centerZ - camera.position.z;
-    return (adx * adx + adz * adz) - (bdx * bdx + bdz * bdz);
+const deferredDecorationStats = Object.freeze({
+    totalSectors: 0,
+    generatedSectors: 0,
+    generatedCells: 0,
+    queuedSectors: 0,
+    pendingSectors: 0,
+    lastPumpMs: 0,
+    retired: true,
 });
-for (const sector of initialDecorationOrder.slice(0, initialDecorationCount)) {
-    sector.status = 'generated';
-    sector.cursor = sector.cells.length;
-    initialDecorationSectors++;
-    for (const [c, r] of sector.cells) {
-        if (runWithStableStreamingRng(`decor:${c}:${r}`, () => decorateOpenCell(c, r))) initialDecorationCells++;
-    }
-    await testYieldIfNeeded('seeding nearest real props', initialDecorationSectors, initialDecorationCount);
-}
-finalizeOverheadCables();
-
-const deferredDecorationStats = {
-    totalSectors: decorationSectors.length,
-    generatedSectors: initialDecorationSectors,
-    generatedCells: initialDecorationCells,
-    queuedSectors: QP[5277],
-    pendingSectors: Math.max(QP[5278], decorationSectors.length - initialDecorationSectors),
-    lastPumpMs: QP[5279],
-};
-const decorationQueue = [];
-let decorationIdleHandle = null;
-let decorationStreamTimer = QP[5280];
-
-function sortDecorationQueueNearPlayer() {
-    decorationQueue.sort((a, b) => {
-        const adx = a.centerX - camera.position.x, adz = a.centerZ - camera.position.z;
-        const bdx = b.centerX - camera.position.x, bdz = b.centerZ - camera.position.z;
-        return (adx * adx + adz * adz) - (bdx * bdx + bdz * bdz);
-    });
-}
-
-function queueDecorationNear(x, z) {
-    const prefetch = QUALITY.drawDistance * QP[5281] + JUNK_RENDER_CHUNK;
-    const prefetchSq = prefetch * prefetch;
-    const candidates = [];
-    for (const sector of decorationSectors) {
-        if (sector.status !== 'pending') continue;
-        const dx = sector.centerX - x, dz = sector.centerZ - z;
-        const d2 = dx * dx + dz * dz;
-         
-         
-         
-        candidates.push([d2 <= prefetchSq ? 0 : 1, d2, sector]);
-    }
-    candidates.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
-    const admit = Math.min(QP[5284], candidates.length);
-    for (let i = QP[5285]; i < admit; i++) {
-        const sector = candidates[i][2];
-        sector.status = 'queued';
-        decorationQueue.push(sector);
-    }
-    sortDecorationQueueNearPlayer();
-    deferredDecorationStats.queuedSectors = decorationQueue.length;
-    scheduleDecorationPump();
-}
-
-function scheduleDecorationPump() {
-    if (decorationIdleHandle !== null || !decorationQueue.length) return;
-    if ('requestIdleCallback' in window) {
-        decorationIdleHandle = requestIdleCallback(pumpDecoration, { timeout: QP[5287] });
-    } else {
-        decorationIdleHandle = setTimeout(() => pumpDecoration(null), QP[5288]);
-    }
-}
-
-function pumpDecoration(deadline) {
-    decorationIdleHandle = null;
-    sortDecorationQueueNearPlayer();
-    const started = performance.now();
-    let cellsDone = QP[5289];
-    const hardBudgetMs = QP[5290];
-    const maxCells = QP[5291];
-    while (decorationQueue.length && cellsDone < maxCells) {
-        if (cellsDone > QP[5292]) {
-            const elapsed = performance.now() - started;
-            const idleLow = deadline && !deadline.didTimeout && deadline.timeRemaining() < QP[5293];
-            if (elapsed >= hardBudgetMs || idleLow) break;
-        }
-        const sector = decorationQueue[QP[5294]];
-        const cell = sector.cells[sector.cursor++];
-        if (cell) {
-            if (runWithStableStreamingRng(`decor:${cell[QP[5295]]}:${cell[QP[5296]]}`, () => decorateOpenCell(cell[QP[5295]], cell[QP[5296]]))) deferredDecorationStats.generatedCells++;
-            cellsDone++;
-        }
-        if (sector.cursor >= sector.cells.length) {
-            sector.status = 'generated';
-            decorationQueue.shift();
-            deferredDecorationStats.generatedSectors++;
-            deferredDecorationStats.pendingSectors--;
-        }
-    }
-    if (cellsDone) {
-        finalizeOverheadCables(false);
-        playerPhysics.syncDynamicWorld();
-        deferredDecorationStats.lastPumpMs = performance.now() - started;
-    }
-    deferredDecorationStats.queuedSectors = decorationQueue.length;
-    if (decorationQueue.length) scheduleDecorationPump();
-}
-
-function updateDecorationStreaming(delta) {
-    decorationStreamTimer -= delta;
-    if (decorationStreamTimer > QP[5297]) return;
-    decorationStreamTimer = QP[5298];
-    if (decorationQueue.length < QP[5299]) queueDecorationNear(camera.position.x, camera.position.z);
-}
-
-console.log(`[perf] decoration streaming: ${initialDecorationCells} nearby cells in ${initialDecorationSectors}/${decorationSectors.length} sectors generated synchronously; remaining sectors load near the camera during idle time`);
+console.log('[perf] legacy spawn open-cell decoration streamer retired; common Kowloon enrichment owns ordinary street detail');
 
  
 
@@ -3982,7 +3358,6 @@ let worldChunkNextKickAt = 0;
 let authoredOptimizerNextAt = 0;
 let backgroundEnrichmentReleased = false;
 let authoredAssetLaneOpened = false;
-let wikiEnrichmentScheduled = false;
 let authoredBackgroundQueueNear = false;
 
 function playerNearAuthoredSpawn() {
@@ -4040,12 +3415,6 @@ function maybeReleaseBackgroundEnrichment() {
     adornmentLoadQueue.resume();
     authoredBackgroundQueueNear = true;
     console.log('[asset-event] widen-after-prefetch-and-authored-structure | ' + formatAdornmentQueueStats());
-    if (!wikiEnrichmentScheduled) {
-        wikiEnrichmentScheduled = true;
-        const runWiki = () => fetchRandomWikiArticles(QP[5300]);
-        if ('requestIdleCallback' in window) requestIdleCallback(runWiki, { timeout: 2000 });
-        else setTimeout(runWiki, 0);
-    }
     return true;
 }
 
@@ -4179,11 +3548,11 @@ function maybeLogWorldDiagnostics(now) {
         + ' structural=' + authoredStructuralReadySiteIds.size + '/' + buildingSites.length
         + ' jobs=' + authoredBuildingJobs.length
         + ' fabric=' + unifiedSpawnFabricRefinementQueue.length
-        + ' plazas=' + specialPlazaJobs.length
+        + ' plazas=' + authoredSpawnPlazaAdmissions.length
         + ' complete=' + (_spawnDistrictStructuresComplete ? 1 : 0)
         + ' | decor sectors=' + deferredDecorationStats.generatedSectors + '/' + deferredDecorationStats.totalSectors
         + ' cells=' + deferredDecorationStats.generatedCells
-        + ' queued=' + decorationQueue.length
+        + ' queued=0'
         + ' pending=' + deferredDecorationStats.pendingSectors
         + ' | health stall=' + (health.stallWarnings ?? 0)
         + ' starved=' + (health.starvedWarnings ?? 0)
@@ -4325,6 +3694,8 @@ function animate(now = performance.now()) {
     if (spawnLocalWorkAllowed) {
         const groundPump = pumpOpenCellSurfaces({ maxChunks: QP[1024], maxMillis: QP[1024] });
         if (groundPump.chunks) runtimeLatency.record('spawn-ground.pump', groundPump.ms, { ...groundPump, ...groundSurfaceSystem.stats() });
+        const plazaAdmission = pumpAuthoredSpawnPlazaAdmissions({ maxPlazas: authoredDeepLane ? 2 : 1 });
+        if (plazaAdmission.admitted) runtimeLatency.record('spawn-plaza.common-admission', 0, plazaAdmission);
 
         if (authoredBuildingJobs.length) {
             const structuralOnly = authoredStructuralReadySiteIds.size < buildingSites.length;
@@ -4350,16 +3721,9 @@ function animate(now = performance.now()) {
             if (authoredPostPump.steps) runtimeLatency.record('authored-post.local-pump', authoredPostPump.ms, authoredPostPump);
         }
 
-        // Plaza richness is local too: the pump admits only jobs whose own ground
-        // surface chunk has already published, regardless of the outer 5x5 ring.
-        if (specialPlazaJobs.length) {
-            const plazaPump = pumpSpecialPlazaJobs({ maxJobs: QP[1024], maxMillis: QP[1] });
-            if (plazaPump.steps) runtimeLatency.record('plaza.local-pump', plazaPump.ms, plazaPump);
-        }
     }
 
     maybeMarkSpawnDistrictStructuresComplete();
-    if (playerNearSpawn) updateDecorationStreaming(delta);
     if (spawnLocalWorkAllowed) pumpAuthoredOptimizer(now);
     maybeReleaseBackgroundEnrichment();
 
@@ -4726,7 +4090,7 @@ window.__debug = {
             structuralSyncs: authoredStructuralSyncs,
             structuresComplete: _spawnDistrictStructuresComplete,
             ground: groundSurfaceSystem.stats(),
-            plazas: { total: specialPlazaJobsTotal, completed: specialPlazaJobsCompleted, pending: specialPlazaJobs.length, worstMs: specialPlazaWorstMs },
+            plazas: { total: authoredSpawnPlazaTotal, completed: authoredSpawnPlazasAdmitted, pending: authoredSpawnPlazaAdmissions.length, worstMs: 0, commonEngine: true },
         },
         city: {
             cols: GRID_COLS, rows: GRID_ROWS, sites: buildingSites.length,

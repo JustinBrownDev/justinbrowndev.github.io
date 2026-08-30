@@ -566,34 +566,23 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
         const rng = mulberry32(taskSeed(chunk, entity.id, 'plaza-plan'));
         const tasks = [];
         const density = clamp(entity.detailDensity ?? 1, 0, 1);
-        if (rng() < 0.66 * density) tasks.push({
-            kind: 'marker', entityId: entity.id,
-            x: entity.x + (rng() - 0.5) * 2.6,
-            z: entity.z + (rng() - 0.5) * 2.6,
-            y: 0.75 + rng() * 0.45,
-            seed: taskSeed(chunk, entity.id, 'marker'),
-        });
-
-        // The old authored plaza vocabulary is now universal content language.
-        // Structural ground/climb topology remains owned by KowloonFabricEngine;
-        // these semantic features refine on top of that same chunk-owned payload.
+        // Ordinary plazas get at most one context-legible civic/street feature.
+        // Spectacle props (statues, crime scenes, construction barricades and
+        // mega-billboards) are no longer selected randomly; those remain available
+        // only for future explicit landmark recipes.
         if (rng() >= density) return tasks;
-        const kinds = ['statue', 'construction-zone', 'crime-scene', 'newsstand', 'phone-booth', 'atm-kiosk', 'park', 'mega-billboard'];
-        const offset = taskSeed(chunk, entity.id, 'plaza-feature-order') % kinds.length;
-        const count = 1 + (rng() < 0.30 + Math.max(0, entity.kowloonIntensity || 0) * 0.24 ? 1 : 0);
-        for (let i = 0; i < count; i++) {
-            const feature = kinds[(offset + i * 3) % kinds.length];
-            const seed = taskSeed(chunk, entity.id, `plaza-${feature}`, i);
-            const labelRng = mulberry32(seed ^ 0x6a09e667);
-            const [title, subtitle] = textExciter.pairFor(chunk, entity.id, `plaza-${feature}`, pickMassiveNoisePair(labelRng));
-            tasks.push({
-                kind: `plaza-${feature}`,
-                entityId: entity.id,
-                x: entity.x + (rng() - 0.5) * Math.max(1.1, (entity.halfX || 2) * 0.82),
-                z: entity.z + (rng() - 0.5) * Math.max(1.1, (entity.halfZ || 2) * 0.82),
-                title, subtitle, seed,
-            });
-        }
+        const kinds = ['newsstand', 'phone-booth', 'atm-kiosk', 'park'];
+        const feature = kinds[taskSeed(chunk, entity.id, 'plaza-feature-order') % kinds.length];
+        const seed = taskSeed(chunk, entity.id, `plaza-${feature}`);
+        const labelRng = mulberry32(seed ^ 0x6a09e667);
+        const [title, subtitle] = textExciter.pairFor(chunk, entity.id, `plaza-${feature}`, pickMassiveNoisePair(labelRng));
+        tasks.push({
+            kind: `plaza-${feature}`,
+            entityId: entity.id,
+            x: entity.x + (rng() - 0.5) * Math.max(1.1, (entity.halfX || 2) * 0.72),
+            z: entity.z + (rng() - 0.5) * Math.max(1.1, (entity.halfZ || 2) * 0.72),
+            title, subtitle, seed,
+        });
         return tasks;
     }
 

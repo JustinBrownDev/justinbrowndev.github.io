@@ -745,7 +745,7 @@ async function runBootstrapCompilePump() {
 }
 
 function scheduleBootstrapCompilePump() {
-    if (!_backgroundCompileSchedulingEnabled && !_testBootstrapActive) return null;
+    if (!_backgroundCompileSchedulingEnabled) return null;
     if (!_bootstrapCompileQueue.length || _bootstrapCompilePumpPromise) return _bootstrapCompilePumpPromise;
     _bootstrapCompilePumpPromise = runBootstrapCompilePump().finally(() => {
         _bootstrapCompilePumpPromise = null;
@@ -2105,6 +2105,7 @@ let cityFabricEngine = null;
 let _spawnDistrictStructuresComplete = false;
 let _spawnGroundPositionReady = null;
 let authoredCompletedSiteIds = null;
+let authoredStructuralReadySiteIds = null;
 function isStreamingWorldPositionAvailable(x, z) {
     const insideSpawn = Math.abs(x) <= GRID_W / QP[559] && Math.abs(z) <= GRID_H / QP[560];
     if (insideSpawn) {
@@ -2113,7 +2114,7 @@ function isStreamingWorldPositionAvailable(x, z) {
         const { col, row } = worldToCellIndex(x, z);
         if (grid[row]?.[col] === false) return true;
         const siteId = siteIdOf[row]?.[col] ?? QP[775];
-        return siteId >= QP[1015] && authoredCompletedSiteIds?.has(siteId) === true;
+        return siteId >= QP[1015] && authoredStructuralReadySiteIds?.has(siteId) === true;
     }
     if (worldChunkStreamer) return worldChunkStreamer.isWorldPositionAvailable(x, z);
     return false;
@@ -2318,6 +2319,7 @@ function* buildUnifiedSignatureSiteSteps(site) {
     // building engine because it has no building at all; its recipe owns only
     // courtyard/marker content.
     if (site.signatureType === 'futurePlaceholder') {
+        yield { phase: 'signature-empty-parcel-ready', siteId: site.id, type: site.signatureType };
         activeUnifiedSignatureSite = site;
         try {
             yield* signatureContentSiteSteps(site);
@@ -2422,6 +2424,7 @@ const authoredBuildingJobs = buildingSites.map(site => {
         site,
         stepper: createStableStreamingRngStepper(`building:${site.id}`, iteratorFactory),
         turns: QP[1015],
+        structuralReady: false,
         completed: false,
         startedAt: QP[1015],
         lastPhase: 'pending',
@@ -2429,6 +2432,7 @@ const authoredBuildingJobs = buildingSites.map(site => {
 });
 const authoredBuildingJobBySiteId = new Map(authoredBuildingJobs.map(job => [job.site.id, job]));
 authoredCompletedSiteIds = new Set();
+authoredStructuralReadySiteIds = new Set();
 let authoredSchedulerTurns = QP[1015];
 let authoredStructuralSyncs = QP[1015];
 let authoredBuildingsResolve;
@@ -2512,6 +2516,16 @@ function stepAuthoredBuildingJob(job) {
 
     const stepMs = performance.now() - stepStarted;
     const phase = step.value?.phase || 'complete';
+    const structuralReadyPhase = phase === 'unified-fabric-structure'
+        || phase === 'signature-unified-shell'
+        || phase === 'signature-empty-parcel-ready';
+    if (!job.structuralReady && structuralReadyPhase) {
+        job.structuralReady = true;
+        authoredStructuralReadySiteIds.add(site.id);
+        runtimeLatency.record('generation.authored-structural-ready', stepMs, {
+            siteId: site.id, type: site.signatureType || 'ordinary', phase, cells: site.cells.length,
+        });
+    }
     job.lastPhase = phase;
     job.turns++;
     authoredSchedulerTurns++;
@@ -2569,14 +2583,15 @@ function stepAuthoredBuildingJob(job) {
     return { step, stepMs, phase, addedRoots: addedRoots.length, completed: job.completed };
 }
 
-function pumpAuthoredBuildingJobs({ maxSteps = QP[0], maxMillis = QP[1], onlySiteIds = null } = {}) {
+function pumpAuthoredBuildingJobs({ maxSteps = QP[0], maxMillis = QP[1], onlySiteIds = null, structuralOnly = false } = {}) {
     const started = performance.now();
     let steps = QP[1015];
     let completed = QP[1015];
     while (steps < maxSteps && performance.now() - started < maxMillis) {
-        const candidates = onlySiteIds
-            ? authoredBuildingJobs.filter(job => onlySiteIds.has(job.site.id))
-            : authoredBuildingJobs;
+        const candidates = authoredBuildingJobs.filter(job =>
+            (!onlySiteIds || onlySiteIds.has(job.site.id))
+            && (!structuralOnly || !job.structuralReady)
+        );
         if (!candidates.length) break;
         sortAuthoredBuildingJobsNearPlayer(candidates);
         const result = stepAuthoredBuildingJob(candidates[QP[1015]]);
@@ -2587,12 +2602,19 @@ function pumpAuthoredBuildingJobs({ maxSteps = QP[0], maxMillis = QP[1], onlySit
 }
 
 const minimumSafeAuthoredSiteIds = collectMinimumSafeAuthoredSiteIds();
-await testYieldNow('building minimum-safe authored neighborhood', authoredCompletedSiteIds.size, minimumSafeAuthoredSiteIds.size);
-while ([...minimumSafeAuthoredSiteIds].some(id => !authoredCompletedSiteIds.has(id))) {
-    pumpAuthoredBuildingJobs({ maxSteps: QP[0], maxMillis: TEST_FRAME_BUDGET_MS, onlySiteIds: minimumSafeAuthoredSiteIds });
-    await testPublishAndYieldNow('building minimum-safe authored neighborhood', [...minimumSafeAuthoredSiteIds].filter(id => authoredCompletedSiteIds.has(id)).length, minimumSafeAuthoredSiteIds.size);
+await testYieldNow('building minimum-safe authored structural shells', authoredStructuralReadySiteIds.size, minimumSafeAuthoredSiteIds.size);
+while ([...minimumSafeAuthoredSiteIds].some(id => !authoredStructuralReadySiteIds.has(id))) {
+    pumpAuthoredBuildingJobs({
+        maxSteps: QP[0], maxMillis: TEST_FRAME_BUDGET_MS,
+        onlySiteIds: minimumSafeAuthoredSiteIds, structuralOnly: true,
+    });
+    await testPublishAndYieldNow(
+        'building minimum-safe authored structural shells',
+        [...minimumSafeAuthoredSiteIds].filter(id => authoredStructuralReadySiteIds.has(id)).length,
+        minimumSafeAuthoredSiteIds.size
+    );
 }
-console.log(`[stream-perf] minimum-safe authored neighborhood ready: ${minimumSafeAuthoredSiteIds.size} boundary sites complete; ${authoredBuildingJobs.length}/${buildingSites.length} authored sites remain for live background construction`);
+console.log(`[stream-perf] minimum-safe authored neighborhood ready: ${minimumSafeAuthoredSiteIds.size} boundary structural shells collision-ready; ${authoredBuildingJobs.length}/${buildingSites.length} authored content jobs continue in live background`);
 
  
  
@@ -4245,11 +4267,11 @@ console.log(`[perf] spawn structural handoff at ${bootElapsed()} since page star
 testStatus('spawn playable · refinement continues in live runtime');
 bootStatus(`spawn playable (${bootElapsed()}) · world streaming`);
 _backgroundCompileSchedulingEnabled = true;
-scheduleBootstrapCompilePump();
 _testBootstrapActive = false;
 console.log(`[stream-perf] bootstrap handoff after ${_testBootstrapFrame} painted frames; full physics/runtime now authoritative`);
 animate();
 window.__boot?.ready();
+requestAnimationFrame(() => setTimeout(() => scheduleBootstrapCompilePump(), 0));
 
 void (async function continuePostHandoffWorldRefinement() {
     await authoredBuildingsCompletePromise;

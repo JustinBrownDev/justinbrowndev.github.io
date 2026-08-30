@@ -1848,6 +1848,10 @@ const candidateFaces = [];
  
  
  
+// Street/junk batching remains a cosmetic performance concern. Structural
+// geometry is owned exclusively by KowloonFabricEngine.
+const JUNK_RENDER_CHUNK_SIZE = QP[1011];
+
 const {
     addTrashCan,
     addTrafficCone,
@@ -1893,7 +1897,7 @@ const {
 } = createStreetPropsSystem({
     CELL,
     CONFIG,
-    STATIC_BATCH_CHUNK,
+    JUNK_RENDER_CHUNK_SIZE,
     grid,
     scene,
     unitPlaneGeo,
@@ -4347,11 +4351,13 @@ window.__debug = {
             cols: GRID_COLS, rows: GRID_ROWS, sites: buildingSites.length,
             rooftopDecks: rooftopDecks.length, propColliders: propColliders.length,
             rooftopCatwalks: rooftopCatwalkCount, hangingBridges: hangingBridgeCount,
-            fireEscapeBridgeAnchors: verticalCirculationSystem.stats().fireEscapeBridgeAnchors, roadMaterialPool: groundSurfaceSystem.stats().roadMaterialPool,
+            commonFabricPayloads: unifiedSpawnFabricPayloads.size, commonFabricRelationships: unifiedSpawnRelationshipPayloads.length,
+            commonFabricServiceCages: [...unifiedSpawnFabricPayloads.values()].reduce((n, p) => n + (p.entity?.serviceCages ?? 0), 0),
+            commonFabricScaffoldLandings: [...unifiedSpawnFabricPayloads.values()].reduce((n, p) => n + (p.entity?.scaffoldLandings ?? 0), 0),
+            commonFabricRamps: [...unifiedSpawnFabricPayloads.values()].reduce((n, p) => n + (p.physics?.ramps?.length ?? 0), 0),
+            roadMaterialPool: groundSurfaceSystem.stats().roadMaterialPool,
             windowTexturePool: _windowTextureCache.size, buildingMaterialPool: _buildingFacadeMaterialCache.size,
-            heroTowers: buildingConstructionSystem.stats().heroTowers, authoredStairTransitions: buildingConstructionSystem.stats().authoredStairTransitions,
-            circulationValidationFailures: buildingConstructionSystem.stats().circulationValidationFailures, fireEscapeStories: verticalCirculationSystem.stats().fireEscapeStories,
-            groundSurfaceBatches: groundSurfaceSystem.stats(), horizontalPlaneBatches: verticalCirculationSystem.stats().horizontalPlaneBatches,
+            groundSurfaceBatches: groundSurfaceSystem.stats(), horizontalPlaneBatches: flushHorizontalPlaneBatches(),
         },
         decoration: {
             ...deferredDecorationStats,

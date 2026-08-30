@@ -6,7 +6,7 @@ import { outwardRotationY } from '../systems/cardinal.js';
 
 export function createStreetPropsSystem(deps) {
     const {
-        CELL, CONFIG, STATIC_BATCH_CHUNK, grid, scene, unitPlaneGeo, takeDynamicLight,
+        CELL, CONFIG, JUNK_RENDER_CHUNK_SIZE, grid, scene, unitPlaneGeo, takeDynamicLight,
         getStaticWorldOptimizer, registerAnimatedMaterial, getPoetryShort, getPoetryMedium, getPickPoetryTag,
         addFissureCrack, addWantedPoster, hexToCss, jitterGeometry, laneOffset, makePixelTexture,
         pick, pickCityNoisePair, pickInkColor, pickNetworkNoise, pickPaperColor,
@@ -951,7 +951,7 @@ export function createStreetPropsSystem(deps) {
      
      
      
-    const JUNK_RENDER_CHUNK = STATIC_BATCH_CHUNK;
+    const JUNK_RENDER_CHUNK = JUNK_RENDER_CHUNK_SIZE;
     const JUNK_BUCKET_CAPACITY = QP[4347];
     const junkBuckets = new Map();  
     const junkMeshes = new Set();

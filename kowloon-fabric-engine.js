@@ -3,6 +3,14 @@ import { WORLD_FORMAT_VERSION, worldChunkOwnerId, worldEntityId } from './world-
 import { createKowloonFabricEnrichment } from './world/kowloon-fabric-enrichment.js';
 import { createKowloonMazeTopology } from './world/kowloon-district-plan.js';
 import {
+    anyReservationIntersectsBox,
+    createBoxCirculationReservation,
+    createRampCirculationReservation,
+    createStairShaftReservation,
+    reservationCutForAxisSegment,
+    reservationIntersectsBox,
+} from './world/circulation-reservations.js';
+import {
     KOWLOON_DIRS,
     analyzeKowloonCompound,
     chooseKowloonCompoundTargetSize,
@@ -218,47 +226,56 @@ export function createKowloonFabricEngine({
         if (gz1 < z1) transforms.slabs.push({ x: (gx0 + gx1) * 0.5, y: y - slabT * 0.5, z: (gz1 + z1) * 0.5, sx: gx1 - gx0, sy: slabT, sz: z1 - gz1 });
     }
 
-    function addPartitionWall(wallList, physics, fp, y0, y1, spec, stairCx, stairCz) {
+    function addPartitionWall(wallList, physics, fp, y0, y1, spec, stairCx, stairCz, circulationReservation = null) {
         if (!spec) return 0;
         const wallH = y1 - y0;
         const wallY = y0 + wallH * 0.5;
         const wallT = 0.14;
-        const gap = 1.25;
+        const legacyGap = 1.25;
         let segments = 0;
+
+        const emit = (axis, fixed, a, b) => {
+            if (b - a <= 0.04) return;
+            const mid = (a + b) * 0.5;
+            if (axis === 'x') {
+                wallTransform(wallList, mid, wallY, fixed, b - a, wallH, wallT);
+                physics.mazeWalls.push({ x1: a, z1: fixed, x2: b, z2: fixed, yMin: y0, yMax: y1, supportKind: 'partition' });
+            } else {
+                wallTransform(wallList, fixed, wallY, mid, wallT, wallH, b - a);
+                physics.mazeWalls.push({ x1: fixed, z1: a, x2: fixed, z2: b, yMin: y0, yMax: y1, supportKind: 'partition' });
+            }
+            segments++;
+        };
+
+        const emitAroundCut = (axis, fixed, a0, a1, legacyCenter) => {
+            if (circulationReservation) {
+                const cut = reservationCutForAxisSegment(circulationReservation, {
+                    axis, fixedCoord: fixed, from: a0, to: a1, yMin: y0, yMax: y1,
+                }, wallT * 0.5);
+                if (!cut) {
+                    emit(axis, fixed, a0, a1);
+                    return;
+                }
+                emit(axis, fixed, a0, cut.from);
+                emit(axis, fixed, cut.to, a1);
+                return;
+            }
+
+            // Non-spine modules retain the old seeded room-divider shape for this
+            // landing. P5 only changes a divider when real circulation authority exists.
+            const gapCenter = clamp(legacyCenter, a0 + legacyGap * 0.55, a1 - legacyGap * 0.55);
+            emit(axis, fixed, a0, gapCenter - legacyGap * 0.5);
+            emit(axis, fixed, gapCenter + legacyGap * 0.5, a1);
+        };
+
         if (spec.axis === 'x') {
             const z = fp.cz + spec.offset * fp.halfZ;
             const x0 = fp.cx - fp.halfX + 0.18, x1 = fp.cx + fp.halfX - 0.18;
-            const gapCx = clamp(stairCx, x0 + gap * 0.55, x1 - gap * 0.55);
-            const g0 = gapCx - gap * 0.5, g1 = gapCx + gap * 0.5;
-            if (g0 > x0) {
-                const w = g0 - x0;
-                wallTransform(wallList, x0 + w * 0.5, wallY, z, w, wallH, wallT);
-                physics.mazeWalls.push({ x1: x0, z1: z, x2: g0, z2: z, yMin: y0, yMax: y1 });
-                segments++;
-            }
-            if (g1 < x1) {
-                const w = x1 - g1;
-                wallTransform(wallList, g1 + w * 0.5, wallY, z, w, wallH, wallT);
-                physics.mazeWalls.push({ x1: g1, z1: z, x2: x1, z2: z, yMin: y0, yMax: y1 });
-                segments++;
-            }
+            emitAroundCut('x', z, x0, x1, stairCx);
         } else {
             const x = fp.cx + spec.offset * fp.halfX;
             const z0 = fp.cz - fp.halfZ + 0.18, z1 = fp.cz + fp.halfZ - 0.18;
-            const gapCz = clamp(stairCz, z0 + gap * 0.55, z1 - gap * 0.55);
-            const g0 = gapCz - gap * 0.5, g1 = gapCz + gap * 0.5;
-            if (g0 > z0) {
-                const d = g0 - z0;
-                wallTransform(wallList, x, wallY, z0 + d * 0.5, wallT, wallH, d);
-                physics.mazeWalls.push({ x1: x, z1: z0, x2: x, z2: g0, yMin: y0, yMax: y1 });
-                segments++;
-            }
-            if (g1 < z1) {
-                const d = z1 - g1;
-                wallTransform(wallList, x, wallY, g1 + d * 0.5, wallT, wallH, d);
-                physics.mazeWalls.push({ x1: x, z1: g1, x2: x, z2: z1, yMin: y0, yMax: y1 });
-                segments++;
-            }
+            emitAroundCut('z', x, z0, z1, stairCz);
         }
         return segments;
     }
@@ -339,6 +356,17 @@ export function createKowloonFabricEngine({
                 y,
                 'scaffold',
             );
+            physics.circulationReservations.push(createBoxCirculationReservation({
+                id: `scaffold:${seed}:landing:${level}`,
+                kind: 'scaffold-landing',
+                x, z,
+                halfX: (horizontalFace ? landingWidth : landingDepth) * 0.5,
+                halfZ: (horizontalFace ? landingDepth : landingWidth) * 0.5,
+                yMin: y + 0.01,
+                yMax: y + 1.96,
+                source: 'exterior-scaffold',
+                metadata: { level, side },
+            }));
             landings++;
             if (level >= floors) continue;
 
@@ -346,7 +374,7 @@ export function createKowloonFabricEngine({
             const from = direction < 0 ? landingWidth * 0.38 : -landingWidth * 0.38;
             const to = -from;
             const axis = horizontalFace ? 'x' : 'z';
-            physics.ramps.push({
+            const scaffoldRamp = {
                 axis,
                 from: (horizontalFace ? fp.cx : fp.cz) + from,
                 to: (horizontalFace ? fp.cx : fp.cz) + to,
@@ -355,7 +383,14 @@ export function createKowloonFabricEngine({
                 y0: y,
                 y1: y + floorH,
                 supportKind: 'scaffold',
-            });
+            };
+            physics.ramps.push(scaffoldRamp);
+            physics.circulationReservations.push(createRampCirculationReservation({
+                id: `scaffold:${seed}:ramp:${level}`,
+                kind: 'scaffold-ramp',
+                ...scaffoldRamp,
+                source: 'exterior-scaffold',
+            }));
             const steps = 12;
             for (let i = 0; i < steps; i++) {
                 const t = (i + 0.5) / steps;
@@ -601,6 +636,8 @@ export function createKowloonFabricEngine({
         let internalOpenFaces = 0;
         let partyFaces = 0;
         const facades = [];
+        const circulationStartCount = physics.circulationReservations.length;
+        const circulationByModule = new Map();
 
         for (const module of modulePlans) {
             const wallList = transforms.wallGroups[materialIndex];
@@ -609,6 +646,36 @@ export function createKowloonFabricEngine({
             const stairCx = module.rect.cx + (rng() - 0.5) * module.rect.halfX * 0.26;
             const stairCz = module.rect.cz + (rng() - 0.5) * module.rect.halfZ * 0.26;
             const isSpine = module === primaryModule;
+            const stairRunAxis = stairGapD >= stairGapW ? 'z' : 'x';
+            const stairFrom = stairRunAxis === 'z' ? stairCz - stairGapD * 0.42 : stairCx - stairGapW * 0.42;
+            const stairTo = stairRunAxis === 'z' ? stairCz + stairGapD * 0.42 : stairCx + stairGapW * 0.42;
+            const stairHalfWidth = Math.min(stairGapW, stairGapD) * 0.35;
+            const moduleRoofY = module.floors * floorH;
+            const stairReservation = isSpine ? createStairShaftReservation({
+                id: `${chunk.key}:${site.id}:${module.key}:stair-shaft`,
+                x: stairCx, z: stairCz,
+                openingWidth: stairGapW,
+                openingDepth: stairGapD,
+                baseY: 0,
+                roofY: moduleRoofY,
+                exitHeadroom: 2.1,
+                rampAxis: stairRunAxis,
+                rampFrom: stairFrom,
+                rampTo: stairTo,
+                rampHalfWidth: stairHalfWidth,
+                source: 'compound-stair',
+            }) : null;
+            if (stairReservation) {
+                physics.circulationReservations.push(stairReservation);
+                circulationByModule.set(module.key, [stairReservation]);
+            } else {
+                circulationByModule.set(module.key, []);
+            }
+
+            // CIRCULATION SANITY HANDOFF: topology reserves the whole player-sized
+            // stair volume before slabs, partitions, or optional weirdness publish.
+            // Render and collision are both authored around this same reservation.
+            // Optional geometry loses conflicts; structural access never does.
 
             // Preserve the authored curb/skirt massing universally. It is a visual
             // foundation lip, emitted through the same slab batch as every other
@@ -654,10 +721,10 @@ export function createKowloonFabricEngine({
                     if (isSpine) {
                         addNotchedFloor(physics.platforms, module.rect.cx, module.rect.cz,
                             module.rect.halfX * 2 - 0.12, module.rect.halfZ * 2 - 0.12,
-                            y0, stairCx, stairCz, stairGapW, stairGapD);
+                            y0, stairReservation.x, stairReservation.z, stairReservation.openingWidth, stairReservation.openingDepth);
                         addRenderedNotchedSlab(transforms, module.rect.cx, module.rect.cz,
                             module.rect.halfX * 2 - 0.12, module.rect.halfZ * 2 - 0.12,
-                            y0, stairCx, stairCz, stairGapW, stairGapD);
+                            y0, stairReservation.x, stairReservation.z, stairReservation.openingWidth, stairReservation.openingDepth);
                     } else {
                         addRectPlatform(physics.platforms, module.rect.cx, module.rect.cz,
                             module.rect.halfX * 2 - 0.12, module.rect.halfZ * 2 - 0.12, y0, 'floor');
@@ -674,36 +741,45 @@ export function createKowloonFabricEngine({
                         : (floor === 0 ? 0.72 : 0.52);
                 if (module.rect.halfX > 1.55 && module.rect.halfZ > 1.55 && partitionRng() < partitionChance) {
                     const spec = { axis: partitionRng() < 0.5 ? 'x' : 'z', offset: (partitionRng() - 0.5) * 0.42 };
-                    partitionSegments += addPartitionWall(wallList, physics, module.rect, y0, y1, spec, stairCx, stairCz);
+                    partitionSegments += addPartitionWall(wallList, physics, module.rect, y0, y1, spec, stairCx, stairCz, stairReservation);
                 }
 
                 if (isSpine && floor < module.floors) {
-                    const runAxis = stairGapD >= stairGapW ? 'z' : 'x';
-                    const from = runAxis === 'z' ? stairCz - stairGapD * 0.42 : stairCx - stairGapW * 0.42;
-                    const to = runAxis === 'z' ? stairCz + stairGapD * 0.42 : stairCx + stairGapW * 0.42;
                     physics.ramps.push({
-                        axis: runAxis, from, to,
-                        fixedCoord: runAxis === 'z' ? stairCx : stairCz,
-                        halfWidth: Math.min(stairGapW, stairGapD) * 0.35,
+                        axis: stairRunAxis, from: stairFrom, to: stairTo,
+                        fixedCoord: stairRunAxis === 'z' ? stairCx : stairCz,
+                        halfWidth: stairHalfWidth,
                         y0, y1, supportKind: 'compound-stair',
                     });
                     const steps = 12;
                     for (let i = 0; i < steps; i++) {
                         const t = (i + 0.5) / steps;
-                        const along = from + (to - from) * t;
+                        const along = stairFrom + (stairTo - stairFrom) * t;
                         const stepY = y0 + floorH * (i + 1) / steps - 0.08;
-                        transforms.steps.push(runAxis === 'z'
-                            ? { x: stairCx, y: stepY, z: along, sx: stairGapW * 0.62, sy: 0.16, sz: Math.abs(to - from) / steps * 1.06 }
-                            : { x: along, y: stepY, z: stairCz, sx: Math.abs(to - from) / steps * 1.06, sy: 0.16, sz: stairGapD * 0.62 });
+                        transforms.steps.push(stairRunAxis === 'z'
+                            ? { x: stairCx, y: stepY, z: along, sx: stairGapW * 0.62, sy: 0.16, sz: Math.abs(stairTo - stairFrom) / steps * 1.06 }
+                            : { x: along, y: stepY, z: stairCz, sx: Math.abs(stairTo - stairFrom) / steps * 1.06, sy: 0.16, sz: stairGapD * 0.62 });
                     }
                 }
             }
 
-            const roofY = module.floors * floorH;
-            addRectPlatform(physics.platforms, module.rect.cx, module.rect.cz,
-                module.rect.halfX * 2 - 0.12, module.rect.halfZ * 2 - 0.12, roofY, 'roof');
-            transforms.slabs.push({ x: module.rect.cx, y: roofY - 0.06, z: module.rect.cz,
-                sx: module.rect.halfX * 2 - 0.12, sy: 0.12, sz: module.rect.halfZ * 2 - 0.12 });
+            const roofY = moduleRoofY;
+            if (isSpine) {
+                // The final flight reaches the roof, so the roof must obey the exact
+                // same shaft reservation as every intermediate floor. A solid cap
+                // here used to turn a valid stair into a procedural dead end.
+                addNotchedFloor(physics.platforms, module.rect.cx, module.rect.cz,
+                    module.rect.halfX * 2 - 0.12, module.rect.halfZ * 2 - 0.12,
+                    roofY, stairReservation.x, stairReservation.z, stairReservation.openingWidth, stairReservation.openingDepth, 'roof');
+                addRenderedNotchedSlab(transforms, module.rect.cx, module.rect.cz,
+                    module.rect.halfX * 2 - 0.12, module.rect.halfZ * 2 - 0.12,
+                    roofY, stairReservation.x, stairReservation.z, stairReservation.openingWidth, stairReservation.openingDepth);
+            } else {
+                addRectPlatform(physics.platforms, module.rect.cx, module.rect.cz,
+                    module.rect.halfX * 2 - 0.12, module.rect.halfZ * 2 - 0.12, roofY, 'roof');
+                transforms.slabs.push({ x: module.rect.cx, y: roofY - 0.06, z: module.rect.cz,
+                    sx: module.rect.halfX * 2 - 0.12, sy: 0.12, sz: module.rect.halfZ * 2 - 0.12 });
+            }
             for (const dir of KOWLOON_DIRS) {
                 let exposed = module.edgeKinds[dir.key] !== 'internal';
                 if (!exposed) {
@@ -856,25 +932,40 @@ export function createKowloonFabricEngine({
                 const sz = axis === 'z' ? rect.halfZ * 0.88 : rect.halfZ * 1.55;
                 const mx = rect.cx + (axis === 'x' ? side * rect.halfX * 0.48 : 0);
                 const mz = rect.cz + (axis === 'z' ? side * rect.halfZ * 0.48 : 0);
-                transforms.slabs.push({ x: mx, y: y - 0.06, z: mz, sx, sy: 0.12, sz });
-                addRectPlatform(physics.platforms, mx, mz, sx, sz, y, 'mezzanine');
 
                 const rampWidth = Math.max(0.72, Math.min(1.15, axis === 'x' ? sz * 0.48 : sx * 0.48));
                 const run = Math.max(1.15, Math.min(2.4, axis === 'x' ? rect.halfX * 0.82 : rect.halfZ * 0.82));
                 const from = axis === 'x' ? rect.cx - side * run * 0.55 : rect.cz - side * run * 0.55;
                 const to = axis === 'x' ? rect.cx + side * run * 0.45 : rect.cz + side * run * 0.45;
                 const fixedCoord = axis === 'x' ? mz : mx;
-                physics.ramps.push({ axis, from, to, fixedCoord, halfWidth: rampWidth * 0.5, y0: 0, y1: y, supportKind: 'mezzanine-stair' });
-                const stepCount = 7;
-                for (let i = 0; i < stepCount; i++) {
-                    const t = (i + 0.5) / stepCount;
-                    const along = from + (to - from) * t;
-                    const stepY = y * (i + 1) / stepCount - 0.055;
-                    transforms.steps.push(axis === 'x'
-                        ? { x: along, y: stepY, z: fixedCoord, sx: Math.abs(to - from) / stepCount * 1.06, sy: 0.11, sz: rampWidth }
-                        : { x: fixedCoord, y: stepY, z: along, sx: rampWidth, sy: 0.11, sz: Math.abs(to - from) / stepCount * 1.06 });
+                const mezzanineRamp = { axis, from, to, fixedCoord, halfWidth: rampWidth * 0.5, y0: 0, y1: y, supportKind: 'mezzanine-stair' };
+                const mezzanineReservation = createRampCirculationReservation({
+                    id: `${chunk.key}:${site.id}:${module.key}:mezzanine:${mezzanines}`,
+                    kind: 'mezzanine-ramp',
+                    ...mezzanineRamp,
+                    source: 'mezzanine-stair',
+                });
+                const moduleReservations = circulationByModule.get(module.key);
+                const blocksExistingCirculation = anyReservationIntersectsBox(moduleReservations, {
+                    x: mx, z: mz, sx, sz, yMin: y - 0.12, yMax: y + 0.12,
+                }) || moduleReservations.some(existing => reservationIntersectsBox(existing, mezzanineReservation));
+                if (!blocksExistingCirculation) {
+                    transforms.slabs.push({ x: mx, y: y - 0.06, z: mz, sx, sy: 0.12, sz });
+                    addRectPlatform(physics.platforms, mx, mz, sx, sz, y, 'mezzanine');
+                    physics.ramps.push(mezzanineRamp);
+                    physics.circulationReservations.push(mezzanineReservation);
+                    moduleReservations.push(mezzanineReservation);
+                    const stepCount = 7;
+                    for (let i = 0; i < stepCount; i++) {
+                        const t = (i + 0.5) / stepCount;
+                        const along = from + (to - from) * t;
+                        const stepY = y * (i + 1) / stepCount - 0.055;
+                        transforms.steps.push(axis === 'x'
+                            ? { x: along, y: stepY, z: fixedCoord, sx: Math.abs(to - from) / stepCount * 1.06, sy: 0.11, sz: rampWidth }
+                            : { x: fixedCoord, y: stepY, z: along, sx: rampWidth, sy: 0.11, sz: Math.abs(to - from) / stepCount * 1.06 });
+                    }
+                    mezzanines++;
                 }
-                mezzanines++;
             }
 
             // The old interior shelf/desk/chair/junk hooks become deterministic
@@ -889,6 +980,7 @@ export function createKowloonFabricEngine({
                     const h = 0.45 + featureRng() * 1.05;
                     const x = rect.cx + (featureRng() - 0.5) * Math.max(0.2, rect.halfX * 1.25 - w);
                     const z = rect.cz + (featureRng() - 0.5) * Math.max(0.2, rect.halfZ * 1.25 - d);
+                    if (anyReservationIntersectsBox(circulationByModule.get(module.key), { x, z, sx: w, sz: d, yMin: 0, yMax: h })) continue;
                     transforms.props.push({ x, y: h * 0.5, z, sx: w, sy: h, sz: d });
                     physics.props.push({ x, z, radius: Math.max(0.26, Math.min(w, d) * 0.42), yMin: 0, height: h, supportKind: 'interior-clutter' });
                     interiorClutter++;
@@ -908,9 +1000,11 @@ export function createKowloonFabricEngine({
                 const d = Math.min(1.25, rect.halfZ * 0.45);
                 const x = rect.cx + rect.halfX * (featureRng() < 0.5 ? -0.46 : 0.46);
                 const z = rect.cz + rect.halfZ * (featureRng() < 0.5 ? -0.46 : 0.46);
-                transforms.props.push({ x, y: roofY * 0.5, z, sx: w, sy: roofY, sz: d });
-                physics.props.push({ x, z, radius: Math.max(0.32, Math.min(w, d) * 0.43), yMin: 0, height: roofY, supportKind: 'service-core' });
-                serviceCores++;
+                if (!anyReservationIntersectsBox(circulationByModule.get(primaryModule.key), { x, z, sx: w, sz: d, yMin: 0, yMax: roofY })) {
+                    transforms.props.push({ x, y: roofY * 0.5, z, sx: w, sy: roofY, sz: d });
+                    physics.props.push({ x, z, radius: Math.max(0.32, Math.min(w, d) * 0.43), yMin: 0, height: roofY, supportKind: 'service-core' });
+                    serviceCores++;
+                }
             }
             let crownBaseY = roofY;
             if (featureRng() < 0.52 + weird * 0.22) {
@@ -919,19 +1013,27 @@ export function createKowloonFabricEngine({
                 const h = 1.35 + featureRng() * 1.45;
                 const x = rect.cx + (featureRng() - 0.5) * Math.max(0, rect.halfX - w * 0.6);
                 const z = rect.cz + (featureRng() - 0.5) * Math.max(0, rect.halfZ - d * 0.6);
-                transforms.props.push({ x, y: roofY + h * 0.5, z, sx: w, sy: h, sz: d });
-                physics.props.push({ x, z, radius: Math.max(0.45, Math.min(w, d) * 0.42), yMin: roofY, height: roofY + h, supportKind: 'rooftop-mechanical' });
-                crownBaseY = roofY + h;
-                rooftopMechanical++;
+                if (!anyReservationIntersectsBox(circulationByModule.get(primaryModule.key), { x, z, sx: w, sz: d, yMin: roofY, yMax: roofY + h })) {
+                    transforms.props.push({ x, y: roofY + h * 0.5, z, sx: w, sy: h, sz: d });
+                    physics.props.push({ x, z, radius: Math.max(0.45, Math.min(w, d) * 0.42), yMin: roofY, height: roofY + h, supportKind: 'rooftop-mechanical' });
+                    crownBaseY = roofY + h;
+                    rooftopMechanical++;
+                }
             }
             if (featureRng() < 0.40 + weird * 0.30) {
                 roofTopper = featureRng() < 0.44 ? 'dome' : 'spire';
                 if (roofTopper === 'spire') {
                     const h = 1.8 + featureRng() * 4.2;
                     const w = 0.12 + featureRng() * 0.16;
-                    transforms.props.push({ x: rect.cx, y: crownBaseY + h * 0.5, z: rect.cz, sx: w, sy: h, sz: w });
+                    if (!anyReservationIntersectsBox(circulationByModule.get(primaryModule.key), {
+                        x: rect.cx, z: rect.cz, sx: w, sz: w, yMin: crownBaseY, yMax: crownBaseY + h,
+                    })) {
+                        transforms.props.push({ x: rect.cx, y: crownBaseY + h * 0.5, z: rect.cz, sx: w, sy: h, sz: w });
+                    } else {
+                        roofTopper = 'none';
+                    }
                 }
-                roofCrowns++;
+                if (roofTopper !== 'none') roofCrowns++;
             }
         }
 
@@ -983,6 +1085,7 @@ export function createKowloonFabricEngine({
             rooftopMechanical,
             roofCrowns,
             roofTopper,
+            circulationReservationCount: physics.circulationReservations.length - circulationStartCount,
             singularRecipe: structureProfile?.singularRecipe ?? null,
             suppressInteriorEnrichment: !!structureProfile?.suppressInteriorClutter,
             bridgePortalCount: bridgeOpeningKeys.size,
@@ -1249,7 +1352,7 @@ export function createKowloonFabricEngine({
     function createFabricBuffers() {
         return {
             transforms: { wallGroups: wallMats.map(() => []), slabs: [], steps: [], props: [], roads: [], windows: [], doors: [] },
-            physics: { mazeWalls: [], platforms: [], ramps: [], ceilings: [], props: [] },
+            physics: { mazeWalls: [], platforms: [], ramps: [], ceilings: [], props: [], circulationReservations: [] },
         };
     }
 

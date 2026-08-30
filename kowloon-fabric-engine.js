@@ -6,10 +6,17 @@ import {
     anyReservationIntersectsBox,
     createBoxCirculationReservation,
     createRampCirculationReservation,
-    createStairShaftReservation,
     reservationCutForAxisSegment,
     reservationIntersectsBox,
 } from './world/circulation-reservations.js';
+import {
+    connectorOpeningWidth,
+    createBridgeConnector,
+    createPortalConnector,
+    createStairConnector,
+    registerSemanticConnector,
+    semanticPortalForRect,
+} from './world/semantic-connectors.js';
 import {
     KOWLOON_DIRS,
     analyzeKowloonCompound,
@@ -619,7 +626,35 @@ export function createKowloonFabricEngine({
         const doorFace = forcedEntranceFaces[0]
             ?? (doorFacePool.length ? doorFacePool[Math.floor(rng() * doorFacePool.length) % doorFacePool.length] : null);
         const entranceFaces = forcedEntranceFaces.length ? forcedEntranceFaces : (doorFace ? [doorFace] : []);
-        const entranceOpeningKeys = new Set(entranceFaces.map(face => `${face.module.key}:${face.dir.key}:0`));
+        const entranceConnectorByKey = new Map();
+        for (let i = 0; i < entranceFaces.length; i++) {
+            const face = entranceFaces[i];
+            const openingKey = `${face.module.key}:${face.dir.key}:0`;
+            const portal = semanticPortalForRect({
+                id: `${chunk.key}:${site.id}:${face.module.key}:entrance:${i}:portal`,
+                rect: face.module.rect,
+                side: face.dir.side,
+                floor: 0,
+                floorH,
+                width: 1.55,
+                height: 2.2,
+                depth: 1.2,
+                source: 'compound-entrance',
+                fromSpaceId: `${chunk.key}:${site.id}:${face.module.key}:floor:0`,
+                toSpaceId: `${chunk.key}:street`,
+                metadata: { moduleKey: face.module.key, dirKey: face.dir.key, floor: 0 },
+            });
+            const connector = createPortalConnector({
+                id: `${chunk.key}:${site.id}:${face.module.key}:entrance:${i}`,
+                portal,
+                kind: 'door',
+                source: 'compound-entrance',
+                visualRole: 'street-entrance',
+                metadata: { moduleKey: face.module.key, dirKey: face.dir.key, floor: 0 },
+            });
+            registerSemanticConnector(physics, connector);
+            entranceConnectorByKey.set(openingKey, connector);
+        }
         if (doorFace) primaryModule = primaryModule || doorFace.module;
 
         const serviceCagePlans = [];
@@ -678,9 +713,12 @@ export function createKowloonFabricEngine({
             const stairFrom = stairRunAxis === 'z' ? stairCz - stairGapD * 0.42 : stairCx - stairGapW * 0.42;
             const stairTo = stairRunAxis === 'z' ? stairCz + stairGapD * 0.42 : stairCx + stairGapW * 0.42;
             const stairHalfWidth = Math.min(stairGapW, stairGapD) * 0.35;
-            const moduleRoofY = module.floors * floorH;
-            const stairReservation = isSpine ? createStairShaftReservation({
-                id: `${chunk.key}:${site.id}:${module.key}:stair-shaft`,
+            // Match the exact arithmetic used by the final stair flight arrival.
+            // JS can represent floors * floorH and (floors - 1) * floorH + floorH
+            // a few ulps apart, which breaks the circulation contract's exact roof key.
+            const moduleRoofY = module.floors > 0 ? (module.floors - 1) * floorH + floorH : 0;
+            const stairConnector = isSpine ? createStairConnector({
+                id: `${chunk.key}:${site.id}:${module.key}:stair`,
                 x: stairCx, z: stairCz,
                 openingWidth: stairGapW,
                 openingDepth: stairGapD,
@@ -692,9 +730,14 @@ export function createKowloonFabricEngine({
                 rampTo: stairTo,
                 rampHalfWidth: stairHalfWidth,
                 source: 'compound-stair',
+                visualRole: 'vertical-spine',
+                fromSpaceId: `${chunk.key}:${site.id}:${module.key}:ground`,
+                toSpaceId: `${chunk.key}:${site.id}:${module.key}:roof`,
+                metadata: { moduleKey: module.key, floors: module.floors, floorH },
             }) : null;
-            if (stairReservation) {
-                physics.circulationReservations.push(stairReservation);
+            const stairReservation = stairConnector?.primaryReservation ?? null;
+            if (stairConnector) {
+                registerSemanticConnector(physics, stairConnector);
                 circulationByModule.set(module.key, [stairReservation]);
             } else {
                 circulationByModule.set(module.key, []);
@@ -735,7 +778,9 @@ export function createKowloonFabricEngine({
                     if (bridgeOpeningKeys.has(`${module.key}:${dir.key}:${floor}`)) opening = 1.20;
                     else if (cantileverOpeningKeys.has(`${module.key}:${dir.key}:${floor}`)) opening = 1.12;
                     else if (serviceCageOpeningKeys.has(`${module.key}:${dir.key}:${floor}`)) opening = 1.08;
-                    else if (entranceOpeningKeys.has(`${module.key}:${dir.key}:${floor}`)) opening = 1.55;
+                    else if (entranceConnectorByKey.has(`${module.key}:${dir.key}:${floor}`)) {
+                        opening = connectorOpeningWidth(entranceConnectorByKey.get(`${module.key}:${dir.key}:${floor}`), 1.55);
+                    }
                     else if (floor === 0 && kind === 'courtyard' && rng() < 0.44) opening = 1.18;
                     addCompoundSideWall({ physics, wallList, rect: module.rect, floorH, floor, side: dir.side, opening });
                     if (kind === 'street' || kind === 'courtyard') facades.push({
@@ -1166,6 +1211,12 @@ export function createKowloonFabricEngine({
             if (x1 <= x0) return false;
             const span = x1 - x0;
             const x = (x0 + x1) * 0.5;
+            registerSemanticConnector(physics, createBridgeConnector({
+                id: `${bridge.id}:connector`,
+                axis: 'x', from: x0, to: x1, fixedCoord: z, halfWidth: width * 0.5, y,
+                source: 'skybridge', visualRole: bridge.variant || 'skybridge',
+                metadata: { bridgeId: bridge.id, variant: bridge.variant || 'skybridge', floor: bridge.floor },
+            }));
             transforms.slabs.push({ x, y: y - 0.06, z, sx: span, sy: 0.12, sz: width });
             addRectPlatform(physics.platforms, x, z, span, width, y, bridge.variant || 'skybridge');
             for (const sideZ of [z - width * 0.5, z + width * 0.5]) {
@@ -1188,6 +1239,12 @@ export function createKowloonFabricEngine({
             if (z1 <= z0) return false;
             const span = z1 - z0;
             const z = (z0 + z1) * 0.5;
+            registerSemanticConnector(physics, createBridgeConnector({
+                id: `${bridge.id}:connector`,
+                axis: 'z', from: z0, to: z1, fixedCoord: x, halfWidth: width * 0.5, y,
+                source: 'skybridge', visualRole: bridge.variant || 'skybridge',
+                metadata: { bridgeId: bridge.id, variant: bridge.variant || 'skybridge', floor: bridge.floor },
+            }));
             transforms.slabs.push({ x, y: y - 0.06, z, sx: width, sy: 0.12, sz: span });
             addRectPlatform(physics.platforms, x, z, width, span, y, bridge.variant || 'skybridge');
             for (const sideX of [x - width * 0.5, x + width * 0.5]) {
@@ -1380,7 +1437,7 @@ export function createKowloonFabricEngine({
     function createFabricBuffers() {
         return {
             transforms: { wallGroups: wallMats.map(() => []), slabs: [], steps: [], props: [], roads: [], windows: [], doors: [] },
-            physics: { mazeWalls: [], platforms: [], ramps: [], ceilings: [], props: [], circulationReservations: [] },
+            physics: { mazeWalls: [], platforms: [], ramps: [], ceilings: [], props: [], circulationReservations: [], semanticConnectors: [] },
         };
     }
 

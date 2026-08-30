@@ -4,6 +4,9 @@ import { BASE_GRAFFITI_TAGS } from '../content/graffiti-content.js';
 import { createProceduralTextExciter } from './procedural-text-exciter.js';
 import { SEMANTIC_INTERIOR_ASSETS, SEMANTIC_INTERIOR_ASSET_BY_ID } from '../vendor/city-pack/semantic-interiors/catalog.js';
 import { SEMANTIC_ROOM_RECIPES } from '../vendor/city-pack/semantic-interiors/room-recipes.js';
+import { anyReservationIntersectsBox } from './circulation-reservations.js';
+import { createSemanticPlacementRecord, resolveSemanticPlacement } from './semantic-placement.js';
+import { SEMANTIC_RELATIONSHIP_SAMPLES, semanticGraphForAsset } from '../vendor/city-pack/semantic-interiors/semantic-links.js';
 
 function mulberry32(seed) {
     let a = seed >>> 0;
@@ -554,6 +557,31 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
                     });
                 }
             }
+
+            // Representative relationship samples only. These guarantee that the
+            // resolver is exercised by the live runtime without bulk-wiring the new
+            // corpus. Both members share one room/floor; phase priority establishes
+            // the provider/anchor before its dependent.
+            const sampleSteps = SEMANTIC_RELATIONSHIP_SAMPLES[program] ?? [];
+            if (sampleSteps.length) {
+                const module = entity.footprintModules[taskSeed(chunk, entity.id, 'semantic-link-sample-module') % entity.footprintModules.length];
+                const maxFloor = Math.max(1, Math.min(3, module.floors || 1));
+                const sampleFloor = taskSeed(chunk, entity.id, 'semantic-link-sample-floor') % maxFloor;
+                for (let i = 0; i < sampleSteps.length; i++) {
+                    const step = sampleSteps[i];
+                    if (!SEMANTIC_INTERIOR_ASSET_BY_ID.has(step.assetId)) continue;
+                    if (tasks.some(task => task.assetId === step.assetId && task.moduleKey === module.key && task.floor === sampleFloor)) continue;
+                    tasks.push({
+                        kind: `semantic-${step.phase ?? 'functional'}`,
+                        entityId: entity.id,
+                        assetId: step.assetId,
+                        program,
+                        moduleKey: module.key,
+                        floor: sampleFloor,
+                        seed: taskSeed(chunk, entity.id, 'semantic-link-sample', i),
+                    });
+                }
+            }
         }
         if (entity.roofTopper && entity.roofTopper !== 'none') tasks.push({
             kind: 'roof-topper', entityId: entity.id, topper: entity.roofTopper,
@@ -1049,68 +1077,69 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
         const module = entity?.footprintModules?.find(candidate => candidate.key === task.moduleKey) ?? entity?.footprintModules?.[0];
         const def = SEMANTIC_INTERIOR_ASSET_BY_ID.get(task.assetId);
         if (!entity || !module || !def) return null;
-        const rng = mulberry32(task.seed);
+        const graph = semanticGraphForAsset(def);
         const floorH = entity.floorH || 3.15;
         const floor = Math.max(0, Math.min((module.floors || 1) - 1, task.floor || 0));
         const yBase = floor * floorH;
         const dims = def.dimensionsXYZ ?? [0.6, 0.8, 0.6];
         const min = def.boundsMin ?? [-dims[0] * 0.5, 0, -dims[2] * 0.5];
+        const semanticPlacements = payload.semanticPlacements ?? (payload.semanticPlacements = []);
+        const placement = resolveSemanticPlacement({
+            def,
+            graph,
+            module,
+            yBase,
+            floorH,
+            seed: task.seed,
+            placements: semanticPlacements,
+            entityId: task.entityId,
+            moduleKey: module.key,
+            floor,
+            tryReserve: reservation => {
+                const structural = payload?.physics?.circulationReservations ?? [];
+                if (structural.length && anyReservationIntersectsBox(structural, reservation)) return false;
+                return reserveDetailBox(
+                    payload,
+                    reservation.x,
+                    reservation.z,
+                    reservation.halfX,
+                    reservation.halfZ,
+                    reservation.yMin,
+                    reservation.yMax,
+                    0,
+                );
+            },
+        });
+        if (!placement) return null;
+
         const group = new THREE.Group();
         group.name = `chunk-semantic:${task.program}:${def.kind}:${task.entityId}`;
-        const wallMount = def.mount === 'wall';
-        let x, z, rotY;
-
-        if (wallMount) {
-            const sides = ['north', 'east', 'south', 'west'];
-            const start = task.seed % sides.length;
-            let placed = false;
-            for (let attempt = 0; attempt < 4 && !placed; attempt++) {
-                const side = sides[(start + attempt) % sides.length];
-                const depth = Math.max(0.04, dims[2]);
-                const halfW = Math.max(0.14, dims[0] * 0.5);
-                if (side === 'north' || side === 'south') {
-                    const avail = module.halfX - halfW - 0.18; if (avail <= 0) continue;
-                    x = module.cx + (rng() - 0.5) * 2 * avail;
-                    z = module.cz + (side === 'north' ? -1 : 1) * (module.halfZ - depth * 0.5 - 0.07);
-                    rotY = side === 'north' ? 0 : Math.PI;
-                } else {
-                    const avail = module.halfZ - halfW - 0.18; if (avail <= 0) continue;
-                    z = module.cz + (rng() - 0.5) * 2 * avail;
-                    x = module.cx + (side === 'west' ? -1 : 1) * (module.halfX - depth * 0.5 - 0.07);
-                    rotY = side === 'west' ? Math.PI * 0.5 : -Math.PI * 0.5;
-                }
-                const y = yBase + Math.min(floorH - dims[1] - 0.24, Math.max(1.10, floorH * 0.42));
-                if (!reserveDetailBox(payload, x, z, halfW, depth * 0.5, y, y + dims[1], 0.08)) continue;
-                group.position.set(x, y - min[1], z); group.rotation.y = rotY; placed = true;
-            }
-            if (!placed) return null;
-        } else {
-            const clearance = def.clearance ?? {};
-            const halfW = Math.max(0.12, dims[0] * 0.5);
-            const halfD = Math.max(0.12, dims[2] * 0.5);
-            const marginX = halfW + Math.max(0.10, Number(clearance.sides) || 0);
-            const marginZ = halfD + Math.max(0.10, Number(clearance.front) || 0, Number(clearance.rear) || 0);
-            const availX = module.halfX - marginX;
-            const availZ = module.halfZ - marginZ;
-            if (availX <= 0.08 || availZ <= 0.08) return null;
-            let placed = false;
-            for (let attempt = 0; attempt < 7 && !placed; attempt++) {
-                x = module.cx + (rng() - 0.5) * 2 * availX;
-                z = module.cz + (rng() - 0.5) * 2 * availZ;
-                rotY = Math.floor(rng() * 4) * Math.PI * 0.5;
-                if (!reserveDetailBox(payload, x, z, halfW, halfD, yBase, yBase + dims[1], 0.14)) continue;
-                group.position.set(x, yBase - min[1], z); group.rotation.y = rotY; placed = true;
-            }
-            if (!placed) return null;
-        }
+        group.position.set(placement.x, placement.y, placement.z);
+        group.rotation.y = placement.rotY;
 
         const proxy = new THREE.Mesh(unitBox, task.kind === 'semantic-identity' ? awningMaterials[task.seed % awningMaterials.length] : interiorMetalMat);
         proxy.scale.set(Math.max(0.08, dims[0]), Math.max(0.08, dims[1]), Math.max(0.08, dims[2]));
         proxy.position.set(0, dims[1] * 0.5 + min[1], 0);
         group.add(proxy);
-        group.userData.chunkCosmetic = true; group.userData.detailKind = task.kind;
-        group.userData.semanticClass = def.semanticClass; group.userData.semanticProgram = task.program;
+        group.userData.chunkCosmetic = true;
+        group.userData.detailKind = task.kind;
+        group.userData.semanticClass = def.semanticClass;
+        group.userData.semanticProgram = task.program;
+        group.userData.semanticPlacement = {
+            mode: placement.mode,
+            relationTo: placement.relationTo ?? null,
+            schema: graph?.schema ?? null,
+        };
         group.userData.detailPhysics = semanticPhysics(def, group.position.x, group.position.y + min[1], group.position.z, group.rotation.y);
+        semanticPlacements.push(createSemanticPlacementRecord({
+            def,
+            graph,
+            placement,
+            entityId: task.entityId,
+            moduleKey: module.key,
+            floor,
+            program: task.program,
+        }));
         queueSemanticUpgrade(payload, group, def);
         return group;
     }
@@ -1414,6 +1443,7 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
         payload.detailRoot = detailRoot;
         payload.detailResources = { textures: new Set(), materials: new Set() };
         payload.detailReservations = [];
+        payload.semanticPlacements = [];
         payload.refinement = plan(chunk, payload.entities);
         return payload.refinement;
     }

@@ -1,79 +1,74 @@
-AGGRESSIVE INFINITE CHUNK STREAMING - FINAL VALIDATION
-Date: 2026-08-29
+AGGRESSIVE INFINITE CHUNK STREAMING - HOT STREAM PATCH
+=====================================================
 
-SHIPPING ROUTES
-- / is the only interactive 3D runtime.
-- /old/ remains the regular portfolio / escape target.
-- /test/ removed completely.
-- /synchronous/ removed completely after audit found no named generator/runtime function unique to its older main.js.
-- Regression tests moved to /tests/ so QA survives without shipping alternate runtime surfaces.
+Observed problem
+----------------
+Real-browser boot log showed the authored spawn generator accelerating from
+roughly building 10/38 to 37/38 in about 0.4 seconds, while the supposedly much
+lighter post-handoff infinite stream appeared to crawl or stop.
 
-STARTUP / UX
-- One unified fast streaming terminal.
-- Stream filters: ALL / WORLD / RENDER / PHYSICS / DATA.
-- Exactly one user action: "Escape to regular website" -> ./old/.
-- No redundant "load/continue website" button.
-- Escape action persists at top-right after gameplay handoff.
-- Stream-filter and escape clicks are excluded from pointer-lock capture.
+Root cause
+----------
+The generic chunk factory was already fast, but it inherited multiple nested
+cooperative yield points. Each ~millisecond chunk could be forced to wait for
+several requestAnimationFrame boundaries during its internal 7x7 construction,
+and the world streamer then forced another yield after commit. Wall-clock wait
+vastly exceeded actual generation cost.
 
-POST-HANDOFF STREAMING POLICY
-- Spawn chunk 0,0 remains the only startup gate.
-- Normal movement/jump/F/P/pointer-lock runtime starts immediately after spawn READY.
-- No 120ms one-chunk drip timer remains.
-- One cooperative multi-chunk pump stays active after handoff.
-- 5x5 READY render neighborhood target (radius 2).
-- 7x7 warm prefetch neighborhood target (radius 3).
-- retention radius 4 to avoid boundary churn while keeping memory local.
-- Up to 4 chunks per pump while render ring is incomplete.
-- Up to 3 chunks per pump while prefetch ring is incomplete.
-- Queue refreshes between chunks so movement during a long pump reprioritizes immediately.
-- Current camera heading biases equally-near chunks in front of the player.
-- Chunk construction still yields on frame/input pressure; this is aggressive utilization, not a return to blocking whole-world loading.
-- Streaming policy is centralized under CONFIG.streaming and therefore available to cfg.* reload parameterization.
+Correction
+----------
+- Generic chunk construction is now atomic and off-scene.
+- Visuals and physics still publish together in one atomic commit.
+- No unconditional per-chunk requestAnimationFrame sleep remains.
+- The OUTER world pump is now the only post-handoff CPU scheduler.
+- Pump stops between complete chunks when its real millisecond budget is spent.
+- Urgent render-ring policy: up to 24 chunks / 12 ms per pump.
+- Prefetch policy: up to 16 chunks / 8 ms per pump.
+- Warm maintenance: up to 6 chunks / 4 ms per pump.
+- Warm cooldown is zero; movement can immediately create new work.
+- Console instrumentation prints [world-perf] with pump chunk count, pump ms,
+  average chunk build ms, and render/prefetch completion.
 
-LANDMARK POLICY
-- Six world-singular authored areas remain confined to pinned spawn chunk 0,0.
-- Infinite terrain gets repeatable/disposable district landmarks instead of more singulars.
-- Exactly one district landmark is selected per 3x3 chunk macrocell.
-- District landmark families: spire, stack, gatehouse, archive, beacon.
-- Landmark identity/placement is coordinate deterministic and survives unload/regeneration.
-- Landmarks reuse chunk instancing/batching instead of creating a large draw-call tax.
+Exact-seed synthetic throughput check
+-------------------------------------
+Seed: 671278205 (the seed from the supplied Firefox log)
+Factory: real infinite-city-chunks.js with vendored Three.js, real chunk
+streamer, off-scene build + atomic scene/physics commit.
 
-INFINITE WORLD CONTRACTS
-- Stable/versioned chunk/entity/owner IDs retained.
-- Weirdness gradient retained for future farther-from-spawn -> stranger content.
-- Generic chunks build off-scene and commit render + physics atomically.
-- Physics/render state is chunk-owned and removable.
-- Far chunk scene/physics state and scheduler metadata are pruned.
-- Pinned authored spawn remains resident during normal streaming.
-- Shared road boundary portals remain deterministic across independently generated neighbors.
+48 procedural chunks built/committed (7x7 neighborhood minus spawn):
+- total build CPU: ~75.5 ms
+- average build: ~1.57 ms/chunk
+- average commit: ~0.006 ms/chunk
+- 5x5 render ring: 25/25 complete after ~65.9 ms measured CPU/wall work in Node
+- 7x7 prefetch ring: 49/49 complete after ~79.5 ms total measured work
 
-LEAN REPO CLEANUP
-- Removed obsolete historical patch artifacts and superseded validation reports from the shipping tree.
-- STREAMING-WORLD-ARCHITECTURE.md is explicitly exempted from the repo's *.md ignore rule so the next normal git add keeps the architecture contract.
+These numbers are not a browser FPS promise; they prove the generator itself is
+cheap and the previous slowdown was scheduler-imposed waiting.
 
-VALIDATION PASSED
-- node --check main.js
-- node --check world-chunk-streamer.js
-- node --check infinite-city-chunks.js
-- node --check world-contract.js
-- world-contract-selftest.mjs
-- world-chunk-streamer-selftest.mjs
-- infinite-city-chunks-selftest.mjs
-- city-performance-selftest.mjs
-- player-physics-selftest.mjs
-- parameter-system-selftest.mjs
-- parameter-catalog-selftest.mjs (9,328 catalog entries)
-- tests/full-fidelity-selftest.mjs
-- tests/homepage-priority-selftest.mjs
-- tests/progressive-optimizer-selftest.mjs
-- tdz-boot-audit.cjs main.js (0 hazards)
-- tdz-generation-audit.cjs main.js (0 hazards)
-- runtime-handoff-audit.cjs main.js (0 hazards)
-- local relative static/dynamic import resolution check
-- route-surface assertion: / + /old only; /tests contains QA, not a site route
+Regression validation
+---------------------
+PASS city-performance-selftest.mjs
+PASS infinite-city-chunks-selftest.mjs
+PASS parameter-catalog-selftest.mjs (9,328 literals)
+PASS parameter-system-selftest.mjs
+PASS player-physics-selftest.mjs
+PASS runtime-handoff-audit.cjs
+PASS tdz-boot-audit.cjs main.js
+PASS tdz-generation-audit.cjs main.js
+PASS tests/full-fidelity-selftest.mjs
+PASS tests/homepage-priority-selftest.mjs
+PASS tests/progressive-optimizer-selftest.mjs
+PASS world-chunk-streamer-selftest.mjs
+PASS world-contract-selftest.mjs
+PASS node --check main.js
+PASS node --check world-chunk-streamer.js
+PASS node --check infinite-city-chunks.js
 
-BROWSER SMOKE LIMITATION
-- A current headless Chromium smoke attempt was made against a local HTTP server.
-- Container Chromium cannot initialize EGL/ANGLE/SwiftShader (EGL_NOT_INITIALIZED / xcb_connect failed) and timed out before a meaningful WebGL application run.
-- No application-level crash was observed before the renderer environment failed; real-browser/GPU visual validation remains the only environment-dependent check.
+Browser verification
+--------------------
+On the next real Firefox run, watch for [world-perf] lines immediately after
+spawn handoff. A healthy fast client should rapidly approach:
+  render 25/25
+  prefetch 49/49
+If average chunk build time is low but the rings do not fill, the remaining
+problem is outside generation and the new telemetry identifies it directly.

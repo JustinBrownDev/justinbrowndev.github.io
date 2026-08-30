@@ -49,12 +49,12 @@ ok(chunks.includes('worldChunkOwnerId'), 'generic physics/render ownership must 
 ok(chunks.includes('worldEntityId'), 'generic chunk metadata must expose stable entity IDs');
 ok(chunks.includes('districtLandmarkFor'), 'repeatable district landmark contract missing');
 ok(main.includes('landmarkSpacingChunks: 3') && main.includes('landmarkSpacingChunks: CONFIG.streaming.landmarkSpacingChunks'), 'district landmarks must recur every few chunks through cfg.streaming');
-ok(chunks.includes('if (yieldControl &&'), 'generic off-scene construction must yield cooperatively');
+ok(main.includes('yieldControl: null') && main.includes('pump({ maxChunks, maxMillis })'), 'generic chunks must be atomic and outer pump must own the live frame budget');
 
 ok(main.includes('createProgressiveStaticWorldOptimizer({'), 'spawn chunk optimizer must remain cooperative');
 ok(main.includes("await testYieldNow('optimizing spawn chunk"), 'optimizer must be explicitly scoped to spawn chunk startup');
 ok(main.includes('function pumpWorldChunksAggressively()'), 'live aggressive chunk streamer loop missing');
-ok(main.includes('CONFIG.streaming.urgentPumpChunks') && main.includes('CONFIG.streaming.prefetchPumpChunks'), 'live stream must keep CPU busy until render/prefetch rings are warm');
+ok(main.includes('CONFIG.streaming.urgentPumpChunks') && main.includes('CONFIG.streaming.prefetchPumpChunks') && main.includes('CONFIG.streaming.urgentBuildBudgetMs'), 'live stream must keep CPU busy with an explicit outer time budget until render/prefetch rings are warm');
 ok(main.includes('prefetchRadiusChunks: CONFIG.streaming.prefetchRadiusChunks'), 'live stream must maintain a larger prefetch ring after handoff');
 ok(!main.includes('worldChunkPumpTimer = 0.12'), 'old 120ms chunk drip-feed must remain removed');
 const readyAt = main.indexOf('window.__boot?.ready();');

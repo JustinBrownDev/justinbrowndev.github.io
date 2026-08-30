@@ -141,3 +141,18 @@ ECS or add network abstractions until there is an actual multiplayer design.
 - infinite authored singular placement outside spawn.
 
 These are extensions, not prerequisites for the shipping client.
+
+## Post-handoff CPU policy
+
+Generic infinite chunks are intentionally atomic off-scene builds. Do not add
+`requestAnimationFrame`/idle sleeps inside the generic chunk factory merely to
+make it "cooperative": a normal generic chunk is millisecond-scale work and
+nested yielding can cost orders of magnitude more wall-clock time than the work
+itself. The live world streamer owns the single scheduling budget and yields
+only between complete chunks.
+
+Current runtime policy keeps the local render ring urgent, then fills the
+prefetch ring. A pump is bounded by both a chunk cap and a millisecond budget;
+a fast client therefore builds several chunks per rendered frame while a slow
+client naturally completes fewer. Visual and physics publication remain one
+atomic commit per chunk.

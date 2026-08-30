@@ -5607,10 +5607,16 @@ const CONFIG = {
         prefetchRadiusChunks: 3,
         retentionRadiusChunks: 4,
         landmarkSpacingChunks: 3,
-        urgentPumpChunks: 4,
-        prefetchPumpChunks: 3,
-        warmPumpChunks: 1,
-        warmCooldownMs: 90,
+        // The generic factory builds a complete off-scene chunk in roughly
+        // millisecond-scale CPU time on desktop. Keep chunk construction atomic
+        // and budget the OUTER pump instead of inserting rAF sleeps inside it.
+        urgentPumpChunks: 24,
+        prefetchPumpChunks: 16,
+        warmPumpChunks: 6,
+        urgentBuildBudgetMs: 12,
+        prefetchBuildBudgetMs: 8,
+        warmBuildBudgetMs: 4,
+        warmCooldownMs: 0,
     },
 
     lighting: {
@@ -16109,9 +16115,12 @@ infiniteChunkFactory = createInfiniteCityChunkFactory({
     // to keep the streamed world visually anchored, sparse enough that the
     // authored origin district still feels special.
     landmarkSpacingChunks: CONFIG.streaming.landmarkSpacingChunks,
-    // A generic chunk remains atomic to the player, but its off-scene build is
-    // cooperative so a weak client keeps painting/input between construction slices.
-    yieldControl: (phase, done, total) => testYieldIfNeeded(phase, done, total),
+    // Generic chunks are deliberately small/instanced and build off-scene in
+    // millisecond-scale bursts. Keep each chunk atomic; the OUTER live-world
+    // pump enforces the frame budget between completed chunks. Multiple nested
+    // rAF yields here were the reason post-handoff streaming looked inexplicably
+    // slower than the much heavier authored spawn build.
+    yieldControl: null,
 });
 worldChunkStreamer = createWorldChunkStreamer({
     chunkSize: STREAM_CHUNK_SIZE,
@@ -16126,7 +16135,9 @@ worldChunkStreamer = createWorldChunkStreamer({
     buildChunk: chunk => infiniteChunkFactory.build(chunk),
     commitChunk: (chunk, payload) => infiniteChunkFactory.commit(chunk, payload),
     unloadChunk: (chunk, payload) => infiniteChunkFactory.unload(chunk, payload),
-    yieldControl: phase => testYieldIfNeeded(phase, 1, 1),
+    // No unconditional per-chunk frame sleep. pump({ maxMillis }) is the single
+    // scheduler authority for post-handoff CPU usage.
+    yieldControl: null,
     onChunkState: (chunk, state) => {
         if (state === 'ready' || state === 'unloaded') {
             console.log(`[world] chunk ${chunk.key} ${state} · weirdness=${chunk.weirdness.sampled.toFixed(3)}`);
@@ -16338,8 +16349,19 @@ function pumpWorldChunksAggressively() {
         : !prefetchWarm
             ? CONFIG.streaming.prefetchPumpChunks
             : CONFIG.streaming.warmPumpChunks;
+    const maxMillis = !renderWarm
+        ? CONFIG.streaming.urgentBuildBudgetMs
+        : !prefetchWarm
+            ? CONFIG.streaming.prefetchBuildBudgetMs
+            : CONFIG.streaming.warmBuildBudgetMs;
     const warmCooldownMs = renderWarm && prefetchWarm ? CONFIG.streaming.warmCooldownMs : 0;
-    worldChunkPumpPromise = worldChunkStreamer.pump({ maxChunks })
+    worldChunkPumpPromise = worldChunkStreamer.pump({ maxChunks, maxMillis })
+        .then(builtAny => {
+            if (!builtAny) return;
+            const after = worldChunkStreamer.stats();
+            const t = after.throughput;
+            console.log(`[world-perf] pump ${t.lastPumpBuilt} chunk(s) in ${t.lastPumpMs.toFixed(1)}ms · avg build ${t.avgBuildMs.toFixed(2)}ms · render ${after.localRenderRing.ready}/${after.localRenderRing.total} · prefetch ${after.localPrefetchRing.ready}/${after.localPrefetchRing.total}`);
+        })
         .catch(error => console.error('[world] chunk pump failed', error))
         .finally(() => {
             worldChunkPumpPromise = null;

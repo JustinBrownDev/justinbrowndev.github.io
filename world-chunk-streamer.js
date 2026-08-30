@@ -55,6 +55,11 @@ export function createWorldChunkStreamer({
     let unloadCount = 0;
     let pruneCount = 0;
     let failureCount = 0;
+    let buildCount = 0;
+    let totalBuildMs = 0;
+    let totalCommitMs = 0;
+    let lastPumpBuilt = 0;
+    let lastPumpMs = 0;
 
     const keyOf = worldChunkKey;
     const coordsForWorld = (x, z) => ({ x: Math.floor((x + chunkSize * 0.5) / chunkSize), z: Math.floor((z + chunkSize * 0.5) / chunkSize) });
@@ -164,13 +169,22 @@ export function createWorldChunkStreamer({
         state(chunk, CHUNK_STATE.BUILDING);
         chunk.buildOrder = ++buildSerial;
         try {
+            // A generic chunk is intentionally atomic. The factory builds it
+            // off-scene, normally in only a few milliseconds, then this method
+            // publishes visuals + physics together. Do NOT force an animation-
+            // frame yield inside every chunk: the outer pump owns the frame
+            // budget and can usually finish several chunks per frame.
+            const buildStarted = performance.now();
             const payload = await buildChunk(chunk);
+            totalBuildMs += performance.now() - buildStarted;
+            buildCount++;
             chunk.payload = payload ?? null;
             state(chunk, CHUNK_STATE.COMMITTING);
+            const commitStarted = performance.now();
             if (commitChunk) await commitChunk(chunk, chunk.payload);
+            totalCommitMs += performance.now() - commitStarted;
             chunk.readyAt = performance.now();
             state(chunk, CHUNK_STATE.READY);
-            if (yieldControl) await yieldControl(`${label} ${chunk.key} ready`, 1, 1);
             return chunk;
         } catch (error) {
             chunk.error = error;
@@ -224,18 +238,20 @@ export function createWorldChunkStreamer({
             }
             chunks.delete(chunk.key);
             pruneCount++;
-            if (yieldControl) await yieldControl(`unloading world chunk ${chunk.key}`, 1, pending.length);
         }
     }
 
-    async function pump({ maxChunks = 1 } = {}) {
+    async function pump({ maxChunks = 1, maxMillis = Infinity } = {}) {
         if (busy || disposed) return false;
         busy = true;
+        const pumpStarted = performance.now();
         try {
             const center = ensureNeighborhood();
             await unloadFarChunks(center);
             let built = 0;
-            while (built < maxChunks && !disposed) {
+            const chunkCap = Number.isFinite(maxChunks) ? Math.max(0, Math.floor(maxChunks)) : Infinity;
+            const timeCap = Number.isFinite(maxMillis) ? Math.max(0, maxMillis) : Infinity;
+            while (built < chunkCap && !disposed) {
                 // The player may cross a chunk boundary while an earlier chunk
                 // is cooperatively building. Refresh the queue before every
                 // selection so a long pump follows the player instead of
@@ -245,7 +261,13 @@ export function createWorldChunkStreamer({
                 if (!next) break;
                 await buildOne(next, 'streaming');
                 built++;
+                // Budget only between complete chunks. This preserves atomic
+                // chunk commits while allowing a fast machine to crunch through
+                // many ~millisecond chunks in the same rendered frame.
+                if (built > 0 && performance.now() - pumpStarted >= timeCap) break;
             }
+            lastPumpBuilt = built;
+            lastPumpMs = performance.now() - pumpStarted;
             return built > 0;
         } finally {
             busy = false;
@@ -314,6 +336,15 @@ export function createWorldChunkStreamer({
             pruned: pruneCount,
             failures: failureCount,
             busy,
+            throughput: {
+                builds: buildCount,
+                totalBuildMs,
+                totalCommitMs,
+                avgBuildMs: buildCount ? totalBuildMs / buildCount : 0,
+                avgCommitMs: buildCount ? totalCommitMs / buildCount : 0,
+                lastPumpBuilt,
+                lastPumpMs,
+            },
             localRenderRing: readyWithinRadius(renderRadiusChunks),
             localPrefetchRing: readyWithinRadius(prefetchRadiusChunks),
             states: counts,

@@ -11,11 +11,10 @@ const physics = {
   registerOwnedWorld(id, data) { owners.set(id, data); },
   unregisterOwnedWorld(id) { return owners.delete(id); },
 };
-let yields = 0;
 const factory = createInfiniteCityChunkFactory({
   THREE, scene, playerPhysics: physics, worldSeed, chunkSize: 64,
   landmarkSpacingChunks: 3,
-  yieldControl: async () => { yields++; },
+  yieldControl: null,
 });
 
 function chunk(x, z) {
@@ -85,7 +84,7 @@ assert.equal(scene.children.includes(payloadA.root), false, 'build must stay off
 assert.equal(owners.has(payloadA.ownerId), false, 'build must not publish physics before commit');
 assert.ok(payloadA.entities.length > 0, 'chunk must expose stable high-level entity metadata');
 assert.equal(new Set(payloadA.entities.map(e => e.id)).size, payloadA.entities.length, 'entity ids must be unique inside chunk');
-assert.ok(yields > 0, 'off-scene chunk construction must yield cooperatively');
+assert.equal(scene.children.includes(payloadA.root), false, 'atomic off-scene build must remain invisible until commit');
 await factory.commit(a, payloadA);
 assert.equal(scene.children.includes(payloadA.root), true, 'commit must publish complete root atomically');
 assert.equal(owners.has(payloadA.ownerId), true, 'commit must publish chunk-owned collision');

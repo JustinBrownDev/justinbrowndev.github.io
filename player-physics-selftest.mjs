@@ -200,6 +200,46 @@ function runLateColliderSync() {
 const lateCollider = runLateColliderSync();
 assert.ok(lateCollider.position.x < 0.55, `late-streamed prop should enter physics broadphase after sync, x=${lateCollider.position.x}`);
 
+
+function runOwnedChunkLifecycle() {
+  const position = { x: 0, y: 1.65, z: 0 };
+  const physics = makeController(position, emptyWorld({ ownedCompactionThreshold: 8 }));
+  const streamedProp = { x: 1, z: 0, radius: 0.3, height: 1.0 };
+  physics.registerOwnedWorld('chunk:1,0', { props: [streamedProp] });
+  for (let i = 0; i < 60; i++) physics.step(1 / 60, 2, 0);
+  const blockedX = position.x;
+
+  physics.unregisterOwnedWorld('chunk:1,0');
+  position.x = 0; position.z = 0; position.y = 1.65;
+  physics.syncFromPosition({ resetVelocity: true });
+  for (let i = 0; i < 60; i++) physics.step(1 / 60, 2, 0);
+  const unloadedX = position.x;
+
+  // Re-registering an un-compacted owner reactivates the exact prior collider
+  // record instead of duplicating it in the broadphase.
+  physics.registerOwnedWorld('chunk:1,0', { props: [{ x: 99, z: 99, radius: 1, height: 1 }] });
+  position.x = 0; position.z = 0; position.y = 1.65;
+  physics.syncFromPosition({ resetVelocity: true });
+  for (let i = 0; i < 60; i++) physics.step(1 / 60, 2, 0);
+  const revisitedX = position.x;
+
+  physics.unregisterOwnedWorld('chunk:1,0');
+  for (let i = 0; i < 8; i++) {
+    const id = `dead:${i}`;
+    physics.registerOwnedWorld(id, { props: [{ x: 20 + i, z: 20, radius: 0.2, height: 0.5 }] });
+    physics.unregisterOwnedWorld(id);
+  }
+  const compacted = physics.compactOwnedWorld();
+  return { blockedX, unloadedX, revisitedX, stats: physics.ownedWorldStats(), compacted };
+}
+
+const ownedChunk = runOwnedChunkLifecycle();
+assert.ok(ownedChunk.blockedX < 0.55, `resident chunk collider must block, x=${ownedChunk.blockedX}`);
+assert.ok(ownedChunk.unloadedX > 1.0, `unloaded chunk collider must deactivate, x=${ownedChunk.unloadedX}`);
+assert.ok(ownedChunk.revisitedX < 0.55, `revisited chunk collider must reactivate without duplication, x=${ownedChunk.revisitedX}`);
+assert.equal(ownedChunk.stats.inactiveOwners, 0, 'compaction must discard inactive chunk-owner records');
+assert.ok(ownedChunk.stats.owners <= ownedChunk.stats.activeOwners, 'only resident owners should remain after explicit compaction');
+
 const rollback = runInvalidResyncRollback();
 assert.ok(Math.abs(rollback.position.x - rollback.safe.x) < 1e-6, 'invalid resync should return to last safe X, not depenetrate arbitrarily');
 assert.ok(Math.abs(rollback.state.feetY - rollback.safe.feetY) < 1e-6, 'invalid resync should preserve last safe feet Y');
@@ -220,5 +260,6 @@ console.log(JSON.stringify({
   underElevatedProp: underElevatedProp.state,
   lateCollider: lateCollider.state,
   rollback: rollback.state,
+  ownedChunk,
 }, null, 2));
 console.log('player-physics self-tests: PASS');

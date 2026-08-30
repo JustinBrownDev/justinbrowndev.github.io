@@ -414,11 +414,13 @@ export function createProgressiveStaticWorldOptimizer({
     const chunks = new Map();
     const visibleKeys = new Set();
     const pendingLateObjects = [];
+    const dirtyChunks = new Set();
     const canonicalMaterials = new Map();
     const box = new THREE.Box3();
     const size = new THREE.Vector3();
     const center = new THREE.Vector3();
     let enabled = false;
+    let incrementalMode = false;
     let optimizing = false;
     let phase = 'pending';
     let phaseDone = __qp72;
@@ -486,8 +488,10 @@ export function createProgressiveStaticWorldOptimizer({
         }
         const ix = Math.floor(b.centerX / chunkSize);
         const iz = Math.floor(b.centerZ / chunkSize);
+        const key = chunkKey(ix, iz);
         const group = getChunk(ix, iz);
         group.add(obj);
+        dirtyChunks.add(key);
         if (isLate) {
             freezeObject(obj);
             lateObjects++;
@@ -544,6 +548,93 @@ export function createProgressiveStaticWorldOptimizer({
         for (const key of next) visibleKeys.add(key);
     }
 
+    function optimizeChunkGroup(group) {
+        if (!group) return;
+        // Incremental chunks may have been frozen after an earlier commit and
+        // then received another late/static root. Temporarily permit the group
+        // to propagate world matrices, rebatch everything currently in it, then
+        // freeze the final chunk again.
+        if ('matrixAutoUpdate' in group) group.matrixAutoUpdate = true;
+        if ('matrixWorldAutoUpdate' in group) group.matrixWorldAutoUpdate = true;
+        group.updateMatrixWorld(true);
+        materialReplacements += dedupeMaterialsInto(group, dynamicMaterials, canonicalMaterials);
+        const stats = batchChunkMeshes(THREE, group, dynamicMaterials, mergeMinMeshes, mergeMaxVertices);
+        batchStats.sourceMeshes += stats.sourceMeshes;
+        batchStats.mergedMeshes += stats.mergedMeshes;
+        batchStats.drawCallsSaved += stats.drawCallsSaved;
+        batchStats.emptyGroupsPruned += pruneEmptyGroups(group);
+        freezeObject(group);
+        dirtyChunks.delete(chunkKey(group.userData.chunkX, group.userData.chunkZ));
+    }
+
+    function beginIncremental() {
+        if (enabled) return controller;
+        enabled = true;
+        incrementalMode = true;
+        optimizing = false;
+        phase = 'streaming world chunks';
+        phaseDone = __qp72;
+        phaseTotal = __qp72;
+        updateVisibility(true);
+        return controller;
+    }
+
+    async function flushDirtyChunks({ yieldControl = null, keys = null, phaseLabel = 'optimizing streamed chunks' } = {}) {
+        if (!enabled) beginIncremental();
+        const allowed = keys ? new Set(keys) : null;
+        const pending = [];
+        for (const key of dirtyChunks) {
+            if (allowed && !allowed.has(key)) continue;
+            const group = chunks.get(key);
+            if (group) pending.push(group);
+        }
+        pending.sort((a, b) => chunkDistanceSq(b) - chunkDistanceSq(a));
+        phaseTotal = pending.length;
+        for (let done = __qp72; pending.length; done++) {
+            const group = pending.pop();
+            optimizeChunkGroup(group);
+            phase = phaseLabel;
+            phaseDone = done + 1;
+            updateVisibility(true);
+            if (yieldControl) await yieldControl(phaseLabel, done + 1, phaseTotal);
+        }
+        if (!dirtyChunks.size && incrementalMode) {
+            phase = 'streaming world chunks';
+            phaseDone = phaseTotal;
+        }
+        return controller;
+    }
+
+    async function finalizeIncremental({ yieldControl = null } = {}) {
+        if (!enabled) beginIncremental();
+        optimizing = true;
+
+        while (pendingLateObjects.length) placeObject(pendingLateObjects.shift(), true);
+        await flushDirtyChunks({ yieldControl, phaseLabel: 'finalizing streamed chunks' });
+
+        // Large/static globals (the city-sized base plane, fixed lights, etc.)
+        // intentionally never belonged to a spatial chunk. Freeze them one root
+        // at a time without disabling scene-wide matrix updates: async assets and
+        // deferred decoration are still allowed to arrive after this point.
+        const globalRoots = [...scene.children].filter(obj => !obj.userData?.__perfChunkGroup && !dynamicRoots.has(obj));
+        phaseTotal = globalRoots.length;
+        for (let done = __qp72; done < globalRoots.length; done++) {
+            const obj = globalRoots[done];
+            materialReplacements += dedupeMaterialsInto(obj, dynamicMaterials, canonicalMaterials);
+            freezeObject(obj);
+            phase = 'finalizing streamed globals';
+            phaseDone = done + 1;
+            updateVisibility(true);
+            if (yieldControl) await yieldControl(phase, done + 1, phaseTotal);
+        }
+
+        optimizing = false;
+        phase = 'ready';
+        phaseDone = phaseTotal;
+        updateVisibility(true);
+        return controller;
+    }
+
     async function optimize({ yieldControl = null } = {}) {
         if (enabled || optimizing) return controller;
         optimizing = true;
@@ -582,13 +673,7 @@ export function createProgressiveStaticWorldOptimizer({
                 reprioritizeChunks = false;
             }
             const group = pendingChunks.pop();
-            materialReplacements += dedupeMaterialsInto(group, dynamicMaterials, canonicalMaterials);
-            const s = batchChunkMeshes(THREE, group, dynamicMaterials, mergeMinMeshes, mergeMaxVertices);
-            batchStats.sourceMeshes += s.sourceMeshes;
-            batchStats.mergedMeshes += s.mergedMeshes;
-            batchStats.drawCallsSaved += s.drawCallsSaved;
-            batchStats.emptyGroupsPruned += pruneEmptyGroups(group);
-            freezeObject(group);
+            optimizeChunkGroup(group);
             reprioritizeChunks = await yieldStep('optimizing static world · merging nearest chunks', done + 1, phaseTotal);
         }
 
@@ -622,6 +707,9 @@ export function createProgressiveStaticWorldOptimizer({
 
     const controller = {
         optimize,
+        beginIncremental,
+        flushDirtyChunks,
+        finalizeIncremental,
         updateVisibility,
         setDrawDistance(value) {
             const next = Number(value);
@@ -651,6 +739,8 @@ export function createProgressiveStaticWorldOptimizer({
                 lateObjects,
                 materialReplacements,
                 uniqueMaterials: canonicalMaterials.size,
+                dirtyChunks: dirtyChunks.size,
+                incrementalMode,
                 optimizing,
                 phase,
                 phaseDone,

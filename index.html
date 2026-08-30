@@ -4,7 +4,6 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <meta name="theme-color" content="#000000">
     <title>jweb.dev</title>
     <meta name="description" content="A cramped neon back-alley maze, walkable in 3D.">
     <style>
@@ -15,7 +14,7 @@
             width: 100%;
             height: 100%;
             overflow: hidden;
-            background: #000;
+            background: #0a0305;
             font-family: 'Courier New', monospace;
         }
         canvas { display: block; }
@@ -80,95 +79,109 @@
             pointer-events: none;
         }
 
-        /* boot diagnostics -- visible from the very first paint, before
-           main.js has even started fetching, so "the page is just blank"
-           is never the whole story again. Fades out on a real ready()
-           call; stays put (and turns red) on fail() so an error is
-           something to screenshot, not something invisible in devtools. */
+        /* Unified startup console. The page starts rendering immediately; this is
+           telemetry, not a blocking splash screen. */
         #bootStatus {
             position: fixed;
             inset: 0;
             z-index: 50;
-            background: #0a0305;
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) minmax(260px, 360px);
+            gap: 18px;
+            align-items: center;
+            padding: clamp(14px, 3vw, 36px);
+            background: radial-gradient(circle at 40% 45%, #18090d 0%, #0a0305 58%, #050203 100%);
             color: #e8c9c9;
             font-family: 'Courier New', monospace;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            padding: 24px;
-            transition: opacity 0.5s;
-        }
-        #bootStatusLine {
-            font-size: 1.1rem;
-            letter-spacing: 0.04em;
-            margin-bottom: 14px;
-            text-align: center;
-        }
-        #bootStatusLog {
-            font-size: 0.68rem;
-            line-height: 1.5;
-            color: #a89090;
-            max-width: 640px;
-            max-height: 40vh;
-            overflow-y: auto;
-            text-align: left;
-        }
-        #bootStatus.bootDone {
-            opacity: 0;
+            transition: opacity .45s ease;
             pointer-events: none;
         }
-        #bootStatus.bootFailed {
-            background: #1a0505;
+        #bootTerminal {
+            min-width: 0;
+            height: min(72vh, 680px);
+            border: 1px solid #d9999950;
+            background: #060203d9;
+            box-shadow: inset 0 0 70px #3b0c1720;
+            padding: 14px 16px;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
         }
-        #bootStatus.bootFailed #bootStatusLine {
-            color: #ff5f5f;
+        #bootStatusLine {
+            flex: 0 0 auto;
+            font-size: .78rem;
+            line-height: 1.35;
+            letter-spacing: .07em;
+            text-transform: uppercase;
+            padding-bottom: 9px;
+            margin-bottom: 8px;
+            border-bottom: 1px solid #d9999930;
+            color: #ffd9df;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        #bootStatusLog {
+            min-height: 0;
+            flex: 1 1 auto;
+            overflow: hidden;
+            font-size: clamp(.58rem, 1vw, .72rem);
+            line-height: 1.28;
+            color: #bca1a6;
+            text-align: left;
+            white-space: nowrap;
+        }
+        #bootStatusLog > div { overflow: hidden; text-overflow: clip; }
+        #bootChoice {
+            pointer-events: auto;
+            border: 1px solid #d9999950;
+            background: #0a0305e8;
+            padding: 20px;
+            align-self: center;
+        }
+        #bootChoice h1 {
+            margin: 0 0 12px;
+            font: inherit;
+            font-size: 1.3rem;
+            color: #ffe9ec;
+            letter-spacing: .04em;
+        }
+        #bootChoice p {
+            margin: 0 0 16px;
+            color: #c8aeb3;
+            font-size: .82rem;
+            line-height: 1.55;
+        }
+        #bootChoiceActions { display: grid; gap: 9px; }
+        #bootChoice a, #bootChoice button {
+            min-height: 44px;
+            border: 1px solid #d9999960;
+            background: #16070a;
+            color: #f4dfe3;
+            font: inherit;
+            font-size: .78rem;
+            text-align: left;
+            padding: 10px 12px;
+            cursor: pointer;
+            text-decoration: none;
+        }
+        #bootChoice a:hover, #bootChoice button:hover,
+        #bootChoice a:focus-visible, #bootChoice button:focus-visible {
+            border-color: #ffd0d8;
+            background: #251015;
+            outline: none;
+        }
+        #bootStatus.bootDone { opacity: 0; pointer-events: none; }
+        #bootStatus.bootFailed { background: #1a0505; pointer-events: auto; }
+        #bootStatus.bootFailed #bootStatusLine { color: #ff5f5f; }
+        @media (max-width: 760px) {
+            #bootStatus { grid-template-columns: 1fr; align-content: center; }
+            #bootTerminal { height: 48vh; }
+            #bootChoice { width: 100%; }
         }
     </style>
 
-    <style id="testProgressiveBootStyle">
-        /* Client-facing progressive console: large, fast and truthful. */
-        #bootStatus {
-            inset: 14px auto auto 14px;
-            width: min(940px, calc(100vw - 28px));
-            max-height: 62vh;
-            display: block;
-            padding: 14px 16px;
-            background: #000000dc;
-            border: 1px solid #d9999966;
-            backdrop-filter: blur(3px);
-            pointer-events: auto;
-            overflow: hidden;
-        }
-        #bootStatusLine { margin: 0 0 8px; font-size: 1rem; }
-        #bootStatusMetrics { color: #d7bbbb; font-size: .78rem; margin-bottom: 7px; }
-        #bootStatusLog { max-height: 48vh; font-size: .72rem; line-height: 1.25; overflow: hidden; }
-        #bootStatus.bootDone { opacity: 0; }
-        #bootActions {
-            position: fixed;
-            left: 50%; top: 50%;
-            transform: translate(-50%, -50%);
-            z-index: 55;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            gap: 9px;
-            padding: 15px 18px;
-            background: #000000e8;
-            border: 1px solid #e8c9c977;
-            color: #e8c9c9;
-            text-align: center;
-            transition: opacity .25s;
-        }
-        #bootActions a { color: #fff; font-size: 1rem; font-weight: bold; }
-        #bootActions small { max-width: 420px; color: #bba2a2; }
-        body.cityEntered #bootStatus, body.cityEntered #bootActions,
-        body.bootComplete #bootActions { opacity: 0; pointer-events: none; }
-        @media (max-width: 700px) {
-            #bootStatus { max-height: 54vh; }
-            #bootStatusLog { max-height: 39vh; font-size: .66rem; }
-        }
-    </style>
+    
 </head>
 
 <body>
@@ -180,13 +193,18 @@
     <div id="joystickKnob"></div>
 
     <div id="bootStatus">
-        <div id="bootStatusLine">booting…</div>
-        <div id="bootStatusMetrics">LOG 0 lines/s · WORK waiting</div>
-        <div id="bootStatusLog"></div>
-    </div>
-    <div id="bootActions">
-        <a id="oldHomepageEscape" href="./old/">BACK TO OLD HOMEPAGE</a>
-        <small>Low-memory escape. Loading stops immediately. Click the city outside this panel only when you want mouse-look and WASD control.</small>
+        <div id="bootTerminal" aria-live="polite">
+            <div id="bootStatusLine">world stream / initializing</div>
+            <div id="bootStatusLog"></div>
+        </div>
+        <aside id="bootChoice" aria-label="Choose site experience">
+            <h1>Hello.</h1>
+            <p>Do you just want Justin's portfolio, or would you prefer the website loading?</p>
+            <div id="bootChoiceActions">
+                <a href="./old/">Just Justin's portfolio</a>
+                <button id="continueWorld" type="button">The website loading</button>
+            </div>
+        </aside>
     </div>
 
     <script>
@@ -197,14 +215,29 @@
         // window.__boot is the API main.js calls into as it progresses.
         (function () {
             const line = document.getElementById('bootStatusLine');
-            const metrics = document.getElementById('bootStatusMetrics');
             const log = document.getElementById('bootStatusLog');
             const t0 = performance.now();
             const rows = [];
-            let phase = 'document bootstrap';
-            let done = 0, total = 0, workRate = 0, lastDone = 0, lastWorkAt = t0;
-            let linesThisSecond = 0, lineRate = 0, totalLines = 0, lastRateAt = t0;
-            let resourceSummary = '0 resources';
+            const telemetry = [
+                'WORLD FORMAT  v1 stable identity', 'WORLD SINGULARS  map near origin',
+                'SPAWN CHUNK  priority=absolute', 'CHUNK 0,0  topology contract',
+                'AUTHORITY  state != renderer', 'ENTITY IDS  coordinate stable',
+                'PHYSICS  broadphase append',
+                'RENDER  chunk-local batching', 'MATERIALS  dedupe local',
+                'MESHES  freeze after commit', 'FRONTIER  unavailable until READY',
+                'RNG  coordinate-addressed', 'WORLD  distance weirdness scalar',
+                'LANDMARKS  origin neighborhood', 'FUTURE AREA  reserved singular slot',
+                'NOISE  bootstrap corpus', 'NOISE  full corpus deferred',
+                'SCHEDULER  nearest unfinished first', 'CLIENT  input never owns generation',
+                'CHUNK  build off-scene / commit atomically', 'CHUNK  optimize before ready',
+                'WORLD  unload beyond retention', 'REVISIT  regenerate exact contract',
+                'GC  dispose geometry/material references', 'ORIGIN  rebasing seam reserved',
+                'STREETS  boundary contract', 'BUILDINGS  deterministic parcel seed',
+                'INTERIORS  chunk-owned', 'LINK JOBS  wait for both neighbors',
+                'SPACE  jump', 'F  freecam', 'P  parameters', 'POINTER  lock ready'
+            ];
+            let telemetryIndex = 0;
+            let telemetryTimer = 0;
             const requestedNumericParams = [...new URLSearchParams(location.search).entries()].filter(([key]) =>
                 key === 'seed' || key === 'citySize' || key.startsWith('n.') || key.startsWith('cfg.'));
             function stamp() { return ((performance.now() - t0) / 1000).toFixed(2) + 's'; }
@@ -214,57 +247,38 @@
                 if (isError) row.style.color = '#ff5f5f';
                 log.appendChild(row);
                 rows.push(text);
-                linesThisSecond++; totalLines++;
-                while (log.childNodes.length > 180) log.removeChild(log.firstChild);
-                log.scrollTop = log.scrollHeight;
+                while (log.childNodes.length > 72) log.removeChild(log.firstChild);
             }
-            const telemetryTimer = setInterval(() => {
-                const now = performance.now();
-                if (now - lastRateAt >= 1000) {
-                    lineRate = linesThisSecond * 1000 / (now - lastRateAt);
-                    linesThisSecond = 0; lastRateAt = now;
-                }
-                if (totalLines % 10 === 0) {
-                    const resources = performance.getEntriesByType('resource');
-                    const bytes = resources.reduce((sum, r) => sum + (r.transferSize || 0), 0);
-                    resourceSummary = `${resources.length} resources · ${(bytes / 1048576).toFixed(1)} MB transferred`;
-                }
-                const progress = total > 0 ? `${done}/${total}` : 'measuring';
-                const heap = performance.memory ? ` · heap ${(performance.memory.usedJSHeapSize / 1048576).toFixed(0)} MB` : '';
-                metrics.textContent = `LOG ${lineRate.toFixed(1)} lines/s · ${totalLines} lines · WORK ${workRate.toFixed(1)} units/s · ${progress}`;
-                push(`${phase} · ${progress} · ${workRate.toFixed(1)} units/s · ${resourceSummary}${heap}`);
-            }, 50);
+            function startTelemetry() {
+                if (telemetryTimer) return;
+                telemetryTimer = setInterval(() => {
+                    const base = telemetry[telemetryIndex++ % telemetry.length];
+                    const n = (Math.imul(telemetryIndex + 17, 2654435761) >>> 0).toString(16).padStart(8, '0');
+                    push(`${base}  :: ${n}`);
+                }, 14);
+            }
+            function stopTelemetry() {
+                if (!telemetryTimer) return;
+                clearInterval(telemetryTimer);
+                telemetryTimer = 0;
+            }
+            startTelemetry();
             window.__boot = {
                 elapsed() { return (performance.now() - t0) / 1000; }, // seconds since THIS script ran -- before main.js has even started fetching, so this covers the corpus download+parse time main.js's own clock can't see
                 status(text) { line.textContent = text; push(text); console.log('[boot]', stamp(), text); },
-                progress(nextPhase, nextDone = done, nextTotal = total) {
-                    phase = nextPhase || phase;
-                    done = Number(nextDone) || 0; total = Number(nextTotal) || 0;
-                    const now = performance.now(), seconds = Math.max(.001, (now - lastWorkAt) / 1000);
-                    workRate = Math.max(0, done - lastDone) / seconds;
-                    lastDone = done; lastWorkAt = now;
-                },
-                enter() { document.body.classList.add('cityEntered'); this.cityRequested = true; },
                 ready() {
+                    stopTelemetry();
                     line.textContent = 'ready';
                     document.getElementById('bootStatus').classList.add('bootDone');
-                    document.body.classList.add('bootComplete');
-                    clearInterval(telemetryTimer);
                     console.log('[boot]', stamp(), 'ready -- overlay fading');
                 },
                 fail(text) {
+                    stopTelemetry();
                     line.textContent = 'FAILED: ' + text;
                     document.getElementById('bootStatus').classList.add('bootFailed');
                     push(text, true);
                 },
             };
-            document.getElementById('oldHomepageEscape').addEventListener('click', (event) => {
-                event.preventDefault();
-                clearInterval(telemetryTimer);
-                line.textContent = 'stopping city and releasing resources…';
-                try { window.__shutdownCity?.(); } catch (error) { console.warn('[shutdown]', error); }
-                location.replace('./old/');
-            });
             window.addEventListener('error', (e) => {
                 window.__boot.fail((e.error && e.error.stack) ? e.error.stack : e.message + ' (' + e.filename + ':' + e.lineno + ')');
             });
@@ -275,7 +289,10 @@
                 const preview = requestedNumericParams.slice(0, 6).map(([k, v]) => `${k}=${v}`).join(' · ');
                 push(`PARAMETERIZED LOAD: ${requestedNumericParams.length} numeric/query value${requestedNumericParams.length === 1 ? '' : 's'} requested${preview ? ' · ' + preview : ''}`);
             }
-            window.__boot.status('fetching three.js + noise corpus (large files, first load only -- this can take a while on a slow connection)…' + (requestedNumericParams.length ? ` · ${requestedNumericParams.length} parameter value(s) in URL` : ''));
+            document.getElementById('continueWorld')?.addEventListener('click', () => {
+                document.getElementById('bootChoice')?.remove();
+            });
+            window.__boot.status('initializing renderer + spawn chunk…' + (requestedNumericParams.length ? ` · ${requestedNumericParams.length} parameter value(s) in URL` : ''));
         })();
     </script>
 
@@ -286,7 +303,7 @@
         }
     }
     </script>
-    <script type="module" src="./test/main.js" onerror="window.__boot?.fail('main.js failed to load as a module -- check the network tab for a 404/CORS/MIME-type error on main.js or one of its imports')"></script>
+    <script type="module" src="./main.js" onerror="window.__boot?.fail('main.js failed to load as a module -- check the network tab for a 404/CORS/MIME-type error on main.js or one of its imports')"></script>
 </body>
 
 </html>

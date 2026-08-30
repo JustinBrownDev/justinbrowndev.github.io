@@ -1,92 +1,78 @@
 import fs from 'node:fs';
-import crypto from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.dirname(here);
 const main = fs.readFileSync(path.join(root, 'main.js'), 'utf8');
-const test = fs.readFileSync(path.join(here, 'main.js'), 'utf8');
-const html = fs.readFileSync(path.join(here, 'index.html'), 'utf8');
+const testMain = fs.readFileSync(path.join(here, 'main.js'), 'utf8');
+const testHtml = fs.readFileSync(path.join(here, 'index.html'), 'utf8');
+const indexHtml = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+const syncHtml = fs.readFileSync(path.join(root, 'synchronous', 'index.html'), 'utf8');
+const syncMain = fs.readFileSync(path.join(root, 'synchronous', 'main.js'), 'utf8');
+const contract = fs.readFileSync(path.join(root, 'world-contract.js'), 'utf8');
+const streamer = fs.readFileSync(path.join(root, 'world-chunk-streamer.js'), 'utf8');
+const chunks = fs.readFileSync(path.join(root, 'infinite-city-chunks.js'), 'utf8');
 const failures = [];
 const ok = (condition, message) => { if (!condition) failures.push(message); };
 
-function sha256(text) { return crypto.createHash('sha256').update(text).digest('hex'); }
-function functionSource(source, name) {
-  const sig = `function ${name}(`;
-  const start = source.indexOf(sig);
-  if (start < 0) return null;
-  const brace = source.indexOf('{', start);
-  let depth = 0, quote = null, escape = false, lineComment = false, blockComment = false;
-  for (let i = brace; i < source.length; i++) {
-    const c = source[i], n = source[i + 1];
-    if (lineComment) { if (c === '\n') lineComment = false; continue; }
-    if (blockComment) { if (c === '*' && n === '/') { blockComment = false; i++; } continue; }
-    if (quote) {
-      if (escape) { escape = false; continue; }
-      if (c === '\\') { escape = true; continue; }
-      if (c === quote) quote = null;
-      continue;
-    }
-    if (c === '/' && n === '/') { lineComment = true; i++; continue; }
-    if (c === '/' && n === '*') { blockComment = true; i++; continue; }
-    if (c === '"' || c === "'" || c === '`') { quote = c; continue; }
-    if (c === '{') depth++;
-    if (c === '}' && --depth === 0) return source.slice(start, i + 1);
-  }
-  return null;
-}
+ok(testMain.trim() === "import '../main.js';", '/test must reuse the root runtime instead of carrying a divergent copy');
+ok(testHtml.includes('<base href="../">'), '/test must resolve root assets through <base href="../">');
+ok(testHtml.includes('src="./test/main.js"'), '/test must launch its tiny root-runtime bridge');
 
-const forbidden = [
-  /\bLOTS\s*=\s*6\b/,
-  /world-worker\.js/,
-  /fake building/i,
-  /proxy city/i,
-  /regular-grid/i,
-];
-for (const pattern of forbidden) ok(!pattern.test(test), `forbidden surrogate marker present: ${pattern}`);
+ok(main.includes("import * as BOOTSTRAP_NOISE from './noise-data-bootstrap.js';"), 'spawn path must use compact bootstrap corpus');
+ok(!/^import .*noise-data-hard/m.test(main), 'full archival corpus must not be a static startup import');
+ok(main.includes("import('./noise-data-hard.js')"), 'full archival local corpus must remain hydratable after runtime start');
+ok(main.includes("import('./noise-data-remote.js')"), 'full archival remote corpus must remain hydratable after runtime start');
+ok(main.includes("import('./noise-data-poetry.js')"), 'full archival poetry corpus must remain hydratable after runtime start');
 
-ok(html.includes('<base href="../">'), 'test index must root runtime assets with <base href="../">');
-ok(html.includes('src="./test/main.js"'), 'test index must launch test/main.js');
-ok(test.includes("import('../noise-data-hard.js')"), 'local noise corpus must be the real root module');
-ok(test.includes("import('../noise-data-remote.js')"), 'remote noise corpus must be the real root module');
-ok(test.includes("import('../noise-data-poetry.js')"), 'poetry corpus must be the real root module');
-ok(test.includes("site.signatureType ? buildSignatureSite(site) : addBuildingSite(site);"), 'real BuildingSite dispatch missing');
-ok(test.includes("await testYieldIfNeeded('streaming nearest real buildings'"), 'real building loop is not cooperatively yielding');
-ok(test.includes('async function layOpenCellSurfaces()'), 'real ground generation is not cooperatively yielding');
-ok(test.includes('createProgressiveStaticWorldOptimizer({'), 'real progressive static-world optimizer missing');
-ok(test.includes('createPlayerPhysics({'), 'real player physics missing');
-ok(test.includes("mode: 'full-fidelity-progressive'"), 'progressive runtime telemetry missing');
+ok(main.includes('cols: 13'), 'authored spawn district must remain compact');
+ok(main.includes('rows: 13'), 'authored spawn district must remain compact');
+ok(main.includes('const STREAM_CHUNK_SIZE = Math.max(GRID_W, GRID_H);'), 'stream chunk size must align exactly to authored spawn footprint');
+ok(main.includes('grid[startRow][c] = false') && main.includes('grid[r][startCol] = false'), 'spawn district must expose real cardinal gateways to infinite neighbors');
+ok(main.includes("const SIGNATURE_TYPES = ['artGallery', 'as400Archive', 'justinIndex', 'systemsWorkshop', 'loreShrine', 'futurePlaceholder'];"), 'spawn district must reserve five authored landmarks plus future slot');
+ok(main.includes('entityId: singularEntityId(SEED, type)'), 'singulars must receive stable world identity');
+ok(main.includes('createSpawnSingularManifest(SEED, signatureInstances)'), 'spawn singular manifest must be materialized into chunk 0,0');
 
-// These are architecture/content functions.  Their bodies must be byte-for-byte
-// identical to root: /test may schedule around them, but it may not simplify them.
-for (const name of [
-  'worldToCellIndex',
-  'buildSignaturePlaceholder',
-  'buildSignatureSite',
-  'addBuildingSite',
-  'buildRooftopCatwalks',
-  'buildHangingBridges',
-  'buildTraversalGraph',
-  'validateTraversal',
-]) {
-  const a = functionSource(main, name);
-  const b = functionSource(test, name);
-  ok(!!a && !!b, `${name}: function missing from root or test`);
-  if (a && b) ok(a === b, `${name}: /test changed authoritative function body`);
-}
+ok(contract.includes('export const WORLD_FORMAT_VERSION = 1;'), 'world format must be explicitly versioned');
+ok(contract.includes("export const SPAWN_CHUNK = Object.freeze({ x: 0, z: 0, key: '0,0' });"), 'spawn chunk identity must be stable at origin');
+ok(contract.includes('export function worldChunkOwnerId'), 'chunk ownership ID contract missing');
+ok(contract.includes('export function worldEntityId'), 'stable entity ID contract missing');
+ok(contract.includes('export function worldWeirdnessAt'), 'distance weirdness contract missing');
 
-// Dependency path changes are expected because the copy lives one directory
-// deeper.  No other alternate runtime module should exist in /test.
-const testFiles = fs.readdirSync(here).sort();
-ok(!testFiles.includes('world-worker.js'), 'world-worker.js must not exist in /test');
-ok(!testFiles.includes('app.js'), 'alternate app.js runtime must not exist in /test');
+ok(streamer.includes("UNLOADING: 'unloading'"), 'streamer must have reversible unload lifecycle');
+ok(streamer.includes('createChunkDescriptor({'), 'streamer must consume renderer-agnostic chunk descriptors');
+ok(streamer.includes('chunks.delete(chunk.key)'), 'streamer must prune obsolete chunk metadata after unload/travel');
+ok(streamer.includes('chunks.clear();'), 'streamer dispose must release all scheduler metadata');
+ok(main.includes("pinnedChunkKeys: ['0,0']"), 'authored spawn/singular chunk must remain pinned');
+ok(main.includes('commitChunk: (chunk, payload) => infiniteChunkFactory.commit(chunk, payload)'), 'generic chunks must build off-scene then commit atomically');
+ok(chunks.includes('async function commit(chunk, payload)'), 'generic chunk factory must expose atomic commit seam');
+ok(chunks.includes('worldChunkOwnerId'), 'generic physics/render ownership must use stable world IDs');
+ok(chunks.includes('worldEntityId'), 'generic chunk metadata must expose stable entity IDs');
+ok(chunks.includes('if (yieldControl &&'), 'generic off-scene construction must yield cooperatively');
 
-console.log(`[full-fidelity] root main.js sha256 ${sha256(main)}`);
-console.log(`[full-fidelity] test main.js sha256 ${sha256(test)}`);
+ok(main.includes('createProgressiveStaticWorldOptimizer({'), 'spawn chunk optimizer must remain cooperative');
+ok(main.includes("await testYieldNow('optimizing spawn chunk"), 'optimizer must be explicitly scoped to spawn chunk startup');
+const readyAt = main.indexOf('window.__boot?.ready();');
+const animateAt = main.indexOf('\nanimate();', main.indexOf('Atomic handoff'));
+const traversalScheduleAt = main.indexOf('scheduleTraversalValidation();');
+ok(animateAt >= 0 && readyAt >= 0 && animateAt < readyAt, 'normal runtime must start before the startup overlay is dismissed');
+ok(traversalScheduleAt > readyAt, 'traversal QA must be deferred until after first real interactivity');
+
+ok(indexHtml.includes('Do you just want Justin\'s portfolio, or would you prefer the website loading?'), 'unified startup choice copy missing');
+ok(indexHtml.includes('id="bootTerminal"'), 'startup must use unified terminal presentation');
+ok(indexHtml.includes('ORIGIN  rebasing seam reserved'), 'startup must describe floating-origin support as a reserved seam, not an implemented feature');
+ok(!indexHtml.match(/Photosens/i), 'photosensitivity warning must remain removed');
+ok(!indexHtml.match(/Old Site/i), 'old-site prompt must remain removed');
+
+ok(syncHtml.includes('src="./synchronous/main.js"'), '/synchronous must execute its preserved runtime');
+ok(syncMain.includes("from '../city-performance.js'"), '/synchronous runtime must resolve shared support modules from root');
+ok(syncMain.includes('createStaticWorldOptimizer'), '/synchronous must preserve the old synchronous optimizer path');
+ok(!syncMain.includes('createWorldChunkStreamer'), '/synchronous must not silently import the streaming runtime');
+
 if (failures.length) {
   console.error(`[full-fidelity] FAIL (${failures.length})`);
-  for (const f of failures) console.error(` - ${f}`);
+  for (const failure of failures) console.error(` - ${failure}`);
   process.exit(1);
 }
-console.log('[full-fidelity] PASS: /test changes scheduling, not world/content architecture');
+console.log('[full-fidelity] PASS: root is one-chunk-to-live + infinite stream; /test reuses root; /synchronous remains isolated');

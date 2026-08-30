@@ -1,0 +1,59 @@
+INFINITE CHUNK STREAMING - SHIPPING VALIDATION
+==============================================
+
+Architecture validated
+----------------------
+- Root homepage uses compact authored spawn chunk as the only startup world gate.
+- All current world-singular landmarks plus one future placeholder are confined to spawn neighborhood.
+- Spawn chunk 0,0 is pinned during normal streaming.
+- Infinite procedural chunks are deterministic and coordinate-addressed.
+- Generic chunk build is off-scene; commit publishes scene + owned physics atomically.
+- Chunk unload removes render/physics ownership and scheduler metadata.
+- Stale queued/planned/failed metadata outside retention is pruned.
+- Long-distance travel test keeps scheduler metadata bounded.
+- Neighbor chunks independently agree on boundary road portals.
+- Spawn cardinal gateways align with infinite-neighbor boundary contracts.
+- Distance-from-spawn weirdness gradient is deterministic and available for future generators.
+- Stable versioned chunk/entity/singular IDs are independent from render scheduling.
+- Chunk coordinates avoid 32-bit bitwise wraparound.
+- /test reuses root runtime rather than carrying a divergent engine.
+- /synchronous runs its own preserved old runtime; static and dynamic relative imports resolve to root support files.
+- Large archival noise corpora are not on the static startup import path.
+- Traversal QA is deferred until after normal runtime handoff.
+- Startup GUI is one fast streaming terminal plus the portfolio/site choice panel.
+
+Passing repository checks
+-------------------------
+PASS world-contract-selftest.mjs
+PASS world-chunk-streamer-selftest.mjs
+PASS infinite-city-chunks-selftest.mjs
+PASS player-physics-selftest.mjs
+PASS city-performance-selftest.mjs
+PASS test/progressive-optimizer-selftest.mjs
+PASS test/full-fidelity-selftest.mjs
+PASS test/homepage-priority-selftest.mjs
+PASS parameter-catalog-selftest.mjs (9,328 parameters)
+PASS parameter-system-selftest.mjs
+PASS tdz-boot-audit.cjs main.js (0 hazards)
+PASS tdz-generation-audit.cjs main.js (0 hazards)
+PASS runtime-handoff-audit.cjs main.js (0 hazards)
+PASS node --check on production runtime modules
+PASS production local-import resolution audit
+
+Headless browser limitation
+---------------------------
+A final Chromium smoke attempt was made against a local HTTP server. The container's Chromium GPU
+process cannot initialize EGL/ANGLE/SwiftShader (EGL_NOT_INITIALIZED / xcb display initialization
+failure), so the browser run times out before it can provide a meaningful WebGL application smoke test.
+No application change was made to accommodate this container renderer failure.
+
+Future-facing seams intentionally present, not overbuilt
+--------------------------------------------------------
+- WORLD_FORMAT_VERSION and stable IDs support a later authoritative state source.
+- Build and commit are separate, so a future server can eventually provide state without defining
+  network identity in terms of Three.js objects.
+- Explicit owner lifecycles can later extend to interactions/audio/AI/persistence.
+- Floating/render-origin rebasing is reserved but NOT claimed as implemented.
+- Multiplayer/networking itself is NOT implemented in this shipping pass.
+
+See STREAMING-WORLD-ARCHITECTURE.md for durable invariants.

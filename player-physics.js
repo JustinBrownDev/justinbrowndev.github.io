@@ -148,6 +148,7 @@ export function createPlayerPhysics(options) {
         elevatedPlatforms,
         rampRuns,
         overheadCeilings,
+        isWorldPositionAvailable = null,
     } = options;
 
     const eyeHeight = options.eyeHeight ?? __qp7;
@@ -178,12 +179,10 @@ export function createPlayerPhysics(options) {
 
     let lastSafe = null;
 
-    // Static broadphase. The procedural world is fully built before this
-    // controller is created, so index the expensive support/ceiling/prop
-    // collections once instead of rescanning the entire city on every
-    // physics substep. Items are inserted with the player's contact radius
-    // already baked into their bounds, so point queries cannot miss a valid
-    // edge contact.
+    // Static + append-only broadphase. The controller may now be created as
+    // soon as the first streamed world chunk is committed. Existing geometry
+    // is indexed once here and syncDynamicWorld() extends the same indexes as
+    // later chunks arrive, so no full-city rebuild is required.
     const spatialCellSize = options.spatialCellSize ?? __qp27;
 
     function spatialBucket(index, ix, iz, create = false) {
@@ -223,6 +222,7 @@ export function createPlayerPhysics(options) {
     }
 
     const EMPTY_BUCKET = Object.freeze([]);
+    const physicsItemActive = item => item && item.__physicsDisabled !== true;
     const platformBounds = p => ({
         minX: p.x - p.hx - playerRadius, maxX: p.x + p.hx + playerRadius,
         minZ: p.z - p.hz - playerRadius, maxZ: p.z + p.hz + playerRadius,
@@ -252,11 +252,11 @@ export function createPlayerPhysics(options) {
             minZ: Math.min(seg.z1, seg.z2) - r, maxZ: Math.max(seg.z1, seg.z2) + r,
         };
     };
-    const platformIndex = buildSpatialIndex(elevatedPlatforms, platformBounds);
-    const ceilingIndex = buildSpatialIndex(overheadCeilings, ceilingBounds);
-    const rampIndex = buildSpatialIndex(rampRuns, rampBounds);
-    const propIndex = buildSpatialIndex(propColliders, propBounds);
-    const mazeIndex = buildSpatialIndex(mazeSealWalls, mazeBounds);
+    let platformIndex = buildSpatialIndex(elevatedPlatforms, platformBounds);
+    let ceilingIndex = buildSpatialIndex(overheadCeilings, ceilingBounds);
+    let rampIndex = buildSpatialIndex(rampRuns, rampBounds);
+    let propIndex = buildSpatialIndex(propColliders, propBounds);
+    let mazeIndex = buildSpatialIndex(mazeSealWalls, mazeBounds);
     let indexedPlatformCount = elevatedPlatforms.length;
     let indexedCeilingCount = overheadCeilings.length;
     let indexedRampCount = rampRuns.length;
@@ -301,17 +301,18 @@ export function createPlayerPhysics(options) {
         };
 
         for (const p of querySpatial(platformIndex, x, z)) {
-            if (!platformSupportsAt(p, x, z)) continue;
+            if (!physicsItemActive(p) || !platformSupportsAt(p, x, z)) continue;
             consider(p.y, p.supportKind ?? 'platform');
         }
 
         for (const r of querySpatial(rampIndex, x, z)) {
+            if (!physicsItemActive(r)) continue;
             const y = rampHeightAt(r, x, z);
             if (y !== null) consider(y, 'ramp');
         }
 
         for (const p of querySpatial(propIndex, x, z)) {
-            if (p.height === Infinity || !circleContains(p, x, z, supportMargin)) continue;
+            if (!physicsItemActive(p) || p.height === Infinity || !circleContains(p, x, z, supportMargin)) continue;
             consider(p.height, 'prop');
         }
 
@@ -326,16 +327,17 @@ export function createPlayerPhysics(options) {
         const ys = [__qp33];
 
         for (const p of querySpatial(platformIndex, x, z)) {
-            if (platformSupportsAt(p, x, z)) ys.push(p.y);
+            if (physicsItemActive(p) && platformSupportsAt(p, x, z)) ys.push(p.y);
         }
 
         for (const r of querySpatial(rampIndex, x, z)) {
+            if (!physicsItemActive(r)) continue;
             const y = rampHeightAt(r, x, z);
             if (y !== null) ys.push(y);
         }
 
         for (const p of querySpatial(propIndex, x, z)) {
-            if (p.height === Infinity) continue;
+            if (!physicsItemActive(p) || p.height === Infinity) continue;
             if (circleContains(p, x, z, supportMargin)) ys.push(p.height);
         }
 
@@ -361,12 +363,12 @@ export function createPlayerPhysics(options) {
         let nearest = Infinity;
 
         for (const p of querySpatial(platformIndex, x, z)) {
-            if (!isCeilingSolid(p) || p.y <= fromFeetY + CONTACT_EPS) continue;
+            if (!physicsItemActive(p) || !isCeilingSolid(p) || p.y <= fromFeetY + CONTACT_EPS) continue;
             if (rectContains(p, x, z, playerRadius) && p.y < nearest) nearest = p.y;
         }
 
         for (const c of querySpatial(ceilingIndex, x, z)) {
-            if (c.y <= fromFeetY + CONTACT_EPS) continue;
+            if (!physicsItemActive(c) || c.y <= fromFeetY + CONTACT_EPS) continue;
             if (rectContains(c, x, z, playerRadius) && c.y < nearest) nearest = c.y;
         }
 
@@ -419,6 +421,121 @@ export function createPlayerPhysics(options) {
             addedMazeWalls: indexedMazeCount - before.maze,
         };
     }
+    // Infinite/chunk-owned collision data. These records never depend on the
+    // finite spawn-grid row/column map: a streamed chunk can register its own
+    // local collision primitives, deactivate them on unload, and reactivate
+    // the exact same deterministic records when revisited.
+    const ownedWorld = new Map();
+    const ownedCompactionThreshold = Math.max(8, options.ownedCompactionThreshold ?? 48);
+
+    function normalizedOwnedData(data = {}) {
+        return {
+            platforms: [...(data.platforms || [])],
+            ceilings: [...(data.ceilings || [])],
+            ramps: [...(data.ramps || [])],
+            props: [...(data.props || [])],
+            mazeWalls: [...(data.mazeWalls || [])],
+        };
+    }
+
+    function ownedItems(data) {
+        return [
+            ...data.platforms, ...data.ceilings, ...data.ramps,
+            ...data.props, ...data.mazeWalls,
+        ];
+    }
+
+    function indexOwnedRecord(record) {
+        const add = (list, index, boundsFor) => {
+            for (const item of list) {
+                item.__physicsOwner = record.ownerId;
+                item.__physicsDisabled = !record.active;
+                if (record.active) insertSpatialItem(index, item, boundsFor);
+            }
+        };
+        add(record.data.platforms, platformIndex, platformBounds);
+        add(record.data.ceilings, ceilingIndex, ceilingBounds);
+        add(record.data.ramps, rampIndex, rampBounds);
+        add(record.data.props, propIndex, propBounds);
+        add(record.data.mazeWalls, mazeIndex, mazeBounds);
+    }
+
+    // Rebuild the five streamed broadphase maps from the permanent authored
+    // arrays plus CURRENTLY resident chunk owners. This is intentionally rare
+    // and bounded: unloads are cheap flag flips; after enough dead owners have
+    // accumulated, one compaction makes every collider from forgotten chunks
+    // garbage-collectable instead of retaining an invisible travel history.
+    function compactOwnedWorld() {
+        let removedOwners = 0, removedItems = 0;
+        for (const [ownerId, record] of ownedWorld) {
+            if (record.active) continue;
+            removedOwners++;
+            removedItems += record.items.length;
+            ownedWorld.delete(ownerId);
+        }
+        if (!removedOwners) return { removedOwners: 0, removedItems: 0, ...ownedWorldStats() };
+
+        platformIndex = buildSpatialIndex(elevatedPlatforms, platformBounds);
+        ceilingIndex = buildSpatialIndex(overheadCeilings, ceilingBounds);
+        rampIndex = buildSpatialIndex(rampRuns, rampBounds);
+        propIndex = buildSpatialIndex(propColliders, propBounds);
+        mazeIndex = buildSpatialIndex(mazeSealWalls, mazeBounds);
+        indexedPlatformCount = elevatedPlatforms.length;
+        indexedCeilingCount = overheadCeilings.length;
+        indexedRampCount = rampRuns.length;
+        indexedPropCount = propColliders.length;
+        indexedMazeCount = mazeSealWalls.length;
+
+        for (const record of ownedWorld.values()) indexOwnedRecord(record);
+        return { removedOwners, removedItems, ...ownedWorldStats() };
+    }
+
+    function registerOwnedWorld(ownerId, data = {}) {
+        if (ownerId === undefined || ownerId === null) throw new Error('registerOwnedWorld requires ownerId');
+        const existing = ownedWorld.get(ownerId);
+        if (existing) {
+            for (const item of existing.items) item.__physicsDisabled = false;
+            existing.active = true;
+            return existing;
+        }
+
+        const ownedData = normalizedOwnedData(data);
+        const record = { ownerId, data: ownedData, items: ownedItems(ownedData), active: true };
+        indexOwnedRecord(record);
+        ownedWorld.set(ownerId, record);
+        return record;
+    }
+
+    function unregisterOwnedWorld(ownerId) {
+        const record = ownedWorld.get(ownerId);
+        if (!record) return false;
+        for (const item of record.items) item.__physicsDisabled = true;
+        record.active = false;
+
+        let inactiveOwners = 0;
+        for (const candidate of ownedWorld.values()) if (!candidate.active) inactiveOwners++;
+        if (inactiveOwners >= ownedCompactionThreshold) compactOwnedWorld();
+        return true;
+    }
+
+    function ownedWorldStats() {
+        let activeOwners = 0, activeItems = 0, totalItems = 0;
+        for (const record of ownedWorld.values()) {
+            totalItems += record.items.length;
+            if (!record.active) continue;
+            activeOwners++;
+            activeItems += record.items.length;
+        }
+        return {
+            owners: ownedWorld.size,
+            activeOwners,
+            inactiveOwners: ownedWorld.size - activeOwners,
+            activeItems,
+            totalItems,
+            compactionThreshold: ownedCompactionThreshold,
+        };
+    }
+
     const nearbyBuildingWalls = [];
     function buildingWallsNear(x, z) {
         const { col, row } = worldToCell(x, z);
@@ -438,6 +555,11 @@ export function createPlayerPhysics(options) {
     function bodyBlockedHorizontally(x, z, atFeetY) {
         if (!Number.isFinite(x) || !Number.isFinite(z) || !Number.isFinite(atFeetY)) return true;
         if (Math.abs(x) > boundsHalf || Math.abs(z) > boundsHalf) return true;
+        // Progressive generation exposes a chunk only after its render objects
+        // and collision additions have committed. Treat an uncommitted chunk
+        // as a temporary hard frontier instead of allowing the capsule to walk
+        // into a solid cell whose real wall mesh/collider does not exist yet.
+        if (typeof isWorldPositionAvailable === 'function' && !isWorldPositionAvailable(x, z)) return true;
 
         const bodyBottom = atFeetY;
         const bodyTop = atFeetY + bodyHeight;
@@ -453,6 +575,7 @@ export function createPlayerPhysics(options) {
         }
 
         for (const seg of querySpatial(mazeIndex, x, z)) {
+            if (!physicsItemActive(seg)) continue;
             const yMin = seg.yMin ?? -Infinity;
             const yMax = seg.yMax ?? Infinity;
             if (!verticalOverlap(bodyBottom, bodyTop, yMin, yMax)) continue;
@@ -460,6 +583,7 @@ export function createPlayerPhysics(options) {
         }
 
         for (const p of querySpatial(propIndex, x, z)) {
+            if (!physicsItemActive(p)) continue;
             const minDist = p.radius + playerRadius;
             const dx = x - p.x;
             const dz = z - p.z;
@@ -570,8 +694,8 @@ export function createPlayerPhysics(options) {
             if (hit === null || c.y < hit) hit = c.y;
         };
 
-        for (const p of querySpatial(platformIndex, x, z)) consider(p, isCeilingSolid(p));
-        for (const c of querySpatial(ceilingIndex, x, z)) consider(c, true);
+        for (const p of querySpatial(platformIndex, x, z)) if (physicsItemActive(p)) consider(p, isCeilingSolid(p));
+        for (const c of querySpatial(ceilingIndex, x, z)) if (physicsItemActive(c)) consider(c, true);
         return hit;
     }
 
@@ -777,6 +901,10 @@ export function createPlayerPhysics(options) {
         bufferJump,
         syncFromPosition,
         syncDynamicWorld,
+        registerOwnedWorld,
+        unregisterOwnedWorld,
+        compactOwnedWorld,
+        ownedWorldStats,
         getState,
         supportHeightAt,
         poseIsValid,

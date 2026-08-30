@@ -2368,8 +2368,21 @@ buildSignatureSite = (site) => {
     return step.value;
 };
 
+function sortUnifiedSpawnFabricRefinementNearPlayer() {
+    unifiedSpawnFabricRefinementQueue.sort((a, b) => {
+        const ae = a?.entity, be = b?.entity;
+        const ax = ae?.x ?? a?.chunk?.centerX ?? 0, az = ae?.z ?? a?.chunk?.centerZ ?? 0;
+        const bx = be?.x ?? b?.chunk?.centerX ?? 0, bz = be?.z ?? b?.chunk?.centerZ ?? 0;
+        const adx = ax - camera.position.x, adz = az - camera.position.z;
+        const bdx = bx - camera.position.x, bdz = bz - camera.position.z;
+        return (adx * adx + adz * adz) - (bdx * bdx + bdz * bdz)
+            || String(a?.chunk?.key ?? '').localeCompare(String(b?.chunk?.key ?? ''));
+    });
+}
+
 function pumpUnifiedSpawnFabricRefinement({ maxSteps = QP[1024], maxMillis = QP[1] } = {}) {
     if (!unifiedSpawnFabricRefinementQueue.length) return { steps: QP[1015], pending: QP[1015], ms: QP[1015] };
+    sortUnifiedSpawnFabricRefinementNearPlayer();
     const started = performance.now();
     let steps = QP[1015];
     let cursorGuard = unifiedSpawnFabricRefinementQueue.length;
@@ -3004,9 +3017,24 @@ function sortSpecialPlazaJobsNearPlayer() {
     });
 }
 
+function specialPlazaJobGroundReady(job) {
+    const pos = cellToWorld(job.c, job.r);
+    return groundSurfaceSystem.isWorldPositionReady(pos.x, pos.z);
+}
+
+function promoteNearestGroundReadySpecialPlazaJob() {
+    sortSpecialPlazaJobsNearPlayer();
+    const readyIndex = specialPlazaJobs.findIndex(specialPlazaJobGroundReady);
+    if (readyIndex < 0) return false;
+    if (readyIndex > 0) specialPlazaJobs.unshift(...specialPlazaJobs.splice(readyIndex, 1));
+    return true;
+}
+
 function pumpSpecialPlazaJobs({ maxJobs = QP[1024], maxMillis = QP[1] } = {}) {
     if (!specialPlazaJobs.length) return { jobs: QP[1015], pending: QP[1015], ms: QP[1015], worstMs: specialPlazaWorstMs };
-    sortSpecialPlazaJobsNearPlayer();
+    if (!promoteNearestGroundReadySpecialPlazaJob()) {
+        return { jobs: QP[1015], pending: specialPlazaJobs.length, ms: QP[1015], worstMs: specialPlazaWorstMs };
+    }
     const started = performance.now();
     let steps = QP[1015];
     let jobs = QP[1015];
@@ -4013,7 +4041,7 @@ function maybeReleaseBackgroundEnrichment() {
 }
 
 const WORLD_DIAGNOSTIC_INTERVAL_MS = 2000;
-let worldDiagnosticsNextLogAt = 0;
+let worldDiagnosticsNextLogAt = performance.now() + WORLD_DIAGNOSTIC_INTERVAL_MS;
 let worldDiagnosticsPrevious = null;
 
 function diagnosticRate(current, previous, seconds) {
@@ -4021,9 +4049,13 @@ function diagnosticRate(current, previous, seconds) {
     return (Math.max(0, current - previous) / seconds).toFixed(1) + '/s';
 }
 
-function maybeLogWorldDiagnostics(now, stats = worldChunkStreamer?.stats()) {
-    if (now < worldDiagnosticsNextLogAt || !stats?.richness) return false;
+function maybeLogWorldDiagnostics(now) {
+    if (now < worldDiagnosticsNextLogAt || !worldChunkStreamer) return false;
     worldDiagnosticsNextLogAt = now + WORLD_DIAGNOSTIC_INTERVAL_MS;
+    // Full scene-tree richness inspection is diagnostics-only. Normal frame and
+    // scheduler stats remain counter/ring based and never traverse render trees.
+    const stats = worldChunkStreamer.stats({ includeRichness: true });
+    if (!stats?.richness) return false;
 
     const richness = stats.richness;
     const throughput = stats.throughput ?? {};
@@ -4035,6 +4067,8 @@ function maybeLogWorldDiagnostics(now, stats = worldChunkStreamer?.stats()) {
     const states = stats.states ?? {};
     const assets = adornmentLoadQueue.stats();
     const playerChunk = worldChunkStreamer.playerChunkCoords();
+    const focusKey = `${playerChunk.x},${playerChunk.z}`;
+    const focus = richness.perChunk?.find(chunk => chunk.key === focusKey) ?? null;
     const current = {
         at: now,
         builds: throughput.builds ?? 0,
@@ -4061,6 +4095,10 @@ function maybeLogWorldDiagnostics(now, stats = worldChunkStreamer?.stats()) {
         + ' gear=' + worldStreamingGear
         + ' player=' + camera.position.x.toFixed(1) + ',' + camera.position.y.toFixed(1) + ',' + camera.position.z.toFixed(1)
         + ' chunk=' + playerChunk.x + ',' + playerChunk.z
+        + ' | focus=' + focusKey
+        + ':detail=' + (focus?.published ?? 0) + '/' + (focus?.taskCount ?? 0)
+        + ':pending=' + (focus?.pendingTasks ?? 0)
+        + ':first=' + (focus?.firstPassEntitiesComplete ?? 0) + '/' + (focus?.firstPassEntityTarget ?? 0)
         + ' | ring pub=' + (render.published ?? render.ready ?? 0) + '/' + (render.total ?? 0)
         + ' phys=' + (render.physicsAuthoritative ?? 0) + '/' + (render.total ?? 0)
         + ' struct=' + (render.structuralReady ?? 0) + '/' + (render.total ?? 0)
@@ -4170,17 +4208,22 @@ function pumpWorldChunksAggressively() {
     // build. A 20ms build overrun can no longer starve already-visible detail.
     const maxRefinements = structureIncomplete
         ? (desktop ? 2 : 1)
-        : gear === WORLD_STREAMING_GEAR.VISIBLE_FIRST_PASS || gear === WORLD_STREAMING_GEAR.LOCAL_DEEPEN
-            ? (desktop ? CONFIG.streaming.chunkRefinementStepsDesktop : CONFIG.streaming.chunkRefinementStepsWeak)
-            : 0;
+        : gear === WORLD_STREAMING_GEAR.PREFETCH_STRUCTURE
+            ? 1
+            : gear === WORLD_STREAMING_GEAR.VISIBLE_FIRST_PASS || gear === WORLD_STREAMING_GEAR.LOCAL_DEEPEN
+                ? (desktop ? CONFIG.streaming.chunkRefinementStepsDesktop : CONFIG.streaming.chunkRefinementStepsWeak)
+                : 0;
     const refineFirst = structureIncomplete
         || gear === WORLD_STREAMING_GEAR.VISIBLE_FIRST_PASS
+        || gear === WORLD_STREAMING_GEAR.PREFETCH_STRUCTURE
         || gear === WORLD_STREAMING_GEAR.LOCAL_DEEPEN;
     const refinementBudgetMs = structureIncomplete
         ? (desktop ? Math.min(1.5, CONFIG.streaming.visibleDetailBudgetMsDesktop) : Math.min(1.0, CONFIG.streaming.visibleDetailBudgetMsWeak))
         : gear === WORLD_STREAMING_GEAR.VISIBLE_FIRST_PASS
             ? (desktop ? CONFIG.streaming.visibleDetailBudgetMsDesktop : CONFIG.streaming.visibleDetailBudgetMsWeak)
-            : gear === WORLD_STREAMING_GEAR.LOCAL_DEEPEN ? CONFIG.streaming.warmBuildBudgetMs : Infinity;
+            : gear === WORLD_STREAMING_GEAR.PREFETCH_STRUCTURE
+                ? (desktop ? Math.min(1.25, CONFIG.streaming.visibleDetailBudgetMsDesktop) : Math.min(0.75, CONFIG.streaming.visibleDetailBudgetMsWeak))
+                : gear === WORLD_STREAMING_GEAR.LOCAL_DEEPEN ? CONFIG.streaming.warmBuildBudgetMs : Infinity;
     const warmCooldownMs = gear === WORLD_STREAMING_GEAR.LOCAL_DEEPEN ? CONFIG.streaming.warmCooldownMs : 0;
     worldChunkPumpPromise = worldChunkStreamer.pump({
         maxChunks, maxMillis, maxRefinements, refineFirst, refinementBudgetMs,
@@ -4219,7 +4262,7 @@ function animate(now = performance.now()) {
     staticWorldOptimizer?.updateVisibility();
     worldChunkStreamer?.updateVisibility();
     const liveWorldStats = worldChunkStreamer?.stats();
-    maybeLogWorldDiagnostics(now, liveWorldStats);
+    maybeLogWorldDiagnostics(now);
 
     const streamingGear = updateWorldStreamingGear(liveWorldStats);
     pumpWorldChunksAggressively();
@@ -4250,18 +4293,22 @@ function animate(now = performance.now()) {
             if (authoredPump.steps) runtimeLatency.record(structuralOnly ? 'authored-local-shell.pump' : 'authored-local-content.pump', authoredPump.ms, authoredPump);
         }
 
-        if (worldChunkStreamer?.stats().localRenderRing.complete && unifiedSpawnFabricRefinementQueue.length) {
+        // Authored fabric payloads enter this queue only after common-engine commit,
+        // so their own structural authority is the prerequisite -- never 25/25.
+        if (unifiedSpawnFabricRefinementQueue.length) {
             const fabricDetailPump = pumpUnifiedSpawnFabricRefinement({ maxSteps: QP[1024], maxMillis: QP[1024] });
             if (fabricDetailPump.steps) runtimeLatency.record('spawn-fabric.local-detail-pump', fabricDetailPump.ms, fabricDetailPump);
         }
 
-        if (!authoredBuildingJobs.length && worldChunkStreamer?.stats().localRenderRing.complete) {
+        if (!authoredBuildingJobs.length) {
             maybeStartAuthoredPostStructurePipeline();
             const authoredPostPump = pumpAuthoredPostStructurePipeline({ maxSteps: QP[1024], maxMillis: QP[1024] });
             if (authoredPostPump.steps) runtimeLatency.record('authored-post.local-pump', authoredPostPump.ms, authoredPostPump);
         }
 
-        if (worldChunkStreamer?.stats().localRenderRing.complete && specialPlazaJobs.length) {
+        // Plaza richness is local too: the pump admits only jobs whose own ground
+        // surface chunk has already published, regardless of the outer 5x5 ring.
+        if (specialPlazaJobs.length) {
             const plazaPump = pumpSpecialPlazaJobs({ maxJobs: QP[1024], maxMillis: QP[1] });
             if (plazaPump.steps) runtimeLatency.record('plaza.local-pump', plazaPump.ms, plazaPump);
         }

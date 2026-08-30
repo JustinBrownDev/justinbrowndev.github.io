@@ -61,7 +61,12 @@ assert(main.includes("reserveSpecialPlazaJob('park'"));
 assert(main.includes('function* addParkSteps('));
 assert(main.includes("yield { phase: 'park-tree'"));
 assert(main.includes('pumpSpecialPlazaJobs({ maxJobs: QP[1024]'));
-assert(main.includes('worldChunkStreamer?.stats().localRenderRing.complete && specialPlazaJobs.length'));
+assert(main.includes('function specialPlazaJobGroundReady(job)'));
+assert(main.includes('groundSurfaceSystem.isWorldPositionReady'));
+assert(main.includes('sortUnifiedSpawnFabricRefinementNearPlayer'));
+assert(main.includes('if (unifiedSpawnFabricRefinementQueue.length)'));
+assert(!main.includes('localRenderRing.complete && unifiedSpawnFabricRefinementQueue.length'));
+assert(!main.includes('localRenderRing.complete && specialPlazaJobs.length'));
 assert(main.includes('plaza content continues independently'));
 assert(main.includes('if (colliderDelta > QP[1015]) playerPhysics.syncDynamicWorld();')); // content obstacles still enter dynamic collision
 

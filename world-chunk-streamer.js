@@ -400,6 +400,76 @@ export function createWorldChunkStreamer({
         };
     }
 
+    function localRefinementHealthSummary(radius = renderRadiusChunks) {
+        const center = playerChunkCoords();
+        let total = 0;
+        let publishedChunks = 0;
+        let attempted = 0;
+        let successful = 0;
+        let noOp = 0;
+        let failed = 0;
+        let tasks = 0;
+        let firstPassEntitiesComplete = 0;
+        let firstPassEntityTarget = 0;
+        let pendingPublishedDetailChunks = 0;
+        const perChunk = [];
+        for (let dz = -radius; dz <= radius; dz++) {
+            for (let dx = -radius; dx <= radius; dx++) {
+                if (Math.max(Math.abs(dx), Math.abs(dz)) > radius) continue;
+                total++;
+                const key = keyOf(center.x + dx, center.z + dz);
+                const chunk = chunks.get(key);
+                if (!chunk) {
+                    perChunk.push({ key, state: 'missing', renderPublished: false, physicsAuthoritative: false, pendingTasks: 0 });
+                    continue;
+                }
+                if (chunk.state === CHUNK_STATE.READY && chunk.payload) syncChunkPublication(chunk);
+                const refinement = chunk.payload?.refinement;
+                const taskCount = refinement?.tasks?.length ?? 0;
+                const cursor = Number(refinement?.cursor) || 0;
+                const diagnostic = {
+                    key: chunk.key,
+                    state: chunk.state,
+                    renderPublished: !!chunk.renderPublished,
+                    physicsAuthoritative: !!chunk.physicsAuthoritative,
+                    attempted: Number(refinement?.attempted) || 0,
+                    published: Number(refinement?.published) || 0,
+                    noOp: Number(refinement?.noOp) || 0,
+                    failed: Number(refinement?.failed ?? refinement?.failures) || 0,
+                    cursor,
+                    taskCount,
+                    pendingTasks: Math.max(0, taskCount - cursor),
+                    firstPassEntitiesComplete: Number(refinement?.firstPassEntitiesComplete) || 0,
+                    firstPassEntityTarget: Number(refinement?.firstPassEntityTarget) || 0,
+                };
+                perChunk.push(diagnostic);
+                if (!chunk.renderPublished || !chunk.physicsAuthoritative) continue;
+                publishedChunks++;
+                attempted += diagnostic.attempted;
+                successful += diagnostic.published;
+                noOp += diagnostic.noOp;
+                failed += diagnostic.failed;
+                tasks += diagnostic.taskCount;
+                firstPassEntitiesComplete += diagnostic.firstPassEntitiesComplete;
+                firstPassEntityTarget += diagnostic.firstPassEntityTarget;
+                if (chunkNeedsRefinement(chunk)) pendingPublishedDetailChunks++;
+            }
+        }
+        return {
+            published: publishedChunks,
+            total,
+            attempted,
+            successful,
+            noOp,
+            failed,
+            tasks,
+            firstPassEntitiesComplete,
+            firstPassEntityTarget,
+            pendingPublishedDetailChunks,
+            perChunk,
+        };
+    }
+
     function compactRichnessDiagnostic(diagnostic) {
         const summary = diagnostic.summary ?? {};
         const blockers = diagnostic.blockers ?? {};
@@ -461,7 +531,7 @@ export function createWorldChunkStreamer({
     function resetRichnessWatch(now, p, summary) {
         richnessWatchX = p.x;
         richnessWatchZ = p.z;
-        richnessWatchMarker = summary.detailRenderInstances + summary.detailChildren;
+        richnessWatchMarker = summary.successful;
         richnessWatchAttemptCount = refinementAttemptCount;
         richnessWatchAttemptsWithoutGrowth = 0;
         richnessWatchLastGrowthAt = now;
@@ -475,18 +545,20 @@ export function createWorldChunkStreamer({
         const center = coordsForWorld(p.x, p.z);
         const current = chunks.get(keyOf(center.x, center.z));
         if (!current || current.state !== CHUNK_STATE.READY || !current.renderPublished || !current.physicsAuthoritative || pinned.has(current.key)) {
-            const summary = localRichnessSummary(renderRadiusChunks);
+            const summary = localRefinementHealthSummary(renderRadiusChunks);
             resetRichnessWatch(now, p, summary);
             return null;
         }
-        const summary = localRichnessSummary(renderRadiusChunks);
+        // Health checks run in the hot path, so they use only refinement/publication
+        // counters. Full mesh/instance traversal is reserved for explicit diagnostics.
+        const summary = localRefinementHealthSummary(renderRadiusChunks);
         const stationaryLimit = Math.max(0.05, Number(richnessStationaryDistance) || 0.75);
         if (!Number.isFinite(richnessWatchX) || Math.hypot(p.x - richnessWatchX, p.z - richnessWatchZ) > stationaryLimit) {
             resetRichnessWatch(now, p, summary);
             return null;
         }
 
-        const marker = summary.detailRenderInstances + summary.detailChildren;
+        const marker = summary.successful;
         const attemptDelta = Math.max(0, refinementAttemptCount - richnessWatchAttemptCount);
         if (marker > richnessWatchMarker) {
             richnessWatchMarker = marker;
@@ -651,18 +723,24 @@ export function createWorldChunkStreamer({
         if (refineAfterPrefetchReady && !readyWithinRadius(prefetchRadiusChunks).complete) return null;
         let best = null;
         let bestVisibilityRank = Infinity;
+        let bestFocusRank = Infinity;
         let bestFloorRank = Infinity;
         let bestSemanticFocus = false;
         let bestSerial = Infinity;
         let bestPriority = Infinity;
         for (const chunk of chunks.values()) {
             if (!chunkNeedsRefinement(chunk)) continue;
-            if (ringDistance(chunk, center) > prefetchRadiusChunks) continue;
-            const visibilityRank = shouldBeVisible(chunk, center) ? 0 : 1;
+            const ring = ringDistance(chunk, center);
+            if (ring > prefetchRadiusChunks) continue;
+            const visibilityRank = ring <= renderRadiusChunks ? 0 : 1;
             if (visibilityRank === 0) {
                 syncChunkPublication(chunk);
                 if (!chunk.renderPublished || !chunk.physicsAuthoritative) continue;
             }
+            // No new state machine: this is only a sort key. The block under the
+            // player converges first, then immediate/forward neighbors, then the
+            // rest of the visible ring, while prefetch detail remains last.
+            const focusRank = visibilityRank > 0 ? 3 : ring === 0 ? 0 : ring === 1 ? 1 : 2;
             const firstPassPending = visibilityRank === 0 && !chunkVisibleFirstPassComplete(chunk);
             const floorRank = firstPassPending ? 0 : 1;
             const semanticFocus = firstPassPending && semanticFirstPassTarget(chunk) !== null;
@@ -672,21 +750,12 @@ export function createWorldChunkStreamer({
             let better = false;
             if (visibilityRank < bestVisibilityRank) better = true;
             else if (visibilityRank === bestVisibilityRank) {
-                if (floorRank < bestFloorRank) better = true;
-                else if (floorRank === bestFloorRank) {
-                    if (semanticFocus !== bestSemanticFocus) better = semanticFocus;
-                    else if (semanticFocus) {
-                        // Real chunk payloads declare a semantic first pass. Finish
-                        // the nearest/forward block's first visible layer before
-                        // smearing microscopic turns across the whole horizon.
-                        better = priority < bestPriority
-                            || (priority === bestPriority && (serial < bestSerial
-                                || (serial === bestSerial && chunk.key < best?.key)));
-                    } else {
-                        // Distance/heading remains authoritative even for generic
-                        // refiners. The player's nearest/forward block converges
-                        // before fairness can smear work across the horizon.
-                        better = priority < bestPriority
+                if (focusRank < bestFocusRank) better = true;
+                else if (focusRank === bestFocusRank) {
+                    if (floorRank < bestFloorRank) better = true;
+                    else if (floorRank === bestFloorRank) {
+                        if (semanticFocus !== bestSemanticFocus) better = semanticFocus;
+                        else better = priority < bestPriority
                             || (priority === bestPriority && (serial < bestSerial
                                 || (serial === bestSerial && chunk.key < best?.key)));
                     }
@@ -695,6 +764,7 @@ export function createWorldChunkStreamer({
             if (better) {
                 best = chunk;
                 bestVisibilityRank = visibilityRank;
+                bestFocusRank = focusRank;
                 bestFloorRank = floorRank;
                 bestSemanticFocus = semanticFocus;
                 bestSerial = serial;
@@ -869,28 +939,35 @@ export function createWorldChunkStreamer({
             const prefetchReadyAtPumpStart = readyWithinRadius(prefetchRadiusChunks).complete;
             const canRefineBeforePrefetch = !refineAfterPrefetchReady && visibleRefinementAtStart && !prefetchReadyAtPumpStart;
 
-            const runRefinementTurns = async ({ visibleOnly = false, deadlineMs = timeCap } = {}) => {
-                while (refined < refinementCap && performance.now() - pumpStarted < deadlineMs) {
+            const runRefinementTurns = async ({ visibleOnly = false, budgetMs = timeCap, guaranteeOne = false } = {}) => {
+                // Refinement owns its own clock. Neighborhood maintenance, unloading,
+                // visibility sync, diagnostics, or other pump setup cannot spend it.
+                const laneStarted = performance.now();
+                let laneTurns = 0;
+                while (refined < refinementCap) {
+                    const laneElapsed = performance.now() - laneStarted;
+                    if (Number.isFinite(budgetMs) && laneElapsed >= budgetMs && (!guaranteeOne || laneTurns > 0)) break;
                     const next = nearestRefinableChunk(center);
                     if (!next) break;
                     if (visibleOnly && !shouldBeVisible(next, center)) break;
-                    const remaining = Number.isFinite(deadlineMs)
-                        ? Math.max(0.1, deadlineMs - (performance.now() - pumpStarted))
+                    const remaining = Number.isFinite(budgetMs)
+                        ? Math.max(0.1, budgetMs - (performance.now() - laneStarted))
                         : 2;
                     const result = await refineOne(next, { maxMillis: Math.min(2, remaining) });
                     if (!result?.progressed && !result?.steps) break;
-                    refined += Math.max(1, result.steps || 0);
+                    const turns = Math.max(1, result.steps || 0);
+                    refined += turns;
+                    laneTurns += turns;
                 }
+                return laneTurns;
             };
 
-            // Explicit detail-first modes may spend their bounded slice first.
-            // Crucially, this no longer requires the entire 5x5 ring to be ready:
-            // any already-published visible chunk is eligible to visibly deepen.
+            // If visible local detail exists, one turn is guaranteed before any
+            // indivisible chunk build. The budget bounds additional turns only.
             if (!disposed && refineFirst && visibleRefinementAtStart && refinementCap > 0) {
-                await runRefinementTurns({ visibleOnly: true, deadlineMs: refinementTimeCap });
+                await runRefinementTurns({ visibleOnly: true, budgetMs: refinementTimeCap, guaranteeOne: true });
             } else if (!disposed && canRefineBeforePrefetch && refinementCap > 0 && chunkCap === 0) {
-                // A detail-only pump should still make progress before prefetch is warm.
-                await runRefinementTurns({ visibleOnly: true, deadlineMs: refinementTimeCap });
+                await runRefinementTurns({ visibleOnly: true, budgetMs: refinementTimeCap, guaranteeOne: true });
             }
 
             // When construction and enrichment share a pump, reserve a tiny tail
@@ -914,9 +991,15 @@ export function createWorldChunkStreamer({
             const visibleRefinementAfterBuild = hasPublishedVisibleRefinement(center);
             if (!disposed && visibleRefinementAfterBuild && refined < refinementCap
                 && (!refineAfterPrefetchReady || prefetchReadyForRefinement)) {
+                const remainingPumpMs = Number.isFinite(timeCap)
+                    ? Math.max(0, timeCap - (performance.now() - pumpStarted))
+                    : refinementTimeCap;
                 await runRefinementTurns({
                     visibleOnly: !renderCompleteForRefinement || !prefetchReadyForRefinement,
-                    deadlineMs: timeCap,
+                    budgetMs: Math.min(refinementTimeCap, remainingPumpMs),
+                    // A newly published chunk may create the first local pending work.
+                    // Even after a build overrun, do not return a 0-refinement pump.
+                    guaranteeOne: refined === 0,
                 });
             }
             lastPumpBuilt = built;
@@ -1127,7 +1210,7 @@ export function createWorldChunkStreamer({
         };
     }
 
-    function stats() {
+    function stats({ includeRichness = false } = {}) {
         const counts = {};
         for (const name of Object.values(CHUNK_STATE)) counts[name] = 0;
         for (const chunk of chunks.values()) counts[chunk.state] = (counts[chunk.state] ?? 0) + 1;
@@ -1182,7 +1265,11 @@ export function createWorldChunkStreamer({
                 stalledRequestedVisible: [...chunks.values()].filter(chunk => chunk.state === CHUNK_STATE.READY && chunk.renderRequested && !chunk.renderPublished).length,
                 stallWarnings: publicationStallWarnings,
             },
-            richness: localRichnessSummary(renderRadiusChunks),
+            // Default scheduler/frame stats are counter-only. Full render-tree
+            // richness is opt-in and used by the 2-second diagnostic heartbeat.
+            richness: includeRichness
+                ? localRichnessSummary(renderRadiusChunks)
+                : localRefinementHealthSummary(renderRadiusChunks),
             richnessHealth: {
                 stallWarnings: richnessStallWarnings,
                 starvedWarnings: refinementStarvedWarnings,

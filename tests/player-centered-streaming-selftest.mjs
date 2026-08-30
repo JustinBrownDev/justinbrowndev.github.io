@@ -141,6 +141,116 @@ assert.equal(partialStreamer.stats().localRenderRing.complete, false, 'the held 
 assert.ok(partialStreamer.stats().refinement.published > 0, 'successful visible publications must be counted explicitly');
 await partialStreamer.dispose();
 
+// Setup work has no right to consume the refinement lane. Simulate an expensive
+// unload before a tiny 0.5ms detail budget and require the local turn anyway.
+const setupEvents = [];
+const setupPosition = { x: 0, y: 1.65, z: 0 };
+const setupStreamer = createWorldChunkStreamer({
+  chunkSize: 64,
+  worldSeed: 78,
+  getPlayerPosition: () => setupPosition,
+  renderRadiusChunks: 0,
+  prefetchRadiusChunks: 0,
+  retentionRadiusChunks: 1,
+  refineAfterPrefetchReady: false,
+  buildChunk: async () => null,
+  unloadChunk: async chunk => {
+    setupEvents.push(`unload:${chunk.key}`);
+    const overrunUntil = performance.now() + 8;
+    while (performance.now() < overrunUntil) {}
+  },
+  setChunkVisibility: (_chunk, p, visible) => { p.renderPublished = !!visible; return p.renderPublished; },
+  refineChunk: async (chunk, p) => {
+    setupEvents.push(`refine:${chunk.key}`);
+    p.refinement.cursor++;
+    p.refinement.attempted++;
+    p.refinement.published++;
+    return { progressed: true, steps: 1, attempted: 1, published: 1, noOp: 0, failed: 0, complete: true, lastKind: 'setup-budget-proof' };
+  },
+  hasPendingRefinement: (_chunk, p) => p.refinement.cursor < p.refinement.tasks.length,
+});
+setupStreamer.markChunkReady(0, 0, {
+  renderPublished: false, physicsActivationState: 'active',
+  refinement: { tasks: [{}], cursor: 0, attempted: 0, published: 0, noOp: 0, failed: 0 },
+});
+setupStreamer.markChunkReady(4, 4, {
+  renderPublished: false, physicsActivationState: 'active',
+  refinement: { tasks: [], cursor: 0, attempted: 0, published: 0, noOp: 0, failed: 0 },
+});
+await setupStreamer.pump({ maxChunks: 0, maxMillis: 1, maxRefinements: 1, refineFirst: true, refinementBudgetMs: 0.5 });
+assert.ok(setupEvents.some(event => event.startsWith('unload:')), 'regression setup must spend longer than the nominal pump budget before refinement');
+assert.ok(setupEvents.includes('refine:0,0'), 'refinement must own an independent clock after setup overruns');
+await setupStreamer.dispose();
+
+// Focus is a ranking rule, not a new state machine. The current block wins, and
+// crossing one chunk boundary transfers convergence pressure immediately.
+const focusPosition = { x: 0, y: 1.65, z: 0 };
+const focusTurns = [];
+const focusStreamer = createWorldChunkStreamer({
+  chunkSize: 64,
+  worldSeed: 79,
+  getPlayerPosition: () => focusPosition,
+  getPlayerHeading: () => ({ x: 1, z: 0 }),
+  renderRadiusChunks: 2,
+  prefetchRadiusChunks: 2,
+  retentionRadiusChunks: 3,
+  refineAfterPrefetchReady: false,
+  buildChunk: async () => null,
+  setChunkVisibility: (_chunk, p, visible) => { p.renderPublished = !!visible; return p.renderPublished; },
+  refineChunk: async (chunk, p) => {
+    p.refinement.cursor++;
+    focusTurns.push(chunk.key);
+    return { progressed: true, steps: 1, attempted: 1, published: 1, noOp: 0, failed: 0, complete: p.refinement.cursor >= p.refinement.tasks.length, lastKind: 'focus-proof' };
+  },
+  hasPendingRefinement: (_chunk, p) => p.refinement.cursor < p.refinement.tasks.length,
+});
+for (const [x, z] of [[0, 0], [1, 0], [2, 0]]) {
+  focusStreamer.markChunkReady(x, z, {
+    renderPublished: false, physicsActivationState: 'active',
+    refinement: { tasks: [{}, {}, {}], cursor: 0 },
+  });
+}
+await focusStreamer.pump({ maxChunks: 0, maxMillis: 4, maxRefinements: 1, refineFirst: true, refinementBudgetMs: 1 });
+assert.equal(focusTurns[0], '0,0', 'the block under the player must be the first refinement target');
+focusPosition.x = 64;
+await focusStreamer.pump({ maxChunks: 0, maxMillis: 4, maxRefinements: 1, refineFirst: true, refinementBudgetMs: 1 });
+assert.equal(focusTurns[1], '1,0', 'crossing a boundary must transfer convergence pressure to the new current chunk');
+await focusStreamer.dispose();
+
+// Hot-path stats and visibility health checks must never traverse scene trees.
+// Only the explicit diagnostic snapshot may pay that cost.
+let diagnosticTreeVisits = 0;
+const diagnosticPosition = { x: 0, y: 1.65, z: 0 };
+const diagnosticStreamer = createWorldChunkStreamer({
+  chunkSize: 64,
+  worldSeed: 80,
+  getPlayerPosition: () => diagnosticPosition,
+  renderRadiusChunks: 0,
+  prefetchRadiusChunks: 0,
+  retentionRadiusChunks: 1,
+  refineAfterPrefetchReady: false,
+  buildChunk: async () => null,
+  setChunkVisibility: (_chunk, p, visible) => { p.renderPublished = !!visible; return p.renderPublished; },
+  refineChunk: async () => ({ progressed: false, steps: 0, complete: false }),
+  hasPendingRefinement: (_chunk, p) => p.refinement.cursor < p.refinement.tasks.length,
+});
+diagnosticStreamer.markChunkReady(0, 0, {
+  renderPublished: false,
+  physicsActivationState: 'active',
+  root: { traverse(fn) { diagnosticTreeVisits++; fn({ isMesh: true, isInstancedMesh: false }); } },
+  detailRoot: { children: [], traverse(fn) { diagnosticTreeVisits++; fn({ isMesh: true, isInstancedMesh: false }); } },
+  entities: [],
+  refinement: { tasks: [{}, {}], cursor: 0, attempted: 0, published: 0, noOp: 0, failed: 0 },
+});
+diagnosticStreamer.stats();
+diagnosticStreamer.updateVisibility();
+diagnosticStreamer.stats();
+assert.equal(diagnosticTreeVisits, 0, 'normal scheduler stats and visibility health checks must not traverse render trees');
+const explicitDiagnostic = diagnosticStreamer.stats({ includeRichness: true });
+assert.ok(diagnosticTreeVisits > 0 && explicitDiagnostic.richness?.perChunk?.length === 1,
+  'the explicit diagnostic snapshot may traverse render trees on its low-frequency cadence');
+await diagnosticStreamer.dispose();
+
 // Streamer semantic completion must use successful publication, never task cursor.
 const position = { x: 0, y: 1.65, z: 0 };
 const streamer = createWorldChunkStreamer({

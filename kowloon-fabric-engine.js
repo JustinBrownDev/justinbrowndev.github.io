@@ -631,7 +631,7 @@ export function createKowloonFabricEngine({
             const face = entranceFaces[i];
             const openingKey = `${face.module.key}:${face.dir.key}:0`;
             const portal = semanticPortalForRect({
-                id: `${chunk.key}:${site.id}:${face.module.key}:entrance:${i}:portal`,
+                id: `${chunk.key}:${siteSignature}:${face.module.key}:entrance:${i}:portal`,
                 rect: face.module.rect,
                 side: face.dir.side,
                 floor: 0,
@@ -640,12 +640,12 @@ export function createKowloonFabricEngine({
                 height: 2.2,
                 depth: 1.2,
                 source: 'compound-entrance',
-                fromSpaceId: `${chunk.key}:${site.id}:${face.module.key}:floor:0`,
+                fromSpaceId: `${chunk.key}:${siteSignature}:${face.module.key}:floor:0`,
                 toSpaceId: `${chunk.key}:street`,
                 metadata: { moduleKey: face.module.key, dirKey: face.dir.key, floor: 0 },
             });
             const connector = createPortalConnector({
-                id: `${chunk.key}:${site.id}:${face.module.key}:entrance:${i}`,
+                id: `${chunk.key}:${siteSignature}:${face.module.key}:entrance:${i}`,
                 portal,
                 kind: 'door',
                 source: 'compound-entrance',
@@ -718,7 +718,7 @@ export function createKowloonFabricEngine({
             // a few ulps apart, which breaks the circulation contract's exact roof key.
             const moduleRoofY = module.floors > 0 ? (module.floors - 1) * floorH + floorH : 0;
             const stairConnector = isSpine ? createStairConnector({
-                id: `${chunk.key}:${site.id}:${module.key}:stair`,
+                id: `${chunk.key}:${siteSignature}:${module.key}:stair`,
                 x: stairCx, z: stairCz,
                 openingWidth: stairGapW,
                 openingDepth: stairGapD,
@@ -731,8 +731,8 @@ export function createKowloonFabricEngine({
                 rampHalfWidth: stairHalfWidth,
                 source: 'compound-stair',
                 visualRole: 'vertical-spine',
-                fromSpaceId: `${chunk.key}:${site.id}:${module.key}:ground`,
-                toSpaceId: `${chunk.key}:${site.id}:${module.key}:roof`,
+                fromSpaceId: `${chunk.key}:${siteSignature}:${module.key}:ground`,
+                toSpaceId: `${chunk.key}:${siteSignature}:${module.key}:roof`,
                 metadata: { moduleKey: module.key, floors: module.floors, floorH },
             }) : null;
             const stairReservation = stairConnector?.primaryReservation ?? null;
@@ -1013,7 +1013,7 @@ export function createKowloonFabricEngine({
                 const fixedCoord = axis === 'x' ? mz : mx;
                 const mezzanineRamp = { axis, from, to, fixedCoord, halfWidth: rampWidth * 0.5, y0: 0, y1: y, supportKind: 'mezzanine-stair' };
                 const mezzanineReservation = createRampCirculationReservation({
-                    id: `${chunk.key}:${site.id}:${module.key}:mezzanine:${mezzanines}`,
+                    id: `${chunk.key}:${siteSignature}:${module.key}:mezzanine:${mezzanines}`,
                     kind: 'mezzanine-ramp',
                     ...mezzanineRamp,
                     source: 'mezzanine-stair',
@@ -1134,6 +1134,7 @@ export function createKowloonFabricEngine({
             floorH,
             floors: Math.max(...floorCounts),
             archetype,
+            semanticSiteKey: siteSignature,
             doorSide: doorFace?.dir.side ?? scaffoldSide ?? 'north',
             entranceFaces: entranceFaces.map(face => ({ moduleKey: face.module.key, side: face.dir.side, dirKey: face.dir.key })),
             compoundCells: site.cells.map(cell => ({ col: cell.col, row: cell.row })),

@@ -211,7 +211,7 @@ export function resolveSemanticPlacement({
                 z: provider.z,
                 rotY: provider.rotY,
                 mode: 'support-surface',
-                relationTo: provider.assetId,
+                relationTo: provider.instanceId ?? provider.assetId,
             };
             const placed = tryCandidate(def, graph, candidate, tryReserve, module);
             if (placed) return placed;
@@ -232,7 +232,7 @@ export function resolveSemanticPlacement({
                 z: target.z + front.z * gap,
                 rotY: normalizeAngle(target.rotY + Math.PI),
                 mode: 'faces-surface',
-                relationTo: target.assetId,
+                relationTo: target.instanceId ?? target.assetId,
             };
             const placed = tryCandidate(def, graph, candidate, tryReserve, module);
             if (placed) return placed;
@@ -257,7 +257,7 @@ export function resolveSemanticPlacement({
                     z: anchor.z + right.z * spacing * sign,
                     rotY: anchor.rotY,
                     mode: 'row-aligned',
-                    relationTo: anchor.assetId,
+                    relationTo: anchor.instanceId ?? anchor.assetId,
                 };
                 const placed = tryCandidate(def, graph, candidate, tryReserve, module);
                 if (placed) return placed;
@@ -285,8 +285,10 @@ export function resolveSemanticPlacement({
     return null;
 }
 
-export function createSemanticPlacementRecord({ def, graph, placement, entityId, moduleKey, floor, program }) {
+export function createSemanticPlacementRecord({ def, graph, placement, instanceId = null, spaceId = null, entityId, moduleKey, floor, program }) {
     return {
+        instanceId,
+        spaceId,
         assetId: def?.id ?? null,
         def,
         graph,

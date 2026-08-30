@@ -2382,11 +2382,13 @@ function sortUnifiedSpawnFabricRefinementNearPlayer() {
 
 function pumpUnifiedSpawnFabricRefinement({ maxSteps = QP[1024], maxMillis = QP[1] } = {}) {
     if (!unifiedSpawnFabricRefinementQueue.length) return { steps: QP[1015], pending: QP[1015], ms: QP[1015] };
-    sortUnifiedSpawnFabricRefinementNearPlayer();
     const started = performance.now();
     let steps = QP[1015];
     let cursorGuard = unifiedSpawnFabricRefinementQueue.length;
     while (unifiedSpawnFabricRefinementQueue.length && steps < maxSteps && cursorGuard-- > QP[1015]) {
+        // Re-rank every turn so the site beside the player can actually converge
+        // instead of receiving one turn and rotating behind every other spawn site.
+        sortUnifiedSpawnFabricRefinementNearPlayer();
         const payload = unifiedSpawnFabricRefinementQueue.shift();
         const result = cityFabricEngine.refine(payload.chunk, payload, { maxSteps: QP[1024], maxMillis });
         steps += result.steps || QP[1015];
@@ -2899,6 +2901,9 @@ const specialPlazaJobs = [];
 let specialPlazaJobsTotal = QP[1015];
 let specialPlazaJobsCompleted = QP[1015];
 let specialPlazaWorstMs = QP[1015];
+// Ground scatter was visually overwhelming spawn. Keep structural/facade richness
+// intact and trim only loose junk / pile incidence by a modest 28 percent.
+const SPAWN_GROUND_CLUTTER_SCALE = 0.72;
 
 function* specialPlazaOneShotSteps(run) {
     yield { phase: 'plaza-job-ready' };
@@ -3004,7 +3009,10 @@ for (const [pc, pr] of plazaCells) {
     reserveSpecialPlazaJob('plaza-atmosphere', cell, QP[1015], false, () => {
         const { x, z } = cellToWorld(pc, pr);
         addPlazaGlow(x, z);
-        if (rng() < QP[4807] * QUALITY.propDensity) scatterJunk('plaza', x, z, QP[4808] + Math.floor(rng() * QP[4809]), Math.min(colHalf(pc), rowHalf(pr)) * QP[4810]);
+        if (rng() < QP[4807] * QUALITY.propDensity * SPAWN_GROUND_CLUTTER_SCALE) {
+            const junkCount = Math.max(1, Math.floor((QP[4808] + Math.floor(rng() * QP[4809])) * SPAWN_GROUND_CLUTTER_SCALE));
+            scatterJunk('plaza', x, z, junkCount, Math.min(colHalf(pc), rowHalf(pr)) * QP[4810]);
+        }
     });
 }
 
@@ -3230,9 +3238,10 @@ function* addParkSteps(x, z, col = null, row = null) {
     const benchAngle = randRange(QP[5013], Math.PI * QP[5014]);
     addBench(x + Math.cos(benchAngle) * QP[5015], z + Math.sin(benchAngle) * QP[5016], benchAngle + Math.PI / QP[5017]);
     yield { phase: 'park-bench' };
-    scatterJunk('park', x, z, QP[5018], Math.min(hwx, hwz) * QP[5019]);
+    scatterJunk('park', x, z, Math.max(1, Math.floor(QP[5018] * SPAWN_GROUND_CLUTTER_SCALE)), Math.min(hwx, hwz) * QP[5019]);
     yield { phase: 'park-junk' };
-    if (rng() < QP[5020]) placeRealModel('ironGate', x, z - hwz * QP[5021], QP[5022]);
+    // Wrought-iron gates made ordinary parks read as fenced set pieces. Keep the
+    // resumable phase for iterator/checkpoint stability, but intentionally spawn none.
     yield { phase: 'park-model' };
     return Math.min(hwx, hwz);
 }
@@ -3419,7 +3428,7 @@ function decorateOpenCell(c, r) {
     const laneAxis = throughAxis(c, r);
     const wallsHere = wallDirections(c, r);
     const districtDensity = districtClutterDensity(c, r);
-    const localDensity = QUALITY.propDensity * districtDensity;
+    const localDensity = QUALITY.propDensity * districtDensity * SPAWN_GROUND_CLUTTER_SCALE;
     const pileScale = THREE.MathUtils.clamp(districtDensity, QP[5091], QP[5092]);
     let pileSpot = null;
 
@@ -3464,7 +3473,7 @@ function decorateOpenCell(c, r) {
      
     const looseDensity = Math.sqrt(Math.max(QP[5148], districtDensity));
     if (onStreet) {
-        if (rng() < Math.min(QP[5149], QP[5150] * QUALITY.propDensity * looseDensity)) {
+        if (rng() < Math.min(QP[5149], QP[5150] * QUALITY.propDensity * looseDensity * SPAWN_GROUND_CLUTTER_SCALE)) {
             scatterJunk('street', x, z, QP[5151], Math.min(chx, chz) * QP[5152], laneAxis);
         }
         if (rng() < Math.min(QP[5153], QP[5154] * QUALITY.propDensity * looseDensity) && wallsHere.length) {
@@ -3472,7 +3481,7 @@ function decorateOpenCell(c, r) {
             const lamp = wallAnchorForOpenCell(c, r, dir, QP[5155], QP[5156]);
             if (lamp) placeRealModel('streetLamp', lamp.x, lamp.z, lamp.rotY);
         }
-    } else if (rng() < Math.min(QP[5157], QP[5158] * QUALITY.propDensity * looseDensity)) {
+    } else if (rng() < Math.min(QP[5157], QP[5158] * QUALITY.propDensity * looseDensity * SPAWN_GROUND_CLUTTER_SCALE)) {
         scatterJunk('alley', x, z, QP[5159] + (districtDensity > QP[5160] && rng() < QP[5161] ? QP[5162] : QP[5163]), Math.min(chx, chz) * QP[5164], laneAxis);
     }
 
@@ -4049,6 +4058,33 @@ function diagnosticRate(current, previous, seconds) {
     return (Math.max(0, current - previous) / seconds).toFixed(1) + '/s';
 }
 
+function authoredOriginFocusDiagnostic() {
+    let nearestPending = null;
+    let nearestAny = null;
+    for (const [siteId, payload] of unifiedSpawnFabricPayloads.entries()) {
+        const entity = payload?.entity;
+        const state = payload?.refinement;
+        if (!entity || !state) continue;
+        const dx = (entity.x ?? 0) - camera.position.x;
+        const dz = (entity.z ?? 0) - camera.position.z;
+        const distanceSq = dx * dx + dz * dz;
+        const taskCount = state.tasks?.length ?? 0;
+        const cursor = Number(state.cursor) || 0;
+        const candidate = {
+            key: 'spawn:' + siteId,
+            distanceSq,
+            published: Number(state.published) || 0,
+            taskCount,
+            pendingTasks: Math.max(0, taskCount - cursor),
+            firstPassEntitiesComplete: Number(state.firstPassEntitiesComplete) || 0,
+            firstPassEntityTarget: Number(state.firstPassEntityTarget) || 0,
+        };
+        if (!nearestAny || distanceSq < nearestAny.distanceSq) nearestAny = candidate;
+        if (candidate.pendingTasks > 0 && (!nearestPending || distanceSq < nearestPending.distanceSq)) nearestPending = candidate;
+    }
+    return nearestPending ?? nearestAny;
+}
+
 function maybeLogWorldDiagnostics(now) {
     if (now < worldDiagnosticsNextLogAt || !worldChunkStreamer) return false;
     worldDiagnosticsNextLogAt = now + WORLD_DIAGNOSTIC_INTERVAL_MS;
@@ -4067,8 +4103,16 @@ function maybeLogWorldDiagnostics(now) {
     const states = stats.states ?? {};
     const assets = adornmentLoadQueue.stats();
     const playerChunk = worldChunkStreamer.playerChunkCoords();
-    const focusKey = `${playerChunk.x},${playerChunk.z}`;
-    const focus = richness.perChunk?.find(chunk => chunk.key === focusKey) ?? null;
+    const streamFocusKey = `${playerChunk.x},${playerChunk.z}`;
+    const streamFocus = richness.perChunk?.find(chunk => chunk.key === streamFocusKey) ?? null;
+    // The streamed origin is a composite shell with no own refinement tasks. While
+    // physically in 0,0, report the nearest unfinished authored fabric payload so
+    // focus= describes the work the player can actually see converging.
+    const authoredFocus = playerChunk.x === 0 && playerChunk.z === 0
+        ? authoredOriginFocusDiagnostic()
+        : null;
+    const focus = authoredFocus ?? streamFocus;
+    const focusKey = focus?.key ?? streamFocusKey;
     const current = {
         at: now,
         builds: throughput.builds ?? 0,

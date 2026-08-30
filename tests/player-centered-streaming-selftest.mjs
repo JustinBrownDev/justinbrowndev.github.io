@@ -55,7 +55,9 @@ const chunk = {
 const payload = await engine.build(chunk);
 assert.equal(payload.buildings, 13, 'regression chunk structure changed unexpectedly');
 assert.equal(payload.plazas, 3, 'regression chunk plaza plan changed unexpectedly');
-assert.equal(payload.refinement.tasks.length, 129, 'visible-convergence ordering must not delete deterministic detail work');
+assert.equal(payload.refinement.tasks.length, 137, 'richness-parity corpus must preserve all deterministic detail work plus 8 street fixtures');
+assert.equal(payload.refinement.tasks.filter(task => task.kind === 'street-fixture').length, 8,
+  'exact regression seed must retain the 8 deterministic player-local street fixtures');
 assert.equal(payload.refinement.firstPassEntityTarget, 16, 'all 13 buildings + 3 plazas must participate in first-pass population');
 assert.equal(payload.refinement.firstPassPublicationTarget, 16, 'exact seed should require one meaningful successful publication per visible entity');
 assert.equal(payload.refinement.firstPassTaskCount, 16, 'compatibility firstPassTaskCount must match the one-per-entity publication target');

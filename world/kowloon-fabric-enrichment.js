@@ -144,6 +144,7 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0 } = {}) {
     const unitBox = new THREE.BoxGeometry(1, 1, 1);
     const unitPlane = new THREE.PlaneGeometry(1, 1);
     const pipeGeo = new THREE.CylinderGeometry(0.055, 0.055, 1, 7, 1, false);
+    const fixtureCylinderGeo = new THREE.CylinderGeometry(0.30, 0.27, 0.72, 8, 1, false);
     const leafGeo = new THREE.PlaneGeometry(0.34, 0.42);
     const topperDomeGeo = new THREE.SphereGeometry(1, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2);
     const topperSpireGeo = new THREE.ConeGeometry(1, 1, 9);
@@ -282,6 +283,19 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0 } = {}) {
             kind: 'spray-cans', entityId: entity.id, side, facadeIndex: sideFacadeIndex,
             seed: taskSeed(chunk, entity.id, 'spray-cans'),
         });
+        // Street-level identity belongs to the same deterministic payload as signs,
+        // pipes, and awnings. Use an independent RNG so adding this family does not
+        // perturb the established authored/procedural task sequence.
+        const fixtureRng = mulberry32(taskSeed(chunk, entity.id, 'street-fixture-plan'));
+        if (fixtureRng() < 0.60) {
+            const variants = ['trash-can', 'crate', 'utility-box', 'planter', 'lantern'];
+            tasks.push({
+                kind: 'street-fixture', entityId: entity.id, side: front, facadeIndex: frontFacadeIndex,
+                along: (fixtureRng() - 0.5) * 1.25,
+                variant: variants[Math.floor(fixtureRng() * variants.length) % variants.length],
+                seed: taskSeed(chunk, entity.id, 'street-fixture'),
+            });
+        }
         if (!entity.suppressInteriorEnrichment && entity.footprintModules?.length) {
             const classes = ['shelf', 'desk', 'crate', 'chair', 'plant'];
             const count = 1 + Math.floor(rng() * 3);
@@ -336,19 +350,19 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0 } = {}) {
 
     const DETAIL_KIND_PRIORITY = Object.freeze({
         sign: 0, awning: 0, graffiti: 0, flyer: 0,
-        pipe: 1, ivy: 1, security: 1, 'elevator-hardware': 1,
+        pipe: 1, ivy: 1, security: 1, 'elevator-hardware': 1, 'street-fixture': 1,
         'roof-clutter': 2, 'roof-topper': 2,
         marker: 3, 'spray-cans': 3,
         'interior-prop': 4,
     });
 
     const FIRST_PASS_KIND_ORDER = Object.freeze([
-        'sign', 'awning', 'pipe', 'graffiti', 'security', 'elevator-hardware',
+        'sign', 'awning', 'pipe', 'street-fixture', 'graffiti', 'security', 'elevator-hardware',
         'ivy', 'roof-topper', 'roof-clutter', 'spray-cans', 'flyer', 'marker',
     ]);
     function firstPassClass(kind) {
         if (kind === 'sign' || kind === 'awning' || kind === 'graffiti' || kind === 'flyer') return 'facade';
-        if (kind === 'pipe' || kind === 'ivy' || kind === 'security' || kind === 'elevator-hardware' || kind === 'spray-cans') return 'fixture';
+        if (kind === 'pipe' || kind === 'ivy' || kind === 'security' || kind === 'elevator-hardware' || kind === 'spray-cans' || kind === 'street-fixture') return 'fixture';
         if (kind === 'interior-prop') return 'hidden';
         if (kind === 'roof-clutter' || kind === 'roof-topper' || kind === 'marker' || String(kind).startsWith('plaza-')) return 'cap';
         return 'other';
@@ -483,18 +497,56 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0 } = {}) {
                 side: THREE.DoubleSide,
             })
             : posterFallbackMat;
-        const mesh = new THREE.Mesh(unitPlane, material);
-        mesh.name = `${graffiti ? 'chunk-graffiti' : 'chunk-sign'}:${task.entityId}`;
-        mesh.position.set(point.x, point.y, point.z);
-        mesh.rotation.y = point.ry;
-        mesh.scale.set(task.width, task.height, 1);
-        mesh.userData.chunkCosmetic = true;
-        mesh.userData.detailKind = task.kind;
         if (texture) {
             payload.detailResources.textures.add(texture);
             payload.detailResources.materials.add(material);
         }
-        return mesh;
+
+        if (graffiti) {
+            const mesh = new THREE.Mesh(unitPlane, material);
+            mesh.name = `chunk-graffiti:${task.entityId}`;
+            mesh.position.set(point.x, point.y, point.z);
+            mesh.rotation.y = point.ry;
+            mesh.scale.set(task.width, task.height, 1);
+            mesh.userData.chunkCosmetic = true;
+            mesh.userData.detailKind = task.kind;
+            return mesh;
+        }
+
+        // Projecting blade sign: same street-reading silhouette as authored spawn --
+        // wall plate + cantilever arm + dimensional double-sided panel. The panel
+        // stays compact enough for ordinary streamed alleys and remains cosmetic.
+        const rng = mulberry32(task.seed ^ 0x9e3779b9);
+        const group = new THREE.Group();
+        group.name = `chunk-blade-sign:${task.entityId}`;
+        group.position.set(point.x, point.y, point.z);
+        group.rotation.y = point.ry;
+        const armLength = 0.34 + rng() * 0.18;
+        const bladeWidth = clamp(task.width * 0.46, 0.95, 1.70);
+        const bladeHeight = clamp(task.height * 0.82, 0.62, 1.12);
+
+        const plate = new THREE.Mesh(unitBox, securityMat);
+        plate.scale.set(0.13, 0.34, 0.09);
+        plate.position.set(0, 0, -0.02);
+        const arm = new THREE.Mesh(pipeGeo, securityMat);
+        arm.scale.set(0.92, armLength, 0.92);
+        arm.rotation.x = Math.PI * 0.5;
+        arm.position.set(0, 0.08, -armLength * 0.5);
+        const braceDrop = 0.24;
+        const braceLength = Math.hypot(armLength, braceDrop);
+        const brace = new THREE.Mesh(pipeGeo, securityMat);
+        brace.scale.set(0.78, braceLength, 0.78);
+        brace.rotation.x = -Math.atan2(armLength, braceDrop);
+        brace.position.set(0, -braceDrop * 0.5, -armLength * 0.5);
+        const panel = new THREE.Mesh(unitBox, [roofHardwareMat, roofHardwareMat, roofHardwareMat, roofHardwareMat, material, material]);
+        panel.scale.set(bladeWidth, bladeHeight, 0.075);
+        panel.rotation.y = Math.PI * 0.5;
+        panel.position.set(0, -0.03, -(armLength + bladeWidth * 0.5));
+        group.add(plate, arm, brace, panel);
+        group.userData.chunkCosmetic = true;
+        group.userData.detailKind = task.kind;
+        group.userData.semanticClass = 'hanging-sign';
+        return group;
     }
 
     function createPipe(payload, task) {
@@ -655,6 +707,60 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0 } = {}) {
         }
         group.userData.chunkCosmetic = true;
         group.userData.detailKind = task.kind;
+        return group;
+    }
+
+    function createStreetFixture(payload, task) {
+        const entity = getEntity(payload, task.entityId);
+        if (!entity) return null;
+        const point = facadePoint(entity, task.side, task.along, 0, task.facadeIndex);
+        const rng = mulberry32(task.seed);
+        const group = new THREE.Group();
+        group.name = `chunk-street-fixture:${task.variant}:${task.entityId}`;
+        group.position.set(point.x, 0, point.z);
+        group.rotation.y = point.ry;
+        const z = -0.30;
+        const box = (material, x, y, localZ, sx, sy, sz) => {
+            const mesh = new THREE.Mesh(unitBox, material);
+            mesh.position.set(x, y, localZ);
+            mesh.scale.set(sx, sy, sz);
+            group.add(mesh);
+            return mesh;
+        };
+        if (task.variant === 'trash-can') {
+            const body = new THREE.Mesh(fixtureCylinderGeo, roofHardwareMat);
+            body.position.set(0, 0.36, z);
+            body.scale.set(0.86, 1, 0.86);
+            group.add(body);
+            box(securityMat, 0, 0.72, z, 0.34, 0.07, 0.34);
+        } else if (task.variant === 'crate') {
+            box(interiorWoodMat, -0.13, 0.28, z, 0.48, 0.56, 0.46).rotation.y = (rng() - 0.5) * 0.20;
+            box(interiorWoodMat, 0.20, 0.18, z - 0.08, 0.34, 0.36, 0.34).rotation.y = (rng() - 0.5) * 0.28;
+        } else if (task.variant === 'utility-box') {
+            box(elevatorMat, 0, 0.48, z, 0.58, 0.96, 0.30);
+            box(elevatorDoorMat, 0, 0.52, z - 0.17, 0.32, 0.34, 0.035);
+        } else if (task.variant === 'planter') {
+            const pot = new THREE.Mesh(fixtureCylinderGeo, plazaConcreteMat);
+            pot.position.set(0, 0.18, z);
+            pot.scale.set(0.78, 0.50, 0.78);
+            group.add(pot);
+            for (let i = 0; i < 3; i++) {
+                const leaf = new THREE.Mesh(leafGeo, ivyMaterials[(task.seed + i) % ivyMaterials.length]);
+                leaf.position.set((i - 1) * 0.12, 0.58 + i * 0.08, z);
+                leaf.rotation.y = i * Math.PI / 3 + rng() * 0.25;
+                leaf.scale.set(0.72, 0.92 + rng() * 0.30, 1);
+                group.add(leaf);
+            }
+        } else {
+            const post = new THREE.Mesh(pipeGeo, securityMat);
+            post.position.set(0, 1.05, z);
+            post.scale.set(1.20, 2.10, 1.20);
+            group.add(post);
+            box(awningMaterials[task.seed % awningMaterials.length], 0, 2.02, z, 0.34, 0.38, 0.34);
+        }
+        group.userData.chunkCosmetic = true;
+        group.userData.detailKind = task.kind;
+        group.userData.semanticClass = task.variant;
         return group;
     }
 
@@ -845,6 +951,7 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0 } = {}) {
         else if (task.kind === 'ivy') object = createIvy(payload, task);
         else if (task.kind === 'security') object = createSecurity(payload, task);
         else if (task.kind === 'elevator-hardware') object = createElevatorHardware(payload, task);
+        else if (task.kind === 'street-fixture') object = createStreetFixture(payload, task);
         else if (task.kind === 'roof-clutter') object = createRoofClutter(payload, task);
         else if (task.kind === 'spray-cans') object = createSprayCans(payload, task);
         else if (task.kind === 'interior-prop') object = createInteriorProp(payload, task);
@@ -969,6 +1076,7 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0 } = {}) {
         unitBox.dispose();
         unitPlane.dispose();
         pipeGeo.dispose();
+        fixtureCylinderGeo.dispose();
         leafGeo.dispose();
         topperDomeGeo.dispose();
         topperSpireGeo.dispose();

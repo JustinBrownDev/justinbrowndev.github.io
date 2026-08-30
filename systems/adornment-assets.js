@@ -75,15 +75,17 @@ export function createAdornmentSystem({ CONFIG, camera, scene, pick, randRange, 
      
      
      
+    const LOOSE_REAL_MODEL_BUDGET_SCALE = 0.72;
+    const scaleLooseBudget = value => Math.max(0, Math.floor(value * LOOSE_REAL_MODEL_BUDGET_SCALE));
     const REAL_MODEL_BUDGETS = {
-        tyre: Math.min(QP[366], QP[367] + Math.ceil(_cityAreaCells / QP[368])),
-        trashbag: Math.min(QP[369], QP[370] + Math.ceil(_cityAreaCells / QP[371])),
+        tyre: scaleLooseBudget(Math.min(QP[366], QP[367] + Math.ceil(_cityAreaCells / QP[368]))),
+        trashbag: scaleLooseBudget(Math.min(QP[369], QP[370] + Math.ceil(_cityAreaCells / QP[371]))),
         manhole: Math.min(QP[372], QP[373] + Math.ceil(_cityAreaCells / QP[374])),
-        sprayCans: QP[375],
+        sprayCans: scaleLooseBudget(QP[375]),
         trashCanReal: Math.min(QP[376], QP[377] + Math.ceil(_cityAreaCells / QP[378])),
         streetLamp: Math.min(QP[379], QP[380] + Math.ceil(_cityAreaCells / QP[381])),
         barrelStove: QP[382],
-        ironGate: QP[383],
+        ironGate: 0,
     };
 
     function sortPlacementRequestsNearestToPlayer(requests) {
@@ -135,6 +137,8 @@ export function createAdornmentSystem({ CONFIG, camera, scene, pick, randRange, 
     }
 
     function placeRealModel(name, x, z, rotY, opts = {}) {
+        // Normal world generation intentionally has no wrought-iron gate placement.
+        if (name === 'ironGate') return false;
         if (!REAL_MODEL_DEFS[name] || failedRealModelLoads.has(name)) return false;
         const budget = REAL_MODEL_BUDGETS[name] ?? Infinity;
         if (realModelPlacedCount[name] >= budget) return false;

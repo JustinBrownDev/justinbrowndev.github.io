@@ -35,6 +35,7 @@ import { createAdornmentSystem } from './systems/adornment-assets.js';
 import { createSignageSystem } from './world/signage.js';
 import { createStreetPropsSystem } from './world/street-props.js';
 import { createGroundSurfaceSystem } from './world/ground-surfaces.js';
+import { createFiniteCylinderSupportColliders } from './world/collision-shapes.js';
 import { createFacadeLayoutSystem } from './world/facade-layout.js';
 import { createAuthoredContentHelpers } from './world/authored-content-helpers.js';
 import { createSpawnMazePlan, createSpawnBuildingSitePlan } from './world/spawn-district-plan.js';
@@ -2975,8 +2976,11 @@ for (let i = QP[4804]; i < CONFIG.props.maxSpecialFeatures.megaBillboards; i++) 
     if (!cell) break;
     reserveSpecialPlazaJob('mega-billboard', cell, i, false, () => {
         const { x, z } = cellToWorld(cell[QP[4805]], cell[QP[4806]]);
-        const r = addMegaBillboard(x, z);
-        propColliders.push({ x, z, radius: r, height: Infinity });
+        const supportColliders = addMegaBillboard(x, z);
+        // SANITY HANDOFF: change semantics first, ownership second. This authored
+        // plaza object can stay in the global prop registry for this release, but
+        // its physical silhouette must match the two visible finite support legs.
+        propColliders.push(...supportColliders);
     });
 }
 
@@ -3138,7 +3142,22 @@ function addMegaBillboard(x, z) {
     g.rotation.y = rotY;
     g.position.set(x, QP[4978], z);
     scene.add(g);
-    return QP[4979];
+
+    // RENDER / COLLISION SANITY HANDOFF: derive collision from the same cylinder
+    // dimensions and local support offsets used above. The panel stays non-solid;
+    // the visibly open space between the legs therefore remains real traversal.
+    const supportColliders = createFiniteCylinderSupportColliders({
+        originX: x,
+        originZ: z,
+        rotationY: rotY,
+        localXOffsets: [QP[4935] * QP[4942], QP[4936] * QP[4942]],
+        localZ: QP[4944],
+        topRadius: QP[4937],
+        bottomRadius: QP[4938],
+        cylinderHeight: QP[4939],
+        centerY: QP[4978] + QP[4943],
+    });
+    return supportColliders;
 }
 
 function sharedGrassMaterial() {

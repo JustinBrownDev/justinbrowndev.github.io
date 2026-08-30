@@ -1,0 +1,54 @@
+{
+  "repository": "JustinBrownDev/justinbrowndev.github.io",
+  "branch": "main",
+  "observedCommit": "783b8a04737f4e7b4f00310af828f5ba16f3a354",
+  "commitMessage": "Fix streamed building seams and rooftop collision",
+  "previousCorpusAnchor": "e9a6971544634e0867b9ef8073050714f7f9e059",
+  "interveningPush": {
+    "commit": "783b8a04737f4e7b4f00310af828f5ba16f3a354",
+    "aheadBy": 1,
+    "changedFiles": [
+      "kowloon-fabric-engine.js",
+      "player-physics.js",
+      "tests/geometry-bugfix-selftest.mjs",
+      "tests/player-physics-wall-selftest.mjs",
+      "world/kowloon-geometry-contract.js"
+    ],
+    "semanticPlacementChanged": false,
+    "semanticInteriorCatalogChanged": false,
+    "assessment": "Compatible with the corpus pass. The new shared Kowloon geometry contract strengthens structural authority and should be consumed by future SpacePlan generation rather than re-derived by semantic placement."
+  },
+  "liveFiles": {
+    "world/semantic-placement.js": {
+      "blobSha": "c9edd08f9416da46ded1f3085272471469b0e5c4",
+      "status": "unchanged across intervening push"
+    },
+    "vendor/city-pack/semantic-interiors/semantic-links.js": {
+      "blobSha": "c1c902fd126c781309e9c2abead4ad4feeee1770",
+      "status": "unchanged across intervening push"
+    },
+    "vendor/city-pack/semantic-interiors/manifest.json": {
+      "blobSha": "903a95aef1304d2b3f35c23d477f2928e6128cef",
+      "assetCount": 24
+    },
+    "world/kowloon-geometry-contract.js": {
+      "blobSha": "913ec1dd03e1930394b366c164a62d7c7a66be2b",
+      "status": "new authoritative module/slab/chunk-edge geometry seam"
+    }
+  },
+  "liveSemanticInteriorAssetCount": 24,
+  "liveExplicitSemanticLinkOverrideCount": 8,
+  "note": "The live semantic-links.js intentionally contains representative runtime wiring only. This archive contains the full external corpus plus v5 planner/topology contracts. No live-site push is included.",
+  "liveSemanticPopulationPilot": {
+    "source": "world/kowloon-fabric-enrichment.js",
+    "phaseSpecs": {
+      "identity": 1,
+      "functional": 1,
+      "life": 0
+    },
+    "scheduledPropsPerBuildingPlan": 2,
+    "v5DefaultAcceptedTargetPerSpace": 24,
+    "v5DensityMultiplierVsPilot": 12.0,
+    "note": "Corpus policy only; no live-site density change is included in this archive."
+  }
+}

@@ -1,0 +1,40 @@
+{
+  "version": 5,
+  "schema": "jweb.full-corpus-audit.v5",
+  "pass": true,
+  "baselineLiveCommit": "783b8a04737f4e7b4f00310af828f5ba16f3a354",
+  "counts": {
+    "assets": 9714,
+    "glbs": 9714,
+    "topologyOverlayAssets": 3556,
+    "plannerAssets": 9714,
+    "structuralDoorways": 816,
+    "doorAdornments": 10,
+    "stairs": 626,
+    "landings": 348,
+    "stairOrShaftOpenings": 96,
+    "fireEscapeAssets": 288,
+    "classification": {
+      "advisory": 23,
+      "unsupported-hard-error": 134,
+      "implemented": 8
+    },
+    "currentRuntimeBlockedAssets": 6368,
+    "roomRecipes": 35,
+    "defaultPropTargetPerSpace": 24,
+    "minimumRecipePropTargetPerSpace": 22,
+    "maximumRecipePropTargetPerSpace": 30
+  },
+  "errors": [],
+  "warnings": [],
+  "guarantees": {
+    "allManifestGLBsPresentAndGlTFMagic": true,
+    "allShippedVocabularyClassified": true,
+    "allAssetsHavePlannerSemantics": true,
+    "doorsFailClosed": true,
+    "stairsFailClosed": true,
+    "stableInstanceRelationPolicy": true,
+    "topologyAssetsRequirePrecommitPlanning": true,
+    "propDensityAtLeast10xLivePilot": true
+  }
+}

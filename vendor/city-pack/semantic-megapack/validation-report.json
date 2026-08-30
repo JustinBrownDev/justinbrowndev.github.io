@@ -1,0 +1,111 @@
+{
+  "version": 3,
+  "assetCount": 6102,
+  "canonicalCount": 410,
+  "variantCount": 3690,
+  "traversalCount": 626,
+  "openingCount": 1376,
+  "trianglesTotal": 1133864,
+  "trianglesMedian": 120,
+  "trianglesMax": 3156,
+  "bytesTotal": 41408368,
+  "reloadSuccess": 6102,
+  "duplicateGeometryGroups": 319,
+  "duplicateGeometryAssets": 839,
+  "errors": [],
+  "sampleDuplicateGroups": [
+    [
+      "semantic/interior/bar_stool",
+      "semantic/interior/shop_stool",
+      "semantic/interior/medical_rolling_stool"
+    ],
+    [
+      "semantic/interior/diner_counter_stool",
+      "semantic/interior/diner_counter_stool_module"
+    ],
+    [
+      "semantic/interior/folding_table",
+      "semantic/interior/laundry_folding_table"
+    ],
+    [
+      "semantic/interior/side_table",
+      "semantic/interior/nightstand"
+    ],
+    [
+      "semantic/interior/reception_desk",
+      "semantic/interior/security_desk"
+    ],
+    [
+      "semantic/interior/clothing_rack",
+      "semantic/interior/motel_clothes_rail"
+    ],
+    [
+      "semantic/interior/menu_board",
+      "semantic/interior/headboard",
+      "semantic/interior/wall_directory",
+      "semantic/interior/chalkboard",
+      "semantic/interior/whiteboard",
+      "semantic/interior/timetable_board",
+      "semantic/interior/cork_bulletin_board",
+      "semantic/interior/key_hook_board",
+      "semantic/interior/newsroom_assignment_board",
+      "semantic/interior/safety_station_board",
+      "semantic/interior/service_log_clipboard_rack"
+    ],
+    [
+      "semantic/interior/pie_display",
+      "semantic/interior/pastry_case"
+    ],
+    [
+      "semantic/interior/commercial_range",
+      "semantic/interior/commercial_dishwasher"
+    ],
+    [
+      "semantic/interior/dish_rack",
+      "semantic/interior/bread_rack"
+    ],
+    [
+      "semantic/interior/double_bed",
+      "semantic/interior/motel_bed"
+    ],
+    [
+      "semantic/interior/sink_cabinet",
+      "semantic/interior/pedestal_sink"
+    ],
+    [
+      "semantic/interior/waiting_room_magazine_rack",
+      "semantic/interior/periodical_rack",
+      "semantic/interior/magazine_rack",
+      "semantic/interior/newspaper_rack"
+    ],
+    [
+      "semantic/interior/housekeeping_cart",
+      "semantic/interior/cleaning_cart"
+    ],
+    [
+      "semantic/interior/motel_wall_mirror",
+      "semantic/interior/mirror"
+    ],
+    [
+      "semantic/interior/shop_sink",
+      "semantic/interior/utility_sink",
+      "semantic/interior/janitor_sink"
+    ],
+    [
+      "semantic/interior/arcade_cabinet",
+      "semantic/interior/cocktail_arcade"
+    ],
+    [
+      "semantic/interior/gallery_bench",
+      "semantic/interior/holding_cell_bench"
+    ],
+    [
+      "semantic/interior/memorial_plaque_stand",
+      "semantic/interior/memorial_guestbook_stand"
+    ],
+    [
+      "semantic/interior/equipment_locker",
+      "semantic/interior/evidence_locker"
+    ]
+  ]
+}

@@ -1,0 +1,610 @@
+{
+  "version": 5,
+  "schema": "jweb.semantic-population.v5",
+  "baselineLiveCommit": "783b8a04737f4e7b4f00310af828f5ba16f3a354",
+  "livePilotBaseline": {
+    "source": "world/kowloon-fabric-enrichment.js",
+    "phaseSpecs": {
+      "identity": 1,
+      "functional": 1,
+      "life": 0
+    },
+    "scheduledSemanticPropsPerBuildingPlan": 2
+  },
+  "default": {
+    "targetAcceptedPerEligibleSpace": 24,
+    "minimumDenseTargetPerEligibleSpace": 20,
+    "densityMultiplierVsLivePilot": 12.0,
+    "phaseTargets": {
+      "identity": 6,
+      "functional": 10,
+      "life": 8
+    },
+    "attemptBudget": 72
+  },
+  "programOverrides": {
+    "diner": {
+      "schema": "jweb.semantic-population.v5",
+      "targetAcceptedPerSpace": 30,
+      "minimumDenseTargetPerSpace": 20,
+      "densityMultiplierVsLivePilot": 15.0,
+      "phaseTargets": {
+        "identity": 8,
+        "functional": 12,
+        "life": 10
+      },
+      "attemptBudget": 90,
+      "topologyAssetsMultiplied": false,
+      "variantPolicy": "expand canonical families before exact-repeat; deterministic by spaceId/task ordinal",
+      "overflowPolicy": "carry unresolved soft prop demand to compatible same-program spaces; never violate hard typed reservations"
+    },
+    "laundromat": {
+      "schema": "jweb.semantic-population.v5",
+      "targetAcceptedPerSpace": 30,
+      "minimumDenseTargetPerSpace": 20,
+      "densityMultiplierVsLivePilot": 15.0,
+      "phaseTargets": {
+        "identity": 8,
+        "functional": 12,
+        "life": 10
+      },
+      "attemptBudget": 90,
+      "topologyAssetsMultiplied": false,
+      "variantPolicy": "expand canonical families before exact-repeat; deterministic by spaceId/task ordinal",
+      "overflowPolicy": "carry unresolved soft prop demand to compatible same-program spaces; never violate hard typed reservations"
+    },
+    "grocery": {
+      "schema": "jweb.semantic-population.v5",
+      "targetAcceptedPerSpace": 30,
+      "minimumDenseTargetPerSpace": 20,
+      "densityMultiplierVsLivePilot": 15.0,
+      "phaseTargets": {
+        "identity": 8,
+        "functional": 12,
+        "life": 10
+      },
+      "attemptBudget": 90,
+      "topologyAssetsMultiplied": false,
+      "variantPolicy": "expand canonical families before exact-repeat; deterministic by spaceId/task ordinal",
+      "overflowPolicy": "carry unresolved soft prop demand to compatible same-program spaces; never violate hard typed reservations"
+    },
+    "convenience": {
+      "schema": "jweb.semantic-population.v5",
+      "targetAcceptedPerSpace": 30,
+      "minimumDenseTargetPerSpace": 20,
+      "densityMultiplierVsLivePilot": 15.0,
+      "phaseTargets": {
+        "identity": 8,
+        "functional": 12,
+        "life": 10
+      },
+      "attemptBudget": 90,
+      "topologyAssetsMultiplied": false,
+      "variantPolicy": "expand canonical families before exact-repeat; deterministic by spaceId/task ordinal",
+      "overflowPolicy": "carry unresolved soft prop demand to compatible same-program spaces; never violate hard typed reservations"
+    },
+    "pharmacy": {
+      "schema": "jweb.semantic-population.v5",
+      "targetAcceptedPerSpace": 30,
+      "minimumDenseTargetPerSpace": 20,
+      "densityMultiplierVsLivePilot": 15.0,
+      "phaseTargets": {
+        "identity": 8,
+        "functional": 12,
+        "life": 10
+      },
+      "attemptBudget": 90,
+      "topologyAssetsMultiplied": false,
+      "variantPolicy": "expand canonical families before exact-repeat; deterministic by spaceId/task ordinal",
+      "overflowPolicy": "carry unresolved soft prop demand to compatible same-program spaces; never violate hard typed reservations"
+    },
+    "post_office": {
+      "schema": "jweb.semantic-population.v5",
+      "targetAcceptedPerSpace": 24,
+      "minimumDenseTargetPerSpace": 20,
+      "densityMultiplierVsLivePilot": 12.0,
+      "phaseTargets": {
+        "identity": 6,
+        "functional": 10,
+        "life": 8
+      },
+      "attemptBudget": 72,
+      "topologyAssetsMultiplied": false,
+      "variantPolicy": "expand canonical families before exact-repeat; deterministic by spaceId/task ordinal",
+      "overflowPolicy": "carry unresolved soft prop demand to compatible same-program spaces; never violate hard typed reservations"
+    },
+    "bank": {
+      "schema": "jweb.semantic-population.v5",
+      "targetAcceptedPerSpace": 24,
+      "minimumDenseTargetPerSpace": 20,
+      "densityMultiplierVsLivePilot": 12.0,
+      "phaseTargets": {
+        "identity": 6,
+        "functional": 10,
+        "life": 8
+      },
+      "attemptBudget": 72,
+      "topologyAssetsMultiplied": false,
+      "variantPolicy": "expand canonical families before exact-repeat; deterministic by spaceId/task ordinal",
+      "overflowPolicy": "carry unresolved soft prop demand to compatible same-program spaces; never violate hard typed reservations"
+    },
+    "office": {
+      "schema": "jweb.semantic-population.v5",
+      "targetAcceptedPerSpace": 24,
+      "minimumDenseTargetPerSpace": 20,
+      "densityMultiplierVsLivePilot": 12.0,
+      "phaseTargets": {
+        "identity": 6,
+        "functional": 10,
+        "life": 8
+      },
+      "attemptBudget": 72,
+      "topologyAssetsMultiplied": false,
+      "variantPolicy": "expand canonical families before exact-repeat; deterministic by spaceId/task ordinal",
+      "overflowPolicy": "carry unresolved soft prop demand to compatible same-program spaces; never violate hard typed reservations"
+    },
+    "1980s_office": {
+      "schema": "jweb.semantic-population.v5",
+      "targetAcceptedPerSpace": 24,
+      "minimumDenseTargetPerSpace": 20,
+      "densityMultiplierVsLivePilot": 12.0,
+      "phaseTargets": {
+        "identity": 6,
+        "functional": 10,
+        "life": 8
+      },
+      "attemptBudget": 72,
+      "topologyAssetsMultiplied": false,
+      "variantPolicy": "expand canonical families before exact-repeat; deterministic by spaceId/task ordinal",
+      "overflowPolicy": "carry unresolved soft prop demand to compatible same-program spaces; never violate hard typed reservations"
+    },
+    "clinic": {
+      "schema": "jweb.semantic-population.v5",
+      "targetAcceptedPerSpace": 24,
+      "minimumDenseTargetPerSpace": 20,
+      "densityMultiplierVsLivePilot": 12.0,
+      "phaseTargets": {
+        "identity": 6,
+        "functional": 10,
+        "life": 8
+      },
+      "attemptBudget": 72,
+      "topologyAssetsMultiplied": false,
+      "variantPolicy": "expand canonical families before exact-repeat; deterministic by spaceId/task ordinal",
+      "overflowPolicy": "carry unresolved soft prop demand to compatible same-program spaces; never violate hard typed reservations"
+    },
+    "motel_room": {
+      "schema": "jweb.semantic-population.v5",
+      "targetAcceptedPerSpace": 22,
+      "minimumDenseTargetPerSpace": 20,
+      "densityMultiplierVsLivePilot": 11.0,
+      "phaseTargets": {
+        "identity": 6,
+        "functional": 9,
+        "life": 7
+      },
+      "attemptBudget": 66,
+      "topologyAssetsMultiplied": false,
+      "variantPolicy": "expand canonical families before exact-repeat; deterministic by spaceId/task ordinal",
+      "overflowPolicy": "carry unresolved soft prop demand to compatible same-program spaces; never violate hard typed reservations"
+    },
+    "auto_shop": {
+      "schema": "jweb.semantic-population.v5",
+      "targetAcceptedPerSpace": 30,
+      "minimumDenseTargetPerSpace": 20,
+      "densityMultiplierVsLivePilot": 15.0,
+      "phaseTargets": {
+        "identity": 8,
+        "functional": 12,
+        "life": 10
+      },
+      "attemptBudget": 90,
+      "topologyAssetsMultiplied": false,
+      "variantPolicy": "expand canonical families before exact-repeat; deterministic by spaceId/task ordinal",
+      "overflowPolicy": "carry unresolved soft prop demand to compatible same-program spaces; never violate hard typed reservations"
+    },
+    "hardware_store": {
+      "schema": "jweb.semantic-population.v5",
+      "targetAcceptedPerSpace": 30,
+      "minimumDenseTargetPerSpace": 20,
+      "densityMultiplierVsLivePilot": 15.0,
+      "phaseTargets": {
+        "identity": 8,
+        "functional": 12,
+        "life": 10
+      },
+      "attemptBudget": 90,
+      "topologyAssetsMultiplied": false,
+      "variantPolicy": "expand canonical families before exact-repeat; deterministic by spaceId/task ordinal",
+      "overflowPolicy": "carry unresolved soft prop demand to compatible same-program spaces; never violate hard typed reservations"
+    },
+    "library": {
+      "schema": "jweb.semantic-population.v5",
+      "targetAcceptedPerSpace": 30,
+      "minimumDenseTargetPerSpace": 20,
+      "densityMultiplierVsLivePilot": 15.0,
+      "phaseTargets": {
+        "identity": 8,
+        "functional": 12,
+        "life": 10
+      },
+      "attemptBudget": 90,
+      "topologyAssetsMultiplied": false,
+      "variantPolicy": "expand canonical families before exact-repeat; deterministic by spaceId/task ordinal",
+      "overflowPolicy": "carry unresolved soft prop demand to compatible same-program spaces; never violate hard typed reservations"
+    },
+    "archive": {
+      "schema": "jweb.semantic-population.v5",
+      "targetAcceptedPerSpace": 30,
+      "minimumDenseTargetPerSpace": 20,
+      "densityMultiplierVsLivePilot": 15.0,
+      "phaseTargets": {
+        "identity": 8,
+        "functional": 12,
+        "life": 10
+      },
+      "attemptBudget": 90,
+      "topologyAssetsMultiplied": false,
+      "variantPolicy": "expand canonical families before exact-repeat; deterministic by spaceId/task ordinal",
+      "overflowPolicy": "carry unresolved soft prop demand to compatible same-program spaces; never violate hard typed reservations"
+    },
+    "school_classroom": {
+      "schema": "jweb.semantic-population.v5",
+      "targetAcceptedPerSpace": 30,
+      "minimumDenseTargetPerSpace": 20,
+      "densityMultiplierVsLivePilot": 15.0,
+      "phaseTargets": {
+        "identity": 8,
+        "functional": 12,
+        "life": 10
+      },
+      "attemptBudget": 90,
+      "topologyAssetsMultiplied": false,
+      "variantPolicy": "expand canonical families before exact-repeat; deterministic by spaceId/task ordinal",
+      "overflowPolicy": "carry unresolved soft prop demand to compatible same-program spaces; never violate hard typed reservations"
+    },
+    "server_room": {
+      "schema": "jweb.semantic-population.v5",
+      "targetAcceptedPerSpace": 30,
+      "minimumDenseTargetPerSpace": 20,
+      "densityMultiplierVsLivePilot": 15.0,
+      "phaseTargets": {
+        "identity": 8,
+        "functional": 12,
+        "life": 10
+      },
+      "attemptBudget": 90,
+      "topologyAssetsMultiplied": false,
+      "variantPolicy": "expand canonical families before exact-repeat; deterministic by spaceId/task ordinal",
+      "overflowPolicy": "carry unresolved soft prop demand to compatible same-program spaces; never violate hard typed reservations"
+    },
+    "mainframe_room": {
+      "schema": "jweb.semantic-population.v5",
+      "targetAcceptedPerSpace": 30,
+      "minimumDenseTargetPerSpace": 20,
+      "densityMultiplierVsLivePilot": 15.0,
+      "phaseTargets": {
+        "identity": 8,
+        "functional": 12,
+        "life": 10
+      },
+      "attemptBudget": 90,
+      "topologyAssetsMultiplied": false,
+      "variantPolicy": "expand canonical families before exact-repeat; deterministic by spaceId/task ordinal",
+      "overflowPolicy": "carry unresolved soft prop demand to compatible same-program spaces; never violate hard typed reservations"
+    },
+    "bar": {
+      "schema": "jweb.semantic-population.v5",
+      "targetAcceptedPerSpace": 30,
+      "minimumDenseTargetPerSpace": 20,
+      "densityMultiplierVsLivePilot": 15.0,
+      "phaseTargets": {
+        "identity": 8,
+        "functional": 12,
+        "life": 10
+      },
+      "attemptBudget": 90,
+      "topologyAssetsMultiplied": false,
+      "variantPolicy": "expand canonical families before exact-repeat; deterministic by spaceId/task ordinal",
+      "overflowPolicy": "carry unresolved soft prop demand to compatible same-program spaces; never violate hard typed reservations"
+    },
+    "arcade": {
+      "schema": "jweb.semantic-population.v5",
+      "targetAcceptedPerSpace": 30,
+      "minimumDenseTargetPerSpace": 20,
+      "densityMultiplierVsLivePilot": 15.0,
+      "phaseTargets": {
+        "identity": 8,
+        "functional": 12,
+        "life": 10
+      },
+      "attemptBudget": 90,
+      "topologyAssetsMultiplied": false,
+      "variantPolicy": "expand canonical families before exact-repeat; deterministic by spaceId/task ordinal",
+      "overflowPolicy": "carry unresolved soft prop demand to compatible same-program spaces; never violate hard typed reservations"
+    },
+    "fire_station": {
+      "schema": "jweb.semantic-population.v5",
+      "targetAcceptedPerSpace": 24,
+      "minimumDenseTargetPerSpace": 20,
+      "densityMultiplierVsLivePilot": 12.0,
+      "phaseTargets": {
+        "identity": 6,
+        "functional": 10,
+        "life": 8
+      },
+      "attemptBudget": 72,
+      "topologyAssetsMultiplied": false,
+      "variantPolicy": "expand canonical families before exact-repeat; deterministic by spaceId/task ordinal",
+      "overflowPolicy": "carry unresolved soft prop demand to compatible same-program spaces; never violate hard typed reservations"
+    },
+    "police_booking": {
+      "schema": "jweb.semantic-population.v5",
+      "targetAcceptedPerSpace": 24,
+      "minimumDenseTargetPerSpace": 20,
+      "densityMultiplierVsLivePilot": 12.0,
+      "phaseTargets": {
+        "identity": 6,
+        "functional": 10,
+        "life": 8
+      },
+      "attemptBudget": 72,
+      "topologyAssetsMultiplied": false,
+      "variantPolicy": "expand canonical families before exact-repeat; deterministic by spaceId/task ordinal",
+      "overflowPolicy": "carry unresolved soft prop demand to compatible same-program spaces; never violate hard typed reservations"
+    },
+    "courtroom": {
+      "schema": "jweb.semantic-population.v5",
+      "targetAcceptedPerSpace": 24,
+      "minimumDenseTargetPerSpace": 20,
+      "densityMultiplierVsLivePilot": 12.0,
+      "phaseTargets": {
+        "identity": 6,
+        "functional": 10,
+        "life": 8
+      },
+      "attemptBudget": 72,
+      "topologyAssetsMultiplied": false,
+      "variantPolicy": "expand canonical families before exact-repeat; deterministic by spaceId/task ordinal",
+      "overflowPolicy": "carry unresolved soft prop demand to compatible same-program spaces; never violate hard typed reservations"
+    },
+    "funeral_home": {
+      "schema": "jweb.semantic-population.v5",
+      "targetAcceptedPerSpace": 24,
+      "minimumDenseTargetPerSpace": 20,
+      "densityMultiplierVsLivePilot": 12.0,
+      "phaseTargets": {
+        "identity": 6,
+        "functional": 10,
+        "life": 8
+      },
+      "attemptBudget": 72,
+      "topologyAssetsMultiplied": false,
+      "variantPolicy": "expand canonical families before exact-repeat; deterministic by spaceId/task ordinal",
+      "overflowPolicy": "carry unresolved soft prop demand to compatible same-program spaces; never violate hard typed reservations"
+    },
+    "florist": {
+      "schema": "jweb.semantic-population.v5",
+      "targetAcceptedPerSpace": 24,
+      "minimumDenseTargetPerSpace": 20,
+      "densityMultiplierVsLivePilot": 12.0,
+      "phaseTargets": {
+        "identity": 6,
+        "functional": 10,
+        "life": 8
+      },
+      "attemptBudget": 72,
+      "topologyAssetsMultiplied": false,
+      "variantPolicy": "expand canonical families before exact-repeat; deterministic by spaceId/task ordinal",
+      "overflowPolicy": "carry unresolved soft prop demand to compatible same-program spaces; never violate hard typed reservations"
+    },
+    "print_shop": {
+      "schema": "jweb.semantic-population.v5",
+      "targetAcceptedPerSpace": 30,
+      "minimumDenseTargetPerSpace": 20,
+      "densityMultiplierVsLivePilot": 15.0,
+      "phaseTargets": {
+        "identity": 8,
+        "functional": 12,
+        "life": 10
+      },
+      "attemptBudget": 90,
+      "topologyAssetsMultiplied": false,
+      "variantPolicy": "expand canonical families before exact-repeat; deterministic by spaceId/task ordinal",
+      "overflowPolicy": "carry unresolved soft prop demand to compatible same-program spaces; never violate hard typed reservations"
+    },
+    "photo_lab": {
+      "schema": "jweb.semantic-population.v5",
+      "targetAcceptedPerSpace": 22,
+      "minimumDenseTargetPerSpace": 20,
+      "densityMultiplierVsLivePilot": 11.0,
+      "phaseTargets": {
+        "identity": 6,
+        "functional": 9,
+        "life": 7
+      },
+      "attemptBudget": 66,
+      "topologyAssetsMultiplied": false,
+      "variantPolicy": "expand canonical families before exact-repeat; deterministic by spaceId/task ordinal",
+      "overflowPolicy": "carry unresolved soft prop demand to compatible same-program spaces; never violate hard typed reservations"
+    },
+    "electronics_repair": {
+      "schema": "jweb.semantic-population.v5",
+      "targetAcceptedPerSpace": 30,
+      "minimumDenseTargetPerSpace": 20,
+      "densityMultiplierVsLivePilot": 15.0,
+      "phaseTargets": {
+        "identity": 8,
+        "functional": 12,
+        "life": 10
+      },
+      "attemptBudget": 90,
+      "topologyAssetsMultiplied": false,
+      "variantPolicy": "expand canonical families before exact-repeat; deterministic by spaceId/task ordinal",
+      "overflowPolicy": "carry unresolved soft prop demand to compatible same-program spaces; never violate hard typed reservations"
+    },
+    "butcher": {
+      "schema": "jweb.semantic-population.v5",
+      "targetAcceptedPerSpace": 24,
+      "minimumDenseTargetPerSpace": 20,
+      "densityMultiplierVsLivePilot": 12.0,
+      "phaseTargets": {
+        "identity": 6,
+        "functional": 10,
+        "life": 8
+      },
+      "attemptBudget": 72,
+      "topologyAssetsMultiplied": false,
+      "variantPolicy": "expand canonical families before exact-repeat; deterministic by spaceId/task ordinal",
+      "overflowPolicy": "carry unresolved soft prop demand to compatible same-program spaces; never violate hard typed reservations"
+    },
+    "dentist": {
+      "schema": "jweb.semantic-population.v5",
+      "targetAcceptedPerSpace": 22,
+      "minimumDenseTargetPerSpace": 20,
+      "densityMultiplierVsLivePilot": 11.0,
+      "phaseTargets": {
+        "identity": 6,
+        "functional": 9,
+        "life": 7
+      },
+      "attemptBudget": 66,
+      "topologyAssetsMultiplied": false,
+      "variantPolicy": "expand canonical families before exact-repeat; deterministic by spaceId/task ordinal",
+      "overflowPolicy": "carry unresolved soft prop demand to compatible same-program spaces; never violate hard typed reservations"
+    },
+    "laboratory": {
+      "schema": "jweb.semantic-population.v5",
+      "targetAcceptedPerSpace": 30,
+      "minimumDenseTargetPerSpace": 20,
+      "densityMultiplierVsLivePilot": 15.0,
+      "phaseTargets": {
+        "identity": 8,
+        "functional": 12,
+        "life": 10
+      },
+      "attemptBudget": 90,
+      "topologyAssetsMultiplied": false,
+      "variantPolicy": "expand canonical families before exact-repeat; deterministic by spaceId/task ordinal",
+      "overflowPolicy": "carry unresolved soft prop demand to compatible same-program spaces; never violate hard typed reservations"
+    },
+    "factory_control": {
+      "schema": "jweb.semantic-population.v5",
+      "targetAcceptedPerSpace": 30,
+      "minimumDenseTargetPerSpace": 20,
+      "densityMultiplierVsLivePilot": 15.0,
+      "phaseTargets": {
+        "identity": 8,
+        "functional": 12,
+        "life": 10
+      },
+      "attemptBudget": 90,
+      "topologyAssetsMultiplied": false,
+      "variantPolicy": "expand canonical families before exact-repeat; deterministic by spaceId/task ordinal",
+      "overflowPolicy": "carry unresolved soft prop demand to compatible same-program spaces; never violate hard typed reservations"
+    },
+    "projection_booth": {
+      "schema": "jweb.semantic-population.v5",
+      "targetAcceptedPerSpace": 22,
+      "minimumDenseTargetPerSpace": 20,
+      "densityMultiplierVsLivePilot": 11.0,
+      "phaseTargets": {
+        "identity": 6,
+        "functional": 9,
+        "life": 7
+      },
+      "attemptBudget": 66,
+      "topologyAssetsMultiplied": false,
+      "variantPolicy": "expand canonical families before exact-repeat; deterministic by spaceId/task ordinal",
+      "overflowPolicy": "carry unresolved soft prop demand to compatible same-program spaces; never violate hard typed reservations"
+    },
+    "radio_station": {
+      "schema": "jweb.semantic-population.v5",
+      "targetAcceptedPerSpace": 30,
+      "minimumDenseTargetPerSpace": 20,
+      "densityMultiplierVsLivePilot": 15.0,
+      "phaseTargets": {
+        "identity": 8,
+        "functional": 12,
+        "life": 10
+      },
+      "attemptBudget": 90,
+      "topologyAssetsMultiplied": false,
+      "variantPolicy": "expand canonical families before exact-repeat; deterministic by spaceId/task ordinal",
+      "overflowPolicy": "carry unresolved soft prop demand to compatible same-program spaces; never violate hard typed reservations"
+    },
+    "boiler_room": {
+      "schema": "jweb.semantic-population.v5",
+      "targetAcceptedPerSpace": 30,
+      "minimumDenseTargetPerSpace": 20,
+      "densityMultiplierVsLivePilot": 15.0,
+      "phaseTargets": {
+        "identity": 8,
+        "functional": 12,
+        "life": 10
+      },
+      "attemptBudget": 90,
+      "topologyAssetsMultiplied": false,
+      "variantPolicy": "expand canonical families before exact-repeat; deterministic by spaceId/task ordinal",
+      "overflowPolicy": "carry unresolved soft prop demand to compatible same-program spaces; never violate hard typed reservations"
+    }
+  },
+  "selection": {
+    "recipeEntriesAreCanonicalSeeds": true,
+    "expandAcrossCanonicalVariants": true,
+    "preferUnseenVariantBeforeExactRepeat": true,
+    "deterministicSeedInputs": [
+      "worldSeed",
+      "chunkId",
+      "spaceId",
+      "phase",
+      "taskOrdinal"
+    ],
+    "note": "The corpus normally carries ten visual variants per canonical noun, so high density should diversify before cloning an exact GLB."
+  },
+  "safety": {
+    "excludeRolesFromMultiplication": [
+      "adapter",
+      "balcony",
+      "catwalk",
+      "circulation",
+      "circulation-adjacent",
+      "edge-guard",
+      "escalator",
+      "facade-circulation",
+      "fire-escape",
+      "fire-escape-component",
+      "grade-transition",
+      "junction",
+      "ladder",
+      "landing",
+      "landing-or-platform",
+      "negative-space",
+      "portal",
+      "portal-adjacent",
+      "service-opening",
+      "shaft-opening",
+      "stair",
+      "stair-tower",
+      "support-structure",
+      "vertical-opening",
+      "vertical_transport"
+    ],
+    "neverMultiplyAuthoritativeTopology": true,
+    "hardReservationsWinOverDensity": true,
+    "densityShortfallMayNotCauseOverlap": true,
+    "postCommitRule": "Only already-approved non-solid narrative clutter may be added after commit; solid semantic props belong in the precommit space solve."
+  },
+  "scheduler": {
+    "rule": "Dense props use the shared bounded prioritized asset scheduler, never a semantic-only FIFO.",
+    "priority": [
+      "visible/current player space",
+      "adjacent visible space",
+      "prefetch ring",
+      "loadTier",
+      "importance",
+      "proxy availability"
+    ],
+    "realization": "place approved proxies first; realize GLBs progressively so 10x+ population does not become a boot wall"
+  }
+}

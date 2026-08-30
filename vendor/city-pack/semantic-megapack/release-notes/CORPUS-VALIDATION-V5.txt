@@ -1,0 +1,52 @@
+JWEB SMART ASSET FULL CORPUS V5
+
+live baseline: 783b8a04737f4e7b4f00310af828f5ba16f3a354
+intervening push assessment: PASS - semantic placement/catalog unchanged; new Kowloon geometry contract adopted as structural input
+
+base corpus GLBs: 9,714 / 9,714 PASS
+base semanticGraph coverage: 9,714 / 9,714 PASS
+planner semantics coverage: 9,714 / 9,714 PASS
+topology overlay assets: 3,556
+all shipped vocabulary classified: PASS
+classification: 8 implemented / 23 advisory / 134 unsupported-hard-error
+assets blocked from blind use by current pilot runtime: 6,368 (intentional fail-closed behavior)
+
+PROP DENSITY
+live pilot semantic population: 2 props/building plan (identity=1 functional=1 life=0)
+v5 default accepted target: 24 props/eligible SpacePlan = 12x live pilot
+v5 program recipe range: 22-30 props/space = 11x-15x live pilot
+room recipes with dense population contract: 35 / 35 PASS
+placement attempt budget: >=3x accepted target
+canonical visual variants expanded before exact GLB repeat
+topology-bearing assets multiplied by density policy: NO
+hard reservations override density: YES
+
+DOOR / STAIR SMARTNESS AUDIT
+structural doorways: 816 / 816 PASS
+door leaf/adornment assets: 10 / 10 PASS
+stairs: 626 / 626 PASS
+landings: 348 / 348 PASS
+stair/shaft vertical openings: 96
+fire-escape assets: 288
+failures: 0
+
+v5 guarantees:
+- structural portal void reserved before host collision
+- host collision excludes portal void
+- door leaf cannot authorize or shrink structural void
+- door placement requires stable adjacent-space identities and two-sided sockets
+- stair endpoints always exist as geometric or logical sockets
+- stair story/landing roles are explicit
+- stair headroom and player-sweep semantics are typed separately without inventing geometry
+- slab penetration requires a compatible vertical-opening dependency
+- guards break at valid traversal connections
+- render/walk-surface/collision publication is atomic by contract
+- all relationships target stable instance identity at planning time
+- physical/circulation/service/interaction/socket/visual/preferences remain typed, not one envelope
+- progressive refinement cannot change topology or reserved space
+- default semantic prop population target is 12x live pilot; program recipes are 11x-15x
+- density never multiplies authoritative topology or overrides hard reservations
+
+GLB geometry changed by v5 enrichment: NO
+live-site push included: NO
+FULL CORPUS AUDIT: PASS

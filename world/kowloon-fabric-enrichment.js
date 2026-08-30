@@ -2,8 +2,8 @@ import { hashString32 } from '../world-chunk-streamer.js';
 import { pickMassiveNoisePair, pickPoetryTag } from '../noise-data-bootstrap.js';
 import { BASE_GRAFFITI_TAGS } from '../content/graffiti-content.js';
 import { createProceduralTextExciter } from './procedural-text-exciter.js';
-import { SEMANTIC_INTERIOR_ASSETS, SEMANTIC_INTERIOR_ASSET_BY_ID } from '../vendor/city-pack/semantic-interiors/catalog.js';
-import { SEMANTIC_ROOM_RECIPES } from '../vendor/city-pack/semantic-interiors/room-recipes.js';
+import { SEMANTIC_MEGA_RUNTIME_ASSETS as SEMANTIC_INTERIOR_ASSETS, SEMANTIC_MEGA_RUNTIME_ASSET_BY_ID as SEMANTIC_INTERIOR_ASSET_BY_ID } from '../vendor/city-pack/semantic-megapack/runtime-catalog-v5.js';
+import { SEMANTIC_ROOM_RECIPES } from '../vendor/city-pack/semantic-megapack/room-recipes.js';
 import { anyReservationIntersectsBox } from './circulation-reservations.js';
 import { createSemanticPlacementRecord, resolveSemanticPlacement } from './semantic-placement.js';
 import { SEMANTIC_RELATIONSHIP_SAMPLES, semanticGraphForAsset } from '../vendor/city-pack/semantic-interiors/semantic-links.js';
@@ -224,6 +224,26 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
     console.log('[world-text] deterministic full curated corpus exciter ready', textExciter.stats);
 
     const semanticRecipeById = new Map(SEMANTIC_ROOM_RECIPES.map(recipe => [recipe.id, recipe]));
+    const semanticVariantFamilies = new Map();
+    const semanticProgramPhasePools = new Map();
+    const semanticAllPhasePools = new Map();
+    const phaseForImportance = importance => importance === 'identity' ? 'identity' : importance === 'narrative' ? 'life' : 'functional';
+    const addCanonicalToPool = (map, key, canonicalId) => {
+        const pool = map.get(key) ?? [];
+        if (!pool.includes(canonicalId)) pool.push(canonicalId);
+        map.set(key, pool);
+    };
+    for (const def of SEMANTIC_INTERIOR_ASSETS) {
+        if (!def?.id || !def?.semanticGraph?.roles?.includes('semantic-prop')) continue;
+        const canonicalId = def.canonicalId || def.id;
+        const family = semanticVariantFamilies.get(canonicalId) ?? [];
+        family.push(def.id);
+        semanticVariantFamilies.set(canonicalId, family);
+        const phase = phaseForImportance(def.importance);
+        addCanonicalToPool(semanticAllPhasePools, phase, canonicalId);
+        for (const program of def.programs ?? []) addCanonicalToPool(semanticProgramPhasePools, `${program}:${phase}`, canonicalId);
+    }
+    for (const family of semanticVariantFamilies.values()) family.sort((a, b) => a.localeCompare(b));
     let semanticLoader = null;
     let semanticLoaderPromise = null;
     const semanticTemplates = new Map();
@@ -233,11 +253,23 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
     let semanticActiveLoads = 0;
     const SEMANTIC_LOAD_CONCURRENCY = 2;
     const semanticProgramFamilies = Object.freeze({
-        'workshop-warehouse': ['auto_shop', 'hardware_store', 'print_shop', 'electronics_repair', 'laboratory', 'projection_booth', 'boiler_room', 'factory_control'],
-        'vertical-stack': ['office', '1980s_office', 'server_room', 'mainframe_room', 'archive', 'library', 'bank', 'post_office', 'clinic'],
-        'dense-tenement': ['diner', 'laundromat', 'convenience', 'motel_room', 'bar', 'arcade', 'grocery', 'clinic', 'florist'],
-        default: ['diner', 'office', 'hardware_store', 'library', 'bar', 'electronics_repair', 'motel_room'],
+        'workshop-warehouse': ['auto_shop', 'hardware_store', 'print_shop', 'photo_lab', 'electronics_repair', 'laboratory', 'projection_booth', 'radio_station', 'boiler_room', 'factory_control', 'fire_station'],
+        'vertical-stack': ['office', '1980s_office', 'server_room', 'mainframe_room', 'archive', 'library', 'bank', 'post_office', 'clinic', 'pharmacy', 'school_classroom', 'police_booking', 'courtroom', 'dentist'],
+        'dense-tenement': ['diner', 'laundromat', 'convenience', 'motel_room', 'bar', 'arcade', 'grocery', 'clinic', 'florist', 'pharmacy', 'funeral_home', 'butcher'],
+        default: SEMANTIC_ROOM_RECIPES.map(recipe => recipe.id),
     });
+
+    function denseSemanticAssetId(pool, fallbackPool, seed, ordinal) {
+        const eligible = pool.filter(assetId => semanticVariantFamilies.has(assetId));
+        const source = eligible.length ? eligible : fallbackPool;
+        if (!source?.length) return null;
+        const canonicalId = source[((seed >>> 0) + ordinal) % source.length];
+        const family = semanticVariantFamilies.get(canonicalId) ?? [];
+        if (!family.length) return null;
+        const variantLayer = Math.floor(ordinal / source.length);
+        const variantOffset = (seed >>> 8) % family.length;
+        return family[(variantOffset + variantLayer) % family.length];
+    }
 
     function normalizeDecorationTemplate(root) {
         root?.traverse?.(object => {
@@ -536,23 +568,34 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
             });
         }
         if (!entity.suppressInteriorEnrichment && entity.footprintModules?.length) {
-            const semanticRng = mulberry32(taskSeed(chunk, entity.id, 'semantic-room-plan'));
             const program = semanticProgramFor(chunk, entity);
             const recipe = semanticRecipeById.get(program) ?? SEMANTIC_ROOM_RECIPES[taskSeed(chunk, entity.id, 'semantic-room-fallback') % SEMANTIC_ROOM_RECIPES.length];
+            const phaseTargets = recipe?.population?.phaseTargets ?? { identity: 6, functional: 10, life: 8 };
             const phaseSpecs = [
-                ['identity', 1],
-                ['functional', 1],
-                ['life', 0],
+                ['identity', Math.max(0, Math.floor(Number(phaseTargets.identity) || 0))],
+                ['functional', Math.max(0, Math.floor(Number(phaseTargets.functional) || 0))],
+                ['life', Math.max(0, Math.floor(Number(phaseTargets.life) || 0))],
             ];
+            const semanticSlots = [];
+            for (const module of entity.footprintModules) {
+                const maxFloor = Math.max(1, Math.min(3, module.floors || 1));
+                for (let floor = 0; floor < maxFloor; floor++) semanticSlots.push({ module, floor });
+            }
+            const activeSlotCount = Math.max(1, Math.min(4, semanticSlots.length));
+            const slotStart = taskSeed(chunk, entity.id, 'semantic-space-rotation') % semanticSlots.length;
+            const activeSlots = Array.from({ length: activeSlotCount }, (_, i) => semanticSlots[(slotStart + i) % semanticSlots.length]);
             for (const [phase, wanted] of phaseSpecs) {
                 const pool = recipe?.[phase] ?? [];
-                for (let i = 0; i < Math.min(wanted, pool.length); i++) {
-                    const assetId = pool[(taskSeed(chunk, entity.id, `semantic:${phase}`, i) + i) % pool.length];
-                    const module = entity.footprintModules[(taskSeed(chunk, entity.id, `semantic-module:${phase}`, i)) % entity.footprintModules.length];
-                    const maxFloor = Math.max(1, Math.min(3, module.floors || 1));
+                const fallbackPool = semanticProgramPhasePools.get(`${program}:${phase}`) ?? semanticAllPhasePools.get(phase) ?? [];
+                const phaseSeed = taskSeed(chunk, entity.id, `semantic-dense:${phase}`);
+                for (let i = 0; i < wanted; i++) {
+                    const assetId = denseSemanticAssetId(pool, fallbackPool, phaseSeed, i);
+                    if (!assetId) continue;
+                    const slot = activeSlots[i % activeSlots.length];
+                    const module = slot.module;
                     tasks.push({
                         kind: `semantic-${phase}`, entityId: entity.id, assetId, program, moduleKey: module.key,
-                        floor: taskSeed(chunk, entity.id, `semantic-floor:${phase}`, i) % maxFloor,
+                        floor: slot.floor,
                         seed: taskSeed(chunk, entity.id, `semantic-object:${phase}`, i),
                     });
                 }

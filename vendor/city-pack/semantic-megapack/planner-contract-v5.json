@@ -1,0 +1,224 @@
+{
+  "version": 5,
+  "schema": "jweb.semantic-planner.v1",
+  "baselineLiveCommit": "783b8a04737f4e7b4f00310af828f5ba16f3a354",
+  "pipeline": [
+    "Kowloon topology",
+    "structural SpacePlans",
+    "semantic space graph",
+    "complete dependency solve",
+    "stable PlacementDescriptors + typed reservations/collision",
+    "atomic chunk commit",
+    "progressive visual realization"
+  ],
+  "liveStructuralInputs": {
+    "world/kowloon-geometry-contract.js": {
+      "blobSha": "913ec1dd03e1930394b366c164a62d7c7a66be2b",
+      "authority": "module/slab/chunk-edge geometry seam contract",
+      "requiredExports": [
+        "computeKowloonModuleRect",
+        "computeKowloonSlabRect",
+        "isKowloonSharedRoadCell",
+        "kowloonChunkBoundaryEdgeKind",
+        "kowloonStreetEncroachmentAllowed"
+      ],
+      "rule": "SpacePlan generation consumes these structural decisions; semantic planning must not recompute competing edge or slab offsets."
+    }
+  },
+  "spacePlan": {
+    "requiredFields": [
+      "spaceId",
+      "bounds",
+      "floor",
+      "ceiling",
+      "walls",
+      "openings",
+      "traversableRegions",
+      "circulation",
+      "obstacles",
+      "sockets",
+      "exposure",
+      "program"
+    ],
+    "stableIdentity": "spaceId must be deterministic for the structural space and survive visual refinement.",
+    "sourceOfTruth": "structural generation; never reconstructed from rendered meshes"
+  },
+  "placementDescriptor": {
+    "requiredFields": [
+      "instanceId",
+      "assetId",
+      "spaceId",
+      "transform",
+      "relationToInstanceId",
+      "typedReservations",
+      "collision",
+      "resolutionState"
+    ],
+    "instanceIdRule": "deterministic chunkId/spaceId/taskKey/ordinal identity; never assetId-only",
+    "resolutionStates": [
+      "resolved",
+      "blocked",
+      "unsatisfied",
+      "deferred"
+    ],
+    "dependencyRule": "solve the complete space graph before commit; failed ordering is never converted into a permanent no-op"
+  },
+  "typedVolumes": {
+    "types": [
+      "physical",
+      "circulation",
+      "service",
+      "interaction",
+      "socket",
+      "visual",
+      "soft-preference"
+    ],
+    "physicalPolarity": [
+      "solid",
+      "void"
+    ],
+    "conflictMatrix": {
+      "physical": {
+        "physical": "polarity-aware-hard",
+        "circulation": "solid-hard_void-compatible",
+        "service": "solid-hard_void-compatible",
+        "interaction": "solid-hard_void-compatible",
+        "socket": "solid-hard_void-compatible",
+        "visual": "soft",
+        "soft-preference": "soft"
+      },
+      "circulation": {
+        "physical": "solid-hard_void-compatible",
+        "circulation": "compatible",
+        "service": "requires-compatibility",
+        "interaction": "requires-compatibility",
+        "socket": "compatible",
+        "visual": "compatible",
+        "soft-preference": "soft"
+      },
+      "service": {
+        "physical": "solid-hard_void-compatible",
+        "circulation": "requires-compatibility",
+        "service": "compatible",
+        "interaction": "requires-compatibility",
+        "socket": "compatible",
+        "visual": "compatible",
+        "soft-preference": "soft"
+      },
+      "interaction": {
+        "physical": "solid-hard_void-compatible",
+        "circulation": "requires-compatibility",
+        "service": "requires-compatibility",
+        "interaction": "compatible",
+        "socket": "compatible",
+        "visual": "compatible",
+        "soft-preference": "soft"
+      },
+      "socket": {
+        "physical": "solid-hard_void-compatible",
+        "circulation": "compatible",
+        "service": "compatible",
+        "interaction": "compatible",
+        "socket": "requires-compatibility",
+        "visual": "compatible",
+        "soft-preference": "soft"
+      },
+      "visual": {
+        "circulation": "compatible",
+        "service": "compatible",
+        "interaction": "compatible",
+        "socket": "compatible",
+        "visual": "compatible",
+        "physical": "soft",
+        "soft-preference": "compatible"
+      },
+      "soft-preference": {
+        "physical": "soft",
+        "circulation": "soft",
+        "service": "soft",
+        "interaction": "soft",
+        "socket": "soft",
+        "visual": "soft",
+        "soft-preference": "soft"
+      }
+    },
+    "rule": "Body, passage, service, interaction, sockets, and preferences are not merged into one candidate envelope."
+  },
+  "atomicCommit": {
+    "mustCommitTogether": [
+      "resolved semantic layout",
+      "solid reservations",
+      "authoritative voids",
+      "collision proxies",
+      "traversal walk surfaces",
+      "hard circulation reservations"
+    ],
+    "postCommitAllowed": [
+      "proxy-to-GLB replacement",
+      "material refinement",
+      "visual LOD/detail",
+      "non-solid narrative clutter within already-approved reservations"
+    ],
+    "postCommitForbidden": [
+      "new solid topology",
+      "new structural voids",
+      "changing reserved space",
+      "discovering a required dependency"
+    ]
+  },
+  "doors": {
+    "authority": "structural negative-space portal",
+    "required": [
+      "host wall instance",
+      "adjacent space identities",
+      "authoritative wall void",
+      "two-sided approach/portal sockets",
+      "precollision reservation",
+      "separate leaf consumer policy"
+    ],
+    "failClosed": true
+  },
+  "stairs": {
+    "authority": "structural traversal topology",
+    "required": [
+      "entry/exit endpoints",
+      "walk surface",
+      "story datum/elevations",
+      "landing roles",
+      "headroom",
+      "player sweep",
+      "circulation clearances",
+      "guard breaks",
+      "support/anchors",
+      "slab/shaft void binding where applicable"
+    ],
+    "failClosed": true
+  },
+  "propPopulation": {
+    "policyFile": "prop-density-policy-v5.json",
+    "defaultTargetAcceptedPerEligibleSpace": 24,
+    "minimumDenseTargetPerEligibleSpace": 20,
+    "phaseTargets": {
+      "identity": 6,
+      "functional": 10,
+      "life": 8
+    },
+    "densityMultiplierVsLivePilot": 12.0,
+    "topologyAssetsMultiplied": false,
+    "rule": "Density is solved inside the complete SpacePlan graph before commit; hard reservations always beat density."
+  },
+  "resourceScheduling": {
+    "rule": "semantic GLBs use the existing shared bounded prioritized asset scheduler; no private FIFO",
+    "priorityInputs": [
+      "player distance",
+      "visibility/prefetch ring",
+      "loadTier",
+      "importance",
+      "proxy availability"
+    ]
+  },
+  "unsupportedSemantics": {
+    "classificationFile": "semantic-term-classification-v5.json",
+    "rule": "any asset with an unsupported-hard-error term that is materially required for its planned placement is blocked until an implementing planner path exists"
+  }
+}

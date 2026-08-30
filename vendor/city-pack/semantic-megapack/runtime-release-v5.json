@@ -1,0 +1,8 @@
+{
+  "schema": "jweb.semantic-runtime-release.v5",
+  "fullCorpusAssets": 9714,
+  "runtimeRecipeCompatibleAssets": 1460,
+  "runtimeCanonicalFamilies": 146,
+  "policy": "Full corpus ships; current late-detail pilot only receives recipe-relevant assets classified runtime-pilot-compatible. Topology assets remain structural/fail-closed.",
+  "baselineCommit": "783b8a04737f4e7b4f00310af828f5ba16f3a354"
+}

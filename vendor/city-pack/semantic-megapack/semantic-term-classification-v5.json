@@ -1,0 +1,872 @@
+{
+  "version": 5,
+  "schema": "jweb.semantic-term-classification.v5",
+  "baselineRuntime": {
+    "repository": "JustinBrownDev/justinbrowndev.github.io",
+    "branch": "main",
+    "observedCommit": "783b8a04737f4e7b4f00310af828f5ba16f3a354",
+    "semanticPlacementBlob": "c9edd08f9416da46ded1f3085272471469b0e5c4",
+    "semanticLinksBlob": "c1c902fd126c781309e9c2abead4ad4feeee1770",
+    "note": "Classification is deliberately strict: metadata is not considered implemented merely because it survives parsing."
+  },
+  "summary": {
+    "advisory": 23,
+    "unsupported-hard-error": 134,
+    "implemented": 8
+  },
+  "classifications": {
+    "roles": {
+      "accessibility": {
+        "status": "advisory",
+        "assetUseCount": 14,
+        "reason": "The current live runtime may retain this metadata, but does not enforce it as a hard topology/collision obligation."
+      },
+      "adapter": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 816,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "balcony": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 160,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "building_service": {
+        "status": "advisory",
+        "assetUseCount": 42,
+        "reason": "The current live runtime may retain this metadata, but does not enforce it as a hard topology/collision obligation."
+      },
+      "catwalk": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 144,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "circulation": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 2502,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "circulation-adjacent": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 192,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "edge-guard": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 240,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "emergency": {
+        "status": "advisory",
+        "assetUseCount": 14,
+        "reason": "The current live runtime may retain this metadata, but does not enforce it as a hard topology/collision obligation."
+      },
+      "escalator": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 108,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "facade-circulation": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 352,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "fire-escape": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 192,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "fire-escape-component": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 96,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "grade-transition": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 768,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "junction": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 144,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "ladder": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 48,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "landing": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 312,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "landing-or-platform": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 128,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "loading": {
+        "status": "advisory",
+        "assetUseCount": 48,
+        "reason": "The current live runtime may retain this metadata, but does not enforce it as a hard topology/collision obligation."
+      },
+      "negative-space": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 2384,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "parking": {
+        "status": "advisory",
+        "assetUseCount": 28,
+        "reason": "The current live runtime may retain this metadata, but does not enforce it as a hard topology/collision obligation."
+      },
+      "portal": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 2384,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "portal-adjacent": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 120,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "public_service": {
+        "status": "advisory",
+        "assetUseCount": 14,
+        "reason": "The current live runtime may retain this metadata, but does not enforce it as a hard topology/collision obligation."
+      },
+      "restroom": {
+        "status": "advisory",
+        "assetUseCount": 42,
+        "reason": "The current live runtime may retain this metadata, but does not enforce it as a hard topology/collision obligation."
+      },
+      "retail": {
+        "status": "advisory",
+        "assetUseCount": 14,
+        "reason": "The current live runtime may retain this metadata, but does not enforce it as a hard topology/collision obligation."
+      },
+      "semantic-prop": {
+        "status": "advisory",
+        "assetUseCount": 4444,
+        "reason": "The current live runtime may retain this metadata, but does not enforce it as a hard topology/collision obligation."
+      },
+      "service-opening": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 432,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "shaft-opening": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 192,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "stair": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 626,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "stair-tower": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 144,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "support-structure": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 144,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "vertical-opening": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 384,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "vertical_transport": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 28,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      }
+    },
+    "capabilities": {
+      "climb": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 1010,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "climb-through": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 744,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "connection-break": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 48,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "edge-interruption-provider": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 96,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "edge-opening": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 48,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "guard-edge": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 336,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "height-mismatch-resolver": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 768,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "landing-connector": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 96,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "landing-provider": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 376,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "multi-connection-node": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 144,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "pass-through": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 432,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "portal-consumer": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 256,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "portal-provider": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 1376,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "slab-void-provider": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 384,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "story-connector": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 252,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "support-provider": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 144,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "support-surface-provider": {
+        "status": "implemented",
+        "assetUseCount": 1650,
+        "reason": "The current live semantic-placement runtime explicitly interprets this token or mode."
+      },
+      "traversal-provider": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 626,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "vertical-portal": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 384,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "walk": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 2454,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "walk-through": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 1160,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "wall-anchor": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 144,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "wall-void-provider": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 2000,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      }
+    },
+    "requirements": {
+      "access-portal-preferred": {
+        "status": "advisory",
+        "assetUseCount": 72,
+        "reason": "The current live runtime may retain this metadata, but does not enforce it as a hard topology/collision obligation."
+      },
+      "access-portal-required": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 256,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "access-portals-by-floor-policy": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 144,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "attach-to-exposed-edge": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 240,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "both-ends-connect": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 768,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "both-ends-must-connect": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 96,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "circulation-clear": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 472,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "climb-sweep-clear": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 48,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "connect-to-compatible-shaft-or-circulation": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 192,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "connected-arms-required": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 144,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "counter-or-service-zone-compatible": {
+        "status": "advisory",
+        "assetUseCount": 432,
+        "reason": "The current live runtime may retain this metadata, but does not enforce it as a hard topology/collision obligation."
+      },
+      "customer-side-clear": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 180,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "cut-slab-or-roof-before-collision": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 384,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "cut-structural-void-before-collision": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 192,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "cut-wall-void-before-collision": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 432,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "do-not-use-as-structural-opening": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 10,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "exposed-edges-guarded-unless-connected": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 144,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "facade-support": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 352,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "floor-access-at-top": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 144,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "floor-landings-access-portals": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 96,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "front-circulation": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 270,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "grade-transition": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 20,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "guard-exposed-edges-unless-connected": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 128,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "guard-opening-unless-connected": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 384,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "headroom-clear": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 950,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "host-surface-compatible": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 28,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "landing-circulation-clear": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 638,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "operator-side-clear": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 180,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "service-clearance": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 400,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "side-circulation": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 50,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "slab-void-required": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 144,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "structural-wall-void-before-collision": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 1376,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "support-surface": {
+        "status": "implemented",
+        "assetUseCount": 130,
+        "reason": "The current live semantic-placement runtime explicitly interprets this token or mode."
+      },
+      "top-transition-clear": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 48,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "wall-anchor-surface": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 144,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      }
+    },
+    "relationships": {
+      "aligns-story-datum": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 232,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "aligns-story-datums": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 492,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "anchors-load-to-wall": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 144,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "anchors-to-facade": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 352,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "connects-fire-escape-landings": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 96,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "connects-floor-to-dock-or-threshold": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 768,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "connects-floor-to-floor": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 288,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "connects-public-levels": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 108,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "connects-service-and-customer-zones": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 432,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "connects-spaces": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 1376,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "connects-to-atrium-edge": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 48,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "connects-to-elevator-shaft": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 48,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "connects-to-freight-shaft": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 48,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "connects-to-stair-shaft": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 48,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "connects-traversal-elements": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 216,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "connects-vertical-spaces": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 384,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "continuous-guard": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 96,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "corner": {
+        "status": "advisory",
+        "assetUseCount": 12,
+        "reason": "The current live runtime may retain this metadata, but does not enforce it as a hard topology/collision obligation."
+      },
+      "defines-vehicle-pedestrian-boundary": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 28,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "display-or-storage-provider": {
+        "status": "advisory",
+        "assetUseCount": 400,
+        "reason": "The current live runtime may retain this metadata, but does not enforce it as a hard topology/collision obligation."
+      },
+      "endcap": {
+        "status": "advisory",
+        "assetUseCount": 12,
+        "reason": "The current live runtime may retain this metadata, but does not enforce it as a hard topology/collision obligation."
+      },
+      "expects-facade-opening": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 256,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "faces-work-or-social-surface": {
+        "status": "implemented",
+        "assetUseCount": 270,
+        "reason": "The current live semantic-placement runtime explicitly interprets this token or mode."
+      },
+      "guards-platform-edge": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 192,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "head-against-wall": {
+        "status": "advisory",
+        "assetUseCount": 50,
+        "reason": "The current live runtime may retain this metadata, but does not enforce it as a hard topology/collision obligation."
+      },
+      "illuminates-local-semantic-zone": {
+        "status": "advisory",
+        "assetUseCount": 50,
+        "reason": "The current live runtime may retain this metadata, but does not enforce it as a hard topology/collision obligation."
+      },
+      "inherits-portal-story-and-program": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 120,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "interruptible-by-connection": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 96,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "joins-catwalks-or-bridges": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 144,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "ladder_break": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 12,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "marks-service-penetration": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 28,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "mounts-in-wall": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 1376,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "near-elevator-opening": {
+        "status": "advisory",
+        "assetUseCount": 28,
+        "reason": "The current live runtime may retain this metadata, but does not enforce it as a hard topology/collision obligation."
+      },
+      "near-loading-bay-opening": {
+        "status": "advisory",
+        "assetUseCount": 28,
+        "reason": "The current live runtime may retain this metadata, but does not enforce it as a hard topology/collision obligation."
+      },
+      "near-portal": {
+        "status": "advisory",
+        "assetUseCount": 120,
+        "reason": "The current live runtime may retain this metadata, but does not enforce it as a hard topology/collision obligation."
+      },
+      "portal_break": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 12,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "queue-compatible": {
+        "status": "advisory",
+        "assetUseCount": 180,
+        "reason": "The current live runtime may retain this metadata, but does not enforce it as a hard topology/collision obligation."
+      },
+      "resolves-edge-interruption": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 48,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "resolves-small-elevation-mismatch": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 768,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "restroom-fixture-zone": {
+        "status": "advisory",
+        "assetUseCount": 42,
+        "reason": "The current live runtime may retain this metadata, but does not enforce it as a hard topology/collision obligation."
+      },
+      "row-alignable": {
+        "status": "implemented",
+        "assetUseCount": 1270,
+        "reason": "The current live semantic-placement runtime explicitly interprets this token or mode."
+      },
+      "sits-on-work-surface": {
+        "status": "implemented",
+        "assetUseCount": 130,
+        "reason": "The current live semantic-placement runtime explicitly interprets this token or mode."
+      },
+      "supports-balcony-or-platform": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 144,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "utility-zone-compatible": {
+        "status": "implemented",
+        "assetUseCount": 400,
+        "reason": "The current live semantic-placement runtime explicitly interprets this token or mode."
+      },
+      "visual-door-noun-only": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 10,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "wall-anchored": {
+        "status": "implemented",
+        "assetUseCount": 1150,
+        "reason": "The current live semantic-placement runtime explicitly interprets this token or mode."
+      }
+    },
+    "reservedVolumeTypes": {
+      "circulation": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 1384,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "playerSweep": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 590,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "slabVoid": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 384,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "stairShaft": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 144,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "wallOpeningVoid": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 2000,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      }
+    },
+    "supportModes": {
+      "facade-brackets": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 96,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "facade-brackets-or-slab": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 160,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "floor": {
+        "status": "advisory",
+        "assetUseCount": 3020,
+        "reason": "The current live runtime may retain this metadata, but does not enforce it as a hard topology/collision obligation."
+      },
+      "landing-both-ends": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 96,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "platform-edge": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 240,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "roof": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 14,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "slab-or-roof": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 384,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "structural-support": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 144,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "structural-surface": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 1380,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "structural-surface-or-anchors": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 626,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "wall": {
+        "status": "implemented",
+        "assetUseCount": 1554,
+        "reason": "The current live semantic-placement runtime explicitly interprets this token or mode."
+      },
+      "wall-surround": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 2000,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      }
+    },
+    "landingRoles": {
+      "balcony": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 0,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "dock": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 0,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "floor": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 1792,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "floor-compatible": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 300,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "floor|intermediate|transfer": {
+        "status": "advisory",
+        "assetUseCount": 36,
+        "reason": "The current live runtime may retain this metadata, but does not enforce it as a hard topology/collision obligation."
+      },
+      "grade": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 0,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "intermediate": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 288,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "roof": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 0,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "service": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 0,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      },
+      "transfer": {
+        "status": "unsupported-hard-error",
+        "assetUseCount": 72,
+        "reason": "Ignoring this token can invalidate topology, collision, traversal, structural support, or required clearance. Bulk integration must fail closed until the planner implements it."
+      }
+    }
+  },
+  "fieldBehavior": {
+    "semanticGraph.circulation.keepClear": {
+      "status": "advisory",
+      "note": "Live runtime reads directional keepClear values but collapses them into the same AABB used for body clearance, so typed-volume semantics are not implemented."
+    },
+    "semanticGraph.progressiveInvariant": {
+      "status": "advisory",
+      "note": "Live runtime carries the metadata but does not use it as an atomic-commit gate."
+    },
+    "semanticGraph.negativeSpace": {
+      "status": "unsupported-hard-error",
+      "note": "Live semantic placement does not reserve authoritative voids before host collision."
+    }
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "version": 5,
+  "baseManifestVersion": 4,
+  "assetCount": 9714,
+  "overlayAssetCount": 3556,
+  "structuralDoorwayCount": 816,
+  "doorAdornmentCount": 10,
+  "stairCount": 626,
+  "landingCount": 348,
+  "stairOrShaftOpeningCount": 96,
+  "fireEscapeCount": 288,
+  "failures": {
+    "doors": {},
+    "doorAdornments": {},
+    "stairs": {},
+    "landings": {}
+  },
+  "pass": true
+}

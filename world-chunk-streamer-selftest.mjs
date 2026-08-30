@@ -40,7 +40,7 @@ const spawn = streamer.markChunkReady(0, 0, { authored: true });
 assert.equal(spawn.state, CHUNK_STATE.READY);
 assert.equal(streamer.isWorldPositionAvailable(0, 0), true);
 assert.equal(streamer.classifyWorldPosition(40, 0).state, WORLD_SPACE_STATE.UNKNOWN, 'unbuilt neighboring space must be unknown, not solid');
-assert.equal(streamer.isWorldPositionAvailable(40, 0), true, 'compatibility availability must allow movement into unknown procedural space');
+assert.equal(streamer.isWorldPositionAvailable(40, 0), false, 'unknown procedural space must hold movement at the generation frontier until published authority exists');
 
 streamer.ensureNeighborhood();
 const nearest = streamer.nearestQueuedChunk();

@@ -51,6 +51,8 @@ export function createWorldChunkStreamer({
     unloadChunk = null,
     yieldControl = null,
     onChunkState = null,
+    publicationWarnAfterMs = 750,
+    onPublicationStall = null,
     weirdness = {},
     pinnedChunkKeys = [],
 } = {}) {
@@ -89,6 +91,7 @@ export function createWorldChunkStreamer({
     let worstRefinementStepMs = 0;
     let lastPumpRefined = 0;
     let lastRefinementKind = null;
+    let publicationStallWarnings = 0;
 
     const keyOf = worldChunkKey;
     const coordsForWorld = (x, z) => ({ x: Math.floor((x + chunkSize * 0.5) / chunkSize), z: Math.floor((z + chunkSize * 0.5) / chunkSize) });
@@ -120,6 +123,13 @@ export function createWorldChunkStreamer({
             committedAt: 0,
             visibleAt: 0,
             visible: false,
+            renderRequested: false,
+            renderRequestedAt: 0,
+            renderPublished: false,
+            renderPublishedAt: 0,
+            physicsAuthoritative: false,
+            publicationReason: null,
+            lastPublicationWarningAt: 0,
             payload: null,
             error: null,
             lastRefinedSerial: 0,
@@ -168,24 +178,60 @@ export function createWorldChunkStreamer({
         return ringDistance(chunk, center) <= renderRadiusChunks;
     }
 
-    function applyChunkVisibility(chunk, center = playerChunkCoords()) {
-        if (!chunk || !chunk.payload) return false;
-        const next = shouldBeVisible(chunk, center);
-        const previous = !!chunk.visible;
-        if (previous === next && chunk.visibilityInitialized) return next;
-        if (setChunkVisibility) setChunkVisibility(chunk, chunk.payload, next);
-        chunk.visible = next;
-        chunk.visibilityInitialized = true;
-        visibilityUpdates++;
-        if (chunk.state === CHUNK_STATE.READY) {
-            if (!previous && next) visibleReadyCount++;
-            else if (previous && !next) visibleReadyCount = Math.max(0, visibleReadyCount - 1);
+    // WORLD-LIVENESS CONTRACT:
+    // The render ring is governed by actual publication, never by the request to
+    // publish. Kowloon payloads expose renderPublished + physicsActivationState;
+    // generic payloads may expose root.visible / visible or return a boolean from
+    // setChunkVisibility(). READY remains structural completion only.
+    function publicationStateFromPayload(chunk, requested, explicitPublished = undefined) {
+        const payload = chunk?.payload;
+        const physicsAuthoritative = !payload?.physics
+            || !('physicsActivationState' in payload)
+            || payload.physicsActivationState === 'active';
+        let renderPublished;
+        if (typeof explicitPublished === 'boolean') renderPublished = explicitPublished;
+        else if (typeof payload?.renderPublished === 'boolean') renderPublished = payload.renderPublished;
+        else if (payload?.root && typeof payload.root.visible === 'boolean') renderPublished = payload.root.visible;
+        else if (typeof payload?.visible === 'boolean') renderPublished = payload.visible;
+        else renderPublished = !!requested;
+        return {
+            renderRequested: !!requested,
+            renderPublished: !!requested && !!renderPublished,
+            physicsAuthoritative,
+            deferredReason: payload?.physicsDeferredReason ?? null,
+        };
+    }
+
+    function syncChunkPublication(chunk, requested = chunk?.renderRequested, explicitPublished = undefined) {
+        if (!chunk || !chunk.payload) return { renderRequested: false, renderPublished: false, physicsAuthoritative: false, deferredReason: null };
+        const now = performance.now();
+        const previousRequested = !!chunk.renderRequested;
+        const previousPublished = !!chunk.renderPublished;
+        const next = publicationStateFromPayload(chunk, requested, explicitPublished);
+
+        chunk.renderRequested = next.renderRequested;
+        if (!previousRequested && next.renderRequested) {
+            chunk.renderRequestedAt = now;
+            chunk.lastPublicationWarningAt = 0;
+        } else if (previousRequested && !next.renderRequested) {
+            chunk.renderRequestedAt = 0;
+            chunk.lastPublicationWarningAt = 0;
         }
-        if (next && !chunk.visibleAt) {
-            chunk.visibleAt = performance.now();
+        chunk.renderPublished = next.renderPublished;
+        chunk.visible = next.renderPublished; // compatibility: visible now means pixels may actually publish.
+        chunk.physicsAuthoritative = next.physicsAuthoritative;
+        chunk.publicationReason = next.deferredReason;
+
+        if (chunk.state === CHUNK_STATE.READY && previousPublished !== next.renderPublished) {
+            visibleReadyCount += next.renderPublished ? 1 : -1;
+            visibleReadyCount = Math.max(0, visibleReadyCount);
+        }
+        if (next.renderPublished && !chunk.renderPublishedAt) {
+            chunk.renderPublishedAt = now;
+            chunk.visibleAt = now;
             if (chunk.committedAt) {
                 commitToVisibleCount++;
-                const commitToVisibleMs = Math.max(0, chunk.visibleAt - chunk.committedAt);
+                const commitToVisibleMs = Math.max(0, now - chunk.committedAt);
                 totalCommitToVisibleMs += commitToVisibleMs;
                 worstCommitToVisibleMs = Math.max(worstCommitToVisibleMs, commitToVisibleMs);
             }
@@ -193,14 +239,76 @@ export function createWorldChunkStreamer({
         return next;
     }
 
+    function applyChunkVisibility(chunk, center = playerChunkCoords()) {
+        if (!chunk || !chunk.payload) return false;
+        const requested = shouldBeVisible(chunk, center);
+        let explicitPublished;
+        if (!chunk.visibilityInitialized || chunk.renderRequested !== requested) {
+            if (setChunkVisibility) explicitPublished = setChunkVisibility(chunk, chunk.payload, requested);
+            chunk.visibilityInitialized = true;
+            visibilityUpdates++;
+        }
+        return syncChunkPublication(chunk, requested, explicitPublished).renderPublished;
+    }
+
+    function renderableSummary(payload) {
+        let renderObjects = 0;
+        let renderInstances = 0;
+        payload?.root?.traverse?.(object => {
+            if (!object?.isMesh && !object?.isInstancedMesh) return;
+            renderObjects++;
+            renderInstances += object.isInstancedMesh ? Math.max(0, Number(object.count) || 0) : 1;
+        });
+        return { renderObjects, renderInstances };
+    }
+
+    function checkPublicationStalls(now = performance.now()) {
+        const warnAfter = Math.max(0, Number(publicationWarnAfterMs) || 0);
+        if (!warnAfter) return 0;
+        const repeatAfter = Math.max(1000, warnAfter * 2);
+        let stalled = 0;
+        for (const chunk of chunks.values()) {
+            if (chunk.state !== CHUNK_STATE.READY || !chunk.renderRequested || chunk.renderPublished) continue;
+            stalled++;
+            const since = chunk.renderRequestedAt || chunk.committedAt || chunk.readyAt || now;
+            const ageMs = Math.max(0, now - since);
+            if (ageMs < warnAfter || (chunk.lastPublicationWarningAt && now - chunk.lastPublicationWarningAt < repeatAfter)) continue;
+            chunk.lastPublicationWarningAt = now;
+            publicationStallWarnings++;
+            const payload = chunk.payload;
+            const refinement = payload?.refinement;
+            const diagnostic = {
+                chunkKey: chunk.key,
+                ownerId: payload?.ownerId ?? null,
+                ageMs: Number(ageMs.toFixed(1)),
+                state: chunk.state,
+                renderRequested: chunk.renderRequested,
+                renderPublished: chunk.renderPublished,
+                physicsAuthoritative: chunk.physicsAuthoritative,
+                deferredReason: chunk.publicationReason,
+                player: (() => { const p = getPlayerPosition(); return { x: p.x, y: p.y ?? null, z: p.z }; })(),
+                entities: payload?.entities?.length ?? 0,
+                ...renderableSummary(payload),
+                refinementPhase: refinement?.phase ?? null,
+                refinementPending: refinement?.tasks ? Math.max(0, refinement.tasks.length - (refinement.cursor || 0)) : null,
+            };
+            console.warn?.(`[world-liveness] requested-visible chunk ${chunk.key} has not published for ${ageMs.toFixed(0)}ms`, diagnostic);
+            try { onPublicationStall?.(diagnostic, chunk, payload); }
+            catch (error) { console.warn?.('[world-liveness] publication-stall listener failed', error); }
+        }
+        return stalled;
+    }
+
     function updateVisibility(center = playerChunkCoords(), force = false) {
-        if (!force && center.x === lastVisibilityCenterX && center.z === lastVisibilityCenterZ) return visibleReadyCount;
+        // Publication can change while the player remains in the same chunk (for
+        // example a physics activation callback). Always resync READY payload truth.
         lastVisibilityCenterX = center.x;
         lastVisibilityCenterZ = center.z;
         for (const chunk of chunks.values()) {
             if (chunk.state !== CHUNK_STATE.READY || !chunk.payload) continue;
             applyChunkVisibility(chunk, center);
         }
+        checkPublicationStalls();
         return visibleReadyCount;
     }
 
@@ -341,8 +449,8 @@ export function createWorldChunkStreamer({
             totalCommitMs += commitMs;
             worstCommitMs = Math.max(worstCommitMs, commitMs);
             chunk.committedAt = performance.now();
-            const expectedVisible = applyChunkVisibility(chunk);
-            if (verifyChunkReady) await verifyChunkReady(chunk, chunk.payload, expectedVisible);
+            applyChunkVisibility(chunk);
+            if (verifyChunkReady) await verifyChunkReady(chunk, chunk.payload, chunk.renderRequested);
             chunk.readyAt = performance.now();
             state(chunk, CHUNK_STATE.READY);
             if (chunk.visible) visibleReadyCount++;
@@ -428,7 +536,7 @@ export function createWorldChunkStreamer({
             const refinementTimeCap = Number.isFinite(refinementBudgetMs)
                 ? Math.max(0, Math.min(timeCap, refinementBudgetMs))
                 : timeCap;
-            const renderReadyAtPumpStart = readyWithinRadius(renderRadiusChunks).complete;
+            const renderReadyAtPumpStart = publicationWithinRadius(renderRadiusChunks).complete;
             const prefetchReadyAtPumpStart = readyWithinRadius(prefetchRadiusChunks).complete;
             const canRefineBeforePrefetch = !refineAfterPrefetchReady && renderReadyAtPumpStart && !prefetchReadyAtPumpStart;
 
@@ -469,7 +577,8 @@ export function createWorldChunkStreamer({
             }
 
             const prefetchReadyForRefinement = readyWithinRadius(prefetchRadiusChunks).complete;
-            if (!disposed && refined < refinementCap && (!refineAfterPrefetchReady || prefetchReadyForRefinement)) {
+            const renderPublishedForRefinement = publicationWithinRadius(renderRadiusChunks).complete;
+            if (!disposed && renderPublishedForRefinement && refined < refinementCap && (!refineAfterPrefetchReady || prefetchReadyForRefinement)) {
                 await runRefinementTurns({
                     visibleOnly: !prefetchReadyForRefinement,
                     deadlineMs: timeCap,
@@ -499,10 +608,9 @@ export function createWorldChunkStreamer({
         chunk.payload = payload;
         chunk.readyAt = performance.now();
         chunk.committedAt = chunk.readyAt;
-        chunk.visible = shouldBeVisible(chunk);
-        chunk.visibilityInitialized = true;
+        applyChunkVisibility(chunk);
         state(chunk, CHUNK_STATE.READY);
-        if (chunk.visible) visibleReadyCount++;
+        if (chunk.renderPublished) visibleReadyCount++;
         return chunk;
     }
 
@@ -510,26 +618,33 @@ export function createWorldChunkStreamer({
         return chunks.get(keyOf(x, z))?.state === CHUNK_STATE.READY;
     }
 
-    // STREAMING / SANITY HANDOFF:
-    // Unknown procedural space is not a wall. Readiness and physical prohibition
-    // are different authority states. The player is allowed onto provisional
-    // baseline support while the destination chunk is pulled to the front of work.
-    // Keep the broader scheduling order from the player-centered write-up in mind:
-    // survival -> next movement -> near field -> predictive corridor -> horizon -> everything else.
+    // FRONTIER / LIVENESS HANDOFF:
+    // UNKNOWN is no longer freely occupiable future-solid space. A movement probe
+    // may cross only after the destination has structural READY + actual render
+    // publication + authoritative physics. Predictive demand should keep this
+    // frontier ahead of normal travel; if the player catches it, movement waits a
+    // few frames instead of creating a late-geometry/player-overlap deadlock.
     function classifyWorldPosition(x, z) {
         const c = coordsForWorld(x, z);
         const chunk = chunks.get(keyOf(c.x, c.z));
-        if (chunk?.state === CHUNK_STATE.READY) {
+        if (chunk?.payload) syncChunkPublication(chunk);
+        if (chunk?.state === CHUNK_STATE.READY && chunk.renderPublished && chunk.physicsAuthoritative) {
             return {
                 state: WORLD_SPACE_STATE.AUTHORITATIVE,
                 chunkKey: chunk.key,
                 provisionalSupportY: null,
+                renderPublished: true,
+                physicsAuthoritative: true,
             };
         }
         return {
             state: WORLD_SPACE_STATE.UNKNOWN,
             chunkKey: keyOf(c.x, c.z),
             provisionalSupportY: 0,
+            structuralReady: chunk?.state === CHUNK_STATE.READY,
+            renderPublished: !!chunk?.renderPublished,
+            physicsAuthoritative: !!chunk?.physicsAuthoritative,
+            reason: chunk?.publicationReason ?? null,
         };
     }
 
@@ -578,15 +693,22 @@ export function createWorldChunkStreamer({
         return { chunkKey: keyOf(c.x, c.z), requested };
     }
 
-    // Compatibility shim for the existing physics caller. Historically false meant
-    // "solid". It now means only truly forbidden space; procedural unknown is
-    // traversable and simultaneously demands its chunk.
+    // Existing player physics asks a boolean question. UNKNOWN now means a short
+    // generation frontier: demand the destination immediately, but do not let the
+    // capsule occupy deterministic geometry that has not published yet. FORBIDDEN
+    // remains a permanent prohibition; UNKNOWN is expected to clear quickly.
     function isWorldPositionAvailable(x, z) {
-        const classification = classifyWorldPosition(x, z);
+        let classification = classifyWorldPosition(x, z);
         if (classification.state === WORLD_SPACE_STATE.UNKNOWN) {
             requestWorldPosition(x, z, { reason: 'player-frontier', neighborhood: 1 });
+            const c = coordsForWorld(x, z);
+            const chunk = chunks.get(keyOf(c.x, c.z));
+            if (chunk?.state === CHUNK_STATE.READY && chunk.payload) {
+                applyChunkVisibility(chunk);
+                classification = classifyWorldPosition(x, z);
+            }
         }
-        return classification.state !== WORLD_SPACE_STATE.FORBIDDEN;
+        return classification.state === WORLD_SPACE_STATE.AUTHORITATIVE;
     }
 
     function getChunkAtWorld(x, z) {
@@ -608,6 +730,39 @@ export function createWorldChunkStreamer({
         return { ready, total, complete: ready === total };
     }
 
+    function publicationWithinRadius(radius = renderRadiusChunks) {
+        const center = playerChunkCoords();
+        let structuralReady = 0;
+        let requested = 0;
+        let published = 0;
+        let physicsAuthoritative = 0;
+        let total = 0;
+        for (let dz = -radius; dz <= radius; dz++) {
+            for (let dx = -radius; dx <= radius; dx++) {
+                if (Math.max(Math.abs(dx), Math.abs(dz)) > radius) continue;
+                total++;
+                const chunk = chunks.get(keyOf(center.x + dx, center.z + dz));
+                if (!chunk || chunk.state !== CHUNK_STATE.READY || !chunk.payload) continue;
+                structuralReady++;
+                syncChunkPublication(chunk);
+                if (chunk.renderRequested) requested++;
+                if (chunk.renderPublished) published++;
+                if (chunk.physicsAuthoritative) physicsAuthoritative++;
+            }
+        }
+        return {
+            // Compatibility: callers historically render `ready/total`. For the
+            // render ring that number now deliberately means actual publication.
+            ready: published,
+            total,
+            structuralReady,
+            requested,
+            published,
+            physicsAuthoritative,
+            complete: published === total && physicsAuthoritative === total,
+        };
+    }
+
     function refinementWithinRadius(radius = renderRadiusChunks) {
         const center = playerChunkCoords();
         let ready = 0;
@@ -620,6 +775,8 @@ export function createWorldChunkStreamer({
                 total++;
                 const chunk = chunks.get(keyOf(center.x + dx, center.z + dz));
                 if (!chunk || chunk.state !== CHUNK_STATE.READY || !chunk.payload) continue;
+                syncChunkPublication(chunk);
+                if (!chunk.renderPublished || !chunk.physicsAuthoritative) continue;
                 ready++;
                 const pending = chunkNeedsRefinement(chunk);
                 if (pending) pendingChunks++;
@@ -675,9 +832,14 @@ export function createWorldChunkStreamer({
                 lastKind: lastRefinementKind,
                 pendingChunks: [...chunks.values()].filter(chunkNeedsRefinement).length,
             },
-            localRenderRing: readyWithinRadius(renderRadiusChunks),
+            localRenderRing: publicationWithinRadius(renderRadiusChunks),
+            localStructuralRenderRing: readyWithinRadius(renderRadiusChunks),
             localRenderRefinement: refinementWithinRadius(renderRadiusChunks),
             localPrefetchRing: readyWithinRadius(prefetchRadiusChunks),
+            publication: {
+                stalledRequestedVisible: [...chunks.values()].filter(chunk => chunk.state === CHUNK_STATE.READY && chunk.renderRequested && !chunk.renderPublished).length,
+                stallWarnings: publicationStallWarnings,
+            },
             states: counts,
         };
     }
@@ -721,6 +883,7 @@ export function createWorldChunkStreamer({
         isWorldPositionAvailable,
         getChunkAtWorld,
         readyWithinRadius,
+        publicationWithinRadius,
         refinementWithinRadius,
         stats,
         dispose,

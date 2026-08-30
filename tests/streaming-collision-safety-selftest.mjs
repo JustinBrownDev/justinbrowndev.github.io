@@ -18,11 +18,14 @@ streamer.markChunkReady(0, 0, { spawn: true });
 const frontierX = 64 * 2;
 const unknown = streamer.classifyWorldPosition(frontierX, 0);
 assert.equal(unknown.state, WORLD_SPACE_STATE.UNKNOWN, 'unbuilt frontier must classify as unknown');
-assert.equal(streamer.isWorldPositionAvailable(frontierX, 0), true, 'unknown frontier must not become an invisible wall');
+assert.equal(streamer.isWorldPositionAvailable(frontierX, 0), false, 'unknown frontier must hold movement until deterministic authority is published');
 assert.equal(streamer.chunks.get('2,0')?.state, CHUNK_STATE.QUEUED, 'touching unknown frontier must queue its destination chunk');
 assert.equal(streamer.nearestQueuedChunk()?.key, '2,0', 'player-demanded destination must outrank speculative neighbors');
 await streamer.buildOne(streamer.chunks.get('2,0'));
-assert.equal(streamer.classifyWorldPosition(frontierX, 0).state, WORLD_SPACE_STATE.AUTHORITATIVE, 'built frontier becomes authoritative');
+assert.equal(streamer.classifyWorldPosition(frontierX, 0).state, WORLD_SPACE_STATE.UNKNOWN, 'structural READY outside the render ring must not masquerade as published authority');
+streamPosition.x = frontierX;
+streamer.updateVisibility();
+assert.equal(streamer.classifyWorldPosition(frontierX, 0).state, WORLD_SPACE_STATE.AUTHORITATIVE, 'frontier becomes authoritative only after actual publication');
 await streamer.dispose();
 
 function emptyWorld(extra = {}) {

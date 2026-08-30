@@ -250,8 +250,8 @@ export function createWorldChunkStreamer({
             if (
                 visibilityRank < bestVisibilityRank ||
                 (visibilityRank === bestVisibilityRank && (
-                    serial < bestSerial ||
-                    (serial === bestSerial && (priority < bestPriority || (priority === bestPriority && chunk.key < best?.key)))
+                    priority < bestPriority ||
+                    (priority === bestPriority && (serial < bestSerial || (serial === bestSerial && chunk.key < best?.key)))
                 ))
             ) {
                 best = chunk;
@@ -392,6 +392,17 @@ export function createWorldChunkStreamer({
             const chunkCap = Number.isFinite(maxChunks) ? Math.max(0, Math.floor(maxChunks)) : Infinity;
             const refinementCap = Number.isFinite(maxRefinements) ? Math.max(0, Math.floor(maxRefinements)) : Infinity;
             const timeCap = Number.isFinite(maxMillis) ? Math.max(0, maxMillis) : Infinity;
+            const renderReadyAtPumpStart = readyWithinRadius(renderRadiusChunks).complete;
+            const prefetchReadyAtPumpStart = readyWithinRadius(prefetchRadiusChunks).complete;
+            const canRefineBeforePrefetch = !refineAfterPrefetchReady && renderReadyAtPumpStart && !prefetchReadyAtPumpStart;
+            if (!disposed && canRefineBeforePrefetch && refinementCap > 0) {
+                const next = nearestRefinableChunk(center);
+                if (next && shouldBeVisible(next, center)) {
+                    const remaining = Number.isFinite(timeCap) ? Math.max(0.1, timeCap - (performance.now() - pumpStarted)) : 2;
+                    const result = await refineOne(next, { maxMillis: Math.min(2, remaining) });
+                    if (result?.progressed || result?.steps) refined += Math.max(1, result.steps || 0);
+                }
+            }
             while (built < chunkCap && !disposed) {
                 ensureNeighborhood();
                 const next = nearestQueuedChunk();
@@ -401,10 +412,12 @@ export function createWorldChunkStreamer({
                 if (built > 0 && performance.now() - pumpStarted >= timeCap) break;
             }
 
-            if (!disposed && refined < refinementCap && readyWithinRadius(prefetchRadiusChunks).complete) {
+            const prefetchReadyForRefinement = readyWithinRadius(prefetchRadiusChunks).complete;
+            if (!disposed && refined < refinementCap && (!refineAfterPrefetchReady || prefetchReadyForRefinement)) {
                 while (refined < refinementCap && performance.now() - pumpStarted < timeCap) {
                     const next = nearestRefinableChunk(center);
                     if (!next) break;
+                    if (!prefetchReadyForRefinement && !shouldBeVisible(next, center)) break;
                     const remaining = Number.isFinite(timeCap) ? Math.max(0.1, timeCap - (performance.now() - pumpStarted)) : 2;
                     const result = await refineOne(next, { maxMillis: Math.min(2, remaining) });
                     if (!result?.progressed && !result?.steps) break;

@@ -48,8 +48,10 @@ ok(kowloon.includes('export function partitionKowloonCompounds') && kowloon.incl
 ok(chunks.includes('enrichment.initializePayload(chunk, payload)'), 'generic chunk must create its own progressive detail state before publication');
 ok(chunks.includes('const refine = (chunk, payload, budget) => enrichment.pump(chunk, payload, budget)'), 'generic chunk must expose resumable local refinement');
 ok(!chunks.includes('requestAnimationFrame('), 'generic structural factory must not contain inner requestAnimationFrame sleeps');
-ok(streamer.includes('nearestRefinableChunk') && streamer.includes('lastRefinedSerial'), 'outer streamer must fairly schedule independent chunk refinement turns');
-ok(streamer.includes('readyWithinRadius(prefetchRadiusChunks).complete'), 'chunk cosmetics must wait for structural neighborhood warmth');
+ok(streamer.includes('priority < bestPriority') && streamer.includes('serial < bestSerial'), 'outer streamer must converge nearest visible detail before fairness among equally-prioritized peers');
+ok(main.includes('refineAfterPrefetchReady: false'), 'live runtime must allow visible chunk detail before the full prefetch ring is warm');
+ok(streamer.includes('const canRefineBeforePrefetch = !refineAfterPrefetchReady') && streamer.includes('renderReadyAtPumpStart'), 'streamer must reserve a visible detail turn while farther structural prefetch continues');
+ok(streamer.includes('!prefetchReadyForRefinement && !shouldBeVisible(next, center)'), 'unfinished prefetch must not spend detail budget on invisible chunks');
 ok(chunkEnrichment.includes("kind: 'sign'") && chunkEnrichment.includes("kind: 'graffiti'") && chunkEnrichment.includes("kind: 'pipe'") && chunkEnrichment.includes("kind: 'awning'") && chunkEnrichment.includes("kind: 'ivy'"), 'infinite chunk enrichment must carry the authored-world facade vocabulary');
 ok(chunkEnrichment.includes('pickMassiveNoisePair') && chunkEnrichment.includes('pickPoetryTag'), 'infinite signage/graffiti must use the packaged text corpus instead of placeholder labels');
 

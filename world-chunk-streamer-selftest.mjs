@@ -130,8 +130,8 @@ assert.ok(visibilityStreamer.stats().throughput.avgCommitToVisibleMs >= 0);
 await visibilityStreamer.dispose();
 console.log('[world-chunk-visibility-selftest] PASS', { visibilityEvents });
 
-// Chunk-local enrichment must behave like cooperative neighbors: structural warmth first,
-// then one deterministic semantic turn per nearest READY chunk before any one chunk hogs work.
+// Chunk-local enrichment should converge from the player outward: keep work bounded,
+// but finish the nearest/forward READY chunk before smearing one turn across every neighbor.
 const refinementPosition = { x: 0, z: 0 };
 const refinementTurns = [];
 const refinementStreamer = createWorldChunkStreamer({
@@ -157,10 +157,10 @@ for (let z = -1; z <= 1; z++) for (let x = -1; x <= 1; x++) {
 assert.equal(refinementStreamer.stats().localPrefetchRing.complete, true, 'refinement test requires a structurally warm neighborhood');
 await refinementStreamer.pump({ maxChunks: 0, maxMillis: 100, maxRefinements: 4 });
 assert.equal(refinementTurns.length, 4, 'bounded refinement pump must honor semantic turn cap');
-assert.equal(new Set(refinementTurns).size, 4, 'fair scheduler must give distinct chunks a turn before repeating one');
 assert.equal(refinementTurns[0], '1,0', 'heading-biased nearest chunk should receive the first equal-distance refinement turn');
+assert.equal(refinementTurns[1], '1,0', 'nearest visible chunk should receive consecutive turns until its local detail queue completes');
+assert.ok(new Set(refinementTurns).size < refinementTurns.length, 'nearest-first convergence must repeat a close chunk instead of smearing one turn across every neighbor');
 await refinementStreamer.pump({ maxChunks: 0, maxMillis: 100, maxRefinements: 4 });
-assert.equal(new Set(refinementTurns.slice(0, 8)).size, 8, 'all eight neighboring chunks should receive one turn before any receives a second');
 assert.equal(refinementStreamer.stats().refinement.steps, 8);
 assert.equal(refinementStreamer.stats().refinement.failures, 0);
 await refinementStreamer.dispose();
@@ -181,4 +181,29 @@ gatedStreamer.markChunkReady(0, 0, { pending: 1 });
 await gatedStreamer.pump({ maxChunks: 0, maxMillis: 100, maxRefinements: 8 });
 assert.equal(gatedRefinementTurns.length, 0, 'chunk cosmetics must not compete with an incomplete structural prefetch neighborhood');
 await gatedStreamer.dispose();
+
+const earlyRefinementTurns = [];
+const earlyStreamer = createWorldChunkStreamer({
+  chunkSize: 64,
+  worldSeed: 125,
+  getPlayerPosition: () => ({ x: 0, z: 0 }),
+  renderRadiusChunks: 0,
+  prefetchRadiusChunks: 1,
+  retentionRadiusChunks: 2,
+  refineAfterPrefetchReady: false,
+  buildChunk: async chunk => ({ key: chunk.key, pending: 1 }),
+  refineChunk: async (chunk, payload) => {
+    if (payload.pending <= 0) return { progressed: false, steps: 0, complete: true };
+    payload.pending--;
+    earlyRefinementTurns.push(chunk.key);
+    return { progressed: true, steps: 1, complete: payload.pending === 0 };
+  },
+  hasPendingRefinement: (_chunk, payload) => payload.pending > 0,
+});
+earlyStreamer.markChunkReady(0, 0, { pending: 1 });
+assert.equal(earlyStreamer.stats().localRenderRing.complete, true, 'early-refinement test requires the visible ring to be structurally safe');
+assert.equal(earlyStreamer.stats().localPrefetchRing.complete, false, 'early-refinement test must begin before the outer prefetch ring is warm');
+await earlyStreamer.pump({ maxChunks: 0, maxMillis: 100, maxRefinements: 1 });
+assert.deepEqual(earlyRefinementTurns, ['0,0'], 'visible local detail should begin before farther prefetch shells finish');
+await earlyStreamer.dispose();
 console.log('[world-chunk-refinement-selftest] PASS', { refinementTurns });

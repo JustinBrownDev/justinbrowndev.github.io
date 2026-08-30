@@ -2183,7 +2183,7 @@ worldChunkStreamer = createWorldChunkStreamer({
     verifyChunkReady: (chunk, payload, visible) => cityFabricEngine.verifyReady(chunk, payload, visible),
     refineChunk: (chunk, payload, budget) => cityFabricEngine.refine(chunk, payload, budget),
     hasPendingRefinement: (chunk, payload) => cityFabricEngine.hasPendingRefinement(chunk, payload),
-    refineAfterPrefetchReady: true,
+    refineAfterPrefetchReady: false,
     unloadChunk: (chunk, payload) => cityFabricEngine.unload(chunk, payload),
     yieldControl: null,
     onChunkState: (chunk, state) => {
@@ -3921,7 +3921,7 @@ function pumpWorldChunksAggressively() {
             ? CONFIG.streaming.prefetchBuildBudgetMs
             : CONFIG.streaming.warmBuildBudgetMs;
     const warmCooldownMs = renderWarm && prefetchWarm ? CONFIG.streaming.warmCooldownMs : 0;
-    const maxRefinements = renderWarm && prefetchWarm
+    const maxRefinements = renderWarm
         ? (QUALITY === CONFIG.quality.desktop ? CONFIG.streaming.chunkRefinementStepsDesktop : CONFIG.streaming.chunkRefinementStepsWeak)
         : 0;
     worldChunkPumpPromise = worldChunkStreamer.pump({ maxChunks, maxMillis, maxRefinements })

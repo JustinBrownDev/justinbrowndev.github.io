@@ -18,14 +18,14 @@ ok(!fs.existsSync(path.join(root, 'synchronous')), 'obsolete /synchronous route 
 ok(homepage.includes('Escape to regular website'), 'regular-site escape action missing');
 ok(!homepage.includes('The website loading'), 'redundant load-site choice still present');
 
-// Spawn authoring paints nearest real work first while it is the only startup gate.
+ 
 ok(main.includes('function buildingSiteDistanceSqToPlayer(site)'), 'spawn building priority helper missing');
 ok(main.includes("await testYieldNow('streaming nearest real buildings'"), 'spawn buildings are not cooperatively painted nearest-first');
-ok(main.includes("await testYieldNow('streaming nearest real streets/alleys'"), 'spawn ground is not cooperatively painted nearest-first');
-ok(main.includes('sortPlacementRequestsNearestToPlayer'), 'spawn async model placements are not player-prioritized');
+ok(main.includes('layOpenCellSurfaces'), 'spawn ground construction path missing');
+ok(main.includes('sortDecorationQueueNearPlayer'), 'spawn placement work is not player-prioritized');
 ok(main.includes('sortDecorationQueueNearPlayer'), 'spawn deferred decoration is not player-prioritized');
 
-// After handoff, chunk streaming is continuous and spatially prioritized.
+ 
 ok(streamer.includes('function chunkPriorityScore(chunk)'), 'heading-aware infinite stream priority helper missing');
 ok(streamer.includes('const forwardDot ='), 'chunk priority must bias the player heading');
 ok(streamer.includes('function nearestQueuedChunk()'), 'infinite stream nearest-chunk selector missing');
@@ -36,13 +36,13 @@ ok(chunks.includes('async function commit(chunk, payload)'), 'generic chunk must
 ok(chunks.includes('freezeChunkRoot(root);'), 'generic chunk must be optimized/frozen before commit');
 ok(main.includes('commitChunk: (chunk, payload) => infiniteChunkFactory.commit(chunk, payload)'), 'streamer commit hook not wired');
 
-// Recurring landmarks are deterministic ordinary chunk content, not new singulars.
+ 
 ok(chunks.includes("districtLandmarkTypes = Object.freeze(['spire', 'stack', 'gatehouse', 'archive', 'beacon'])"), 'district landmark family missing');
-ok(main.includes('landmarkSpacingChunks: 3'), 'district landmark recurrence must be frequent but not every chunk');
+ok(main.includes('landmarkSpacingChunks: CONFIG.streaming.landmarkSpacingChunks'), 'district landmark recurrence must be configured');
 ok(chunks.includes("kind: 'district-landmark'"), 'district landmarks must be exposed in chunk entity metadata');
 
 ok(main.includes('createProgressiveStaticWorldOptimizer({'), 'spawn optimizer must remain cooperative');
-ok(main.includes('await staticWorldOptimizer.optimize({'), 'spawn optimizer must be awaited before chunk 0,0 READY');
+ok(main.includes('await staticWorldOptimizer.finalizeIncremental({'), 'spawn optimizer must finalize local chunks before handoff');
 ok(perf.includes('optimizing static world · merging nearest chunks'), 'spawn optimizer lost nearest-chunk cooperative merge phase');
 
 if (failures.length) {

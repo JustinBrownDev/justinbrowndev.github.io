@@ -1,0 +1,8 @@
+export const MUNICIPAL_VOICE = Object.freeze({
+    nouns: Object.freeze(['RIGHT OF WAY','EASEMENT','CURB LINE','ALLEY VACATION','PARCEL MAP','PLAT BOOK','SETBACK LINE','UTILITY CUT','HYDRANT ZONE','STORM INLET','CATCH BASIN','MANHOLE FRAME','SERVICE LATERAL','METER PIT','SIGN POST','CROSSWALK BAR','STOP LINE','PUBLIC NOTICE','PERMIT WINDOW','INSPECTION CARD','WORK ORDER','WARD MAP','ADDRESS GRID','SNOW ROUTE','NO PARKING ZONE','LOAD LIMIT','SIDEWALK JOINT','TREE PIT']),
+    verbs: Object.freeze(['MARK THE RIGHT OF WAY','CHECK THE PLAT','LOCATE BEFORE DIGGING','POST THE NOTICE','PAINT THE STOP LINE','CLEAR THE INLET','READ THE METER','OPEN THE WORK ORDER','VERIFY THE ADDRESS','INSPECT THE CUT','REPLACE THE LID','FOLLOW THE EASEMENT','MEASURE FROM CURB','CLOSE THE PERMIT','RECORD THE CHANGE']),
+    joints: Object.freeze(['INSIDE THE RIGHT OF WAY','BEHIND THE CURB LINE','BEFORE THE PARCEL EDGE','UNDER PUBLIC NOTICE','AT THE STORM INLET','PAST THE STOP LINE','BETWEEN ADDRESS AND PLACE','ON THE SNOW ROUTE','ALONG THE EASEMENT','WHERE THE PLAT SAYS SO'])
+});
+export const MUNICIPAL_PAIRS = Object.freeze([
+    ['RIGHT OF WAY','public geometry has ownership rules'],['CATCH BASIN','the street has a drain-shaped mouth'],['PLAT BOOK','a city flattened into evidence'],['PUBLIC NOTICE','the wall is also a bulletin board'],['UTILITY CUT','infrastructure leaves scars'],['ADDRESS GRID','place becomes queryable'],['STOP LINE','paint can become law'],['EASEMENT','access exists even when the fence disagrees'],['WORK ORDER','a problem with a tracking number'],['TREE PIT','nature gets a rectangular permit'],['SIDEWALK JOINT','concrete expects to move'],['SNOW ROUTE','weather rewrites priority']
+]);

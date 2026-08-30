@@ -1,0 +1,8 @@
+export const RAIL_VOICE = Object.freeze({
+    nouns: Object.freeze(['SWITCH POINT','FROG','CROSSOVER','SIDING','BLOCK SIGNAL','INTERLOCKING','HOME SIGNAL','DWARF SIGNAL','DERAIL','BUMPING POST','PLATFORM EDGE','THIRD RAIL','CATENARY','TIE PLATE','BALLAST','RAIL JOINT','FLANGEWAY','TRACK CIRCUIT','YARD LEAD','HEADSHUNT','MILEPOST','TIMETABLE','DISPATCHER','CLEARANCE POINT','GRADE CROSSING','RIGHT OF WAY','SIGNAL CABINET','ROUTE INDICATOR']),
+    verbs: Object.freeze(['LINE THE SWITCH','CLEAR THE BLOCK','HOLD AT SIGNAL','CHECK THE POINTS','CALL THE DISPATCHER','PROTECT THE CROSSING','FOLLOW THE LEAD','STOP SHORT','READ THE INDICATION','SHUNT TO THE SIDING','VERIFY THE ROUTE','KEEP BEYOND CLEARANCE','WALK THE TRACK','LISTEN FOR THE JOINT','RESTORE NORMAL']),
+    joints: Object.freeze(['BEYOND THE HOME SIGNAL','INSIDE THE INTERLOCKING','AT THE CLEARANCE POINT','PAST THE FROG','ALONG THE YARD LEAD','BEFORE THE CROSSOVER','UNDER CATENARY','NEXT TO THE SIGNAL CABINET','BETWEEN BLOCKS','WHERE THE ROUTE DIVERGES'])
+});
+export const RAIL_PAIRS = Object.freeze([
+    ['INTERLOCKING','a machine that prevents contradictory routes'],['SWITCH POINT','the path changes at a moving edge'],['CLEARANCE POINT','far enough is a measured place'],['BLOCK SIGNAL','permission is spatial'],['FROG','two rails cross without agreeing'],['SIDING','the main route is not the only route'],['ROUTE INDICATOR','the signal can tell you where it means'],['TRACK CIRCUIT','the rail knows when it is occupied'],['BUMPING POST','the topology ends physically'],['YARD LEAD','many destinations share one throat'],['MILEPOST','distance becomes a label'],['RESTORE NORMAL','temporary routes should leave no mystery']
+]);

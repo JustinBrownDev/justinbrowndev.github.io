@@ -1,0 +1,8 @@
+export const MEASUREMENT_VOICE = Object.freeze({
+    nouns: Object.freeze(['REFERENCE EDGE','DATUM','ZERO POINT','TOLERANCE','CALIPER','MICROMETER','DIAL TEST INDICATOR','STRAIGHTEDGE','FEELER GAUGE','SQUARE','LEVEL VIAL','PLUMB LINE','TAPE RULE','SCALE','GAUGE BLOCK','CENTERLINE','RUNOUT','CLEARANCE','INTERFERENCE','OFFSET','ERROR BAND','SAMPLE RATE','BASELINE','CONTROL MEASURE','CHECK DIMENSION','REFERENCE SURFACE','REPEATABILITY','RESOLUTION']),
+    verbs: Object.freeze(['ZERO THE TOOL','MEASURE TWICE','ESTABLISH THE DATUM','CHECK REPEATABILITY','WRITE THE NUMBER','COMPARE TO BASELINE','MEASURE THE CLEARANCE','SWEEP THE SURFACE','FOLLOW THE CENTERLINE','CHECK BOTH SIDES','CONTROL THE VARIABLE','CALIBRATE FIRST','REPEAT THE MEASUREMENT','MARK THE REFERENCE','QUESTION THE OUTLIER']),
+    joints: Object.freeze(['FROM THE DATUM','AT ZERO','WITHIN TOLERANCE','OUTSIDE THE ERROR BAND','AGAINST BASELINE','BEFORE ADJUSTMENT','AFTER ADJUSTMENT','ALONG THE CENTERLINE','BETWEEN CLEARANCE AND INTERFERENCE','WHERE REPEATABILITY FAILS'])
+});
+export const MEASUREMENT_PAIRS = Object.freeze([
+    ['ESTABLISH THE DATUM','every measurement starts somewhere'],['REPEATABILITY','one good number is not yet a pattern'],['TOLERANCE','correctness has width'],['ZERO THE TOOL','remove the instrument from the answer'],['BASELINE','change needs a before'],['CONTROL MEASURE','a comparison keeps the story honest'],['RUNOUT','rotation reveals misalignment'],['CLEARANCE','empty space can be specified'],['RESOLUTION','the instrument decides what differences exist'],['QUESTION THE OUTLIER','weird does not automatically mean wrong'],['REFERENCE EDGE','geometry needs a place to begin'],['WRITE THE NUMBER','measurement disappears if nobody records it']
+]);

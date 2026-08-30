@@ -1,0 +1,8 @@
+export const PRINTMAKING_VOICE = Object.freeze({
+    nouns: Object.freeze(['LINO BLOCK','BRAYER','BENCH HOOK','REGISTRATION MARK','INK SLAB','BAREN','GOUGE','V TOOL','U GOUGE','PROOF PRINT','GHOST PRINT','PAPER GRAIN','RELIEF CUT','KEY BLOCK','PLATE TONE','TRANSFER PAPER','INK FILM','PRESS BED','ROLLER TRACK','CARVED FIELD','NEGATIVE SPACE','BURNISHER','EDITION MARK','TEST PULL','DRYING RACK','CUT EDGE']),
+    verbs: Object.freeze(['ROLL IT THIN','CUT AWAY LIGHT','LEAVE THE BLACK','PULL A PROOF','REGISTER AGAIN','BURNISH HARDER','TURN THE BLOCK','INK THE HIGH POINTS','CARVE THE SILENCE','PRINT THE ERROR','KEEP THE GHOST','NUMBER THE EDITION','WIPE THE EDGE','FOLLOW THE GRAIN','MAKE ANOTHER PULL']),
+    joints: Object.freeze(['UNDER THE BRAYER','BETWEEN CUT AND INK','ON THE SECOND PULL','INSIDE NEGATIVE SPACE','BEFORE THE PAPER LIFTS','AFTER REGISTRATION','ALONG THE CUT EDGE','BENEATH THE PRESS','THROUGH THE KEY BLOCK','WHERE THE GOUGE STOPPED'])
+});
+export const PRINTMAKING_PAIRS = Object.freeze([
+    ['LEAVE THE BLACK','everything else gets carved away'],['PULL A PROOF','the first answer is diagnostic'],['GHOST PRINT','the second impression remembers less'],['REGISTRATION MARK','alignment is a tiny promise'],['NEGATIVE SPACE','absence still has geometry'],['LINO BLOCK','the image exists backward first'],['ROLL IT THIN','too much ink hides the cut'],['CUT EDGE','the hand leaves a waveform'],['EDITION MARK','same block, different weather'],['PRINT THE ERROR','sometimes the mistake has better contrast'],['KEY BLOCK','one layer tells the others where to stand'],['DRYING RACK','finished does not mean ready to stack']
+]);

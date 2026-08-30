@@ -1,0 +1,8 @@
+export const LOGISTICS_VOICE = Object.freeze({
+    nouns: Object.freeze(['RECEIVING DOCK','PICK LIST','BIN LOCATION','PALLET TAG','BILL OF LADING','PACKING SLIP','BACKORDER','CYCLE COUNT','STAGING LANE','CROSS DOCK','FREIGHT CLASS','CARTON LABEL','SHRINK WRAP','DOCK PLATE','HAND TRUCK','PALLET JACK','FORK POCKET','RACK BAY','AISLE MARKER','OVERSTOCK','REORDER POINT','MANIFEST','SEAL NUMBER','ROUTE SHEET','DELIVERY WINDOW','RETURN AUTHORIZATION','SHORT SHIPMENT','MIS-PICK']),
+    verbs: Object.freeze(['SCAN THE BIN','COUNT IT TWICE','STAGE BY ROUTE','MATCH THE SEAL','CHECK THE MANIFEST','MOVE THE PALLET','BREAK THE LOAD','CONSOLIDATE HERE','HOLD FOR PICKUP','RECOUNT THE SHORT','PRINT THE LABEL','VERIFY THE SKU','CLEAR THE LANE','LOAD LAST OUT FIRST','MARK THE DAMAGE']),
+    joints: Object.freeze(['AT RECEIVING','BEFORE THE DOCK DOOR','INSIDE RACK BAY FOUR','AFTER THE CYCLE COUNT','BETWEEN PICK AND PACK','UNDER THE PALLET TAG','NEXT TO OVERSTOCK','PAST THE STAGING LANE','BEFORE ROUTE CLOSE','WHERE THE MANIFEST DISAGREES'])
+});
+export const LOGISTICS_PAIRS = Object.freeze([
+    ['PICK LIST','the route through inventory'],['CYCLE COUNT','trust, then count a shelf'],['STAGING LANE','temporary order before motion'],['MIS-PICK','the wrong object in the right box'],['BACKORDER','absence with a purchase order'],['RECEIVING DOCK','where the outside becomes inventory'],['SEAL NUMBER','tiny evidence on a large door'],['MANIFEST','the cargo has a story before arrival'],['REORDER POINT','scarcity has a threshold'],['RACK BAY','space gets an address'],['CROSS DOCK','sometimes storage is the delay'],['RETURN AUTHORIZATION','the reverse route needs paperwork too']
+]);

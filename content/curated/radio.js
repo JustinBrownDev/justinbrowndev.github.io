@@ -1,0 +1,8 @@
+export const RADIO_VOICE = Object.freeze({
+    nouns: Object.freeze(['CARRIER','SIDEBAND','SQUELCH','IF STAGE','LOCAL OSCILLATOR','MIXER','FILTER SKIRT','ANTENNA TUNER','FEED LINE','SWR','GROUND PLANE','DUMMY LOAD','CALL SIGN','REPEATER','OFFSET','DEVIATION','NOISE FLOOR','SIGNAL REPORT','BAND EDGE','PATCH CABLE','BNC JACK','BALUN','FERRITE','HAND MIC','SCAN BANK','CHANNEL MEMORY','INTERMOD','RF SHIELD']),
+    verbs: Object.freeze(['OPEN THE SQUELCH','TUNE FOR MINIMUM','LISTEN BETWEEN CHANNELS','CHECK THE FEED LINE','CALL ONCE','WAIT FOR THE TAIL','MOVE THE ANTENNA','READ THE NOISE FLOOR','SWEEP THE BAND','NULL THE HUM','LOAD THE CHANNEL','KEY AND RELEASE','TRACE THE CARRIER','FILTER THE IMAGE','GROUND THE SHIELD']),
+    joints: Object.freeze(['ABOVE THE NOISE FLOOR','BETWEEN CHANNELS','AFTER THE REPEATER TAIL','AT THE BAND EDGE','THROUGH THE FEED LINE','UNDER THE CARRIER','BEFORE TRANSMIT','PAST THE MIXER','INSIDE THE FILTER SKIRT','WHERE THE SIGNAL FADES'])
+});
+export const RADIO_PAIRS = Object.freeze([
+    ['OPEN THE SQUELCH','silence may be hiding the weak signal'],['NOISE FLOOR','everything starts above something'],['CALL ONCE','leave room for the reply'],['REPEATER TAIL','the system speaks after you stop'],['DUMMY LOAD','test without shouting into the world'],['GROUND PLANE','the invisible half of the antenna'],['SWR','reflections are also information'],['BAND EDGE','rules become geometry'],['CHANNEL MEMORY','a frequency with a name'],['INTERMOD','two clean signals can make a third mess'],['FERRITE','sometimes the fix is a small dark ring'],['SIGNAL REPORT','clarity and strength are different numbers']
+]);

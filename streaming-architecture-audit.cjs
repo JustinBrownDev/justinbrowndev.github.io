@@ -8,6 +8,7 @@ const main = read('main.js');
 const chunks = read('infinite-city-chunks.js');
 const perf = read('city-performance.js');
 const streamer = read('world-chunk-streamer.js');
+const adornment = read('systems/adornment-assets.js');
 
 assert(/directSceneAdd:\s*_origSceneAdd/.test(main), 'main must give infinite chunks an explicit raw scene commit path');
 assert(/worldChunkRoot/.test(chunks) && /renderAuthority\s*=\s*'WorldChunkStreamer'/.test(chunks), 'streamed roots need explicit ownership metadata');
@@ -18,7 +19,7 @@ assert((perf.match(/worldChunkRoot/g) || []).length >= 8, 'both legacy optimizer
 assert(/setChunkVisibility/.test(streamer) && /verifyChunkReady/.test(streamer), 'streamer must own visibility and READY verification');
 assert(/verifyChunkReady\) await verifyChunkReady/.test(streamer), 'READY verification must run before READY state publication');
 assert(!/GLTFLoader|fetch\s*\(|new Image\s*\(/.test(chunks), 'structural infinite chunk factory must have no network/decode dependency');
-assert(/createPriorityLoadQueue/.test(main) && /paused:\s*true/.test(main), 'non-structural asset queue must begin paused');
+assert(/createPriorityLoadQueue/.test(adornment) && /paused:\s*true/.test(adornment), 'non-structural asset queue must begin paused');
 assert(/localPrefetchRing\.complete/.test(main) && /adornmentLoadQueue\.resume\(\)/.test(main), 'adornment network must release only after structural prefetch is warm');
 assert(!fs.existsSync(path.join(__dirname, 'test')), '/test runtime path must remain deleted');
 assert(!fs.existsSync(path.join(__dirname, 'synchronous')), '/synchronous runtime path must remain deleted');

@@ -182,8 +182,8 @@ function createEditor(seed) {
         for (const input of root.querySelectorAll('input[data-key]')) setDesiredParameter(input.dataset.key, input.value);
     }
     root.querySelector('#peGo').addEventListener('click', () => {
-        // Do not lose the final keystroke if GO is clicked before the
-        // 180ms live-preview debounce fires.
+         
+         
         flushVisibleInputs();
         location.href = buildParameterizedReloadUrl(root.querySelector('#peSeed').value);
     });

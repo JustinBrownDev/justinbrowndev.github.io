@@ -1,0 +1,8 @@
+export const MECHANICAL_VOICE = Object.freeze({
+    nouns: Object.freeze(['BEARING','BUSHING','SHAFT COLLAR','KEYWAY','SET SCREW','ROLL PIN','COTTER PIN','THRUST WASHER','GREASE FITTING','CHAIN DRIVE','SPROCKET','BELT TENSIONER','PULLEY','LEAD SCREW','ACME THREAD','GEAR MESH','BACKLASH','JAW COUPLING','LOVEJOY INSERT','PILLOW BLOCK','DIAL INDICATOR','FEELER GAUGE','SURFACE PLATE','SHIM PACK','SPRING RATE','DETENT','CAM FOLLOWER','LINKAGE']),
+    verbs: Object.freeze(['TAKE UP BACKLASH','GREASE THE FITTING','CHECK THE RUNOUT','SHIM THE BASE','ALIGN THE SHAFT','MARK THE KEYWAY','SET THE PRELOAD','TURN BY HAND','WATCH THE COUPLING','MEASURE THE GAP','LOCK THE COLLAR','PIN THE LINKAGE','RELIEVE THE BIND','FOLLOW THE WEAR MARK','RECHECK AFTER HEAT']),
+    joints: Object.freeze(['AT THE BEARING','BEHIND THE COLLAR','UNDER PRELOAD','THROUGH THE LINKAGE','BEFORE THE COUPLING','AFTER THE SHIM','INSIDE THE BACKLASH','ALONG THE SHAFT','WHERE THE WEAR POLISH ENDS','BETWEEN MOTION AND BIND'])
+});
+export const MECHANICAL_PAIRS = Object.freeze([
+    ['BACKLASH','motion can contain deliberate emptiness'],['DIAL INDICATOR','tiny movement gets a large face'],['SHIM PACK','alignment by fractions of almost nothing'],['GREASE FITTING','maintenance has an entrance'],['KEYWAY','torque needs a shared edge'],['PILLOW BLOCK','support the shaft where it actually is'],['TURN BY HAND','feel the mechanism before powering it'],['WEAR MARK','contact writes its own diagram'],['SPRING RATE','distance becomes force'],['JAW COUPLING','two shafts agree through a sacrificial middle'],['FEELER GAUGE','a gap can be measured'],['DETENT','a mechanism remembers a position']
+]);

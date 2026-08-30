@@ -1,0 +1,22 @@
+export const CODE_LORE_CONTENT_GRAFFITI_CONTENT = Object.freeze([
+    "CODELORE|content/graffiti-content.js|0001|spray-paint scrawl near the ground — half bio-rhetoric, half the concept",
+    "CODELORE|content/graffiti-content.js|0002|talking to itself. Irregular jitter per letter so it reads as vandalism,",
+    "CODELORE|content/graffiti-content.js|0003|not signage.",
+    "CODELORE|content/graffiti-content.js|0004|The Great Book of 8gH — scrawled fragments of the same absurdist",
+    "CODELORE|content/graffiti-content.js|0005|personal mythology that names the codeProjects wall plaques below.",
+    "CODELORE|content/graffiti-content.js|0006|two more scrawl voices, same treatment — see INFRA_LORE_FRAGMENTS",
+    "CODELORE|content/graffiti-content.js|0007|and UNDERCITY_LORE_FRAGMENTS below for the full pools these titles",
+    "CODELORE|content/graffiti-content.js|0008|are pulled from.",
+    "CODELORE|content/graffiti-content.js|0009|the curated lines above are hand-written; everything below is a",
+    "CODELORE|content/graffiti-content.js|0010|subject x predicate base vocabulary from the same mythology.",
+    "CODELORE|content/graffiti-content.js|0011|pickRandomizedGraffitiTag() now mutates this with unseeded corpus shards",
+    "CODELORE|content/graffiti-content.js|0012|at render time, so these are ingredients rather than final lines.",
+    "CODELORE|content/graffiti-content.js|0013|a few thousand more, in a different voice -- found-poetry lines and",
+    "CODELORE|content/graffiti-content.js|0014|overheard fragments from the noise-poetry corpus (see",
+    "CODELORE|content/graffiti-content.js|0015|noise-data-poetry.js) instead of more hand-written mythology scrawl.",
+    "CODELORE|content/graffiti-content.js|0016|Natural case on purpose: these read as quoted/overheard, not another",
+    "CODELORE|content/graffiti-content.js|0017|spray tag, so the wall stops repeating itself long before a normal",
+    "CODELORE|content/graffiti-content.js|0018|session could exhaust it. Short-bucket only (<=40 chars) -- a tag",
+    "CODELORE|content/graffiti-content.js|0019|is scrawled in one breath, not an essay; the medium/long lines read",
+    "CODELORE|content/graffiti-content.js|0020|better on flyers/stickers, which have the physical space for them."
+]);

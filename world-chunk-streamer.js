@@ -1,9 +1,9 @@
-// Coordinate-addressed world streaming core.
-//
-// The world is not a boot phase. A chunk is the atomic unit of reality:
-// planned -> queued -> building -> committing -> ready -> unloading -> unloaded.
-// The spawn chunk is the only startup gate. Everything else is selected by
-// player distance and can be discarded/rebuilt deterministically.
+ 
+ 
+ 
+ 
+ 
+ 
 
 import {
     createChunkDescriptor,
@@ -131,9 +131,9 @@ export function createWorldChunkStreamer({
         const hLen = Math.hypot(hx, hz);
         if (!hLen) return distance;
         const forwardDot = (dx * hx + dz * hz) / (distance * hLen);
-        // Distance stays dominant. Heading only breaks/softens ties so the
-        // browser tends to finish the world the player is actually looking or
-        // moving toward before equally-near chunks behind them.
+         
+         
+         
         return distance - Math.max(0, forwardDot) * chunkSize * 0.72;
     }
 
@@ -218,11 +218,11 @@ export function createWorldChunkStreamer({
         state(chunk, CHUNK_STATE.BUILDING);
         chunk.buildOrder = ++buildSerial;
         try {
-            // A generic chunk is intentionally atomic. The factory builds it
-            // off-scene, normally in only a few milliseconds, then this method
-            // publishes visuals + physics together. Do NOT force an animation-
-            // frame yield inside every chunk: the outer pump owns the frame
-            // budget and can usually finish several chunks per frame.
+             
+             
+             
+             
+             
             const buildStarted = performance.now();
             const payload = await buildChunk(chunk);
             totalBuildMs += performance.now() - buildStarted;
@@ -259,9 +259,9 @@ export function createWorldChunkStreamer({
                 continue;
             }
 
-            // These states own no committed scene/physics resources. Dropping
-            // them is both safe and important: otherwise a long walk leaves an
-            // ever-growing history of stale queue records behind the player.
+             
+             
+             
             if (
                 chunk.state === CHUNK_STATE.PLANNED ||
                 chunk.state === CHUNK_STATE.QUEUED ||
@@ -277,7 +277,7 @@ export function createWorldChunkStreamer({
             pruneCount++;
         }
 
-        // Farthest first gets memory back fastest if the player teleported.
+         
         pending.sort((a, b) => ringDistance(b, center) - ringDistance(a, center));
         for (const chunk of pending) {
             state(chunk, CHUNK_STATE.UNLOADING);
@@ -310,18 +310,18 @@ export function createWorldChunkStreamer({
             const chunkCap = Number.isFinite(maxChunks) ? Math.max(0, Math.floor(maxChunks)) : Infinity;
             const timeCap = Number.isFinite(maxMillis) ? Math.max(0, maxMillis) : Infinity;
             while (built < chunkCap && !disposed) {
-                // The player may cross a chunk boundary while an earlier chunk
-                // is cooperatively building. Refresh the queue before every
-                // selection so a long pump follows the player instead of
-                // finishing a stale ring around where the pump began.
+                 
+                 
+                 
+                 
                 ensureNeighborhood();
                 const next = nearestQueuedChunk();
                 if (!next) break;
                 await buildOne(next, 'streaming');
                 built++;
-                // Budget only between complete chunks. This preserves atomic
-                // chunk commits while allowing a fast machine to crunch through
-                // many ~millisecond chunks in the same rendered frame.
+                 
+                 
+                 
                 if (built > 0 && performance.now() - pumpStarted >= timeCap) break;
             }
             lastPumpBuilt = built;
@@ -339,9 +339,9 @@ export function createWorldChunkStreamer({
         return buildOne(chunk, 'spawn chunk');
     }
 
-    // Adopt geometry that was authored by a specialized bootstrap generator.
-    // This is how the rich hand-authored spawn district becomes logical chunk
-    // (0,0) without rebuilding it through the generic infinite generator.
+     
+     
+     
     function markChunkReady(x, z, payload = null) {
         const chunk = ensureChunk(x, z);
         chunk.payload = payload;

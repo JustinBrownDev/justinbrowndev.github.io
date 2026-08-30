@@ -1,6 +1,6 @@
 
 import { parameterNumber, registerLiteralScope } from "./numeric-parameters.js";
-// @quantitative-parameterized -- generated; edit build-parameter-catalog.cjs to rebuild
+ 
 let __qp0=parameterNumber("n.perf.8cad4fe20aa6",4,true,"perf",0);
 let __qp1=parameterNumber("n.perf.7f6e33df1fa3",0.25,true,"perf",1);
 let __qp2=parameterNumber("n.perf.43ef688a29d8",0,true,"perf",2);
@@ -84,22 +84,22 @@ let __qp79=parameterNumber("n.perf.76fc83245f49",0,true,"perf",79);
 let __qp80=parameterNumber("n.perf.f2994701a398",0.01,true,"perf",80);
 function __setQuantitativeLiteral(index,value){switch(index){case 0:__qp0=value;return true;case 1:__qp1=value;return true;case 2:__qp2=value;return true;case 3:__qp3=value;return true;case 4:__qp4=value;return true;case 5:__qp5=value;return true;case 6:__qp6=value;return true;case 7:__qp7=value;return true;case 8:__qp8=value;return true;case 9:__qp9=value;return true;case 10:__qp10=value;return true;case 11:__qp11=value;return true;case 12:__qp12=value;return true;case 13:__qp13=value;return true;case 14:__qp14=value;return true;case 15:__qp15=value;return true;case 16:__qp16=value;return true;case 17:__qp17=value;return true;case 18:__qp18=value;return true;case 19:__qp19=value;return true;case 20:__qp20=value;return true;case 21:__qp21=value;return true;case 22:__qp22=value;return true;case 23:__qp23=value;return true;case 24:__qp24=value;return true;case 25:__qp25=value;return true;case 26:__qp26=value;return true;case 27:__qp27=value;return true;case 28:__qp28=value;return true;case 29:__qp29=value;return true;case 30:__qp30=value;return true;case 31:__qp31=value;return true;case 32:__qp32=value;return true;case 33:__qp33=value;return true;case 34:__qp34=value;return true;case 35:__qp35=value;return true;case 36:__qp36=value;return true;case 37:__qp37=value;return true;case 38:__qp38=value;return true;case 39:__qp39=value;return true;case 40:__qp40=value;return true;case 41:__qp41=value;return true;case 42:__qp42=value;return true;case 43:__qp43=value;return true;case 44:__qp44=value;return true;case 45:__qp45=value;return true;case 46:__qp46=value;return true;case 47:__qp47=value;return true;case 48:__qp48=value;return true;case 49:__qp49=value;return true;case 50:__qp50=value;return true;case 51:__qp51=value;return true;case 52:__qp52=value;return true;case 53:__qp53=value;return true;case 54:__qp54=value;return true;case 55:__qp55=value;return true;case 56:__qp56=value;return true;case 57:__qp57=value;return true;case 58:__qp58=value;return true;case 59:__qp59=value;return true;case 60:__qp60=value;return true;case 61:__qp61=value;return true;case 62:__qp62=value;return true;case 63:__qp63=value;return true;case 64:__qp64=value;return true;case 65:__qp65=value;return true;case 66:__qp66=value;return true;case 67:__qp67=value;return true;case 68:__qp68=value;return true;case 69:__qp69=value;return true;case 70:__qp70=value;return true;case 71:__qp71=value;return true;case 72:__qp72=value;return true;case 73:__qp73=value;return true;case 74:__qp74=value;return true;case 75:__qp75=value;return true;case 76:__qp76=value;return true;case 77:__qp77=value;return true;case 78:__qp78=value;return true;case 79:__qp79=value;return true;case 80:__qp80=value;return true;default:return false;}}
 registerLiteralScope("perf",__setQuantitativeLiteral);
-// Performance infrastructure for the procedural city.
-//
-// The city is almost entirely static after generation. Scaling it by raw
-// object count therefore wastes CPU in three places that have nothing to do
-// with what is actually visible: generation-time all-to-all scans, per-frame
-// world-matrix walks, and renderer traversal of far-away geometry. This module
-// provides two intentionally boring primitives that attack those costs without
-// changing gameplay geometry:
-//   1) SpatialHash2D for local generation/broadphase queries.
-//   2) createStaticWorldOptimizer() for render chunks, material dedupe,
-//      conservative static mesh batching, and static matrix freezing.
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
 
 export class SpatialHash2D {
     constructor(cellSize = __qp0) {
         this.cellSize = Math.max(__qp1, cellSize);
-        this.columns = new Map(); // ix -> Map(iz -> Array(items))
+        this.columns = new Map();  
         this.itemCount = __qp2;
         this._querySeen = new Set();
     }
@@ -170,8 +170,8 @@ function materialTextureKey(mat) {
 
 function materialKey(mat) {
     if (!mat || mat.isShaderMaterial || mat.isRawShaderMaterial) return null;
-    // Custom shader hooks can make two superficially identical materials
-    // render differently. Leave those alone rather than over-deduplicating.
+     
+     
     if (Object.prototype.hasOwnProperty.call(mat, 'onBeforeCompile')
         || Object.prototype.hasOwnProperty.call(mat, 'customProgramCacheKey')) return null;
     const color = mat.color?.getHexString?.() ?? '-';
@@ -227,11 +227,11 @@ function attributeSignature(geometry) {
 }
 
 function transformedGeometry(mesh) {
-    // Batches are attached directly to an identity-transform render chunk.
-    // Bake the full world transform so eligible meshes can be merged even
-    // when they originated inside nested furniture/building Groups. Keep the
-    // source index: expanding boxes/planes to non-indexed triangles needlessly
-    // multiplies vertex memory on the very large cities this path is for.
+     
+     
+     
+     
+     
     const geo = mesh.geometry.clone();
     geo.applyMatrix4(mesh.matrixWorld);
     return geo;
@@ -306,9 +306,9 @@ function canBatchMesh(mesh, dynamicMaterials) {
 }
 
 function batchChunkMeshes(THREE, group, dynamicMaterials, minMeshes = __qp50, maxVertices = __qp51) {
-    // Update once so every descendant has a final world matrix. Collecting
-    // recursively lets a chunk merge repeated rails/steps/walls even when
-    // their authoring helpers wrapped them in nested Groups.
+     
+     
+     
     group.updateMatrixWorld(true);
     const buckets = new Map();
     group.traverse(child => {
@@ -390,12 +390,12 @@ function freezeObject(root) {
     });
 }
 
-// Progressive twin of createStaticWorldOptimizer. The rendered result uses the
-// same chunking, material dedupe, conservative mesh merging, empty-group
-// pruning and matrix freezing as the synchronous optimizer below. The only
-// difference is scheduling: each root/chunk is a yield boundary, and the
-// controller exists before optimization starts so async GLTF/photo arrivals can
-// be queued safely while the optimizer is between slices.
+ 
+ 
+ 
+ 
+ 
+ 
 export function createProgressiveStaticWorldOptimizer({
     THREE,
     scene,
@@ -441,7 +441,13 @@ export function createProgressiveStaticWorldOptimizer({
         group.userData.__perfChunkGroup = true;
         group.userData.chunkX = ix;
         group.userData.chunkZ = iz;
-        group.visible = false;
+        const centerX = (ix + __qp77) * chunkSize;
+        const centerZ = (iz + __qp78) * chunkSize;
+        const dx = centerX - camera.position.x;
+        const dz = centerZ - camera.position.z;
+        const maxDist = activeDrawDistance + Math.SQRT2 * chunkSize;
+        group.visible = dx * dx + dz * dz <= maxDist * maxDist;
+        if (group.visible) visibleKeys.add(key);
         rawSceneAdd(group);
         if (enabled) {
             group.updateMatrixWorld(true);
@@ -550,10 +556,10 @@ export function createProgressiveStaticWorldOptimizer({
 
     function optimizeChunkGroup(group) {
         if (!group) return;
-        // Incremental chunks may have been frozen after an earlier commit and
-        // then received another late/static root. Temporarily permit the group
-        // to propagate world matrices, rebatch everything currently in it, then
-        // freeze the final chunk again.
+         
+         
+         
+         
         if ('matrixAutoUpdate' in group) group.matrixAutoUpdate = true;
         if ('matrixWorldAutoUpdate' in group) group.matrixWorldAutoUpdate = true;
         group.updateMatrixWorld(true);
@@ -612,10 +618,10 @@ export function createProgressiveStaticWorldOptimizer({
         while (pendingLateObjects.length) placeObject(pendingLateObjects.shift(), true);
         await flushDirtyChunks({ yieldControl, phaseLabel: 'finalizing streamed chunks' });
 
-        // Large/static globals (the city-sized base plane, fixed lights, etc.)
-        // intentionally never belonged to a spatial chunk. Freeze them one root
-        // at a time without disabling scene-wide matrix updates: async assets and
-        // deferred decoration are still allowed to arrive after this point.
+         
+         
+         
+         
         const globalRoots = [...scene.children].filter(obj => !obj.userData?.__perfChunkGroup && !obj.userData?.worldChunkRoot && !dynamicRoots.has(obj));
         phaseTotal = globalRoots.length;
         for (let done = __qp72; done < globalRoots.length; done++) {
@@ -647,23 +653,23 @@ export function createProgressiveStaticWorldOptimizer({
             return false;
         };
 
-        // Direct scene roots are cheap to order without recursively measuring
-        // every object up front. Exact bounds are still computed by placeObject
-        // before a root is assigned to a render chunk.
+         
+         
+         
         const roots = [...scene.children]
             .filter(obj => !obj.userData?.__perfChunkGroup && !obj.userData?.worldChunkRoot)
             .sort((a, b) => roughDistanceSq(b) - roughDistanceSq(a));
         phaseTotal = roots.length;
         for (let done = __qp72; roots.length; done++) {
-            // Descending sort + pop keeps the nearest currently-known root at
-            // the end without O(n) shift operations.
+             
+             
             const obj = roots.pop();
             placeObject(obj, false);
             await yieldStep('optimizing static world · spatial chunks', done + 1, phaseTotal);
         }
 
-        // Optimize visible/near chunks first. Re-sort after every yielded chunk
-        // so walking during boot changes what gets merged next, not what exists.
+         
+         
         const pendingChunks = [...chunks.values()];
         phaseTotal = pendingChunks.length;
         let reprioritizeChunks = true;
@@ -677,9 +683,9 @@ export function createProgressiveStaticWorldOptimizer({
             reprioritizeChunks = await yieldStep('optimizing static world · merging nearest chunks', done + 1, phaseTotal);
         }
 
-        // Anything too large/dynamic to live in a render chunk remains a scene
-        // root. Static globals still get material dedupe + one-time matrix
-        // freezing, one root per cooperative slice.
+         
+         
+         
         const globalRoots = [...scene.children].filter(obj => !obj.userData?.__perfChunkGroup && !obj.userData?.worldChunkRoot && !dynamicRoots.has(obj));
         phaseTotal = globalRoots.length;
         for (let done = __qp72; done < globalRoots.length; done++) {
@@ -689,15 +695,15 @@ export function createProgressiveStaticWorldOptimizer({
             await yieldStep('optimizing static world · freezing globals', done + 1, phaseTotal);
         }
 
-        // All static descendants now own final matrixWorld values. Disabling the
-        // scene-wide walk is the same final state as the synchronous optimizer,
-        // without one last full-tree update spike.
+         
+         
+         
         if ('matrixWorldAutoUpdate' in scene) scene.matrixWorldAutoUpdate = false;
         enabled = true;
         optimizing = false;
 
-        // Async model/photo arrivals that landed during cooperative yields were
-        // captured by registerLateObject and are now folded into normal chunks.
+         
+         
         while (pendingLateObjects.length) placeObject(pendingLateObjects.shift(), true);
         updateVisibility(true);
         phase = 'ready';
@@ -796,9 +802,9 @@ export function createStaticWorldOptimizer({
         group.userData.chunkZ = iz;
         group.visible = false;
         rawSceneAdd(group);
-        // Chunks created after the initial freeze (late async assets) are
-        // identity transforms too, but explicitly freeze/update them because
-        // scene-wide matrixWorldAutoUpdate is already disabled at that point.
+         
+         
+         
         if (enabled) {
             group.updateMatrixWorld(true);
             group.matrixAutoUpdate = false;
@@ -845,7 +851,7 @@ export function createStaticWorldOptimizer({
         const ix = Math.floor(b.centerX / chunkSize);
         const iz = Math.floor(b.centerZ / chunkSize);
         const group = getChunk(ix, iz);
-        group.add(obj); // scene and chunk are both identity transforms
+        group.add(obj);  
         if (isLate) {
             freezeObject(obj);
             lateObjects++;
@@ -854,7 +860,7 @@ export function createStaticWorldOptimizer({
         return true;
     }
 
-    // Copy because placeObject reparents children out of scene.children.
+     
     for (const obj of [...scene.children]) {
         if (!obj.userData?.worldChunkRoot) placeObject(obj, false);
     }
@@ -868,10 +874,10 @@ export function createStaticWorldOptimizer({
         batchStats.emptyGroupsPruned += pruneEmptyGroups(group);
     }
 
-    // Everything except explicitly dynamic roots is now immutable. Freeze
-    // world matrices once, then disable scene-wide automatic matrix updates.
-    // The renderer otherwise walks every Object3D every frame even if its
-    // transform has not changed since generation.
+     
+     
+     
+     
     for (const obj of scene.children) {
         if (!obj.userData?.worldChunkRoot && !dynamicRoots.has(obj)) freezeObject(obj);
     }

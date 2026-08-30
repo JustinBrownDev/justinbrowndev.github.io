@@ -165,17 +165,17 @@ function runInvalidResyncRollback() {
     elevatedPlatforms: [{ x: 2, z: 0, hx: 0.8, hz: 1, y: 1.0 }],
   });
   const physics = makeController(position, world);
-  physics.step(1 / 60, 0.5, 0); // establish a recent safe pose
+  physics.step(1 / 60, 0.5, 0);  
   const safe = { ...physics.getState().lastSafe };
   position.x = 2;
   position.z = 0;
-  position.y = 1.65; // impossible standing pose under the 1m slab
+  position.y = 1.65;  
   physics.syncFromPosition({ forceAirborne: true, resetVelocity: true });
   return { position, state: physics.getState(), safe };
 }
 
-// Elevated/stacked junk uses yMin so a rooftop pile does not become an
-// invisible collision column through every floor below it.
+ 
+ 
 function runUnderElevatedProp() {
   const position = { x: 0, y: 1.65, z: 0 };
   const physics = makeController(position, emptyWorld({
@@ -215,8 +215,8 @@ function runOwnedChunkLifecycle() {
   for (let i = 0; i < 60; i++) physics.step(1 / 60, 2, 0);
   const unloadedX = position.x;
 
-  // Re-registering an un-compacted owner reactivates the exact prior collider
-  // record instead of duplicating it in the broadphase.
+   
+   
   physics.registerOwnedWorld('chunk:1,0', { props: [{ x: 99, z: 99, radius: 1, height: 1 }] });
   position.x = 0; position.z = 0; position.y = 1.65;
   physics.syncFromPosition({ resetVelocity: true });

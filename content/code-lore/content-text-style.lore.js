@@ -1,0 +1,21 @@
+export const CODE_LORE_CONTENT_TEXT_STYLE = Object.freeze([
+    "CODELORE|content/text-style.js|0001|shared style axes for every *generic noise* text surface (wanted",
+    "CODELORE|content/text-style.js|0002|posters, wall posters, flyers, stickers, mega billboards, airborne text",
+    "CODELORE|content/text-style.js|0003|shards -- everything except real infrastructure signage like stop",
+    "CODELORE|content/text-style.js|0004|signs, and the CRT terminal-plaque identity used for real code-project",
+    "CODELORE|content/text-style.js|0005|content). Same idea as SIGN_FONTS/SIGN_BACKINGS below, just factored",
+    "CODELORE|content/text-style.js|0006|out early so surfaces defined before addSign (e.g. makeWantedTexture)",
+    "CODELORE|content/text-style.js|0007|can roll their own look too instead of sharing one fixed font/paper.",
+    "CODELORE|content/text-style.js|0008|buildingFaceDefs (four cardinal faces re-derived from a bare hwx/hwz,",
+    "CODELORE|content/text-style.js|0009|with no idea which sides are real street walls vs. party/internal/",
+    "CODELORE|content/text-style.js|0010|courtyard edges) used to live here. Retired -- its one remaining",
+    "CODELORE|content/text-style.js|0011|caller (the forced \"signal\" sign) now selects an actual exposed",
+    "CODELORE|content/text-style.js|0012|FacadeSurface from `buildingFacades` instead (see below). This is",
+    "CODELORE|content/text-style.js|0013|exactly the kind of old-geometry assumption a refactor should not",
+    "CODELORE|content/text-style.js|0014|keep alive just to feed one leftover call site.",
+    "CODELORE|content/text-style.js|0015|style axes a sign rolls independently, so no two signs in the city",
+    "CODELORE|content/text-style.js|0016|necessarily share a look -- shape (canvas aspect), font family, border",
+    "CODELORE|content/text-style.js|0017|treatment/width/color, and backing tone all vary sign-to-sign instead",
+    "CODELORE|content/text-style.js|0018|of being one fixed look shared by every sign, same \"push it hard\"",
+    "CODELORE|content/text-style.js|0019|treatment the noise corpus got."
+]);

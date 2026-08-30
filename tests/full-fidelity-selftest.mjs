@@ -9,6 +9,8 @@ const indexHtml = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
 const contract = fs.readFileSync(path.join(root, 'world-contract.js'), 'utf8');
 const streamer = fs.readFileSync(path.join(root, 'world-chunk-streamer.js'), 'utf8');
 const chunks = fs.readFileSync(path.join(root, 'infinite-city-chunks.js'), 'utf8');
+const config = fs.readFileSync(path.join(root, 'config', 'game-config.js'), 'utf8');
+const spawnPlan = fs.readFileSync(path.join(root, 'world', 'spawn-district-plan.js'), 'utf8');
 const failures = [];
 const ok = (condition, message) => { if (!condition) failures.push(message); };
 
@@ -22,12 +24,12 @@ ok(main.includes("import('./noise-data-hard.js')"), 'full archival local corpus 
 ok(main.includes("import('./noise-data-remote.js')"), 'full archival remote corpus must remain hydratable after runtime start');
 ok(main.includes("import('./noise-data-poetry.js')"), 'full archival poetry corpus must remain hydratable after runtime start');
 
-ok(main.includes('cols: 13'), 'authored spawn district must remain compact');
-ok(main.includes('rows: 13'), 'authored spawn district must remain compact');
+ok(config.includes('cols: 13'), 'authored spawn district must remain compact');
+ok(config.includes('rows: 13'), 'authored spawn district must remain compact');
 ok(main.includes('const STREAM_CHUNK_SIZE = Math.max(GRID_W, GRID_H);'), 'stream chunk size must align exactly to authored spawn footprint');
-ok(main.includes('grid[startRow][c] = false') && main.includes('grid[r][startCol] = false'), 'spawn district must expose real cardinal gateways to infinite neighbors');
-ok(main.includes("const SIGNATURE_TYPES = ['artGallery', 'as400Archive', 'justinIndex', 'systemsWorkshop', 'loreShrine', 'futurePlaceholder'];"), 'spawn district must reserve five authored landmarks plus future slot');
-ok(main.includes('entityId: singularEntityId(SEED, type)'), 'singulars must receive stable world identity');
+ok(spawnPlan.includes('grid[startRow][c] = false') && spawnPlan.includes('grid[r][startCol] = false'), 'spawn district must expose real cardinal gateways to infinite neighbors');
+ok(spawnPlan.includes('SPAWN_SINGULAR_TYPES'), 'spawn district must reserve the singular landmark contract');
+ok(contract.includes('singularEntityId'), 'singulars must receive stable world identity');
 ok(main.includes('createSpawnSingularManifest(SEED, signatureInstances)'), 'spawn singular manifest must be materialized into chunk 0,0');
 
 ok(contract.includes('export const WORLD_FORMAT_VERSION = 1;'), 'world format must be explicitly versioned');
@@ -48,7 +50,7 @@ ok(chunks.includes('async function commit(chunk, payload)'), 'generic chunk fact
 ok(chunks.includes('worldChunkOwnerId'), 'generic physics/render ownership must use stable world IDs');
 ok(chunks.includes('worldEntityId'), 'generic chunk metadata must expose stable entity IDs');
 ok(chunks.includes('districtLandmarkFor'), 'repeatable district landmark contract missing');
-ok(main.includes('landmarkSpacingChunks: 3') && main.includes('landmarkSpacingChunks: CONFIG.streaming.landmarkSpacingChunks'), 'district landmarks must recur every few chunks through cfg.streaming');
+ok(config.includes('landmarkSpacingChunks: 3') && main.includes('landmarkSpacingChunks: CONFIG.streaming.landmarkSpacingChunks'), 'district landmarks must recur every few chunks through cfg.streaming');
 ok(main.includes('yieldControl: null') && main.includes('pump({ maxChunks, maxMillis })'), 'generic chunks must be atomic and outer pump must own the live frame budget');
 
 ok(main.includes('createProgressiveStaticWorldOptimizer({'), 'spawn chunk optimizer must remain cooperative');

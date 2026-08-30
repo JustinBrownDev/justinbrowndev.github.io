@@ -1,13 +1,13 @@
 import { hashString32 } from './world-chunk-streamer.js';
 import { WORLD_FORMAT_VERSION, worldChunkOwnerId, worldEntityId } from './world-contract.js';
 
-// Infinite procedural city substrate.
-//
-// Chunk 0,0 is the authored spawn district and is never rebuilt here. Every
-// other coordinate is independently reproducible from (worldSeed, chunkX,
-// chunkZ). Neighboring chunks share deterministic road-portal contracts at
-// their common boundary, but everything inside the boundary is locally owned
-// and disposable.
+ 
+ 
+ 
+ 
+ 
+ 
+ 
 
 function mulberry32(seed) {
     let a = seed >>> 0;
@@ -139,9 +139,9 @@ export function createInfiniteCityChunkFactory({
         list.push({ x, y, z, sx, sy, sz });
     }
 
-    // Shared-edge road contract. The canonical edge key is identical from
-    // either neighboring chunk, so generation order never affects where the
-    // opening lands. One full micro-cell is the cross-boundary gate.
+     
+     
+     
     function edgeLane(chunkX, chunkZ, side) {
         let edgeKey;
         if (side === 'north') edgeKey = `H:${chunkX}:${chunkZ}`;
@@ -149,9 +149,9 @@ export function createInfiniteCityChunkFactory({
         else if (side === 'west') edgeKey = `V:${chunkX}:${chunkZ}`;
         else edgeKey = `V:${chunkX + 1}:${chunkZ}`;
 
-        // The authored spawn district exposes four centered cardinal streets.
-        // Force the four shared boundaries touching chunk 0,0 to the matching
-        // center lane; all other edges remain hash-addressed and irregular.
+         
+         
+         
         if (edgeKey === 'H:0:0' || edgeKey === 'H:0:1' || edgeKey === 'V:0:0' || edgeKey === 'V:1:0') {
             return Math.floor(microCells / 2);
         }
@@ -193,9 +193,9 @@ export function createInfiniteCityChunkFactory({
         ];
         for (const start of starts) carveManhattan(roads, start, hub, rng() < 0.5);
 
-        // A few deterministic local alleys/loops keep interiors from reducing
-        // to four L-shaped spokes. Weirdness can increase this later without
-        // changing the boundary contract or world format.
+         
+         
+         
         const spurCount = 1 + Math.floor(chunk.weirdness.sampled * 3);
         for (let i = 0; i < spurCount; i++) {
             const roadList = [...roads];
@@ -223,7 +223,7 @@ export function createInfiniteCityChunkFactory({
     }
 
     function addFacadeDetails(transforms, rng, { cx, cz, halfX, halfZ, floorH, floors, doorSide }) {
-        // Door is a visible panel inside the real collision opening.
+         
         const doorH = 2.2, doorW = 1.35, inset = 0.018;
         if (doorSide === 'north' || doorSide === 'south') {
             const z = cz + (doorSide === 'north' ? -halfZ - inset : halfZ + inset);
@@ -233,8 +233,8 @@ export function createInfiniteCityChunkFactory({
             transforms.doors.push({ x, y: doorH * 0.5, z: cz, sx: 0.05, sy: doorH, sz: doorW });
         }
 
-        // Cheap instanced windows keep streamed districts legible as actual
-        // buildings without introducing per-window materials or draw calls.
+         
+         
         for (let floor = 0; floor < floors; floor++) {
             const y = floor * floorH + floorH * 0.58;
             const n = rng() < 0.45 ? 1 : 2;
@@ -288,9 +288,9 @@ export function createInfiniteCityChunkFactory({
                 addRenderedNotchedSlab(transforms, cx, cz, width - wallT * 2, depth - wallT * 2, y0, stairCx, stairCz, stairGapW, stairGapD);
             }
 
-            // Every occupied floor has a real stair to the next support level;
-            // the final flight reaches a NOTCHED roof instead of terminating at
-            // an invisible ceiling.
+             
+             
+             
             const runAxis = stairGapD >= stairGapW ? 'z' : 'x';
             const from = runAxis === 'z' ? stairCz - stairGapD * 0.42 : stairCx - stairGapW * 0.42;
             const to = runAxis === 'z' ? stairCz + stairGapD * 0.42 : stairCx + stairGapW * 0.42;
@@ -330,10 +330,10 @@ export function createInfiniteCityChunkFactory({
     const districtLandmarkTypes = Object.freeze(['spire', 'stack', 'gatehouse', 'archive', 'beacon']);
     const districtLandmarkSpacing = Math.max(3, Math.floor(landmarkSpacingChunks));
 
-    // Exactly one disposable/repeatable landmark chunk is selected inside each
-    // macro-cell. This gives the infinite city recurring authored-scale visual
-    // anchors without introducing any new world-singular state. The selection
-    // is coordinate deterministic, so unloading/revisiting never moves it.
+     
+     
+     
+     
     function districtLandmarkFor(chunk) {
         if (!chunk || chunk.key === spawnChunkKey) return null;
         const macroX = Math.floor(chunk.x / districtLandmarkSpacing);
@@ -406,9 +406,9 @@ export function createInfiniteCityChunkFactory({
             wallList: transforms.wallGroups[materialIndex],
         });
 
-        // Landmark crowns reuse the same instanced wall batch as ordinary
-        // buildings, so recurrence adds visual hierarchy without creating a
-        // per-landmark draw-call tax. Roof-level collision is explicit.
+         
+         
+         
         const floorH = 3.15;
         const roofY = floors * floorH;
         const crownH = 0.9 + typeIndex * 0.22 + weird * 0.8;
@@ -428,9 +428,9 @@ export function createInfiniteCityChunkFactory({
         const last = microCells - 1;
         const wallH = 1.55, wallT = 0.16;
 
-        // Canonical ownership: each chunk owns only EAST and SOUTH edges.
-        // Neighboring west/north edges therefore never double-render the same
-        // barrier. The one road-portal cell remains open.
+         
+         
+         
         for (let r = 0; r < microCells; r++) {
             if (r === roadPlan.portals.east) continue;
             const z = chunk.centerZ - half + (r + 0.5) * cellSize;
@@ -477,9 +477,9 @@ export function createInfiniteCityChunkFactory({
         root.userData.renderAuthority = 'WorldChunkStreamer';
         root.userData.weirdness = chunk.weirdness;
         root.userData.roadPortals = { ...roadPlan.portals };
-        // Prefetched chunks are structurally complete but stay hidden until the
-        // streamer says they are inside its render ring. No other visibility
-        // system is allowed to own this root.
+         
+         
+         
         root.visible = false;
 
         const transforms = {
@@ -515,9 +515,9 @@ export function createInfiniteCityChunkFactory({
             });
         }
 
-        // One canonical low wall around non-road chunk seams turns the shared
-        // portal layout into a real traversable contract instead of merely a
-        // pavement texture. It also gives the infinite city a maze-like edge.
+         
+         
+         
         addOwnedBoundaryBarriers(chunk, roadPlan, physics, transforms.wallGroups[0], cellSize);
 
         let buildings = 0;
@@ -631,10 +631,10 @@ export function createInfiniteCityChunkFactory({
 
     async function commit(chunk, payload) {
         if (!payload || payload.spawnDistrict || payload.committed) return payload;
-        // Infinite chunks bypass scene.add() on purpose. main.js intercepts
-        // ordinary scene.add calls for legacy spawn-district optimization; a
-        // streamed root must never be re-parented, re-chunked, frozen or hidden
-        // by that older system. WorldChunkStreamer is the sole render owner.
+         
+         
+         
+         
         addStreamRoot(payload.root);
         payload.root.updateMatrixWorld(true);
         playerPhysics.registerOwnedWorld(payload.ownerId, payload.physics);
@@ -673,9 +673,9 @@ export function createInfiniteCityChunkFactory({
         if (payload?.ownerId) committedOwners.delete(payload.ownerId);
         const root = payload?.root;
         if (root?.parent) root.parent.remove(root);
-        // All GPU geometries/materials are shared factory resources. Clearing
-        // the root releases only this chunk's Object3D + instance-matrix data;
-        // physics ownership is deactivated/compacted independently.
+         
+         
+         
         root?.clear?.();
         if (payload) payload.committed = false;
     }

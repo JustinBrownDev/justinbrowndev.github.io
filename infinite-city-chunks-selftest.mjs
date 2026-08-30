@@ -51,8 +51,8 @@ assert.equal(factory.planChunk(chunk(0, 1)).portals.north, 3, 'south-of-spawn ch
 assert.equal(factory.planChunk(chunk(0, -1)).portals.south, 3, 'north-of-spawn chunk must center its south portal on the authored spawn gateway');
 assert.ok(pa.roads.length > 4, 'chunk must contain a real internal road graph');
 
-// One repeatable district landmark per 3x3 macrocell. These are ordinary
-// disposable chunk content, not world-singular structures.
+ 
+ 
 for (const [macroX, macroZ] of [[0, 0], [1, 0], [0, 1], [-1, -1]]) {
   let count = 0;
   for (let z = macroZ * 3; z < macroZ * 3 + 3; z++) {

@@ -1,8 +1,8 @@
-// Small bounded priority queue for non-structural network/decode work.
-//
-// This queue is intentionally generic: streamed world structure never depends
-// on it. Callers can enqueue decorative GLTF/data work while the queue is
-// paused, then release it after the nearby structural world is READY.
+ 
+ 
+ 
+ 
+ 
 
 export function createPriorityLoadQueue({ concurrency = 4, paused = false, onState = null } = {}) {
     let maxConcurrency = Math.max(1, Math.floor(Number(concurrency) || 1));

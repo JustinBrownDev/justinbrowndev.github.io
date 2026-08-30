@@ -1,6 +1,6 @@
 
 import { parameterNumber, registerLiteralScope } from "./numeric-parameters.js";
-// @quantitative-parameterized -- generated; edit build-parameter-catalog.cjs to rebuild
+ 
 let __qp0=parameterNumber("n.physics.ed10b2c866cd",1e-4,false,"physics",0);
 let __qp1=parameterNumber("n.physics.11c748c201b3",0.015,false,"physics",1);
 let __qp2=parameterNumber("n.physics.108590dba63e",0,true,"physics",2);
@@ -83,18 +83,18 @@ let __qp78=parameterNumber("n.physics.1bf2e7d96f10",0,true,"physics",78);
 let __qp79=parameterNumber("n.physics.6dd3e567801f",0,true,"physics",79);
 function __setQuantitativeLiteral(index,value){switch(index){case 2:__qp2=value;return true;case 3:__qp3=value;return true;case 4:__qp4=value;return true;case 5:__qp5=value;return true;case 6:__qp6=value;return true;case 7:__qp7=value;return true;case 8:__qp8=value;return true;case 9:__qp9=value;return true;case 10:__qp10=value;return true;case 11:__qp11=value;return true;case 12:__qp12=value;return true;case 13:__qp13=value;return true;case 14:__qp14=value;return true;case 15:__qp15=value;return true;case 16:__qp16=value;return true;case 17:__qp17=value;return true;case 18:__qp18=value;return true;case 19:__qp19=value;return true;case 20:__qp20=value;return true;case 21:__qp21=value;return true;case 22:__qp22=value;return true;case 23:__qp23=value;return true;case 24:__qp24=value;return true;case 25:__qp25=value;return true;case 26:__qp26=value;return true;case 27:__qp27=value;return true;case 28:__qp28=value;return true;case 29:__qp29=value;return true;case 30:__qp30=value;return true;case 31:__qp31=value;return true;case 32:__qp32=value;return true;case 33:__qp33=value;return true;case 34:__qp34=value;return true;case 35:__qp35=value;return true;case 36:__qp36=value;return true;case 37:__qp37=value;return true;case 38:__qp38=value;return true;case 39:__qp39=value;return true;case 40:__qp40=value;return true;case 41:__qp41=value;return true;case 42:__qp42=value;return true;case 43:__qp43=value;return true;case 44:__qp44=value;return true;case 45:__qp45=value;return true;case 46:__qp46=value;return true;case 47:__qp47=value;return true;case 48:__qp48=value;return true;case 49:__qp49=value;return true;case 50:__qp50=value;return true;case 51:__qp51=value;return true;case 52:__qp52=value;return true;case 53:__qp53=value;return true;case 54:__qp54=value;return true;case 55:__qp55=value;return true;case 56:__qp56=value;return true;case 57:__qp57=value;return true;case 58:__qp58=value;return true;case 59:__qp59=value;return true;case 60:__qp60=value;return true;case 61:__qp61=value;return true;case 62:__qp62=value;return true;case 63:__qp63=value;return true;case 64:__qp64=value;return true;case 65:__qp65=value;return true;case 66:__qp66=value;return true;case 67:__qp67=value;return true;case 68:__qp68=value;return true;case 69:__qp69=value;return true;case 70:__qp70=value;return true;case 71:__qp71=value;return true;case 72:__qp72=value;return true;case 73:__qp73=value;return true;case 74:__qp74=value;return true;case 75:__qp75=value;return true;case 76:__qp76=value;return true;case 77:__qp77=value;return true;case 78:__qp78=value;return true;case 79:__qp79=value;return true;default:return false;}}
 registerLiteralScope("physics",__setQuantitativeLiteral);
-// Player physics for the procedural city.
-//
-// The world deliberately has a lot of overlapping vertical structure:
-// roofs, floor plates, mezzanines, ramps, ladders, props, and floor-banded
-// wall segments. Treating movement as "move once, then push out" makes the
-// result frame-rate dependent and lets unrelated geometry eject the player.
-//
-// This controller instead advances the same motion through small substeps,
-// validates a complete standing body at each candidate pose, and rejects or
-// slides blocked horizontal movement. It never resolves penetration by
-// searching for an arbitrary escape direction or by moving the player's feet
-// below the support surface.
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
 
 const EPS = __qp0;
 const CONTACT_EPS = __qp1;
@@ -179,10 +179,10 @@ export function createPlayerPhysics(options) {
 
     let lastSafe = null;
 
-    // Static + append-only broadphase. The controller may now be created as
-    // soon as the first streamed world chunk is committed. Existing geometry
-    // is indexed once here and syncDynamicWorld() extends the same indexes as
-    // later chunks arrive, so no full-city rebuild is required.
+     
+     
+     
+     
     const spatialCellSize = options.spatialCellSize ?? __qp27;
 
     function spatialBucket(index, ix, iz, create = false) {
@@ -208,10 +208,10 @@ export function createPlayerPhysics(options) {
     }
 
     function buildSpatialIndex(items, boundsFor) {
-        // Nested numeric Maps avoid allocating an "ix,iz" string for every
-        // broadphase lookup. At high FPS the solver performs many queries per
-        // render frame, so this tiny allocation used to show up surprisingly
-        // quickly once the world got large enough to make GC more frequent.
+         
+         
+         
+         
         const map = new Map();
         for (const item of items) insertSpatialItem(map, item, boundsFor);
         return map;
@@ -292,9 +292,9 @@ export function createPlayerPhysics(options) {
                 best = { y, kind };
                 return;
             }
-            // If a synthetic ladder sample and a real slab share the same
-            // height, prefer the real slab so the top landing behaves like a
-            // landing rather than remaining in ladder-climb mode.
+             
+             
+             
             if (Math.abs(y - best.y) <= CONTACT_EPS && best.kind === 'ladder' && kind !== 'ladder') {
                 best = { y, kind };
             }
@@ -344,7 +344,6 @@ export function createPlayerPhysics(options) {
         return ys;
     }
 
-
     function restingSupportHeightAt(x, z, currentFeetY, tolerance = __qp34) {
         let best = __qp35;
         for (const y of allSurfaceHeightsAt(x, z)) {
@@ -354,8 +353,8 @@ export function createPlayerPhysics(options) {
     }
 
     function isCeilingSolid(p) {
-        // Ladder climb points are support-only samples, not physical slabs.
-        // Existing platform entries default to solid for backwards compatibility.
+         
+         
         return p.blocksFromBelow !== false;
     }
 
@@ -380,9 +379,9 @@ export function createPlayerPhysics(options) {
         return ceiling === Infinity || ceiling - atFeetY >= bodyHeight - CONTACT_EPS;
     }
 
-    // Convert the generation-time string-keyed map to a direct row/column
-    // lookup once. Physics asks for the surrounding 3x3 cells many times per
-    // substep; constructing nine `${r},${c}` strings each time is needless.
+     
+     
+     
     const buildingWallGrid = Array.from({ length: grid.length }, () => []);
     const indexedBuildingWallKeys = new Set();
     function indexBuildingWallEntry(key, walls) {
@@ -397,11 +396,11 @@ export function createPlayerPhysics(options) {
     }
     for (const [key, walls] of buildingWallSegments) indexBuildingWallEntry(key, walls);
 
-    // Large worlds can now decorate distant sectors after play has already
-    // started.  Generation collections stay append-only, so extending the
-    // broadphase is O(number of newly generated items), never a full rebuild.
-    // This is deliberately explicit rather than observing Array.push(): one
-    // sector batch can add hundreds of pieces and pays one cheap sync at the end.
+     
+     
+     
+     
+     
     function syncDynamicWorld() {
         const before = {
             platforms: indexedPlatformCount, ceilings: indexedCeilingCount,
@@ -421,10 +420,10 @@ export function createPlayerPhysics(options) {
             addedMazeWalls: indexedMazeCount - before.maze,
         };
     }
-    // Infinite/chunk-owned collision data. These records never depend on the
-    // finite spawn-grid row/column map: a streamed chunk can register its own
-    // local collision primitives, deactivate them on unload, and reactivate
-    // the exact same deterministic records when revisited.
+     
+     
+     
+     
     const ownedWorld = new Map();
     const ownedCompactionThreshold = Math.max(8, options.ownedCompactionThreshold ?? 48);
 
@@ -460,11 +459,11 @@ export function createPlayerPhysics(options) {
         add(record.data.mazeWalls, mazeIndex, mazeBounds);
     }
 
-    // Rebuild the five streamed broadphase maps from the permanent authored
-    // arrays plus CURRENTLY resident chunk owners. This is intentionally rare
-    // and bounded: unloads are cheap flag flips; after enough dead owners have
-    // accumulated, one compaction makes every collider from forgotten chunks
-    // garbage-collectable instead of retaining an invisible travel history.
+     
+     
+     
+     
+     
     function compactOwnedWorld() {
         let removedOwners = 0, removedItems = 0;
         for (const [ownerId, record] of ownedWorld) {
@@ -555,10 +554,10 @@ export function createPlayerPhysics(options) {
     function bodyBlockedHorizontally(x, z, atFeetY) {
         if (!Number.isFinite(x) || !Number.isFinite(z) || !Number.isFinite(atFeetY)) return true;
         if (Math.abs(x) > boundsHalf || Math.abs(z) > boundsHalf) return true;
-        // Progressive generation exposes a chunk only after its render objects
-        // and collision additions have committed. Treat an uncommitted chunk
-        // as a temporary hard frontier instead of allowing the capsule to walk
-        // into a solid cell whose real wall mesh/collider does not exist yet.
+         
+         
+         
+         
         if (typeof isWorldPositionAvailable === 'function' && !isWorldPositionAvailable(x, z)) return true;
 
         const bodyBottom = atFeetY;
@@ -604,10 +603,10 @@ export function createPlayerPhysics(options) {
         return true;
     }
 
-    // Used only before the controller has ever observed a valid pose (normally
-    // just a pathological procedural spawn). Runtime collision never performs
-    // this search: once play starts, invalid motion rolls back to the previous
-    // valid pose instead of picking a new escape direction.
+     
+     
+     
+     
     function findBootstrapSafePose(originX, originZ, atFeetY) {
         if (poseIsValid(originX, originZ, atFeetY)) return { x: originX, z: originZ, feetY: atFeetY };
 
@@ -630,10 +629,10 @@ export function createPlayerPhysics(options) {
         const leavesGround = support.y < currentFeetY - stepDownTolerance;
         let targetFeetY = leavesGround ? currentFeetY : support.y;
 
-        // Ladder samples are intentionally stacked at the same X/Z. Without
-        // a time-based cap, render substepping would climb one sample PER
-        // SUBSTEP and a low-FPS frame would shoot up the ladder. Treat the
-        // samples as a continuous climb guide with a real units/second rate.
+         
+         
+         
+         
         if (!leavesGround && support.kind === 'ladder' && targetFeetY > currentFeetY) {
             targetFeetY = Math.min(targetFeetY, currentFeetY + ladderClimbSpeed * dt);
         }
@@ -730,9 +729,9 @@ export function createPlayerPhysics(options) {
             grounded,
         };
 
-        // Consume buffered jump before aging the timers. This makes a jump
-        // request independent of whether this render frame happened to be
-        // split into one physics substep or twelve.
+         
+         
+         
         if (jumpBufferTimer > __qp56 && (grounded || coyoteTimer > __qp57)) {
             verticalVelocity = jumpSpeed;
             grounded = false;
@@ -800,10 +799,10 @@ export function createPlayerPhysics(options) {
 
         position.y = feetY + eyeHeight;
 
-        // A solver bug or malformed procedural geometry is allowed to stop a
-        // move, never to invent a new vertical escape route. First restore the
-        // substep start; only fall back to the older safe pose if the start was
-        // already invalid (for example after leaving freecam inside geometry).
+         
+         
+         
+         
         if (!poseIsValid(position.x, position.z, feetY)) {
             restore(start);
             if (!poseIsValid(position.x, position.z, feetY) && lastSafe) {
@@ -845,10 +844,10 @@ export function createPlayerPhysics(options) {
         if (forceAirborne) {
             grounded = false;
         } else {
-            // Synchronization asks "what am I already standing on?", not
-            // "what could I auto-step onto next?". Using the ordinary step
-            // query here made spawning beside a ladder silently start one rung
-            // up because that rung happened to be within MAX_STEP_HEIGHT.
+             
+             
+             
+             
             const support = restingSupportHeightAt(position.x, position.z, feetY);
             grounded = Math.abs(support - feetY) <= __qp74 && poseIsValid(position.x, position.z, support);
             if (grounded) feetY = support;
@@ -891,9 +890,9 @@ export function createPlayerPhysics(options) {
         };
     }
 
-    // Initial state should reflect the actual spawn/support surface rather
-    // than assuming y=0 forever. This matters for ?landmark= and future
-    // spawn points placed on upper floors.
+     
+     
+     
     syncFromPosition();
 
     return {

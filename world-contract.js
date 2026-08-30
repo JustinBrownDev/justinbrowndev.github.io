@@ -1,16 +1,16 @@
-// Stable, renderer-agnostic world format contract.
-//
-// Keep this module free of THREE/browser state. A future authoritative server,
-// replay tool, save upgrader, or multiplayer client must be able to answer the
-// same identity/seed/chunk questions without importing the renderer.
+ 
+ 
+ 
+ 
+ 
 
 export const WORLD_FORMAT_VERSION = 1;
 export const WORLD_NAMESPACE = 'jweb.dev/world';
 export const SPAWN_CHUNK = Object.freeze({ x: 0, z: 0, key: '0,0' });
 
-// These are the only world-singular authored slots. They all resolve inside the
-// pinned spawn district. Everything outside spawn is ordinary coordinate-
-// addressed procedural world and therefore has no distributed uniqueness rule.
+ 
+ 
+ 
 export const SPAWN_SINGULAR_TYPES = Object.freeze([
     'artGallery',
     'as400Archive',
@@ -24,7 +24,6 @@ function normalizeChunkCoordinate(value, label) {
     if (!Number.isSafeInteger(n)) throw new Error(`${label} must be a safe integer chunk coordinate`);
     return n;
 }
-
 
 export function hashString32(value) {
     let h = 0x811c9dc5;
@@ -73,10 +72,10 @@ export function singularEntityId(worldSeed, type) {
 function clamp01(v) { return Math.max(0, Math.min(1, v)); }
 function smoothstep(v) { v = clamp01(v); return v * v * (3 - 2 * v); }
 
-// Permanent generation hook: broad weirdness rises with distance from spawn.
-// `value` is the stable monotonic gradient. `grain` is deterministic local
-// texture. Future generators should usually consume `sampled`, while systems
-// that need strict monotonic behavior can consume `value`.
+ 
+ 
+ 
+ 
 export function worldWeirdnessAt(chunkX, chunkZ, {
     startRadius = 2,
     fullRadius = 40,

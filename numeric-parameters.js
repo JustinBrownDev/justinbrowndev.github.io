@@ -1,13 +1,13 @@
 import { PARAMETER_LITERAL_COUNT, PARAMETER_SCHEMA } from './parameter-schema.js';
-// Exhaustive quantitative parameter runtime.
-//
-// Authored game/runtime numeric literals are rewritten at build time to call
-// parameterNumber() exactly once, when their module initializes. Query values
-// therefore cost nothing in the render loop: hot paths read ordinary module-
-// local variables. Runtime-function literals can additionally register a tiny
-// generated setter so the P-panel can change future evaluations immediately.
-// CONFIG is handled separately after seeded randomization, so cfg.* overrides
-// mean "final effective value for this load," not "input to the randomizer."
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
 
 const QUERY = new URLSearchParams(typeof location !== 'undefined' ? location.search : '');
 const requestedOverrides = new Map();

@@ -1,0 +1,8 @@
+export const AUTOMOTIVE_VOICE = Object.freeze({
+    nouns: Object.freeze(['WHEEL BEARING','BRAKE DUST','CALIPER SLIDE','ROTOR EDGE','HUB FLANGE','CV BOOT','TIE ROD','CONTROL ARM','BALL JOINT','STRUT TOWER','TORQUE SPEC','LUG STUD','SPLASH SHIELD','SERPENTINE BELT','IDLER PULLEY','COOLANT HOSE','FUSE BLOCK','GROUND STRAP','SERVICE JACK','JACK STAND','DRAIN PAN','SHOP RAG','SCAN TOOL','FAULT CODE','TEST DRIVE','PARKING BRAKE','MASTER CYLINDER','BLEEDER SCREW']),
+    verbs: Object.freeze(['TORQUE TO SPEC','LISTEN AGAIN','CHECK FOR PLAY','BLEED THE LINE','SPIN BY HAND','TRACE THE RUB','WATCH THE DUST','SUPPORT THE CORNER','VERIFY THE CLEARANCE','READ THE CODE','INSPECT THE BOOT','MARK THE POSITION','RECHECK HOT','RECHECK COLD','ROAD TEST']),
+    joints: Object.freeze(['AT THE HUB','UNDER LOAD','BEHIND THE ROTOR','BEFORE THE TEST DRIVE','AFTER THE SECOND CLICK','WITH THE WHEEL OFF','NEXT TO THE SPLASH SHIELD','UNDER THE STRUT','PAST THE FUSE BLOCK','BETWEEN NOISE AND MOTION'])
+});
+export const AUTOMOTIVE_PAIRS = Object.freeze([
+    ['CHECK FOR PLAY','movement is a measurement'],['TORQUE TO SPEC','memory is not a torque wrench'],['SPIN BY HAND','noise becomes geography'],['BRAKE DUST','the wheel keeps receipts'],['FAULT CODE','a clue, not a verdict'],['GROUND STRAP','small wire, large consequences'],['SERVICE JACK','lifting is not supporting'],['TEST DRIVE','change one thing, listen again'],['ROTOR EDGE','wear leaves a contour'],['BLEEDER SCREW','air is also part of the system'],['CV BOOT','protect the joint before the joint complains'],['PARKING BRAKE','hold the machine before entering it']
+]);

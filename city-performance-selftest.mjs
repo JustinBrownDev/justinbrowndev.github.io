@@ -31,8 +31,8 @@ for (let q = 0; q < 500; q++) {
     const ids = new Set(out.map(o => o.id));
     assert(ids.size === out.length, `query ${q}: duplicate candidate returned`);
 
-    // Broadphase may return false positives from a shared bucket, but it must
-    // never miss an item whose rectangle actually touches the query square.
+     
+     
     for (const item of items) {
         const overlaps = item.x + item.hx >= x - r && item.x - item.hx <= x + r
             && item.z + item.hz >= z - r && item.z - item.hz <= z + r;
@@ -42,9 +42,9 @@ for (let q = 0; q < 500; q++) {
 
 console.log(`[perf-selftest] PASS: ${items.length} indexed boxes, 500 randomized broadphase queries, no misses/duplicates`);
 
-// A future accidental registerLateObject(worldChunkRoot) must be a no-op.
-// The old optimizer is allowed to own authored spawn detail, never infinite
-// streamed roots.
+ 
+ 
+ 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera();
 const rawSceneAdd = scene.add.bind(scene);

@@ -1,0 +1,8 @@
+export const THEATER_VOICE = Object.freeze({
+    nouns: Object.freeze(['HOUSE LIGHTS','WORK LIGHTS','AISLE LIGHT','CURTAIN LINE','MASKING LEG','BORDER','FLY LOFT','BATTEN','GRIDIRON','CATWALK','FOLLOWSPOT','LIGHT BOARD','SOUND BOARD','CUE STACK','PROMPT BOOK','BACKSTAGE CALL','GREEN ROOM','LOADING DOOR','ORCHESTRA PIT','APRON','WING SPACE','SPIKE MARK','GEL FRAME','GOBO','DIMMER RACK','PATCH BAY','HOUSE OPEN','PLACES CALL']),
+    verbs: Object.freeze(['GO TO PLACES','STAND BY','TAKE THE CUE','BRING UP WORK LIGHTS','CLEAR THE DECK','SPIKE THE POSITION','PATCH THE CIRCUIT','FOCUS THE SPECIAL','CALL THE CHANGE','HOLD THE HOUSE','FLY IT OUT','BRING IT IN','CHECK THE WING','RESET FOR TOP','OPEN THE HOUSE']),
+    joints: Object.freeze(['AT PLACES','BEHIND THE MASKING','UNDER WORK LIGHTS','ABOVE THE FLY LOFT','IN THE WING','BEFORE HOUSE OPEN','AFTER THE CUE','NEXT TO THE PROMPT BOOK','PAST THE CURTAIN LINE','WHERE THE SPIKE MARK SAYS'])
+});
+export const THEATER_PAIRS = Object.freeze([
+    ['STAND BY','nothing happens yet, but everybody is ready'],['TAKE THE CUE','timing turns preparation into event'],['WORK LIGHTS','the room looks different when nobody is watching'],['SPIKE MARK','a piece of tape can store a coordinate'],['PROMPT BOOK','the performance has an operational memory'],['FLY LOFT','half the building exists above the audience'],['PATCH BAY','routing is physical'],['HOLD THE HOUSE','sometimes readiness waits on people'],['RESET FOR TOP','repeatability makes rehearsal useful'],['PLACES CALL','distributed systems can use a human voice'],['GREEN ROOM','waiting gets its own architecture'],['DIMMER RACK','brightness has infrastructure']
+]);

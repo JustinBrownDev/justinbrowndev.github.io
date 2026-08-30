@@ -49,8 +49,8 @@ await streamer.pump({ maxChunks: 1 });
 assert.equal(built.length, 1, 'one pump budget must build one complete chunk');
 assert.equal(streamer.chunks.get(built[0]).state, CHUNK_STATE.READY);
 
-// Teleporting reprioritizes around the current player, and old non-singular
-// chunks beyond retention are unloaded rather than accumulating forever.
+ 
+ 
 position.x = 64 * 4;
 position.z = 0;
 await streamer.pump({ maxChunks: 1 });
@@ -59,8 +59,8 @@ assert.ok(unloaded.length >= 1, 'far resident procedural chunks must unload afte
 assert.ok(!unloaded.includes('0,0'), 'authored singular spawn chunk must stay pinned');
 assert.equal(streamer.isWorldPositionAvailable(position.x, position.z), true);
 
-// Walk for a long time. Scheduler bookkeeping must remain local to the
-// player rather than retaining every queued/unloaded coordinate ever seen.
+ 
+ 
 for (let step = 5; step <= 80; step++) {
   position.x = 64 * step;
   position.z = 64 * ((step % 7) - 3);
@@ -91,10 +91,10 @@ await streamer.dispose();
 assert.equal(streamer.chunks.size, 0, 'dispose must release scheduler metadata too');
 console.log('[world-chunk-streamer-selftest] PASS', { built, unloaded, w0, w10, w36 });
 
-// Visibility is part of the streamer's ownership contract, not a side effect
-// of an unrelated render optimizer. Prefetched READY chunks may be hidden, but
-// entering their render ring must flip them visible immediately without a
-// rebuild or another spatial authority.
+ 
+ 
+ 
+ 
 const visibilityPosition = { x: 0, z: 0 };
 const visibilityEvents = [];
 const visibilityStreamer = createWorldChunkStreamer({

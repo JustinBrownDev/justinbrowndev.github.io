@@ -71,6 +71,18 @@ export const CONFIG = {
         prefetchBuildBudgetMs: 8,
         warmBuildBudgetMs: 4,
         warmCooldownMs: 0,
+
+        // Live handoff uses explicit gears instead of letting every background
+        // subsystem compete at once. Desktop gets a short, bounded sprint; weak
+        // devices keep the same ordering with smaller slices.
+        sprintBuildBudgetMsDesktop: 18,
+        sprintBuildBudgetMsWeak: 10,
+        prefetchSprintBudgetMsDesktop: 14,
+        prefetchSprintBudgetMsWeak: 8,
+        visibleDetailBudgetMsDesktop: 6,
+        visibleDetailBudgetMsWeak: 3,
+        visibleDetailFloorDesktop: 8,
+        visibleDetailFloorWeak: 4,
          
          
          

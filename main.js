@@ -456,6 +456,7 @@ const detailCullObjects = new Set();
 let _detailCullTick = QP[181];
 let staticWorldOptimizer = null;
 let _backgroundCompileSchedulingEnabled = false;
+let _worldStreamPriorityLock = true;
 let _sceneMaterialRevision = 0;
 let _bootstrapCompileStagingEnabled = false;
 const _bootstrapCompileStaged = new Map();
@@ -745,7 +746,7 @@ async function runBootstrapCompilePump() {
 }
 
 function scheduleBootstrapCompilePump() {
-    if (!_backgroundCompileSchedulingEnabled) return null;
+    if (!_backgroundCompileSchedulingEnabled || _worldStreamPriorityLock) return null;
     if (!_bootstrapCompileQueue.length || _bootstrapCompilePumpPromise) return _bootstrapCompilePumpPromise;
     _bootstrapCompilePumpPromise = runBootstrapCompilePump().finally(() => {
         _bootstrapCompilePumpPromise = null;
@@ -2185,6 +2186,9 @@ worldChunkStreamer = createWorldChunkStreamer({
     refineChunk: (chunk, payload, budget) => cityFabricEngine.refine(chunk, payload, budget),
     hasPendingRefinement: (chunk, payload) => cityFabricEngine.hasPendingRefinement(chunk, payload),
     refineAfterPrefetchReady: false,
+    minimumVisibleRefinementTurns: QUALITY === CONFIG.quality.desktop
+        ? CONFIG.streaming.visibleDetailFloorDesktop
+        : CONFIG.streaming.visibleDetailFloorWeak,
     unloadChunk: (chunk, payload) => cityFabricEngine.unload(chunk, payload),
     yieldControl: null,
     onChunkState: (chunk, state) => {
@@ -3922,37 +3926,78 @@ function maybeReleaseBackgroundEnrichment() {
     return true;
 }
 
+let worldStreamingGear = 'bootstrap';
+function worldStreamingGearFor(stats = worldChunkStreamer?.stats()) {
+    if (!stats?.localRenderRing.complete) return 'visible-structure-sprint';
+    if (authoredStructuralReadySiteIds.size < buildingSites.length) return 'authored-structure-sprint';
+    if (!stats.localRenderRefinement?.floorComplete) return 'visible-detail-sprint';
+    if (!stats.localPrefetchRing.complete) return 'prefetch-sprint';
+    return 'steady';
+}
+
+function updateWorldStreamingGear(stats = worldChunkStreamer?.stats()) {
+    const next = worldStreamingGearFor(stats);
+    if (next !== worldStreamingGear) {
+        const detail = stats?.localRenderRefinement;
+        console.log('[stream-perf] worldgen gear ' + worldStreamingGear + ' -> ' + next
+            + ' · render=' + (stats?.localRenderRing.ready ?? 0) + '/' + (stats?.localRenderRing.total ?? 0)
+            + ' · authored-shells=' + authoredStructuralReadySiteIds.size + '/' + buildingSites.length
+            + ' · detail-floor-pending=' + (detail?.floorPendingChunks ?? '-')
+            + ' · prefetch=' + (stats?.localPrefetchRing.ready ?? 0) + '/' + (stats?.localPrefetchRing.total ?? 0));
+        worldStreamingGear = next;
+    }
+    if (next === 'steady' && _worldStreamPriorityLock) {
+        _worldStreamPriorityLock = false;
+        console.log('[stream-perf] visible world rich + structural prefetch warm · releasing authored content, shader prewarm, plazas, optimizer, and decoration');
+        scheduleBootstrapCompilePump();
+    }
+    return next;
+}
+
 function pumpWorldChunksAggressively() {
     if (!worldChunkStreamer || worldChunkPumpPromise || performance.now() < worldChunkNextKickAt) return;
     const before = worldChunkStreamer.stats();
-    const renderWarm = before.localRenderRing.complete;
-    const prefetchWarm = before.localPrefetchRing.complete;
-     
-     
-     
-     
-     
-    const maxChunks = !renderWarm
+    const gear = updateWorldStreamingGear(before);
+    const desktop = QUALITY === CONFIG.quality.desktop;
+    const maxChunks = gear === 'visible-structure-sprint'
         ? CONFIG.streaming.urgentPumpChunks
-        : !prefetchWarm
-            ? CONFIG.streaming.prefetchPumpChunks
-            : CONFIG.streaming.warmPumpChunks;
-    const maxMillis = !renderWarm
-        ? CONFIG.streaming.urgentBuildBudgetMs
-        : !prefetchWarm
-            ? CONFIG.streaming.prefetchBuildBudgetMs
-            : CONFIG.streaming.warmBuildBudgetMs;
-    const warmCooldownMs = renderWarm && prefetchWarm ? CONFIG.streaming.warmCooldownMs : 0;
-    const maxRefinements = renderWarm
-        ? (QUALITY === CONFIG.quality.desktop ? CONFIG.streaming.chunkRefinementStepsDesktop : CONFIG.streaming.chunkRefinementStepsWeak)
-        : 0;
-    worldChunkPumpPromise = worldChunkStreamer.pump({ maxChunks, maxMillis, maxRefinements })
+        : gear === 'authored-structure-sprint' || gear === 'visible-detail-sprint'
+            ? Math.max(1, Math.ceil(CONFIG.streaming.prefetchPumpChunks / 4))
+            : gear === 'prefetch-sprint'
+                ? CONFIG.streaming.prefetchPumpChunks
+                : CONFIG.streaming.warmPumpChunks;
+    const maxMillis = gear === 'visible-structure-sprint'
+        ? (desktop ? CONFIG.streaming.sprintBuildBudgetMsDesktop : CONFIG.streaming.sprintBuildBudgetMsWeak)
+        : gear === 'authored-structure-sprint'
+            ? (desktop ? CONFIG.streaming.visibleDetailBudgetMsDesktop : CONFIG.streaming.visibleDetailBudgetMsWeak)
+            : gear === 'visible-detail-sprint' || gear === 'prefetch-sprint'
+                ? (desktop ? CONFIG.streaming.prefetchSprintBudgetMsDesktop : CONFIG.streaming.prefetchSprintBudgetMsWeak)
+                : CONFIG.streaming.warmBuildBudgetMs;
+    const maxRefinements = gear === 'authored-structure-sprint'
+        ? 1
+        : gear === 'visible-detail-sprint' || gear === 'steady'
+            ? (desktop ? CONFIG.streaming.chunkRefinementStepsDesktop : CONFIG.streaming.chunkRefinementStepsWeak)
+            : 0;
+    const refineFirst = gear === 'authored-structure-sprint' || gear === 'visible-detail-sprint';
+    const refinementBudgetMs = gear === 'visible-detail-sprint'
+        ? (desktop ? CONFIG.streaming.visibleDetailBudgetMsDesktop : CONFIG.streaming.visibleDetailBudgetMsWeak)
+        : gear === 'authored-structure-sprint' ? 2 : Infinity;
+    const warmCooldownMs = gear === 'steady' ? CONFIG.streaming.warmCooldownMs : 0;
+    worldChunkPumpPromise = worldChunkStreamer.pump({
+        maxChunks, maxMillis, maxRefinements, refineFirst, refinementBudgetMs,
+    })
         .then(builtAny => {
             if (!builtAny) return;
             const after = worldChunkStreamer.stats();
             const t = after.throughput;
             const assets = adornmentLoadQueue.stats();
-            console.log(`[world-perf] pump ${t.lastPumpBuilt} chunk(s) + ${t.lastPumpRefined} local detail turn(s) in ${t.lastPumpMs.toFixed(1)}ms · avg build ${t.avgBuildMs.toFixed(2)}ms · detail worst ${after.refinement.worstStepMs.toFixed(2)}ms · detail pending chunks ${after.refinement.pendingChunks} · commit→visible ${t.avgCommitToVisibleMs.toFixed(2)}ms · render ${after.localRenderRing.ready}/${after.localRenderRing.total} · prefetch ${after.localPrefetchRing.ready}/${after.localPrefetchRing.total} · assets ${assets.active}/${assets.concurrency} active + ${assets.pending} pending · failed ${assets.failed}`);
+            console.log('[world-perf] gear=' + worldStreamingGear + ' · pump ' + t.lastPumpBuilt + ' chunk(s) + ' + t.lastPumpRefined + ' local detail turn(s) in ' + t.lastPumpMs.toFixed(1) + 'ms'
+                + ' · avg build ' + t.avgBuildMs.toFixed(2) + 'ms · detail worst ' + after.refinement.worstStepMs.toFixed(2) + 'ms'
+                + ' · detail pending ' + after.refinement.pendingChunks + ' · visible floor pending ' + after.localRenderRefinement.floorPendingChunks
+                + ' · commit→visible ' + t.avgCommitToVisibleMs.toFixed(2) + 'ms · render ' + after.localRenderRing.ready + '/' + after.localRenderRing.total
+                + ' · prefetch ' + after.localPrefetchRing.ready + '/' + after.localPrefetchRing.total
+                + ' · assets ' + assets.active + '/' + assets.concurrency + ' active + ' + assets.pending + ' pending · failed ' + assets.failed);
+            updateWorldStreamingGear(after);
             maybeReleaseBackgroundEnrichment();
         })
         .catch(error => console.error('[world] chunk pump failed', error))
@@ -3983,11 +4028,23 @@ function animate(now = performance.now()) {
     staticWorldOptimizer?.updateVisibility();
     worldChunkStreamer?.updateVisibility();
 
+    const streamingGear = updateWorldStreamingGear(worldChunkStreamer?.stats());
     pumpWorldChunksAggressively();
+    const worldgenSprintActive = streamingGear !== 'steady';
     const groundPump = pumpOpenCellSurfaces({ maxChunks: QP[1024], maxMillis: QP[1024] });
     if (groundPump.chunks) runtimeLatency.record('spawn-ground.pump', groundPump.ms, { ...groundPump, ...groundSurfaceSystem.stats() });
 
-    if (authoredBuildingJobs.length) {
+    // Once the procedural render ring exists, finish every authored site only to
+    // structural-ready. Expensive interiors/content are not allowed to steal the
+    // sprint; they resume in steady state.
+    if (streamingGear === 'authored-structure-sprint' && authoredBuildingJobs.length) {
+        const authoredShellPump = pumpAuthoredBuildingJobs({
+            maxSteps: QUALITY === CONFIG.quality.desktop ? 4 : 2,
+            maxMillis: QUALITY === CONFIG.quality.desktop ? 4 : 2,
+            structuralOnly: true,
+        });
+        if (authoredShellPump.steps) runtimeLatency.record('authored-shell-sprint.pump', authoredShellPump.ms, authoredShellPump);
+    } else if (!worldgenSprintActive && authoredBuildingJobs.length) {
         const authoredPump = pumpAuthoredBuildingJobs({
             maxSteps: QUALITY === CONFIG.quality.desktop ? QP[0] : QP[1024],
             maxMillis: QUALITY === CONFIG.quality.desktop ? QP[1] : QP[1024],
@@ -3995,25 +4052,25 @@ function animate(now = performance.now()) {
         if (authoredPump.steps) runtimeLatency.record('authored-live.pump', authoredPump.ms, authoredPump);
     }
 
-    if (worldChunkStreamer?.stats().localRenderRing.complete && unifiedSpawnFabricRefinementQueue.length) {
+    if (!worldgenSprintActive && worldChunkStreamer?.stats().localRenderRing.complete && unifiedSpawnFabricRefinementQueue.length) {
         const fabricDetailPump = pumpUnifiedSpawnFabricRefinement({ maxSteps: QP[1024], maxMillis: QP[1024] });
         if (fabricDetailPump.steps) runtimeLatency.record('spawn-fabric.detail-pump', fabricDetailPump.ms, fabricDetailPump);
     }
 
-    if (!authoredBuildingJobs.length && worldChunkStreamer?.stats().localRenderRing.complete) {
+    if (!worldgenSprintActive && !authoredBuildingJobs.length && worldChunkStreamer?.stats().localRenderRing.complete) {
         maybeStartAuthoredPostStructurePipeline();
         const authoredPostPump = pumpAuthoredPostStructurePipeline({ maxSteps: QP[1024], maxMillis: QP[1024] });
         if (authoredPostPump.steps) runtimeLatency.record('authored-post.live-pump', authoredPostPump.ms, authoredPostPump);
     }
 
-    if (worldChunkStreamer?.stats().localRenderRing.complete && specialPlazaJobs.length) {
+    if (!worldgenSprintActive && worldChunkStreamer?.stats().localRenderRing.complete && specialPlazaJobs.length) {
         const plazaPump = pumpSpecialPlazaJobs({ maxJobs: QP[1024], maxMillis: QP[1] });
         if (plazaPump.steps) runtimeLatency.record('plaza.live-pump', plazaPump.ms, plazaPump);
     }
 
     maybeMarkSpawnDistrictStructuresComplete();
-    if (_spawnDistrictStructuresComplete) updateDecorationStreaming(delta);
-    pumpAuthoredOptimizer(now);
+    if (!worldgenSprintActive && _spawnDistrictStructuresComplete) updateDecorationStreaming(delta);
+    if (!worldgenSprintActive) pumpAuthoredOptimizer(now);
     maybeReleaseBackgroundEnrichment();
 
     for (const f of flickerLights) {

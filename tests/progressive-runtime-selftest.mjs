@@ -51,7 +51,12 @@ ok(!chunks.includes('requestAnimationFrame('), 'generic structural factory must 
 ok(streamer.includes('priority < bestPriority') && streamer.includes('serial < bestSerial'), 'outer streamer must converge nearest visible detail before fairness among equally-prioritized peers');
 ok(main.includes('refineAfterPrefetchReady: false'), 'live runtime must allow visible chunk detail before the full prefetch ring is warm');
 ok(streamer.includes('const canRefineBeforePrefetch = !refineAfterPrefetchReady') && streamer.includes('renderReadyAtPumpStart'), 'streamer must reserve a visible detail turn while farther structural prefetch continues');
-ok(streamer.includes('!prefetchReadyForRefinement && !shouldBeVisible(next, center)'), 'unfinished prefetch must not spend detail budget on invisible chunks');
+ok(streamer.includes('visibleOnly: !prefetchReadyForRefinement'), 'unfinished prefetch must not spend detail budget on invisible chunks');
+ok(streamer.includes('minimumVisibleRefinementTurns') && streamer.includes('floorPendingChunks'), 'visible chunks must receive a minimum richness layer before deep nearest-chunk convergence');
+ok(streamer.includes('refineFirst = false') && streamer.includes('refinementBudgetMs = Infinity'), 'streamer pump must support a bounded refinement-first sprint slice');
+ok(main.includes("return 'visible-structure-sprint'") && main.includes("return 'authored-structure-sprint'") && main.includes("return 'visible-detail-sprint'") && main.includes("return 'prefetch-sprint'"), 'live runtime must expose explicit worldgen sprint gears');
+ok(main.includes('structuralOnly: true') && main.includes("streamingGear === 'authored-structure-sprint'"), 'authored sprint must stop jobs at structural-ready instead of consuming content recipes');
+ok(main.includes('_worldStreamPriorityLock') && main.includes('visible world rich + structural prefetch warm'), 'shader/content background work must stay locked out until worldgen sprint reaches steady state');
 ok(chunkEnrichment.includes("kind: 'sign'") && chunkEnrichment.includes("kind: 'graffiti'") && chunkEnrichment.includes("kind: 'pipe'") && chunkEnrichment.includes("kind: 'awning'") && chunkEnrichment.includes("kind: 'ivy'"), 'infinite chunk enrichment must carry the authored-world facade vocabulary');
 ok(chunkEnrichment.includes('pickMassiveNoisePair') && chunkEnrichment.includes('pickPoetryTag'), 'infinite signage/graffiti must use the packaged text corpus instead of placeholder labels');
 

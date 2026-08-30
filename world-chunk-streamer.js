@@ -41,6 +41,7 @@ export function createWorldChunkStreamer({
     refineChunk = null,
     hasPendingRefinement = null,
     refineAfterPrefetchReady = true,
+    minimumVisibleRefinementTurns = 0,
     unloadChunk = null,
     yieldControl = null,
     onChunkState = null,
@@ -239,23 +240,34 @@ export function createWorldChunkStreamer({
         if (refineAfterPrefetchReady && !readyWithinRadius(prefetchRadiusChunks).complete) return null;
         let best = null;
         let bestVisibilityRank = Infinity;
+        let bestFloorRank = Infinity;
         let bestSerial = Infinity;
         let bestPriority = Infinity;
         for (const chunk of chunks.values()) {
             if (!chunkNeedsRefinement(chunk)) continue;
             if (ringDistance(chunk, center) > prefetchRadiusChunks) continue;
             const visibilityRank = shouldBeVisible(chunk, center) ? 0 : 1;
+            // Before deep convergence, give every visible chunk a small first layer
+            // of detail. Within that layer distance/heading still wins, so the world
+            // grows outward rather than round-robin smearing across the horizon.
+            const floorRank = visibilityRank === 0
+                && minimumVisibleRefinementTurns > 0
+                && chunk.refinementTurns < minimumVisibleRefinementTurns ? 0 : 1;
             const serial = chunk.lastRefinedSerial || 0;
             const priority = chunkPriorityScore(chunk);
             if (
                 visibilityRank < bestVisibilityRank ||
                 (visibilityRank === bestVisibilityRank && (
-                    priority < bestPriority ||
-                    (priority === bestPriority && (serial < bestSerial || (serial === bestSerial && chunk.key < best?.key)))
+                    floorRank < bestFloorRank ||
+                    (floorRank === bestFloorRank && (
+                        priority < bestPriority ||
+                        (priority === bestPriority && (serial < bestSerial || (serial === bestSerial && chunk.key < best?.key)))
+                    ))
                 ))
             ) {
                 best = chunk;
                 bestVisibilityRank = visibilityRank;
+                bestFloorRank = floorRank;
                 bestSerial = serial;
                 bestPriority = priority;
             }
@@ -379,7 +391,13 @@ export function createWorldChunkStreamer({
         }
     }
 
-    async function pump({ maxChunks = 1, maxMillis = Infinity, maxRefinements = maxChunks } = {}) {
+    async function pump({
+        maxChunks = 1,
+        maxMillis = Infinity,
+        maxRefinements = maxChunks,
+        refineFirst = false,
+        refinementBudgetMs = Infinity,
+    } = {}) {
         if (busy || disposed) return false;
         busy = true;
         const pumpStarted = performance.now();
@@ -392,10 +410,33 @@ export function createWorldChunkStreamer({
             const chunkCap = Number.isFinite(maxChunks) ? Math.max(0, Math.floor(maxChunks)) : Infinity;
             const refinementCap = Number.isFinite(maxRefinements) ? Math.max(0, Math.floor(maxRefinements)) : Infinity;
             const timeCap = Number.isFinite(maxMillis) ? Math.max(0, maxMillis) : Infinity;
+            const refinementTimeCap = Number.isFinite(refinementBudgetMs)
+                ? Math.max(0, Math.min(timeCap, refinementBudgetMs))
+                : timeCap;
             const renderReadyAtPumpStart = readyWithinRadius(renderRadiusChunks).complete;
             const prefetchReadyAtPumpStart = readyWithinRadius(prefetchRadiusChunks).complete;
             const canRefineBeforePrefetch = !refineAfterPrefetchReady && renderReadyAtPumpStart && !prefetchReadyAtPumpStart;
-            if (!disposed && canRefineBeforePrefetch && refinementCap > 0) {
+
+            const runRefinementTurns = async ({ visibleOnly = false, deadlineMs = timeCap } = {}) => {
+                while (refined < refinementCap && performance.now() - pumpStarted < deadlineMs) {
+                    const next = nearestRefinableChunk(center);
+                    if (!next) break;
+                    if (visibleOnly && !shouldBeVisible(next, center)) break;
+                    const remaining = Number.isFinite(deadlineMs)
+                        ? Math.max(0.1, deadlineMs - (performance.now() - pumpStarted))
+                        : 2;
+                    const result = await refineOne(next, { maxMillis: Math.min(2, remaining) });
+                    if (!result?.progressed && !result?.steps) break;
+                    refined += Math.max(1, result.steps || 0);
+                }
+            };
+
+            // During the visible-detail sprint, spend a bounded slice on what the
+            // player can actually see before constructing farther prefetch shells.
+            if (!disposed && refineFirst && renderReadyAtPumpStart && refinementCap > 0) {
+                await runRefinementTurns({ visibleOnly: true, deadlineMs: refinementTimeCap });
+            } else if (!disposed && canRefineBeforePrefetch && refinementCap > 0) {
+                // Legacy early-refinement behavior reserves one visible turn.
                 const next = nearestRefinableChunk(center);
                 if (next && shouldBeVisible(next, center)) {
                     const remaining = Number.isFinite(timeCap) ? Math.max(0.1, timeCap - (performance.now() - pumpStarted)) : 2;
@@ -403,26 +444,21 @@ export function createWorldChunkStreamer({
                     if (result?.progressed || result?.steps) refined += Math.max(1, result.steps || 0);
                 }
             }
-            while (built < chunkCap && !disposed) {
+
+            while (built < chunkCap && !disposed && performance.now() - pumpStarted < timeCap) {
                 ensureNeighborhood();
                 const next = nearestQueuedChunk();
                 if (!next) break;
                 await buildOne(next, 'streaming');
                 built++;
-                if (built > 0 && performance.now() - pumpStarted >= timeCap) break;
             }
 
             const prefetchReadyForRefinement = readyWithinRadius(prefetchRadiusChunks).complete;
             if (!disposed && refined < refinementCap && (!refineAfterPrefetchReady || prefetchReadyForRefinement)) {
-                while (refined < refinementCap && performance.now() - pumpStarted < timeCap) {
-                    const next = nearestRefinableChunk(center);
-                    if (!next) break;
-                    if (!prefetchReadyForRefinement && !shouldBeVisible(next, center)) break;
-                    const remaining = Number.isFinite(timeCap) ? Math.max(0.1, timeCap - (performance.now() - pumpStarted)) : 2;
-                    const result = await refineOne(next, { maxMillis: Math.min(2, remaining) });
-                    if (!result?.progressed && !result?.steps) break;
-                    refined += Math.max(1, result.steps || 0);
-                }
+                await runRefinementTurns({
+                    visibleOnly: !prefetchReadyForRefinement,
+                    deadlineMs: timeCap,
+                });
             }
             lastPumpBuilt = built;
             lastPumpRefined = refined;
@@ -483,6 +519,31 @@ export function createWorldChunkStreamer({
         return { ready, total, complete: ready === total };
     }
 
+    function refinementWithinRadius(radius = renderRadiusChunks) {
+        const center = playerChunkCoords();
+        let ready = 0;
+        let total = 0;
+        let pendingChunks = 0;
+        let floorPendingChunks = 0;
+        for (let dz = -radius; dz <= radius; dz++) {
+            for (let dx = -radius; dx <= radius; dx++) {
+                if (Math.max(Math.abs(dx), Math.abs(dz)) > radius) continue;
+                total++;
+                const chunk = chunks.get(keyOf(center.x + dx, center.z + dz));
+                if (!chunk || chunk.state !== CHUNK_STATE.READY || !chunk.payload) continue;
+                ready++;
+                const pending = chunkNeedsRefinement(chunk);
+                if (pending) pendingChunks++;
+                if (pending && chunk.refinementTurns < minimumVisibleRefinementTurns) floorPendingChunks++;
+            }
+        }
+        return {
+            ready, total, pendingChunks, floorPendingChunks,
+            floorComplete: ready === total && floorPendingChunks === 0,
+            complete: ready === total && pendingChunks === 0,
+        };
+    }
+
     function stats() {
         const counts = {};
         for (const name of Object.values(CHUNK_STATE)) counts[name] = 0;
@@ -526,6 +587,7 @@ export function createWorldChunkStreamer({
                 pendingChunks: [...chunks.values()].filter(chunkNeedsRefinement).length,
             },
             localRenderRing: readyWithinRadius(renderRadiusChunks),
+            localRenderRefinement: refinementWithinRadius(renderRadiusChunks),
             localPrefetchRing: readyWithinRadius(prefetchRadiusChunks),
             states: counts,
         };
@@ -568,6 +630,7 @@ export function createWorldChunkStreamer({
         isWorldPositionAvailable,
         getChunkAtWorld,
         readyWithinRadius,
+        refinementWithinRadius,
         stats,
         dispose,
     };

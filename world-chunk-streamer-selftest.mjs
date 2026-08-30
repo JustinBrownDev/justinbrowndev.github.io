@@ -206,4 +206,52 @@ assert.equal(earlyStreamer.stats().localPrefetchRing.complete, false, 'early-ref
 await earlyStreamer.pump({ maxChunks: 0, maxMillis: 100, maxRefinements: 1 });
 assert.deepEqual(earlyRefinementTurns, ['0,0'], 'visible local detail should begin before farther prefetch shells finish');
 await earlyStreamer.dispose();
-console.log('[world-chunk-refinement-selftest] PASS', { refinementTurns });
+
+// A visible richness floor prevents both extremes: one-turn round-robin smear and
+// fully completing a single chunk while every other visible chunk stays barren.
+const floorTurns = [];
+const floorStreamer = createWorldChunkStreamer({
+  chunkSize: 64,
+  worldSeed: 126,
+  getPlayerPosition: () => ({ x: 0, z: 0 }),
+  getPlayerHeading: () => ({ x: 1, z: 0 }),
+  renderRadiusChunks: 1,
+  prefetchRadiusChunks: 1,
+  retentionRadiusChunks: 2,
+  refineAfterPrefetchReady: false,
+  minimumVisibleRefinementTurns: 2,
+  buildChunk: async chunk => ({ key: chunk.key, pending: 5 }),
+  refineChunk: async (chunk, payload) => {
+    payload.pending--;
+    floorTurns.push(chunk.key);
+    return { progressed: true, steps: 1, complete: payload.pending <= 0 };
+  },
+  hasPendingRefinement: (_chunk, payload) => payload.pending > 0,
+});
+for (let z = -1; z <= 1; z++) for (let x = -1; x <= 1; x++) {
+  floorStreamer.markChunkReady(x, z, { pending: x === 0 && z === 0 ? 0 : 5 });
+}
+await floorStreamer.pump({ maxChunks: 0, maxMillis: 100, maxRefinements: 4, refineFirst: true, refinementBudgetMs: 100 });
+assert.deepEqual(floorTurns.slice(0, 2), ['1,0', '1,0'], 'nearest forward chunk must receive its minimum visible detail floor first');
+assert.notEqual(floorTurns[2], '1,0', 'after reaching the floor, another visible chunk must get its first detail layer before deep convergence resumes');
+assert.equal(floorStreamer.stats().localRenderRefinement.floorPendingChunks > 0, true);
+await floorStreamer.dispose();
+
+const order = [];
+const refineFirstStreamer = createWorldChunkStreamer({
+  chunkSize: 64, worldSeed: 127,
+  getPlayerPosition: () => ({ x: 0, z: 0 }),
+  renderRadiusChunks: 0, prefetchRadiusChunks: 1, retentionRadiusChunks: 2,
+  refineAfterPrefetchReady: false, minimumVisibleRefinementTurns: 1,
+  buildChunk: async chunk => { order.push('build:' + chunk.key); return { pending: 0 }; },
+  refineChunk: async (chunk, payload) => { payload.pending = 0; order.push('refine:' + chunk.key); return { progressed: true, steps: 1, complete: true }; },
+  hasPendingRefinement: (_chunk, payload) => payload.pending > 0,
+});
+refineFirstStreamer.markChunkReady(0, 0, { pending: 1 });
+refineFirstStreamer.ensureNeighborhood();
+await refineFirstStreamer.pump({ maxChunks: 1, maxMillis: 100, maxRefinements: 1, refineFirst: true, refinementBudgetMs: 10 });
+assert.equal(order[0], 'refine:0,0', 'visible detail sprint must refine before spending the remaining pump on farther prefetch structure');
+assert.ok(order[1]?.startsWith('build:'), 'prefetch structure must continue in the same bounded sprint pump after the visible detail turn');
+await refineFirstStreamer.dispose();
+
+console.log('[world-chunk-refinement-selftest] PASS', { refinementTurns, floorTurns, order });

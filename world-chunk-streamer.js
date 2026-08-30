@@ -53,6 +53,10 @@ export function createWorldChunkStreamer({
     onChunkState = null,
     publicationWarnAfterMs = 750,
     onPublicationStall = null,
+    richnessStallAttemptThreshold = 100,
+    richnessStarveAfterMs = 1500,
+    richnessStationaryDistance = 0.75,
+    onRichnessDiagnostic = null,
     weirdness = {},
     pinnedChunkKeys = [],
 } = {}) {
@@ -92,6 +96,25 @@ export function createWorldChunkStreamer({
     let lastPumpRefined = 0;
     let lastRefinementKind = null;
     let publicationStallWarnings = 0;
+    let refinementAttemptCount = 0;
+    let refinementPublishedCount = 0;
+    let refinementNoOpCount = 0;
+    let refinementTaskFailureCount = 0;
+    let lastPumpMaxRefinements = 0;
+    let lastPumpRefineFirst = false;
+    let lastPumpReserveRefinementMs = 0;
+    let lastPumpAt = 0;
+    let richnessStallWarnings = 0;
+    let refinementStarvedWarnings = 0;
+    let richnessWatchX = Number.NaN;
+    let richnessWatchZ = Number.NaN;
+    let richnessWatchMarker = 0;
+    let richnessWatchAttemptCount = 0;
+    let richnessWatchAttemptsWithoutGrowth = 0;
+    let richnessWatchLastGrowthAt = performance.now();
+    let richnessWatchLastAttemptAt = performance.now();
+    let richnessWatchLastStallWarningAt = 0;
+    let richnessWatchLastStarveWarningAt = 0;
 
     const keyOf = worldChunkKey;
     const coordsForWorld = (x, z) => ({ x: Math.floor((x + chunkSize * 0.5) / chunkSize), z: Math.floor((z + chunkSize * 0.5) / chunkSize) });
@@ -262,6 +285,209 @@ export function createWorldChunkStreamer({
         return { renderObjects, renderInstances };
     }
 
+
+    function detailRenderableSummary(payload) {
+        let detailRenderObjects = 0;
+        let detailRenderInstances = 0;
+        payload?.detailRoot?.traverse?.(object => {
+            if (!object?.isMesh && !object?.isInstancedMesh) return;
+            detailRenderObjects++;
+            detailRenderInstances += object.isInstancedMesh ? Math.max(0, Number(object.count) || 0) : 1;
+        });
+        return {
+            detailChildren: payload?.detailRoot?.children?.length ?? 0,
+            detailRenderObjects,
+            detailRenderInstances,
+        };
+    }
+
+    function chunkRichnessDiagnostic(chunk) {
+        const payload = chunk?.payload;
+        const refinement = payload?.refinement;
+        const detail = detailRenderableSummary(payload);
+        const whole = renderableSummary(payload);
+        const taskCount = refinement?.tasks?.length ?? 0;
+        const cursor = Number(refinement?.cursor) || 0;
+        const published = Number(refinement?.published) || 0;
+        const attempted = Number(refinement?.attempted) || 0;
+        const noOp = Number(refinement?.noOp) || 0;
+        const failed = Number(refinement?.failed ?? refinement?.failures) || 0;
+        const firstPassEntityTarget = Number(refinement?.firstPassEntityTarget) || 0;
+        const firstPassEntitiesComplete = Number(refinement?.firstPassEntitiesComplete) || 0;
+        return {
+            key: chunk?.key ?? null,
+            state: chunk?.state ?? null,
+            renderRequested: !!chunk?.renderRequested,
+            renderPublished: !!chunk?.renderPublished,
+            physicsAuthoritative: !!chunk?.physicsAuthoritative,
+            entities: payload?.entities?.length ?? 0,
+            baseRenderInstances: Math.max(0, whole.renderInstances - detail.detailRenderInstances),
+            ...detail,
+            attempted,
+            published,
+            noOp,
+            failed,
+            cursor,
+            taskCount,
+            pendingTasks: Math.max(0, taskCount - cursor),
+            firstPassEntitiesComplete,
+            firstPassEntityTarget,
+            firstPassComplete: chunkVisibleFirstPassComplete(chunk),
+        };
+    }
+
+    function localRichnessSummary(radius = renderRadiusChunks) {
+        const center = playerChunkCoords();
+        let total = 0;
+        let publishedChunks = 0;
+        let detailChildren = 0;
+        let detailRenderObjects = 0;
+        let detailRenderInstances = 0;
+        let attempted = 0;
+        let successful = 0;
+        let noOp = 0;
+        let failed = 0;
+        let cursor = 0;
+        let tasks = 0;
+        let firstPassEntitiesComplete = 0;
+        let firstPassEntityTarget = 0;
+        let pendingPublishedDetailChunks = 0;
+        const perChunk = [];
+        for (let dz = -radius; dz <= radius; dz++) {
+            for (let dx = -radius; dx <= radius; dx++) {
+                if (Math.max(Math.abs(dx), Math.abs(dz)) > radius) continue;
+                total++;
+                const chunk = chunks.get(keyOf(center.x + dx, center.z + dz));
+                if (!chunk) {
+                    perChunk.push({ key: keyOf(center.x + dx, center.z + dz), state: 'missing', renderPublished: false, physicsAuthoritative: false });
+                    continue;
+                }
+                if (chunk.state === CHUNK_STATE.READY && chunk.payload) syncChunkPublication(chunk);
+                const diagnostic = chunkRichnessDiagnostic(chunk);
+                perChunk.push(diagnostic);
+                if (!chunk.renderPublished || !chunk.physicsAuthoritative) continue;
+                publishedChunks++;
+                detailChildren += diagnostic.detailChildren || 0;
+                detailRenderObjects += diagnostic.detailRenderObjects || 0;
+                detailRenderInstances += diagnostic.detailRenderInstances || 0;
+                attempted += diagnostic.attempted || 0;
+                successful += diagnostic.published || 0;
+                noOp += diagnostic.noOp || 0;
+                failed += diagnostic.failed || 0;
+                cursor += diagnostic.cursor || 0;
+                tasks += diagnostic.taskCount || 0;
+                firstPassEntitiesComplete += diagnostic.firstPassEntitiesComplete || 0;
+                firstPassEntityTarget += diagnostic.firstPassEntityTarget || 0;
+                if (diagnostic.pendingTasks > 0) pendingPublishedDetailChunks++;
+            }
+        }
+        return {
+            published: publishedChunks,
+            total,
+            detailChildren,
+            detailRenderObjects,
+            detailRenderInstances,
+            attempted,
+            successful,
+            noOp,
+            failed,
+            cursor,
+            tasks,
+            firstPassEntitiesComplete,
+            firstPassEntityTarget,
+            pendingPublishedDetailChunks,
+            perChunk,
+        };
+    }
+
+    function emitRichnessDiagnostic(type, summary, extra = {}) {
+        const diagnostic = {
+            type,
+            player: (() => { const p = getPlayerPosition(); return { x: p.x, y: p.y ?? null, z: p.z }; })(),
+            summary,
+            blockers: {
+                busy,
+                refineAfterPrefetchReady,
+                lastPumpMaxRefinements,
+                lastPumpRefineFirst,
+                lastPumpReserveRefinementMs,
+                renderRing: publicationWithinRadius(renderRadiusChunks),
+                prefetchRing: readyWithinRadius(prefetchRadiusChunks),
+            },
+            ...extra,
+        };
+        const label = type === 'stalled' ? '[WORLD-RICHNESS-STALLED]' : '[WORLD-REFINEMENT-STARVED]';
+        console.warn?.(`${label} visible procedural world is not gaining rendered detail`, diagnostic);
+        try { onRichnessDiagnostic?.(diagnostic); }
+        catch (error) { console.warn?.('[world-richness] diagnostic listener failed', error); }
+        return diagnostic;
+    }
+
+    function resetRichnessWatch(now, p, summary) {
+        richnessWatchX = p.x;
+        richnessWatchZ = p.z;
+        richnessWatchMarker = summary.detailRenderInstances + summary.detailChildren;
+        richnessWatchAttemptCount = refinementAttemptCount;
+        richnessWatchAttemptsWithoutGrowth = 0;
+        richnessWatchLastGrowthAt = now;
+        richnessWatchLastAttemptAt = now;
+        richnessWatchLastStallWarningAt = 0;
+        richnessWatchLastStarveWarningAt = 0;
+    }
+
+    function checkRichnessHealth(now = performance.now()) {
+        const p = getPlayerPosition();
+        const center = coordsForWorld(p.x, p.z);
+        const current = chunks.get(keyOf(center.x, center.z));
+        if (!current || current.state !== CHUNK_STATE.READY || !current.renderPublished || !current.physicsAuthoritative || pinned.has(current.key)) {
+            const summary = localRichnessSummary(renderRadiusChunks);
+            resetRichnessWatch(now, p, summary);
+            return null;
+        }
+        const summary = localRichnessSummary(renderRadiusChunks);
+        const stationaryLimit = Math.max(0.05, Number(richnessStationaryDistance) || 0.75);
+        if (!Number.isFinite(richnessWatchX) || Math.hypot(p.x - richnessWatchX, p.z - richnessWatchZ) > stationaryLimit) {
+            resetRichnessWatch(now, p, summary);
+            return null;
+        }
+
+        const marker = summary.detailRenderInstances + summary.detailChildren;
+        const attemptDelta = Math.max(0, refinementAttemptCount - richnessWatchAttemptCount);
+        if (marker > richnessWatchMarker) {
+            richnessWatchMarker = marker;
+            richnessWatchAttemptsWithoutGrowth = 0;
+            richnessWatchLastGrowthAt = now;
+        } else if (attemptDelta > 0) {
+            richnessWatchAttemptsWithoutGrowth += attemptDelta;
+        }
+        if (attemptDelta > 0) richnessWatchLastAttemptAt = now;
+        richnessWatchAttemptCount = refinementAttemptCount;
+
+        const pending = summary.pendingPublishedDetailChunks > 0;
+        const stallThreshold = Math.max(1, Math.floor(Number(richnessStallAttemptThreshold) || 100));
+        if (pending && richnessWatchAttemptsWithoutGrowth >= stallThreshold
+            && (!richnessWatchLastStallWarningAt || now - richnessWatchLastStallWarningAt >= 2000)) {
+            richnessWatchLastStallWarningAt = now;
+            richnessStallWarnings++;
+            return emitRichnessDiagnostic('stalled', summary, {
+                attemptsWithoutGrowth: richnessWatchAttemptsWithoutGrowth,
+                sinceGrowthMs: Math.max(0, now - richnessWatchLastGrowthAt),
+            });
+        }
+
+        const starveAfter = Math.max(10, Number(richnessStarveAfterMs) || 1500);
+        const pumpRecentlyActive = !lastPumpAt || now - lastPumpAt <= starveAfter * 2;
+        if (pending && pumpRecentlyActive && now - richnessWatchLastAttemptAt >= starveAfter
+            && (!richnessWatchLastStarveWarningAt || now - richnessWatchLastStarveWarningAt >= 2000)) {
+            richnessWatchLastStarveWarningAt = now;
+            refinementStarvedWarnings++;
+            return emitRichnessDiagnostic('starved', summary, {
+                noRefinementAttemptForMs: Math.max(0, now - richnessWatchLastAttemptAt),
+            });
+        }
+        return null;
+    }
+
     function checkPublicationStalls(now = performance.now()) {
         const warnAfter = Math.max(0, Number(publicationWarnAfterMs) || 0);
         if (!warnAfter) return 0;
@@ -309,6 +535,7 @@ export function createWorldChunkStreamer({
             applyChunkVisibility(chunk, center);
         }
         checkPublicationStalls();
+        checkRichnessHealth();
         return visibleReadyCount;
     }
 
@@ -360,15 +587,26 @@ export function createWorldChunkStreamer({
     }
 
     function semanticFirstPassTarget(chunk) {
-        const target = Number(chunk?.payload?.refinement?.firstPassTaskCount);
-        return Number.isFinite(target) && target >= 0 ? target : null;
+        const refinement = chunk?.payload?.refinement;
+        const entityTarget = Number(refinement?.firstPassEntityTarget);
+        if (Number.isFinite(entityTarget) && entityTarget >= 0) return entityTarget;
+        const legacyTarget = Number(refinement?.firstPassTaskCount);
+        return Number.isFinite(legacyTarget) && legacyTarget >= 0 ? legacyTarget : null;
     }
 
     function chunkVisibleFirstPassComplete(chunk) {
         if (!chunk || chunk.state !== CHUNK_STATE.READY || !chunk.payload) return false;
-        const semanticTarget = semanticFirstPassTarget(chunk);
-        if (semanticTarget !== null) {
-            return (Number(chunk.payload.refinement?.cursor) || 0) >= semanticTarget;
+        const refinement = chunk.payload.refinement;
+        const entityTarget = Number(refinement?.firstPassEntityTarget);
+        if (Number.isFinite(entityTarget) && entityTarget >= 0) {
+            const entitiesComplete = Number(refinement?.firstPassEntitiesComplete) || 0;
+            return !!refinement?.firstPassComplete || entitiesComplete >= entityTarget;
+        }
+        const legacyTarget = Number(refinement?.firstPassTaskCount);
+        if (Number.isFinite(legacyTarget) && legacyTarget >= 0) {
+            const published = Number(refinement?.published);
+            if (Number.isFinite(published)) return published >= legacyTarget;
+            return (Number(refinement?.cursor) || 0) >= legacyTarget;
         }
         if (!chunkNeedsRefinement(chunk)) return true;
         return chunk.refinementTurns >= minimumVisibleRefinementTurns;
@@ -386,6 +624,10 @@ export function createWorldChunkStreamer({
             if (!chunkNeedsRefinement(chunk)) continue;
             if (ringDistance(chunk, center) > prefetchRadiusChunks) continue;
             const visibilityRank = shouldBeVisible(chunk, center) ? 0 : 1;
+            if (visibilityRank === 0) {
+                syncChunkPublication(chunk);
+                if (!chunk.renderPublished || !chunk.physicsAuthoritative) continue;
+            }
             const firstPassPending = visibilityRank === 0 && !chunkVisibleFirstPassComplete(chunk);
             const floorRank = firstPassPending ? 0 : 1;
             const semanticFocus = firstPassPending && semanticFirstPassTarget(chunk) !== null;
@@ -427,6 +669,15 @@ export function createWorldChunkStreamer({
         return best;
     }
 
+    function hasPublishedVisibleRefinement(center = playerChunkCoords()) {
+        for (const chunk of chunks.values()) {
+            if (!shouldBeVisible(chunk, center) || !chunkNeedsRefinement(chunk)) continue;
+            syncChunkPublication(chunk);
+            if (chunk.renderPublished && chunk.physicsAuthoritative) return true;
+        }
+        return false;
+    }
+
     async function refineOne(chunk, { maxMillis = 2 } = {}) {
         if (!chunkNeedsRefinement(chunk) || disposed) return { progressed: false, steps: 0, complete: true };
         const started = performance.now();
@@ -437,13 +688,21 @@ export function createWorldChunkStreamer({
             refinementPumpCount++;
             worstRefinementStepMs = Math.max(worstRefinementStepMs, elapsed);
             const steps = Math.max(0, Number(result?.steps) || (result?.progressed ? 1 : 0));
+            const attempted = Math.max(0, Number(result?.attempted) || steps);
+            const published = Math.max(0, Number(result?.published) || 0);
+            const noOp = Math.max(0, Number(result?.noOp) || Math.max(0, attempted - published - (Number(result?.failed) || 0)));
+            const failed = Math.max(0, Number(result?.failed) || 0);
             refinementStepCount += steps;
+            refinementAttemptCount += attempted;
+            refinementPublishedCount += published;
+            refinementNoOpCount += noOp;
+            refinementTaskFailureCount += failed;
             if (steps > 0) {
                 chunk.lastRefinedSerial = ++refinementSerial;
                 chunk.refinementTurns++;
-                lastRefinementKind = result?.lastKind ?? lastRefinementKind;
             }
-            return { ...(result || {}), elapsedMs: elapsed, steps };
+            if (published > 0 || (published === 0 && result?.lastKind)) lastRefinementKind = result?.lastKind ?? lastRefinementKind;
+            return { ...(result || {}), elapsedMs: elapsed, steps, attempted, published, noOp, failed };
         } catch (error) {
             refinementFailureCount++;
             console.warn?.(`[world] chunk ${chunk.key} refinement failed`, error);
@@ -549,25 +808,31 @@ export function createWorldChunkStreamer({
         maxRefinements = maxChunks,
         refineFirst = false,
         refinementBudgetMs = Infinity,
+        reserveRefinementMs = 0,
     } = {}) {
         if (busy || disposed) return false;
         busy = true;
         const pumpStarted = performance.now();
+        const chunkCap = Number.isFinite(maxChunks) ? Math.max(0, Math.floor(maxChunks)) : Infinity;
+        const refinementCap = Number.isFinite(maxRefinements) ? Math.max(0, Math.floor(maxRefinements)) : Infinity;
+        const timeCap = Number.isFinite(maxMillis) ? Math.max(0, maxMillis) : Infinity;
+        const refinementTimeCap = Number.isFinite(refinementBudgetMs)
+            ? Math.max(0, Math.min(timeCap, refinementBudgetMs))
+            : timeCap;
+        const requestedReserve = Number.isFinite(reserveRefinementMs) ? Math.max(0, reserveRefinementMs) : 0;
+        lastPumpMaxRefinements = refinementCap;
+        lastPumpRefineFirst = !!refineFirst;
+        lastPumpReserveRefinementMs = requestedReserve;
+        lastPumpAt = pumpStarted;
         try {
             const center = ensureNeighborhood();
             await unloadFarChunks(center);
             updateVisibility(center);
             let built = 0;
             let refined = 0;
-            const chunkCap = Number.isFinite(maxChunks) ? Math.max(0, Math.floor(maxChunks)) : Infinity;
-            const refinementCap = Number.isFinite(maxRefinements) ? Math.max(0, Math.floor(maxRefinements)) : Infinity;
-            const timeCap = Number.isFinite(maxMillis) ? Math.max(0, maxMillis) : Infinity;
-            const refinementTimeCap = Number.isFinite(refinementBudgetMs)
-                ? Math.max(0, Math.min(timeCap, refinementBudgetMs))
-                : timeCap;
-            const renderReadyAtPumpStart = publicationWithinRadius(renderRadiusChunks).complete;
+            const visibleRefinementAtStart = hasPublishedVisibleRefinement(center);
             const prefetchReadyAtPumpStart = readyWithinRadius(prefetchRadiusChunks).complete;
-            const canRefineBeforePrefetch = !refineAfterPrefetchReady && renderReadyAtPumpStart && !prefetchReadyAtPumpStart;
+            const canRefineBeforePrefetch = !refineAfterPrefetchReady && visibleRefinementAtStart && !prefetchReadyAtPumpStart;
 
             const runRefinementTurns = async ({ visibleOnly = false, deadlineMs = timeCap } = {}) => {
                 while (refined < refinementCap && performance.now() - pumpStarted < deadlineMs) {
@@ -583,21 +848,25 @@ export function createWorldChunkStreamer({
                 }
             };
 
-            // During the visible-detail sprint, spend a bounded slice on what the
-            // player can actually see before constructing farther prefetch shells.
-            if (!disposed && refineFirst && renderReadyAtPumpStart && refinementCap > 0) {
+            // Explicit detail-first modes may spend their bounded slice first.
+            // Crucially, this no longer requires the entire 5x5 ring to be ready:
+            // any already-published visible chunk is eligible to visibly deepen.
+            if (!disposed && refineFirst && visibleRefinementAtStart && refinementCap > 0) {
                 await runRefinementTurns({ visibleOnly: true, deadlineMs: refinementTimeCap });
-            } else if (!disposed && canRefineBeforePrefetch && refinementCap > 0) {
-                // Legacy early-refinement behavior reserves one visible turn.
-                const next = nearestRefinableChunk(center);
-                if (next && shouldBeVisible(next, center)) {
-                    const remaining = Number.isFinite(timeCap) ? Math.max(0.1, timeCap - (performance.now() - pumpStarted)) : 2;
-                    const result = await refineOne(next, { maxMillis: Math.min(2, remaining) });
-                    if (result?.progressed || result?.steps) refined += Math.max(1, result.steps || 0);
-                }
+            } else if (!disposed && canRefineBeforePrefetch && refinementCap > 0 && chunkCap === 0) {
+                // A detail-only pump should still make progress before prefetch is warm.
+                await runRefinementTurns({ visibleOnly: true, deadlineMs: refinementTimeCap });
             }
 
-            while (built < chunkCap && !disposed && performance.now() - pumpStarted < timeCap) {
+            // When construction and enrichment share a pump, reserve a tiny tail
+            // slice for visible convergence. Missing structure still gets first use
+            // of the frame, but it can no longer globally starve already-published
+            // neighboring chunks of all visible growth.
+            const reserve = !refineFirst && visibleRefinementAtStart && refinementCap > 0
+                ? Math.min(refinementTimeCap, requestedReserve)
+                : 0;
+            const buildDeadlineMs = Number.isFinite(timeCap) ? Math.max(0, timeCap - reserve) : timeCap;
+            while (built < chunkCap && !disposed && performance.now() - pumpStarted < buildDeadlineMs) {
                 ensureNeighborhood();
                 const next = nearestQueuedChunk();
                 if (!next) break;
@@ -606,16 +875,20 @@ export function createWorldChunkStreamer({
             }
 
             const prefetchReadyForRefinement = readyWithinRadius(prefetchRadiusChunks).complete;
-            const renderPublishedForRefinement = publicationWithinRadius(renderRadiusChunks).complete;
-            if (!disposed && renderPublishedForRefinement && refined < refinementCap && (!refineAfterPrefetchReady || prefetchReadyForRefinement)) {
+            const renderCompleteForRefinement = publicationWithinRadius(renderRadiusChunks).complete;
+            const visibleRefinementAfterBuild = hasPublishedVisibleRefinement(center);
+            if (!disposed && visibleRefinementAfterBuild && refined < refinementCap
+                && (!refineAfterPrefetchReady || prefetchReadyForRefinement)) {
                 await runRefinementTurns({
-                    visibleOnly: !prefetchReadyForRefinement,
+                    visibleOnly: !renderCompleteForRefinement || !prefetchReadyForRefinement,
                     deadlineMs: timeCap,
                 });
             }
             lastPumpBuilt = built;
             lastPumpRefined = refined;
             lastPumpMs = performance.now() - pumpStarted;
+            lastPumpAt = performance.now();
+            checkRichnessHealth(lastPumpAt);
             return built > 0 || refined > 0;
         } finally {
             busy = false;
@@ -854,7 +1127,12 @@ export function createWorldChunkStreamer({
             refinement: {
                 steps: refinementStepCount,
                 pumps: refinementPumpCount,
-                failures: refinementFailureCount,
+                failures: refinementFailureCount + refinementTaskFailureCount,
+                thrownFailures: refinementFailureCount,
+                taskFailures: refinementTaskFailureCount,
+                attempts: refinementAttemptCount,
+                published: refinementPublishedCount,
+                noOp: refinementNoOpCount,
                 totalMs: totalRefinementMs,
                 avgStepMs: refinementStepCount ? totalRefinementMs / refinementStepCount : 0,
                 worstStepMs: worstRefinementStepMs,
@@ -868,6 +1146,17 @@ export function createWorldChunkStreamer({
             publication: {
                 stalledRequestedVisible: [...chunks.values()].filter(chunk => chunk.state === CHUNK_STATE.READY && chunk.renderRequested && !chunk.renderPublished).length,
                 stallWarnings: publicationStallWarnings,
+            },
+            richness: localRichnessSummary(renderRadiusChunks),
+            richnessHealth: {
+                stallWarnings: richnessStallWarnings,
+                starvedWarnings: refinementStarvedWarnings,
+                attemptsWithoutGrowth: richnessWatchAttemptsWithoutGrowth,
+                lastGrowthAt: richnessWatchLastGrowthAt,
+                lastAttemptAt: richnessWatchLastAttemptAt,
+                lastPumpMaxRefinements,
+                lastPumpRefineFirst,
+                lastPumpReserveRefinementMs,
             },
             states: counts,
         };

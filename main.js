@@ -3984,6 +3984,22 @@ function maybeReleaseBackgroundEnrichment() {
     return true;
 }
 
+let worldRichnessNextLogAt = 0;
+function maybeLogWorldRichness(now, stats = worldChunkStreamer?.stats()) {
+    if (now < worldRichnessNextLogAt || !stats?.richness) return false;
+    worldRichnessNextLogAt = now + 1000;
+    const r = stats.richness;
+    console.log('[world-richness] published ' + r.published + '/' + r.total
+        + ' | detail children +' + r.detailChildren
+        + ' | detail instances +' + r.detailRenderInstances
+        + ' | successful detail ' + r.successful + '/' + r.tasks
+        + ' | attempted ' + r.attempted
+        + ' | no-op ' + r.noOp
+        + ' | failed ' + r.failed
+        + ' | first-pass entities ' + r.firstPassEntitiesComplete + '/' + r.firstPassEntityTarget);
+    return true;
+}
+
 let worldStreamingGear = 'bootstrap';
 function worldStreamingGearFor(stats = worldChunkStreamer?.stats()) {
     return choosePlayerCenteredStreamingGear({
@@ -4025,30 +4041,39 @@ function pumpWorldChunksAggressively() {
     const before = worldChunkStreamer.stats();
     const gear = updateWorldStreamingGear(before);
     const desktop = QUALITY === CONFIG.quality.desktop;
-    const maxChunks = gear === WORLD_STREAMING_GEAR.VISIBLE_STRUCTURE
+    const structureIncomplete = gear === WORLD_STREAMING_GEAR.VISIBLE_STRUCTURE;
+    const maxChunks = structureIncomplete
         ? CONFIG.streaming.urgentPumpChunks
         : gear === WORLD_STREAMING_GEAR.VISIBLE_FIRST_PASS
             ? 0
             : gear === WORLD_STREAMING_GEAR.PREFETCH_STRUCTURE
                 ? CONFIG.streaming.prefetchPumpChunks
                 : CONFIG.streaming.warmPumpChunks;
-    const maxMillis = gear === WORLD_STREAMING_GEAR.VISIBLE_STRUCTURE
+    const maxMillis = structureIncomplete
         ? (desktop ? CONFIG.streaming.sprintBuildBudgetMsDesktop : CONFIG.streaming.sprintBuildBudgetMsWeak)
         : gear === WORLD_STREAMING_GEAR.VISIBLE_FIRST_PASS
             ? (desktop ? CONFIG.streaming.visibleDetailBudgetMsDesktop : CONFIG.streaming.visibleDetailBudgetMsWeak)
             : gear === WORLD_STREAMING_GEAR.PREFETCH_STRUCTURE
                 ? (desktop ? CONFIG.streaming.prefetchSprintBudgetMsDesktop : CONFIG.streaming.prefetchSprintBudgetMsWeak)
                 : CONFIG.streaming.warmBuildBudgetMs;
-    const maxRefinements = gear === WORLD_STREAMING_GEAR.VISIBLE_FIRST_PASS || gear === WORLD_STREAMING_GEAR.LOCAL_DEEPEN
-        ? (desktop ? CONFIG.streaming.chunkRefinementStepsDesktop : CONFIG.streaming.chunkRefinementStepsWeak)
-        : 0;
+    // VISIBLE CONVERGENCE: missing structure keeps first use of the frame, but
+    // already-published visible chunks always retain a small refinement lane.
+    // Construction and enrichment are no longer mutually exclusive global gears.
+    const maxRefinements = structureIncomplete
+        ? (desktop ? 2 : 1)
+        : gear === WORLD_STREAMING_GEAR.VISIBLE_FIRST_PASS || gear === WORLD_STREAMING_GEAR.LOCAL_DEEPEN
+            ? (desktop ? CONFIG.streaming.chunkRefinementStepsDesktop : CONFIG.streaming.chunkRefinementStepsWeak)
+            : 0;
     const refineFirst = gear === WORLD_STREAMING_GEAR.VISIBLE_FIRST_PASS || gear === WORLD_STREAMING_GEAR.LOCAL_DEEPEN;
-    const refinementBudgetMs = gear === WORLD_STREAMING_GEAR.VISIBLE_FIRST_PASS
-        ? (desktop ? CONFIG.streaming.visibleDetailBudgetMsDesktop : CONFIG.streaming.visibleDetailBudgetMsWeak)
-        : gear === WORLD_STREAMING_GEAR.LOCAL_DEEPEN ? CONFIG.streaming.warmBuildBudgetMs : Infinity;
+    const refinementBudgetMs = structureIncomplete
+        ? (desktop ? Math.min(1.5, CONFIG.streaming.visibleDetailBudgetMsDesktop) : Math.min(1.0, CONFIG.streaming.visibleDetailBudgetMsWeak))
+        : gear === WORLD_STREAMING_GEAR.VISIBLE_FIRST_PASS
+            ? (desktop ? CONFIG.streaming.visibleDetailBudgetMsDesktop : CONFIG.streaming.visibleDetailBudgetMsWeak)
+            : gear === WORLD_STREAMING_GEAR.LOCAL_DEEPEN ? CONFIG.streaming.warmBuildBudgetMs : Infinity;
+    const reserveRefinementMs = structureIncomplete ? refinementBudgetMs : 0;
     const warmCooldownMs = gear === WORLD_STREAMING_GEAR.LOCAL_DEEPEN ? CONFIG.streaming.warmCooldownMs : 0;
     worldChunkPumpPromise = worldChunkStreamer.pump({
-        maxChunks, maxMillis, maxRefinements, refineFirst, refinementBudgetMs,
+        maxChunks, maxMillis, maxRefinements, refineFirst, refinementBudgetMs, reserveRefinementMs,
     })
         .then(builtAny => {
             if (!builtAny) return;
@@ -4058,6 +4083,7 @@ function pumpWorldChunksAggressively() {
             console.log('[world-perf] gear=' + worldStreamingGear + ' · pump ' + t.lastPumpBuilt + ' chunk(s) + ' + t.lastPumpRefined + ' local detail turn(s) in ' + t.lastPumpMs.toFixed(1) + 'ms'
                 + ' · avg build ' + t.avgBuildMs.toFixed(2) + 'ms · detail worst ' + after.refinement.worstStepMs.toFixed(2) + 'ms'
                 + ' · detail pending ' + after.refinement.pendingChunks + ' · first-pass pending ' + after.localRenderRefinement.floorPendingChunks
+                + ' · detail published ' + after.refinement.published + '/' + after.refinement.attempts + ' attempts · no-op ' + after.refinement.noOp + ' · failed ' + after.refinement.failures
                 + ' · commit→visible ' + t.avgCommitToVisibleMs.toFixed(2) + 'ms · render ' + after.localRenderRing.ready + '/' + after.localRenderRing.total
                 + ' · prefetch ' + after.localPrefetchRing.ready + '/' + after.localPrefetchRing.total
                 + ' · assets ' + assets.active + '/' + assets.concurrency + ' active + ' + assets.pending + ' pending · failed ' + assets.failed);
@@ -4091,8 +4117,10 @@ function animate(now = performance.now()) {
      
     staticWorldOptimizer?.updateVisibility();
     worldChunkStreamer?.updateVisibility();
+    const liveWorldStats = worldChunkStreamer?.stats();
+    maybeLogWorldRichness(now, liveWorldStats);
 
-    const streamingGear = updateWorldStreamingGear(worldChunkStreamer?.stats());
+    const streamingGear = updateWorldStreamingGear(liveWorldStats);
     pumpWorldChunksAggressively();
     const spawnLocalWorkAllowed = shouldRunAuthoredLocalWork({
         gear: streamingGear,

@@ -342,9 +342,47 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0 } = {}) {
         'interior-prop': 4,
     });
 
+    const FIRST_PASS_CLASS_ORDER = Object.freeze(['facade', 'fixture', 'cap']);
+    function firstPassClass(kind) {
+        if (kind === 'sign' || kind === 'awning' || kind === 'graffiti' || kind === 'flyer') return 'facade';
+        if (kind === 'pipe' || kind === 'ivy' || kind === 'security' || kind === 'elevator-hardware' || kind === 'spray-cans') return 'fixture';
+        if (kind === 'interior-prop') return 'hidden';
+        if (kind === 'roof-clutter' || kind === 'roof-topper' || kind === 'marker' || String(kind).startsWith('plaza-')) return 'cap';
+        return 'other';
+    }
+
     function detailPriority(kind) {
         if (String(kind).startsWith('plaza-')) return 2;
         return DETAIL_KIND_PRIORITY[kind] ?? 3;
+    }
+
+    function sortedEntityTasks(queue) {
+        return queue.sort((a, b) =>
+            detailPriority(a.kind) - detailPriority(b.kind)
+            || a.kind.localeCompare(b.kind)
+            || (a.seed >>> 0) - (b.seed >>> 0));
+    }
+
+    function chooseFirstPassBundle(queue) {
+        const visibleCandidates = queue.filter(task => firstPassClass(task.kind) !== 'hidden');
+        const target = Math.min(3, visibleCandidates.length);
+        if (!target) return [];
+        const chosen = [];
+        const chosenSet = new Set();
+        for (const className of FIRST_PASS_CLASS_ORDER) {
+            const task = visibleCandidates.find(candidate => !chosenSet.has(candidate) && firstPassClass(candidate.kind) === className);
+            if (!task) continue;
+            chosen.push(task);
+            chosenSet.add(task);
+            if (chosen.length >= target) break;
+        }
+        for (const task of visibleCandidates) {
+            if (chosen.length >= target) break;
+            if (chosenSet.has(task)) continue;
+            chosen.push(task);
+            chosenSet.add(task);
+        }
+        return chosen;
     }
 
     function layerTasksAcrossEntities(tasks) {
@@ -356,21 +394,39 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0 } = {}) {
         }
         const queues = [...byEntity.entries()]
             .sort((a, b) => a[0].localeCompare(b[0]))
-            .map(([, queue]) => queue.sort((a, b) =>
-                detailPriority(a.kind) - detailPriority(b.kind)
-                || a.kind.localeCompare(b.kind)
-                || (a.seed >>> 0) - (b.seed >>> 0)));
+            .map(([id, raw]) => {
+                const all = sortedEntityTasks(raw);
+                const firstPass = chooseFirstPassBundle(all);
+                const firstSet = new Set(firstPass);
+                const deep = all.filter(task => !firstSet.has(task));
+                firstPass.forEach((task, index) => {
+                    task.firstPassBundle = true;
+                    task.firstPassBundleIndex = index;
+                    task.firstPassClass = firstPassClass(task.kind);
+                });
+                return { id, firstPass, deep, firstPassTarget: firstPass.length };
+            });
+
         const layered = [];
+        for (let layer = 0; layer < 3; layer++) {
+            for (const queue of queues) {
+                if (queue.firstPass[layer]) layered.push(queue.firstPass[layer]);
+            }
+        }
         for (let layer = 0; ; layer++) {
             let emitted = 0;
             for (const queue of queues) {
-                if (layer >= queue.length) continue;
-                layered.push(queue[layer]);
+                if (layer >= queue.deep.length) continue;
+                layered.push(queue.deep[layer]);
                 emitted++;
             }
             if (!emitted) break;
         }
-        return { tasks: layered, firstPassTaskCount: queues.filter(queue => queue.length).length };
+
+        const firstPassTargetByEntity = Object.fromEntries(queues.map(queue => [queue.id, queue.firstPassTarget]));
+        const firstPassPublicationTarget = queues.reduce((sum, queue) => sum + queue.firstPassTarget, 0);
+        const firstPassEntityTarget = queues.filter(queue => queue.firstPassTarget > 0).length;
+        return { tasks: layered, firstPassTargetByEntity, firstPassPublicationTarget, firstPassEntityTarget };
     }
 
     function plan(chunk, entities) {
@@ -379,16 +435,29 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0 } = {}) {
             if (entity.kind === 'building' || entity.kind === 'district-landmark') tasks.push(...planBuildingTasks(chunk, entity));
             else if (entity.kind === 'plaza') tasks.push(...planPlazaTasks(chunk, entity));
         }
-        // PLAYER-CENTERED VISIBLE CONVERGENCE: preserve the exact deterministic
-        // detail corpus, but publish it in layers across entities. A nearby block
-        // therefore acquires one readable/exterior feature per building/plaza
-        // before the scheduler spends deep turns on any single tower.
+        // VISIBLE CONVERGENCE: preserve the exact deterministic corpus, but make
+        // first-pass population a conspicuous per-entity bundle rather than a
+        // single sticker-sized task. Each entity gets up to three early features
+        // spanning facade identity, physical fixture, and roof/plaza/cap content.
         const layered = layerTasksAcrossEntities(tasks);
         return {
             phase: layered.tasks.length ? DETAIL_PHASE.STRUCTURAL_READY : DETAIL_PHASE.READY,
             tasks: layered.tasks,
-            firstPassTaskCount: layered.firstPassTaskCount,
+            firstPassTargetByEntity: layered.firstPassTargetByEntity,
+            firstPassPublishedByEntity: {},
+            firstPassPublicationTarget: layered.firstPassPublicationTarget,
+            firstPassSuccessfulPublications: 0,
+            firstPassEntityTarget: layered.firstPassEntityTarget,
+            firstPassEntitiesComplete: 0,
+            firstPassComplete: layered.firstPassEntityTarget === 0,
+            // Compatibility for older diagnostics. This is now the total number
+            // of successful publications required for the semantic first pass.
+            firstPassTaskCount: layered.firstPassPublicationTarget,
             cursor: 0,
+            attempted: 0,
+            published: 0,
+            noOp: 0,
+            failed: 0,
             completed: 0,
             failures: 0,
             worstStepMs: 0,
@@ -814,16 +883,41 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0 } = {}) {
         state.phase = DETAIL_PHASE.REFINING;
         const start = performance.now();
         let steps = 0;
+        let attempted = 0;
+        let published = 0;
+        let noOp = 0;
+        let failed = 0;
         const stepCap = Math.max(1, Math.floor(maxSteps));
         const timeCap = Number.isFinite(maxMillis) ? Math.max(0.1, maxMillis) : Infinity;
         while (state.cursor < state.tasks.length && steps < stepCap) {
             const task = state.tasks[state.cursor++];
             const stepStart = performance.now();
+            attempted++;
+            state.attempted++;
             try {
-                applyTask(chunk, payload, task);
-                state.completed++;
+                const didPublish = applyTask(chunk, payload, task);
+                if (didPublish) {
+                    published++;
+                    state.published++;
+                    state.completed = state.published;
+                    const entityId = String(task.entityId ?? '');
+                    const target = Number(state.firstPassTargetByEntity?.[entityId]) || 0;
+                    const before = Number(state.firstPassPublishedByEntity?.[entityId]) || 0;
+                    const after = before + 1;
+                    state.firstPassPublishedByEntity[entityId] = after;
+                    if (before < target) {
+                        state.firstPassSuccessfulPublications++;
+                        if (after >= target) state.firstPassEntitiesComplete++;
+                    }
+                    state.firstPassComplete = state.firstPassEntitiesComplete >= state.firstPassEntityTarget;
+                } else {
+                    noOp++;
+                    state.noOp++;
+                }
             } catch (error) {
-                state.failures++;
+                failed++;
+                state.failed++;
+                state.failures = state.failed;
                 console.warn?.(`[world] chunk ${chunk.key} detail ${task.kind} failed`, error);
             }
             const stepMs = performance.now() - stepStart;
@@ -840,10 +934,17 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0 } = {}) {
         return {
             progressed: steps > 0,
             steps,
+            attempted,
+            published,
+            noOp,
+            failed,
             complete,
             pending: Math.max(0, state.tasks.length - state.cursor),
             elapsedMs: performance.now() - start,
             lastKind: state.lastKind ?? null,
+            firstPassComplete: !!state.firstPassComplete,
+            firstPassEntitiesComplete: state.firstPassEntitiesComplete,
+            firstPassEntityTarget: state.firstPassEntityTarget,
         };
     }
 

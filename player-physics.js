@@ -243,8 +243,10 @@ export function createPlayerPhysics(options) {
         const r = p.radius + playerRadius;
         return { minX: p.x - r, maxX: p.x + r, minZ: p.z - r, maxZ: p.z + r };
     };
+    const mazeHalfThickness = seg => Number.isFinite(seg?.thickness) ? Math.max(0, seg.thickness * 0.5) : wallThickness * __qp28;
+    const mazeCollisionRadiusSq = (seg, margin = playerRadius) => (margin + mazeHalfThickness(seg)) ** __qp46;
     const mazeBounds = seg => {
-        const r = playerRadius + wallThickness * __qp28 + __qp29;
+        const r = playerRadius + mazeHalfThickness(seg) + __qp29;
         return {
             minX: Math.min(seg.x1, seg.x2) - r, maxX: Math.max(seg.x1, seg.x2) + r,
             minZ: Math.min(seg.z1, seg.z2) - r, maxZ: Math.max(seg.z1, seg.z2) + r,
@@ -279,6 +281,12 @@ export function createPlayerPhysics(options) {
         return r.y0 + (r.y1 - r.y0) * t;
     }
 
+    function mazeWallSupportsAt(seg, x, z, margin = supportMargin) {
+        return physicsItemActive(seg)
+            && Number.isFinite(seg.yMax)
+            && distanceSqToSegment(x, z, seg) <= mazeCollisionRadiusSq(seg, margin);
+    }
+
     function supportAt(x, z, currentFeetY) {
         let best = { y: __qp32, kind: 'ground' };
         const maxY = currentFeetY + maxStepHeight + CONTACT_EPS;
@@ -310,7 +318,11 @@ export function createPlayerPhysics(options) {
 
         for (const p of querySpatial(propIndex, x, z)) {
             if (!physicsItemActive(p) || p.height === Infinity || !circleContains(p, x, z, supportMargin)) continue;
-            consider(p.height, 'prop');
+            consider(p.height, p.supportKind ?? 'prop');
+        }
+
+        for (const seg of querySpatial(mazeIndex, x, z)) {
+            if (mazeWallSupportsAt(seg, x, z)) consider(seg.yMax, seg.supportKind ?? 'maze-wall');
         }
 
         return best;
@@ -336,6 +348,10 @@ export function createPlayerPhysics(options) {
         for (const p of querySpatial(propIndex, x, z)) {
             if (!physicsItemActive(p) || p.height === Infinity) continue;
             if (circleContains(p, x, z, supportMargin)) ys.push(p.height);
+        }
+
+        for (const seg of querySpatial(mazeIndex, x, z)) {
+            if (mazeWallSupportsAt(seg, x, z)) ys.push(seg.yMax);
         }
 
         return ys;
@@ -509,8 +525,7 @@ export function createPlayerPhysics(options) {
             const yMin = item.yMin ?? -Infinity;
             const yMax = item.yMax ?? Infinity;
             if (!verticalOverlap(bodyBottom, bodyTop, yMin, yMax)) return false;
-            const minWallDistSq = (playerRadius + wallThickness * __qp45) ** __qp46;
-            return distanceSqToSegment(x, z, item) < minWallDistSq;
+            return distanceSqToSegment(x, z, item) < mazeCollisionRadiusSq(item);
         }
 
         return false;
@@ -773,7 +788,7 @@ export function createPlayerPhysics(options) {
             const yMin = seg.yMin ?? -Infinity;
             const yMax = seg.yMax ?? Infinity;
             if (!verticalOverlap(bodyBottom, bodyTop, yMin, yMax)) continue;
-            if (distanceSqToSegment(x, z, seg) < minWallDistSq) return true;
+            if (distanceSqToSegment(x, z, seg) < mazeCollisionRadiusSq(seg)) return true;
         }
 
         for (const p of querySpatial(propIndex, x, z)) {
@@ -961,6 +976,14 @@ export function createPlayerPhysics(options) {
             position.z = moved.z;
         }
 
+        const afterHorizontal = {
+            x: position.x,
+            z: position.z,
+            feetY,
+            verticalVelocity,
+            grounded,
+        };
+
         if (!grounded) {
             verticalVelocity = Math.max(-maxFallSpeed, verticalVelocity + gravity * dt);
             const predictedFeetY = feetY + verticalVelocity * dt;
@@ -970,8 +993,10 @@ export function createPlayerPhysics(options) {
                 if (ceilingY !== null) {
                     const bonkFeetY = ceilingY - bodyHeight;
                     if (bonkFeetY < -CONTACT_EPS || !poseIsValid(position.x, position.z, bonkFeetY)) {
-                        restore(start);
-                        verticalVelocity = Math.min(__qp63, verticalVelocity);
+                        const failedVerticalVelocity = verticalVelocity;
+                        restore(afterHorizontal);
+                        verticalVelocity = Math.min(__qp63, failedVerticalVelocity);
+                        rememberSafe();
                         return;
                     }
                     feetY = bonkFeetY;
@@ -999,6 +1024,13 @@ export function createPlayerPhysics(options) {
          
          
         if (!poseIsValid(position.x, position.z, feetY)) {
+            const failedVerticalVelocity = verticalVelocity;
+            if (poseIsValid(afterHorizontal.x, afterHorizontal.z, afterHorizontal.feetY)) {
+                restore(afterHorizontal);
+                verticalVelocity = failedVerticalVelocity > __qp63 ? __qp63 : failedVerticalVelocity;
+                rememberSafe();
+                return;
+            }
             restore(start);
             if (!poseIsValid(position.x, position.z, feetY) && lastSafe) {
                 restore(lastSafe);

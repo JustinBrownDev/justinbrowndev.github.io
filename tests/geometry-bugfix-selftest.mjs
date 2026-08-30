@@ -1,0 +1,16 @@
+import assert from 'node:assert/strict';
+import { KOWLOON_BOUNDARY_BARRIER_THICKNESS, KOWLOON_BOUNDARY_BUILDING_SETBACK, KOWLOON_WALL_HALF, computeKowloonModuleRect, computeKowloonSlabRect, isKowloonSharedRoadCell, kowloonChunkBoundaryEdgeKind, kowloonStreetEncroachmentAllowed } from '../world/kowloon-geometry-contract.js';
+const dirs={N:{key:'N',dc:0,dr:-1},S:{key:'S',dc:0,dr:1},W:{key:'W',dc:-1,dr:0},E:{key:'E',dc:1,dr:0}};
+const aRect=computeKowloonModuleRect({cellCx:0,cellCz:0,halfX:3.5,halfZ:3.5,edgeKinds:{N:'street',S:'street',W:'street',E:'internal'},streetSetback:-0.7,partySetback:0.1,allowStreetEncroachment:()=>false});
+const bRect=computeKowloonModuleRect({cellCx:7,cellCz:0,halfX:3.5,halfZ:3.5,edgeKinds:{N:'street',S:'street',W:'internal',E:'street'},streetSetback:-0.7,partySetback:0.1,allowStreetEncroachment:()=>false});
+assert.equal(aRect.cx+aRect.halfX,3.5);assert.equal(bRect.cx-bRect.halfX,3.5);
+const a={key:'0,0',cell:{col:0,row:0},edgeKinds:{N:'street',S:'street',W:'street',E:'internal'},floors:3,rect:aRect};const b={key:'1,0',cell:{col:1,row:0},edgeKinds:{N:'street',S:'street',W:'internal',E:'street'},floors:3,rect:bRect};const map=new Map([[a.key,a],[b.key,b]]);
+const fa=computeKowloonSlabRect(a,map,1),fb=computeKowloonSlabRect(b,map,1);assert.equal(fa.x1,fb.x0);assert.equal(fa.x0,aRect.cx-aRect.halfX+KOWLOON_WALL_HALF);
+const ra=computeKowloonSlabRect(a,map,3,{roof:true}),rb=computeKowloonSlabRect(b,map,3,{roof:true});assert.equal(ra.x1,rb.x0);assert.equal(ra.x0,aRect.cx-aRect.halfX+KOWLOON_WALL_HALF);
+b.floors=4;assert.equal(computeKowloonSlabRect(a,map,3,{roof:true}).x1,3.5-KOWLOON_WALL_HALF);b.floors=3;
+const straight=new Set(['1,0','1,-1','1,1']);assert.equal(kowloonStreetEncroachmentAllowed({col:0,row:0},dirs.E,(c,r)=>straight.has(`${c},${r}`)),true);
+const corner=new Set(['1,0','2,0','1,1']);assert.equal(kowloonStreetEncroachmentAllowed({col:0,row:0},dirs.E,(c,r)=>corner.has(`${c},${r}`)),false);assert.equal(kowloonStreetEncroachmentAllowed({col:1,row:-1},dirs.S,(c,r)=>corner.has(`${c},${r}`)),false);
+const intersection=new Set(['1,0','0,0','2,0','1,-1','1,1']);assert.equal(kowloonStreetEncroachmentAllowed({col:0,row:0},dirs.E,(c,r)=>intersection.has(`${c},${r}`)),false);
+const roads=new Set(['4,0']);const portals={north:4,south:6,west:2,east:7};assert.equal(isKowloonSharedRoadCell(4,-1,{microCells:9,portals,roads}),true);assert.equal(isKowloonSharedRoadCell(3,-1,{microCells:9,portals,roads}),false);assert.equal(kowloonChunkBoundaryEdgeKind({col:4,row:0},dirs.N,{microCells:9,portals,roads}),'street');assert.equal(kowloonChunkBoundaryEdgeKind({col:3,row:0},dirs.N,{microCells:9,portals,roads}),'boundary');
+const boundaryRect=computeKowloonModuleRect({cellCx:0,cellCz:0,halfX:3.5,halfZ:3.5,edgeKinds:{N:'street',S:'street',W:'street',E:'boundary'},streetSetback:-0.7,partySetback:0.1,allowStreetEncroachment:()=>false});const seam=3.5;const buildingOuter=boundaryRect.cx+boundaryRect.halfX+KOWLOON_WALL_HALF;const barrierInner=seam-KOWLOON_BOUNDARY_BARRIER_THICKNESS;assert.equal(KOWLOON_BOUNDARY_BUILDING_SETBACK,0.24);assert.ok(buildingOuter<=barrierInner+1e-12);
+console.log('geometry-bugfix-selftest: ok');

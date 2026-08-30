@@ -20,6 +20,16 @@ import {
     partitionKowloonCompounds,
     selectKowloonCourtyardCell,
 } from './world/kowloon-structure.js';
+import {
+    KOWLOON_BOUNDARY_BARRIER_HEIGHT,
+    KOWLOON_BOUNDARY_BARRIER_THICKNESS,
+    KOWLOON_EXTERIOR_WALL_THICKNESS,
+    computeKowloonModuleRect,
+    computeKowloonSlabRect,
+    isKowloonSharedRoadCell,
+    kowloonChunkBoundaryEdgeKind,
+    kowloonStreetEncroachmentAllowed,
+} from './world/kowloon-geometry-contract.js';
 
  
  
@@ -418,7 +428,7 @@ export function createKowloonFabricEngine({
         const y0 = floor * floorH;
         const y1 = y0 + floorH;
         const wallY = (y0 + y1) * 0.5;
-        const wallT = 0.16;
+        const wallT = KOWLOON_EXTERIOR_WALL_THICKNESS;
         const horizontal = side === 'north' || side === 'south';
         const fixed = horizontal
             ? rect.cz + (side === 'north' ? -rect.halfZ : rect.halfZ)
@@ -432,10 +442,10 @@ export function createKowloonFabricEngine({
             const mid = (a + b) * 0.5;
             if (horizontal) {
                 wallTransform(wallList, mid, wallY, fixed, b - a, floorH, wallT);
-                physics.mazeWalls.push({ x1: a, z1: fixed, x2: b, z2: fixed, yMin: y0, yMax: y1 });
+                physics.mazeWalls.push({ x1: a, z1: fixed, x2: b, z2: fixed, yMin: y0, yMax: y1, thickness: wallT });
             } else {
                 wallTransform(wallList, fixed, wallY, mid, wallT, floorH, b - a);
-                physics.mazeWalls.push({ x1: fixed, z1: a, x2: fixed, z2: b, yMin: y0, yMax: y1 });
+                physics.mazeWalls.push({ x1: fixed, z1: a, x2: fixed, z2: b, yMin: y0, yMax: y1, thickness: wallT });
             }
         };
         if (!gap) {
@@ -452,11 +462,11 @@ export function createKowloonFabricEngine({
         if (side === 'north' || side === 'south') {
             const z = rect.cz + (side === 'north' ? -rect.halfZ : rect.halfZ);
             wallTransform(wallList, rect.cx, roofY + h * 0.5, z, rect.halfX * 2, h, t);
-            physics.mazeWalls.push({ x1: rect.cx - rect.halfX, z1: z, x2: rect.cx + rect.halfX, z2: z, yMin: roofY, yMax: roofY + h });
+            physics.mazeWalls.push({ x1: rect.cx - rect.halfX, z1: z, x2: rect.cx + rect.halfX, z2: z, yMin: roofY, yMax: roofY + h, thickness: t, supportKind: 'parapet' });
         } else {
             const x = rect.cx + (side === 'west' ? -rect.halfX : rect.halfX);
             wallTransform(wallList, x, roofY + h * 0.5, rect.cz, t, h, rect.halfZ * 2);
-            physics.mazeWalls.push({ x1: x, z1: rect.cz - rect.halfZ, x2: x, z2: rect.cz + rect.halfZ, yMin: roofY, yMax: roofY + h });
+            physics.mazeWalls.push({ x1: x, z1: rect.cz - rect.halfZ, x2: x, z2: rect.cz + rect.halfZ, yMin: roofY, yMax: roofY + h, thickness: t, supportKind: 'parapet' });
         }
     }
 
@@ -480,7 +490,9 @@ export function createKowloonFabricEngine({
 
         const isStreetCell = (col, row) => {
             if (streetCellOverride) return !!streetCellOverride(col, row);
-            if (col < 0 || row < 0 || col >= microCells || row >= microCells) return true;
+            if (col < 0 || row < 0 || col >= microCells || row >= microCells) {
+                return isKowloonSharedRoadCell(col, row, { microCells, portals: roadPlan.portals, roads: roadPlan.roads });
+            }
             if (roadPlan.roads.has(kowloonCellKey(col, row))) return true;
             const neighborSiteId = siteIdOf[row]?.[col];
             return neighborSiteId >= 0 && openSiteIds.has(neighborSiteId);
@@ -488,7 +500,10 @@ export function createKowloonFabricEngine({
         const edgeKindsFor = cell => {
             const result = {};
             for (const dir of KOWLOON_DIRS) {
-                result[dir.key] = classifyKowloonEdge({
+                const chunkBoundaryKind = streetCellOverride ? null : kowloonChunkBoundaryEdgeKind(cell, dir, {
+                    microCells, portals: roadPlan.portals, roads: roadPlan.roads,
+                });
+                result[dir.key] = chunkBoundaryKind ?? classifyKowloonEdge({
                     siteIdOf, siteId: site.id, row: cell.row, col: cell.col,
                     dr: dir.dr, dc: dir.dc, isStreet: isStreetCell, courtyardCell: courtyard,
                 });
@@ -543,13 +558,12 @@ export function createKowloonFabricEngine({
                 // as a cramped alley instead of a suburban setback.
                 const streetSetback = cellSize * (-0.14 + rng() * 0.07);
                 const partySetback = cellSize * (0.010 + rng() * 0.018);
-                const internalSetback = cellSize * 0.002;
-                const setbackFor = kind => kind === 'internal' ? internalSetback : kind === 'party' ? partySetback : streetSetback;
-                const x0 = cellCx - cellSize * 0.5 + setbackFor(edgeKinds.W);
-                const x1 = cellCx + cellSize * 0.5 - setbackFor(edgeKinds.E);
-                const z0 = cellCz - cellSize * 0.5 + setbackFor(edgeKinds.N);
-                const z1 = cellCz + cellSize * 0.5 - setbackFor(edgeKinds.S);
-                rect = { cx: (x0 + x1) * 0.5, cz: (z0 + z1) * 0.5, halfX: (x1 - x0) * 0.5, halfZ: (z1 - z0) * 0.5 };
+                const dirByKey = new Map(KOWLOON_DIRS.map(dir => [dir.key, dir]));
+                rect = computeKowloonModuleRect({
+                    cellCx, cellCz, halfX: cellSize * 0.5, halfZ: cellSize * 0.5, edgeKinds,
+                    streetSetback, partySetback,
+                    allowStreetEncroachment: sideKey => kowloonStreetEncroachmentAllowed(cell, dirByKey.get(sideKey), isStreetCell),
+                });
             }
             let floors;
             if (key === primaryKey) floors = primaryFloors;
@@ -732,18 +746,18 @@ export function createKowloonFabricEngine({
                 }
 
                 if (floor > 0) {
+                    const slabRect = computeKowloonSlabRect(module, moduleByKey, floor);
                     if (isSpine) {
-                        addNotchedFloor(physics.platforms, module.rect.cx, module.rect.cz,
-                            module.rect.halfX * 2 - 0.12, module.rect.halfZ * 2 - 0.12,
+                        addNotchedFloor(physics.platforms, slabRect.cx, slabRect.cz,
+                            slabRect.width, slabRect.depth,
                             y0, stairReservation.x, stairReservation.z, stairReservation.openingWidth, stairReservation.openingDepth);
-                        addRenderedNotchedSlab(transforms, module.rect.cx, module.rect.cz,
-                            module.rect.halfX * 2 - 0.12, module.rect.halfZ * 2 - 0.12,
+                        addRenderedNotchedSlab(transforms, slabRect.cx, slabRect.cz,
+                            slabRect.width, slabRect.depth,
                             y0, stairReservation.x, stairReservation.z, stairReservation.openingWidth, stairReservation.openingDepth);
                     } else {
-                        addRectPlatform(physics.platforms, module.rect.cx, module.rect.cz,
-                            module.rect.halfX * 2 - 0.12, module.rect.halfZ * 2 - 0.12, y0, 'floor');
-                        transforms.slabs.push({ x: module.rect.cx, y: y0 - 0.06, z: module.rect.cz,
-                            sx: module.rect.halfX * 2 - 0.12, sy: 0.12, sz: module.rect.halfZ * 2 - 0.12 });
+                        addRectPlatform(physics.platforms, slabRect.cx, slabRect.cz, slabRect.width, slabRect.depth, y0, 'floor');
+                        transforms.slabs.push({ x: slabRect.cx, y: y0 - 0.06, z: slabRect.cz,
+                            sx: slabRect.width, sy: 0.12, sz: slabRect.depth });
                     }
                 }
 
@@ -778,21 +792,21 @@ export function createKowloonFabricEngine({
             }
 
             const roofY = moduleRoofY;
+            const roofRect = computeKowloonSlabRect(module, moduleByKey, module.floors, { roof: true });
             if (isSpine) {
                 // The final flight reaches the roof, so the roof must obey the exact
                 // same shaft reservation as every intermediate floor. A solid cap
                 // here used to turn a valid stair into a procedural dead end.
-                addNotchedFloor(physics.platforms, module.rect.cx, module.rect.cz,
-                    module.rect.halfX * 2 - 0.12, module.rect.halfZ * 2 - 0.12,
+                addNotchedFloor(physics.platforms, roofRect.cx, roofRect.cz,
+                    roofRect.width, roofRect.depth,
                     roofY, stairReservation.x, stairReservation.z, stairReservation.openingWidth, stairReservation.openingDepth, 'roof');
-                addRenderedNotchedSlab(transforms, module.rect.cx, module.rect.cz,
-                    module.rect.halfX * 2 - 0.12, module.rect.halfZ * 2 - 0.12,
+                addRenderedNotchedSlab(transforms, roofRect.cx, roofRect.cz,
+                    roofRect.width, roofRect.depth,
                     roofY, stairReservation.x, stairReservation.z, stairReservation.openingWidth, stairReservation.openingDepth);
             } else {
-                addRectPlatform(physics.platforms, module.rect.cx, module.rect.cz,
-                    module.rect.halfX * 2 - 0.12, module.rect.halfZ * 2 - 0.12, roofY, 'roof');
-                transforms.slabs.push({ x: module.rect.cx, y: roofY - 0.06, z: module.rect.cz,
-                    sx: module.rect.halfX * 2 - 0.12, sy: 0.12, sz: module.rect.halfZ * 2 - 0.12 });
+                addRectPlatform(physics.platforms, roofRect.cx, roofRect.cz, roofRect.width, roofRect.depth, roofY, 'roof');
+                transforms.slabs.push({ x: roofRect.cx, y: roofY - 0.06, z: roofRect.cz,
+                    sx: roofRect.width, sy: 0.12, sz: roofRect.depth });
             }
             for (const dir of KOWLOON_DIRS) {
                 let exposed = module.edgeKinds[dir.key] !== 'internal';
@@ -1330,7 +1344,7 @@ export function createKowloonFabricEngine({
     function addOwnedBoundaryBarriers(chunk, roadPlan, physics, wallList, cellSize) {
         const half = chunkSize * 0.5;
         const last = microCells - 1;
-        const wallH = 1.55, wallT = 0.16;
+        const wallH = KOWLOON_BOUNDARY_BARRIER_HEIGHT, wallT = KOWLOON_BOUNDARY_BARRIER_THICKNESS;
 
          
          
@@ -1340,14 +1354,14 @@ export function createKowloonFabricEngine({
             const z = chunk.centerZ - half + (r + 0.5) * cellSize;
             const x = chunk.centerX + half - wallT * 0.5;
             wallTransform(wallList, x, wallH * 0.5, z, wallT, wallH, cellSize);
-            physics.mazeWalls.push({ x1: x, z1: z - cellSize * 0.5, x2: x, z2: z + cellSize * 0.5, yMin: 0, yMax: wallH });
+            physics.mazeWalls.push({ x1: x, z1: z - cellSize * 0.5, x2: x, z2: z + cellSize * 0.5, yMin: 0, yMax: wallH, thickness: wallT });
         }
         for (let c = 0; c < microCells; c++) {
             if (c === roadPlan.portals.south) continue;
             const x = chunk.centerX - half + (c + 0.5) * cellSize;
             const z = chunk.centerZ + half - wallT * 0.5;
             wallTransform(wallList, x, wallH * 0.5, z, cellSize, wallH, wallT);
-            physics.mazeWalls.push({ x1: x - cellSize * 0.5, z1: z, x2: x + cellSize * 0.5, z2: z, yMin: 0, yMax: wallH });
+            physics.mazeWalls.push({ x1: x - cellSize * 0.5, z1: z, x2: x + cellSize * 0.5, z2: z, yMin: 0, yMax: wallH, thickness: wallT });
         }
         return last;
     }
@@ -1447,13 +1461,12 @@ export function createKowloonFabricEngine({
                 const scale = Math.max(0.5, Math.min(hx * 2, hz * 2));
                 const streetSetback = scale * (-0.14 + rng() * 0.07);
                 const partySetback = scale * (0.010 + rng() * 0.018);
-                const internalSetback = scale * 0.002;
-                const setbackFor = kind => kind === 'internal' ? internalSetback : kind === 'party' ? partySetback : streetSetback;
-                const x0 = center.x - hx + setbackFor(edgeKinds.W);
-                const x1 = center.x + hx - setbackFor(edgeKinds.E);
-                const z0 = center.z - hz + setbackFor(edgeKinds.N);
-                const z1 = center.z + hz - setbackFor(edgeKinds.S);
-                return { cx: (x0 + x1) * 0.5, cz: (z0 + z1) * 0.5, halfX: Math.max(0.3, (x1 - x0) * 0.5), halfZ: Math.max(0.3, (z1 - z0) * 0.5) };
+                const isAuthoredRoadCell = (col, row) => grid[row]?.[col] !== true;
+                const dirByKey = new Map(KOWLOON_DIRS.map(dir => [dir.key, dir]));
+                return computeKowloonModuleRect({
+                    cellCx: center.x, cellCz: center.z, halfX: hx, halfZ: hz, edgeKinds, streetSetback, partySetback,
+                    allowStreetEncroachment: sideKey => kowloonStreetEncroachmentAllowed(cell, dirByKey.get(sideKey), isAuthoredRoadCell),
+                });
             },
             metricForCell(cell) {
                 const center = cellToWorld(cell.col, cell.row);

@@ -1,5 +1,6 @@
 import { hashString32 } from './world-chunk-streamer.js';
 import { WORLD_FORMAT_VERSION, worldChunkOwnerId, worldEntityId } from './world-contract.js';
+import { createInfiniteChunkEnrichment } from './world/infinite-chunk-enrichment.js';
 
  
  
@@ -77,6 +78,7 @@ export function createInfiniteCityChunkFactory({
 } = {}) {
     if (!THREE || !scene || !playerPhysics) throw new Error('createInfiniteCityChunkFactory requires THREE, scene, playerPhysics');
     const addStreamRoot = typeof directSceneAdd === 'function' ? directSceneAdd : scene.add.bind(scene);
+    const enrichment = createInfiniteChunkEnrichment({ THREE, worldSeed });
     const committedOwners = new Set();
     if (microCells < 5 || microCells % 2 === 0) throw new Error('microCells must be an odd integer >= 5');
 
@@ -222,31 +224,164 @@ export function createInfiniteCityChunkFactory({
         if (gz1 < z1) transforms.slabs.push({ x: (gx0 + gx1) * 0.5, y: y - slabT * 0.5, z: (gz1 + z1) * 0.5, sx: gx1 - gx0, sy: slabT, sz: z1 - gz1 });
     }
 
-    function addFacadeDetails(transforms, rng, { cx, cz, halfX, halfZ, floorH, floors, doorSide }) {
-         
+    function addFacadeDetails(transforms, rng, { footprints, floorH, floors, doorSide, balconySpec = null }) {
+        const base = footprints[0];
         const doorH = 2.2, doorW = 1.35, inset = 0.018;
         if (doorSide === 'north' || doorSide === 'south') {
-            const z = cz + (doorSide === 'north' ? -halfZ - inset : halfZ + inset);
-            transforms.doors.push({ x: cx, y: doorH * 0.5, z, sx: doorW, sy: doorH, sz: 0.05 });
+            const z = base.cz + (doorSide === 'north' ? -base.halfZ - inset : base.halfZ + inset);
+            transforms.doors.push({ x: base.cx, y: doorH * 0.5, z, sx: doorW, sy: doorH, sz: 0.05 });
         } else {
-            const x = cx + (doorSide === 'west' ? -halfX - inset : halfX + inset);
-            transforms.doors.push({ x, y: doorH * 0.5, z: cz, sx: 0.05, sy: doorH, sz: doorW });
+            const x = base.cx + (doorSide === 'west' ? -base.halfX - inset : base.halfX + inset);
+            transforms.doors.push({ x, y: doorH * 0.5, z: base.cz, sx: 0.05, sy: doorH, sz: doorW });
         }
 
-         
-         
         for (let floor = 0; floor < floors; floor++) {
+            const fp = footprints[floor];
             const y = floor * floorH + floorH * 0.58;
             const n = rng() < 0.45 ? 1 : 2;
             for (let i = 0; i < n; i++) {
                 const u = n === 1 ? 0 : (i === 0 ? -0.32 : 0.32);
-                transforms.windows.push({ x: cx + u * halfX, y, z: cz - halfZ - 0.022, sx: Math.min(1.25, halfX * 0.42), sy: 0.72, sz: 0.04 });
-                transforms.windows.push({ x: cx + u * halfX, y, z: cz + halfZ + 0.022, sx: Math.min(1.25, halfX * 0.42), sy: 0.72, sz: 0.04 });
+                transforms.windows.push({ x: fp.cx + u * fp.halfX, y, z: fp.cz - fp.halfZ - 0.022, sx: Math.min(1.25, fp.halfX * 0.42), sy: 0.72, sz: 0.04 });
+                transforms.windows.push({ x: fp.cx + u * fp.halfX, y, z: fp.cz + fp.halfZ + 0.022, sx: Math.min(1.25, fp.halfX * 0.42), sy: 0.72, sz: 0.04 });
+            }
+            if (fp.halfZ > 1.2) {
+                const sideWindowZ = fp.cz + (floor % 2 ? 0.22 : -0.22) * fp.halfZ;
+                transforms.windows.push({ x: fp.cx - fp.halfX - 0.022, y, z: sideWindowZ, sx: 0.04, sy: 0.68, sz: Math.min(1.15, fp.halfZ * 0.44) });
+                transforms.windows.push({ x: fp.cx + fp.halfX + 0.022, y, z: sideWindowZ, sx: 0.04, sy: 0.68, sz: Math.min(1.15, fp.halfZ * 0.44) });
+            }
+        }
+
+        if (balconySpec) {
+            const fp = footprints[Math.min(1, footprints.length - 1)];
+            const y = floorH + 1.15;
+            const side = balconySpec.side;
+            if (side === 'north' || side === 'south') {
+                const z = fp.cz + (side === 'north' ? -fp.halfZ - inset : fp.halfZ + inset);
+                transforms.doors.push({ x: fp.cx, y, z, sx: 1.1, sy: 2.05, sz: 0.05 });
+            } else {
+                const x = fp.cx + (side === 'west' ? -fp.halfX - inset : fp.halfX + inset);
+                transforms.doors.push({ x, y, z: fp.cz, sx: 0.05, sy: 2.05, sz: 1.1 });
             }
         }
     }
 
-    function buildBuilding({ physics, transforms, rng, cx, cz, halfX, halfZ, floors, doorSide, wallList }) {
+    function addPartitionWall(wallList, physics, fp, y0, y1, spec, stairCx, stairCz) {
+        if (!spec) return 0;
+        const wallH = y1 - y0;
+        const wallY = y0 + wallH * 0.5;
+        const wallT = 0.14;
+        const gap = 1.25;
+        let segments = 0;
+        if (spec.axis === 'x') {
+            const z = fp.cz + spec.offset * fp.halfZ;
+            const x0 = fp.cx - fp.halfX + 0.18, x1 = fp.cx + fp.halfX - 0.18;
+            const gapCx = clamp(stairCx, x0 + gap * 0.55, x1 - gap * 0.55);
+            const g0 = gapCx - gap * 0.5, g1 = gapCx + gap * 0.5;
+            if (g0 > x0) {
+                const w = g0 - x0;
+                wallTransform(wallList, x0 + w * 0.5, wallY, z, w, wallH, wallT);
+                physics.mazeWalls.push({ x1: x0, z1: z, x2: g0, z2: z, yMin: y0, yMax: y1 });
+                segments++;
+            }
+            if (g1 < x1) {
+                const w = x1 - g1;
+                wallTransform(wallList, g1 + w * 0.5, wallY, z, w, wallH, wallT);
+                physics.mazeWalls.push({ x1: g1, z1: z, x2: x1, z2: z, yMin: y0, yMax: y1 });
+                segments++;
+            }
+        } else {
+            const x = fp.cx + spec.offset * fp.halfX;
+            const z0 = fp.cz - fp.halfZ + 0.18, z1 = fp.cz + fp.halfZ - 0.18;
+            const gapCz = clamp(stairCz, z0 + gap * 0.55, z1 - gap * 0.55);
+            const g0 = gapCz - gap * 0.5, g1 = gapCz + gap * 0.5;
+            if (g0 > z0) {
+                const d = g0 - z0;
+                wallTransform(wallList, x, wallY, z0 + d * 0.5, wallT, wallH, d);
+                physics.mazeWalls.push({ x1: x, z1: z0, x2: x, z2: g0, yMin: y0, yMax: y1 });
+                segments++;
+            }
+            if (g1 < z1) {
+                const d = z1 - g1;
+                wallTransform(wallList, x, wallY, g1 + d * 0.5, wallT, wallH, d);
+                physics.mazeWalls.push({ x1: x, z1: g1, x2: x, z2: z1, yMin: y0, yMax: y1 });
+                segments++;
+            }
+        }
+        return segments;
+    }
+
+    function buildModularFootprints({ cx, cz, halfX, halfZ, floors, stairCx, stairCz, stairGapW, stairGapD, enhancementRng }) {
+        const footprints = [{ cx, cz, halfX, halfZ }];
+        if (floors <= 1) return footprints;
+        const useSetback = floors >= 3 && enhancementRng() < 0.82;
+        const setbackFloor = useSetback ? 1 + Math.floor(enhancementRng() * Math.max(1, floors - 2)) : floors;
+        const scaleX = useSetback ? 0.72 + enhancementRng() * 0.20 : 1;
+        const scaleZ = useSetback ? 0.72 + enhancementRng() * 0.20 : 1;
+        const rawOffX = (enhancementRng() - 0.5) * halfX * 0.22;
+        const rawOffZ = (enhancementRng() - 0.5) * halfZ * 0.22;
+        for (let floor = 1; floor < floors; floor++) {
+            if (floor < setbackFloor) {
+                footprints.push({ cx, cz, halfX, halfZ });
+                continue;
+            }
+            const hx = Math.max(stairGapW * 0.5 + 0.55, halfX * scaleX);
+            const hz = Math.max(stairGapD * 0.5 + 0.55, halfZ * scaleZ);
+            const maxDx = Math.max(0, hx - stairGapW * 0.5 - 0.35);
+            const maxDz = Math.max(0, hz - stairGapD * 0.5 - 0.35);
+            const fx = clamp(cx + rawOffX, stairCx - maxDx, stairCx + maxDx);
+            const fz = clamp(cz + rawOffZ, stairCz - maxDz, stairCz + maxDz);
+            footprints.push({ cx: fx, cz: fz, halfX: hx, halfZ: hz });
+        }
+        return footprints;
+    }
+
+    function addBalcony({ physics, transforms, wallList, fp, y, side }) {
+        const slabT = 0.12;
+        const depth = 0.92;
+        const railH = 0.82;
+        const railT = 0.09;
+        if (side === 'north' || side === 'south') {
+            const width = Math.max(1.8, fp.halfX * 1.45);
+            const z = fp.cz + (side === 'north' ? -fp.halfZ - depth * 0.5 : fp.halfZ + depth * 0.5);
+            transforms.slabs.push({ x: fp.cx, y: y - slabT * 0.5, z, sx: width, sy: slabT, sz: depth });
+            addRectPlatform(physics.platforms, fp.cx, z, width, depth, y, 'balcony');
+            const outerZ = z + (side === 'north' ? -depth * 0.5 : depth * 0.5);
+            wallTransform(wallList, fp.cx, y + railH * 0.5, outerZ, width, railH, railT);
+            physics.mazeWalls.push({ x1: fp.cx - width * 0.5, z1: outerZ, x2: fp.cx + width * 0.5, z2: outerZ, yMin: y, yMax: y + railH });
+            for (const x of [fp.cx - width * 0.5, fp.cx + width * 0.5]) {
+                wallTransform(wallList, x, y + railH * 0.5, z, railT, railH, depth);
+                physics.mazeWalls.push({ x1: x, z1: z - depth * 0.5, x2: x, z2: z + depth * 0.5, yMin: y, yMax: y + railH });
+            }
+        } else {
+            const width = Math.max(1.8, fp.halfZ * 1.45);
+            const x = fp.cx + (side === 'west' ? -fp.halfX - depth * 0.5 : fp.halfX + depth * 0.5);
+            transforms.slabs.push({ x, y: y - slabT * 0.5, z: fp.cz, sx: depth, sy: slabT, sz: width });
+            addRectPlatform(physics.platforms, x, fp.cz, depth, width, y, 'balcony');
+            const outerX = x + (side === 'west' ? -depth * 0.5 : depth * 0.5);
+            wallTransform(wallList, outerX, y + railH * 0.5, fp.cz, railT, railH, width);
+            physics.mazeWalls.push({ x1: outerX, z1: fp.cz - width * 0.5, x2: outerX, z2: fp.cz + width * 0.5, yMin: y, yMax: y + railH });
+            for (const z of [fp.cz - width * 0.5, fp.cz + width * 0.5]) {
+                wallTransform(wallList, x, y + railH * 0.5, z, depth, railH, railT);
+                physics.mazeWalls.push({ x1: x - depth * 0.5, z1: z, x2: x + depth * 0.5, z2: z, yMin: y, yMax: y + railH });
+            }
+        }
+    }
+
+    function addRoofParapet({ physics, wallList, fp, roofY }) {
+        const h = 0.68, t = 0.12;
+        wallTransform(wallList, fp.cx, roofY + h * 0.5, fp.cz - fp.halfZ, fp.halfX * 2, h, t);
+        wallTransform(wallList, fp.cx, roofY + h * 0.5, fp.cz + fp.halfZ, fp.halfX * 2, h, t);
+        wallTransform(wallList, fp.cx - fp.halfX, roofY + h * 0.5, fp.cz, t, h, fp.halfZ * 2);
+        wallTransform(wallList, fp.cx + fp.halfX, roofY + h * 0.5, fp.cz, t, h, fp.halfZ * 2);
+        physics.mazeWalls.push(
+            { x1: fp.cx - fp.halfX, z1: fp.cz - fp.halfZ, x2: fp.cx + fp.halfX, z2: fp.cz - fp.halfZ, yMin: roofY, yMax: roofY + h },
+            { x1: fp.cx - fp.halfX, z1: fp.cz + fp.halfZ, x2: fp.cx + fp.halfX, z2: fp.cz + fp.halfZ, yMin: roofY, yMax: roofY + h },
+            { x1: fp.cx - fp.halfX, z1: fp.cz - fp.halfZ, x2: fp.cx - fp.halfX, z2: fp.cz + fp.halfZ, yMin: roofY, yMax: roofY + h },
+            { x1: fp.cx + fp.halfX, z1: fp.cz - fp.halfZ, x2: fp.cx + fp.halfX, z2: fp.cz + fp.halfZ, yMin: roofY, yMax: roofY + h },
+        );
+    }
+
+    function buildBuilding({ physics, transforms, rng, enhancementRng = rng, entityId = '', cx, cz, halfX, halfZ, floors, doorSide, wallList }) {
         const floorH = 3.15;
         const wallT = 0.16;
         const width = halfX * 2;
@@ -256,41 +391,53 @@ export function createInfiniteCityChunkFactory({
         const stairCx = cx + (doorSide === 'west' ? width * 0.20 : doorSide === 'east' ? -width * 0.20 : (rng() - 0.5) * width * 0.22);
         const stairCz = cz + (doorSide === 'north' ? depth * 0.18 : doorSide === 'south' ? -depth * 0.18 : (rng() - 0.5) * depth * 0.22);
         const doorW = 1.65;
+        const footprints = buildModularFootprints({ cx, cz, halfX, halfZ, floors, stairCx, stairCz, stairGapW, stairGapD, enhancementRng });
+        const balconySpec = floors >= 2 && enhancementRng() < 0.58
+            ? { side: ['north', 'east', 'south', 'west'][(hashString32(`${entityId}:balcony`) >>> 0) % 4] }
+            : null;
+        const partitionSpecs = footprints.map((fp, floor) => {
+            if (fp.halfX < 1.8 || fp.halfZ < 1.8 || enhancementRng() > (floor === 0 ? 0.78 : 0.54)) return null;
+            return { axis: enhancementRng() < 0.5 ? 'x' : 'z', offset: (enhancementRng() - 0.5) * 0.45 };
+        });
+        let partitionSegments = 0;
 
         for (let floor = 0; floor < floors; floor++) {
+            const fp = footprints[floor];
             const y0 = floor * floorH;
             const y1 = y0 + floorH;
             const wallY = y0 + floorH * 0.5;
-            const gap = floor === 0 ? doorW : 0;
+            const wallWidth = fp.halfX * 2;
+            const wallDepth = fp.halfZ * 2;
+            const openingSide = floor === 0 ? doorSide : (floor === 1 ? balconySpec?.side : null);
+            const openingWidth = floor === 0 ? doorW : (openingSide ? 1.25 : 0);
 
             const addHorizontalWall = (z, side) => {
-                if (gap && doorSide === side) {
-                    const seg = (width - gap) * 0.5;
-                    wallTransform(wallList, cx - (gap + seg) * 0.5, wallY, z, seg, floorH, wallT);
-                    wallTransform(wallList, cx + (gap + seg) * 0.5, wallY, z, seg, floorH, wallT);
-                } else wallTransform(wallList, cx, wallY, z, width, floorH, wallT);
+                if (openingWidth && openingSide === side) {
+                    const seg = Math.max(0.05, (wallWidth - openingWidth) * 0.5);
+                    wallTransform(wallList, fp.cx - (openingWidth + seg) * 0.5, wallY, z, seg, floorH, wallT);
+                    wallTransform(wallList, fp.cx + (openingWidth + seg) * 0.5, wallY, z, seg, floorH, wallT);
+                } else wallTransform(wallList, fp.cx, wallY, z, wallWidth, floorH, wallT);
             };
             const addVerticalWall = (x, side) => {
-                if (gap && doorSide === side) {
-                    const seg = (depth - gap) * 0.5;
-                    wallTransform(wallList, x, wallY, cz - (gap + seg) * 0.5, wallT, floorH, seg);
-                    wallTransform(wallList, x, wallY, cz + (gap + seg) * 0.5, wallT, floorH, seg);
-                } else wallTransform(wallList, x, wallY, cz, wallT, floorH, depth);
+                if (openingWidth && openingSide === side) {
+                    const seg = Math.max(0.05, (wallDepth - openingWidth) * 0.5);
+                    wallTransform(wallList, x, wallY, fp.cz - (openingWidth + seg) * 0.5, wallT, floorH, seg);
+                    wallTransform(wallList, x, wallY, fp.cz + (openingWidth + seg) * 0.5, wallT, floorH, seg);
+                } else wallTransform(wallList, x, wallY, fp.cz, wallT, floorH, wallDepth);
             };
-            addHorizontalWall(cz - halfZ, 'north');
-            addHorizontalWall(cz + halfZ, 'south');
-            addVerticalWall(cx - halfX, 'west');
-            addVerticalWall(cx + halfX, 'east');
-            pushWallSegments(physics.mazeWalls, cx, cz, halfX, halfZ, y0, y1, floor === 0 ? doorSide : null, doorW);
+            addHorizontalWall(fp.cz - fp.halfZ, 'north');
+            addHorizontalWall(fp.cz + fp.halfZ, 'south');
+            addVerticalWall(fp.cx - fp.halfX, 'west');
+            addVerticalWall(fp.cx + fp.halfX, 'east');
+            pushWallSegments(physics.mazeWalls, fp.cx, fp.cz, fp.halfX, fp.halfZ, y0, y1, openingSide, openingWidth || doorW);
+            partitionSegments += addPartitionWall(wallList, physics, fp, y0, y1, partitionSpecs[floor], stairCx, stairCz);
 
             if (floor > 0) {
-                addNotchedFloor(physics.platforms, cx, cz, width - wallT * 2, depth - wallT * 2, y0, stairCx, stairCz, stairGapW, stairGapD);
-                addRenderedNotchedSlab(transforms, cx, cz, width - wallT * 2, depth - wallT * 2, y0, stairCx, stairCz, stairGapW, stairGapD);
+                const supportFp = footprints[floor - 1];
+                addNotchedFloor(physics.platforms, supportFp.cx, supportFp.cz, supportFp.halfX * 2 - wallT * 2, supportFp.halfZ * 2 - wallT * 2, y0, stairCx, stairCz, stairGapW, stairGapD);
+                addRenderedNotchedSlab(transforms, supportFp.cx, supportFp.cz, supportFp.halfX * 2 - wallT * 2, supportFp.halfZ * 2 - wallT * 2, y0, stairCx, stairCz, stairGapW, stairGapD);
             }
 
-             
-             
-             
             const runAxis = stairGapD >= stairGapW ? 'z' : 'x';
             const from = runAxis === 'z' ? stairCz - stairGapD * 0.42 : stairCx - stairGapW * 0.42;
             const to = runAxis === 'z' ? stairCz + stairGapD * 0.42 : stairCx + stairGapW * 0.42;
@@ -314,10 +461,13 @@ export function createInfiniteCityChunkFactory({
             }
         }
 
+        const top = footprints[footprints.length - 1];
         const roofY = floors * floorH;
-        addNotchedFloor(physics.platforms, cx, cz, width - wallT * 2, depth - wallT * 2, roofY, stairCx, stairCz, stairGapW, stairGapD, 'roof');
-        addRenderedNotchedSlab(transforms, cx, cz, width - wallT * 2, depth - wallT * 2, roofY, stairCx, stairCz, stairGapW, stairGapD);
-        addFacadeDetails(transforms, rng, { cx, cz, halfX, halfZ, floorH, floors, doorSide });
+        addNotchedFloor(physics.platforms, top.cx, top.cz, top.halfX * 2 - wallT * 2, top.halfZ * 2 - wallT * 2, roofY, stairCx, stairCz, stairGapW, stairGapD, 'roof');
+        addRenderedNotchedSlab(transforms, top.cx, top.cz, top.halfX * 2 - wallT * 2, top.halfZ * 2 - wallT * 2, roofY, stairCx, stairCz, stairGapW, stairGapD);
+        addRoofParapet({ physics, wallList, fp: top, roofY });
+        if (balconySpec) addBalcony({ physics, transforms, wallList, fp: footprints[Math.min(1, footprints.length - 1)], y: floorH, side: balconySpec.side });
+        addFacadeDetails(transforms, rng, { footprints, floorH, floors, doorSide, balconySpec });
 
         if (rng() < 0.58) {
             const px = cx + (doorSide === 'west' ? -halfX - 0.7 : doorSide === 'east' ? halfX + 0.7 : (rng() - 0.5) * width * 0.55);
@@ -325,6 +475,16 @@ export function createInfiniteCityChunkFactory({
             transforms.props.push({ x: px, y: 0.38, z: pz, sx: 0.75, sy: 0.76, sz: 0.75 });
             physics.props.push({ x: px, z: pz, radius: 0.52, height: 0.76 });
         }
+
+        return {
+            floorH,
+            halfX,
+            halfZ,
+            footprintModules: footprints.map(fp => ({ ...fp })),
+            modularSetbacks: footprints.filter((fp, i) => i > 0 && (fp.cx !== footprints[i - 1].cx || fp.cz !== footprints[i - 1].cz || fp.halfX !== footprints[i - 1].halfX || fp.halfZ !== footprints[i - 1].halfZ)).length,
+            partitionSegments,
+            balconySide: balconySpec?.side ?? null,
+        };
     }
 
     const districtLandmarkTypes = Object.freeze(['spire', 'stack', 'gatehouse', 'archive', 'beacon']);
@@ -393,10 +553,12 @@ export function createInfiniteCityChunkFactory({
         const halfZ = cellSize * (spec.type === 'stack' ? 0.46 : 0.42);
         const doorSide = cell.sides[hashString32(`${spec.id}:door`) % cell.sides.length];
         const materialIndex = hashString32(`${spec.id}:facade`) % wallMats.length;
-        buildBuilding({
+        const structural = buildBuilding({
             physics,
             transforms,
             rng,
+            enhancementRng: mulberry32(hashString32(`${spec.id}:structure-v2`)),
+            entityId: spec.id,
             cx: cellCx,
             cz: cellCz,
             halfX,
@@ -420,7 +582,7 @@ export function createInfiniteCityChunkFactory({
             const mastH = 2.4 + weird * 3.2;
             wallTransform(transforms.wallGroups[materialIndex], cellCx, roofY + crownH + mastH * 0.5, cellCz, 0.22, mastH, 0.22);
         }
-        return { ...spec, c: cell.c, r: cell.r, x: cellCx, z: cellCz, floors, doorSide, materialIndex };
+        return { ...spec, c: cell.c, r: cell.r, x: cellCx, z: cellCz, floors, doorSide, materialIndex, ...structural };
     }
 
     function addOwnedBoundaryBarriers(chunk, roadPlan, physics, wallList, cellSize) {
@@ -586,12 +748,14 @@ export function createInfiniteCityChunkFactory({
             const materialIndex = hashString32(`${chunk.seed}:facade:${c}:${r}`) % wallMats.length;
 
             const buildingId = worldEntityId(worldSeed, chunk.x, chunk.z, 'building', k);
-            buildBuilding({
+            const structural = buildBuilding({
                 physics, transforms, rng,
+                enhancementRng: mulberry32(hashString32(`${buildingId}:structure-v2`)),
+                entityId: buildingId,
                 cx: bx, cz: bz, halfX, halfZ, floors, doorSide,
                 wallList: transforms.wallGroups[materialIndex],
             });
-            entities.push({ id: buildingId, kind: 'building', c, r, x: bx, z: bz, floors, doorSide, materialIndex });
+            entities.push({ id: buildingId, kind: 'building', c, r, x: bx, z: bz, floors, doorSide, materialIndex, ...structural });
             buildings++;
             if (yieldControl && (entities.length & 7) === 0) await yieldControl(`building chunk ${chunk.key}`, entities.length, microCells * microCells);
         }
@@ -609,8 +773,7 @@ export function createInfiniteCityChunkFactory({
         const doorMesh = makeInstanced(`chunk-doors:${chunk.key}`, unitBox, doorMat, transforms.doors);
         for (const mesh of [slabMesh, stepMesh, propMesh, windowMesh, doorMesh]) if (mesh) root.add(mesh);
 
-        freezeChunkRoot(root);
-        return {
+        const payload = {
             formatVersion: WORLD_FORMAT_VERSION,
             ownerId,
             root,
@@ -626,7 +789,12 @@ export function createInfiniteCityChunkFactory({
                 : null,
             drawBatches: root.children.length,
             committed: false,
+            disposed: false,
         };
+        enrichment.initializePayload(chunk, payload);
+        payload.drawBatches = root.children.length;
+        freezeChunkRoot(root);
+        return payload;
     }
 
     async function commit(chunk, payload) {
@@ -673,9 +841,7 @@ export function createInfiniteCityChunkFactory({
         if (payload?.ownerId) committedOwners.delete(payload.ownerId);
         const root = payload?.root;
         if (root?.parent) root.parent.remove(root);
-         
-         
-         
+        enrichment.disposePayload(payload);
         root?.clear?.();
         if (payload) payload.committed = false;
     }
@@ -691,7 +857,11 @@ export function createInfiniteCityChunkFactory({
         doorMat.dispose();
         windowMat.dispose();
         for (const mat of wallMats) mat.dispose();
+        enrichment.disposeShared();
     }
 
-    return { build, commit, setVisible, verifyReady, unload, planChunk, districtLandmarkFor, disposeShared };
+    const hasPendingRefinement = (_chunk, payload) => enrichment.hasPending(payload);
+    const refine = (chunk, payload, budget) => enrichment.pump(chunk, payload, budget);
+
+    return { build, commit, setVisible, verifyReady, unload, refine, hasPendingRefinement, planChunk, districtLandmarkFor, disposeShared };
 }

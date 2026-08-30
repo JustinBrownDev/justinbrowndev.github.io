@@ -10,6 +10,9 @@ const music = read('systems/music-player.js');
 const signatures = read('world/signature-buildings.js');
 const buildings = read('world/building-construction.js');
 const facade = read('world/facade-layout.js');
+const chunks = read('infinite-city-chunks.js');
+const streamer = read('world-chunk-streamer.js');
+const chunkEnrichment = read('world/infinite-chunk-enrichment.js');
 const failures = [];
 const ok = (value, message) => { if (!value) failures.push(message); };
 
@@ -32,9 +35,20 @@ ok(signatures.includes('function* buildArtGallerySteps(site)') && signatures.inc
 ok(buildings.includes('function* addBuildingSiteSteps(site)') && buildings.includes("yield { phase: 'facade-sign'"), 'ordinary authored buildings must retain resumable semantic steps');
 ok(facade.includes('function* placeSignsOnFacadeSteps(') && facade.includes('yield { signIndex: i, placed }'), 'facade sign generation must remain interruptible below whole-facade granularity');
 
+// Infinite chunks use the same structural-first philosophy without smuggling frame sleeps
+// into the millisecond-scale structural factory. Each payload owns deterministic local work.
+ok(chunks.includes('enhancementRng: mulberry32(hashString32(`${buildingId}:structure-v2`))'), 'generic rich structure must be isolated behind stable entity-local RNG');
+ok(chunks.includes('enrichment.initializePayload(chunk, payload)'), 'generic chunk must create its own progressive detail state before publication');
+ok(chunks.includes('const refine = (chunk, payload, budget) => enrichment.pump(chunk, payload, budget)'), 'generic chunk must expose resumable local refinement');
+ok(!chunks.includes('requestAnimationFrame('), 'generic structural factory must not contain inner requestAnimationFrame sleeps');
+ok(streamer.includes('nearestRefinableChunk') && streamer.includes('lastRefinedSerial'), 'outer streamer must fairly schedule independent chunk refinement turns');
+ok(streamer.includes('readyWithinRadius(prefetchRadiusChunks).complete'), 'chunk cosmetics must wait for structural neighborhood warmth');
+ok(chunkEnrichment.includes("kind: 'sign'") && chunkEnrichment.includes("kind: 'graffiti'") && chunkEnrichment.includes("kind: 'pipe'") && chunkEnrichment.includes("kind: 'awning'") && chunkEnrichment.includes("kind: 'ivy'"), 'infinite chunk enrichment must carry the authored-world facade vocabulary');
+ok(chunkEnrichment.includes('pickMassiveNoisePair') && chunkEnrichment.includes('pickPoetryTag'), 'infinite signage/graffiti must use the packaged text corpus instead of placeholder labels');
+
 if (failures.length) {
   console.error(`[progressive-runtime] FAIL (${failures.length})`);
   for (const failure of failures) console.error(` - ${failure}`);
   process.exit(1);
 }
-console.log('[progressive-runtime] PASS: bounded authored work, structural-first rendering, opt-in lo-fi audio');
+console.log('[progressive-runtime] PASS: bounded authored work + self-refining infinite chunks + structural-first rendering + opt-in lo-fi audio');

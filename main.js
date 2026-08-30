@@ -3176,6 +3176,9 @@ worldChunkStreamer = createWorldChunkStreamer({
     commitChunk: (chunk, payload) => infiniteChunkFactory.commit(chunk, payload),
     setChunkVisibility: (chunk, payload, visible) => infiniteChunkFactory.setVisible(chunk, payload, visible),
     verifyChunkReady: (chunk, payload, visible) => infiniteChunkFactory.verifyReady(chunk, payload, visible),
+    refineChunk: (chunk, payload, budget) => infiniteChunkFactory.refine(chunk, payload, budget),
+    hasPendingRefinement: (chunk, payload) => infiniteChunkFactory.hasPendingRefinement(chunk, payload),
+    refineAfterPrefetchReady: true,
     unloadChunk: (chunk, payload) => infiniteChunkFactory.unload(chunk, payload),
      
      
@@ -3416,13 +3419,16 @@ function pumpWorldChunksAggressively() {
             ? CONFIG.streaming.prefetchBuildBudgetMs
             : CONFIG.streaming.warmBuildBudgetMs;
     const warmCooldownMs = renderWarm && prefetchWarm ? CONFIG.streaming.warmCooldownMs : 0;
-    worldChunkPumpPromise = worldChunkStreamer.pump({ maxChunks, maxMillis })
+    const maxRefinements = renderWarm && prefetchWarm
+        ? (QUALITY === CONFIG.quality.desktop ? CONFIG.streaming.chunkRefinementStepsDesktop : CONFIG.streaming.chunkRefinementStepsWeak)
+        : 0;
+    worldChunkPumpPromise = worldChunkStreamer.pump({ maxChunks, maxMillis, maxRefinements })
         .then(builtAny => {
             if (!builtAny) return;
             const after = worldChunkStreamer.stats();
             const t = after.throughput;
             const assets = adornmentLoadQueue.stats();
-            console.log(`[world-perf] pump ${t.lastPumpBuilt} chunk(s) in ${t.lastPumpMs.toFixed(1)}ms · avg build ${t.avgBuildMs.toFixed(2)}ms · commit→visible ${t.avgCommitToVisibleMs.toFixed(2)}ms · render ${after.localRenderRing.ready}/${after.localRenderRing.total} · prefetch ${after.localPrefetchRing.ready}/${after.localPrefetchRing.total} · assets ${assets.active}/${assets.concurrency} active + ${assets.pending} pending · failed ${assets.failed}`);
+            console.log(`[world-perf] pump ${t.lastPumpBuilt} chunk(s) + ${t.lastPumpRefined} local detail turn(s) in ${t.lastPumpMs.toFixed(1)}ms · avg build ${t.avgBuildMs.toFixed(2)}ms · detail worst ${after.refinement.worstStepMs.toFixed(2)}ms · detail pending chunks ${after.refinement.pendingChunks} · commit→visible ${t.avgCommitToVisibleMs.toFixed(2)}ms · render ${after.localRenderRing.ready}/${after.localRenderRing.total} · prefetch ${after.localPrefetchRing.ready}/${after.localPrefetchRing.total} · assets ${assets.active}/${assets.concurrency} active + ${assets.pending} pending · failed ${assets.failed}`);
             maybeReleaseBackgroundEnrichment();
         })
         .catch(error => console.error('[world] chunk pump failed', error))

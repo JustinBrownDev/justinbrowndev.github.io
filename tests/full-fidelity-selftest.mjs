@@ -52,7 +52,9 @@ ok(chunks.includes('worldChunkOwnerId'), 'generic physics/render ownership must 
 ok(chunks.includes('worldEntityId'), 'generic chunk metadata must expose stable entity IDs');
 ok(chunks.includes('districtLandmarkFor'), 'repeatable district landmark contract missing');
 ok(config.includes('landmarkSpacingChunks: 3') && main.includes('landmarkSpacingChunks: CONFIG.streaming.landmarkSpacingChunks'), 'district landmarks must recur every few chunks through cfg.streaming');
-ok(main.includes('yieldControl: null') && main.includes('pump({ maxChunks, maxMillis })'), 'generic chunks must be atomic and outer pump must own the live frame budget');
+ok(main.includes('yieldControl: null') && main.includes('pump({ maxChunks, maxMillis, maxRefinements })'), 'generic chunks must be atomic while the outer pump owns both structural and chunk-local refinement budgets');
+ok(main.includes('hasPendingRefinement: (chunk, payload) => infiniteChunkFactory.hasPendingRefinement(chunk, payload)') && streamer.includes('nearestRefinableChunk'), 'each generic chunk must carry independently resumable enrichment work scheduled by the outer streamer');
+ok(chunks.includes('enhancementRng: mulberry32(hashString32(`${buildingId}:structure-v2`))'), 'rich generic structure must use a stable entity-local RNG stream instead of perturbing the legacy chunk stream');
 
 ok(main.includes('createProgressiveStaticWorldOptimizer({'), 'spawn chunk optimizer must remain cooperative');
 ok(main.includes("await testYieldNow('optimizing spawn chunk"), 'optimizer must remain a cooperative background refinement after structural handoff');

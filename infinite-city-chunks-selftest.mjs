@@ -114,14 +114,34 @@ assert.ok(owners.get(payloadA.ownerId).platforms.length > 0, 'streamed buildings
 assert.ok(payloadA.root.children.some(o => o.isInstancedMesh), 'streamed fabric must use instancing');
 assert.ok(payloadA.root.children.every(o => o.matrixAutoUpdate === false), 'committed chunk objects must be statically frozen');
 
+const richBuildings = payloadA.entities.filter(e => e.kind === 'building');
+assert.ok(richBuildings.some(e => e.modularSetbacks > 0), 'generic fabric must contain stacked modular/setback building silhouettes');
+assert.ok(richBuildings.some(e => e.partitionSegments > 0), 'generic interiors must include real partition-wall maze structure');
+assert.ok(richBuildings.some(e => e.balconySide), 'generic buildings must include navigable structural balcony modules');
+assert.ok(payloadA.physics.mazeWalls.length > payloadA.buildings * 8, 'rich building walls/parapets/partitions must publish paired collision');
+assert.ok(payloadA.refinement.tasks.length > payloadA.buildings * 2, 'each chunk must own a substantial resumable detail queue after structural READY');
+const detailKinds = new Set(payloadA.refinement.tasks.map(task => task.kind));
+for (const kind of ['sign', 'graffiti', 'pipe', 'awning', 'ivy']) assert.ok(detailKinds.has(kind), `chunk refinement must include ${kind} work`);
+const stableTaskContract = payloadA.refinement.tasks.map(({ kind, entityId, seed }) => ({ kind, entityId, seed }));
+const pendingBefore = payloadA.refinement.tasks.length - payloadA.refinement.cursor;
+for (let i = 0; i < 8; i++) {
+  const step = factory.refine(a, payloadA, { maxSteps: 1, maxMillis: 10 });
+  assert.equal(step.steps, 1, 'one chunk refinement turn must execute one semantic task');
+}
+assert.equal(payloadA.detailRoot.children.length, 8, 'chunk must reveal details incrementally rather than all at once');
+assert.equal(payloadA.refinement.tasks.length - payloadA.refinement.cursor, pendingBefore - 8);
+
 await factory.unload(a, payloadA);
 assert.equal(scene.children.includes(payloadA.root), false, 'unload must remove chunk root');
 assert.equal(owners.has(payloadA.ownerId), false, 'unload must deactivate chunk-owned collision');
+assert.equal(payloadA.refinement.phase, 'disposed', "unload must cancel the chunk's independent refinement state");
+assert.equal(payloadA.detailRoot.children.length, 0, 'unload must release progressive detail objects');
 
 const payloadA2 = await factory.build(chunk(1, 0));
 assert.equal(payloadA2.portals.east, payloadA.portals.east, 'revisit must regenerate same boundary contract');
 assert.equal(payloadA2.buildings, payloadA.buildings, 'revisit must regenerate same building count');
 assert.deepEqual(payloadA2.entities.map(e => e.id), payloadA.entities.map(e => e.id), 'revisit must regenerate stable entity ids');
+assert.deepEqual(payloadA2.refinement.tasks.map(({ kind, entityId, seed }) => ({ kind, entityId, seed })), stableTaskContract, 'revisit must regenerate the exact same independent detail work contract');
 await factory.commit(a, payloadA2);
 await factory.unload(a, payloadA2);
 
@@ -140,4 +160,7 @@ console.log('[infinite-city-chunks-selftest] PASS', {
   plazas: payloadA.plazas,
   drawBatches: payloadA.drawBatches,
   ramps: payloadA.physics.ramps.length,
+  modularBuildings: richBuildings.filter(e => e.modularSetbacks > 0).length,
+  partitionSegments: richBuildings.reduce((n, e) => n + e.partitionSegments, 0),
+  refinementTasks: stableTaskContract.length,
 });

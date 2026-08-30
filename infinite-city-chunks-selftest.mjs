@@ -14,6 +14,7 @@ const physics = {
 let yields = 0;
 const factory = createInfiniteCityChunkFactory({
   THREE, scene, playerPhysics: physics, worldSeed, chunkSize: 64,
+  landmarkSpacingChunks: 3,
   yieldControl: async () => { yields++; },
 });
 
@@ -39,6 +40,27 @@ assert.equal(factory.planChunk(chunk(-1, 0)).portals.east, 3, 'west-of-spawn chu
 assert.equal(factory.planChunk(chunk(0, 1)).portals.north, 3, 'south-of-spawn chunk must center its north portal on the authored spawn gateway');
 assert.equal(factory.planChunk(chunk(0, -1)).portals.south, 3, 'north-of-spawn chunk must center its south portal on the authored spawn gateway');
 assert.ok(pa.roads.length > 4, 'chunk must contain a real internal road graph');
+
+// One repeatable district landmark per 3x3 macrocell. These are ordinary
+// disposable chunk content, not world-singular structures.
+for (const [macroX, macroZ] of [[0, 0], [1, 0], [0, 1], [-1, -1]]) {
+  let count = 0;
+  for (let z = macroZ * 3; z < macroZ * 3 + 3; z++) {
+    for (let x = macroX * 3; x < macroX * 3 + 3; x++) {
+      if (factory.districtLandmarkFor(chunk(x, z))) count++;
+    }
+  }
+  assert.equal(count, 1, `macrocell ${macroX},${macroZ} must own exactly one district landmark`);
+}
+const landmarkChunk = (() => {
+  for (let z = 0; z < 3; z++) for (let x = 0; x < 3; x++) {
+    if (x === 0 && z === 0) continue;
+    const c = chunk(x, z);
+    if (factory.districtLandmarkFor(c)) return c;
+  }
+  return null;
+})();
+assert.ok(landmarkChunk, 'spawn-adjacent macrocell must provide a non-singular district landmark');
 
 function reachableRoads(plan) {
   const roads = new Set(plan.roads);
@@ -85,6 +107,13 @@ assert.equal(payloadA2.buildings, payloadA.buildings, 'revisit must regenerate s
 assert.deepEqual(payloadA2.entities.map(e => e.id), payloadA.entities.map(e => e.id), 'revisit must regenerate stable entity ids');
 await factory.commit(a, payloadA2);
 await factory.unload(a, payloadA2);
+
+const landmarkPayload = await factory.build(landmarkChunk);
+assert.ok(landmarkPayload.districtLandmark, 'selected landmark chunk must materialize its landmark');
+assert.equal(landmarkPayload.districtLandmark.id, factory.districtLandmarkFor(landmarkChunk).id, 'landmark identity must be coordinate deterministic');
+assert.ok(landmarkPayload.districtLandmark.floors >= 5, 'district landmark must read larger than ordinary low-rise filler');
+await factory.commit(landmarkChunk, landmarkPayload);
+await factory.unload(landmarkChunk, landmarkPayload);
 factory.disposeShared();
 
 console.log('[infinite-city-chunks-selftest] PASS', {

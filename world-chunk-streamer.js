@@ -30,6 +30,7 @@ export function createWorldChunkStreamer({
     chunkSize,
     worldSeed = 0,
     getPlayerPosition,
+    getPlayerHeading = null,
     renderRadiusChunks = 2,
     prefetchRadiusChunks = Math.max(3, renderRadiusChunks + 1),
     retentionRadiusChunks = Math.max(5, prefetchRadiusChunks + 2),
@@ -102,6 +103,24 @@ export function createWorldChunkStreamer({
         return dx * dx + dz * dz;
     }
 
+    function chunkPriorityScore(chunk) {
+        const p = getPlayerPosition();
+        const dx = chunk.centerX - p.x;
+        const dz = chunk.centerZ - p.z;
+        const distance = Math.hypot(dx, dz);
+        if (!distance || typeof getPlayerHeading !== 'function') return distance;
+        const h = getPlayerHeading();
+        const hx = Number(h?.x) || 0;
+        const hz = Number(h?.z) || 0;
+        const hLen = Math.hypot(hx, hz);
+        if (!hLen) return distance;
+        const forwardDot = (dx * hx + dz * hz) / (distance * hLen);
+        // Distance stays dominant. Heading only breaks/softens ties so the
+        // browser tends to finish the world the player is actually looking or
+        // moving toward before equally-near chunks behind them.
+        return distance - Math.max(0, forwardDot) * chunkSize * 0.72;
+    }
+
     function ringDistance(chunk, center) {
         return Math.max(Math.abs(chunk.x - center.x), Math.abs(chunk.z - center.z));
     }
@@ -122,12 +141,15 @@ export function createWorldChunkStreamer({
 
     function nearestQueuedChunk() {
         let best = null;
+        let bestScore = Infinity;
         let bestDistance = Infinity;
         for (const chunk of chunks.values()) {
             if (chunk.state !== CHUNK_STATE.QUEUED && chunk.state !== CHUNK_STATE.PLANNED) continue;
+            const score = chunkPriorityScore(chunk);
             const d = chunkDistanceSq(chunk);
-            if (d < bestDistance || (d === bestDistance && chunk.key < best?.key)) {
+            if (score < bestScore || (score === bestScore && (d < bestDistance || (d === bestDistance && chunk.key < best?.key)))) {
                 best = chunk;
+                bestScore = score;
                 bestDistance = d;
             }
         }
@@ -214,6 +236,11 @@ export function createWorldChunkStreamer({
             await unloadFarChunks(center);
             let built = 0;
             while (built < maxChunks && !disposed) {
+                // The player may cross a chunk boundary while an earlier chunk
+                // is cooperatively building. Refresh the queue before every
+                // selection so a long pump follows the player instead of
+                // finishing a stale ring around where the pump began.
+                ensureNeighborhood();
                 const next = nearestQueuedChunk();
                 if (!next) break;
                 await buildOne(next, 'streaming');
@@ -257,6 +284,20 @@ export function createWorldChunkStreamer({
         return chunks.get(keyOf(c.x, c.z)) ?? null;
     }
 
+    function readyWithinRadius(radius = renderRadiusChunks) {
+        const center = playerChunkCoords();
+        let ready = 0;
+        let total = 0;
+        for (let dz = -radius; dz <= radius; dz++) {
+            for (let dx = -radius; dx <= radius; dx++) {
+                if (Math.max(Math.abs(dx), Math.abs(dz)) > radius) continue;
+                total++;
+                if (isChunkReady(center.x + dx, center.z + dz)) ready++;
+            }
+        }
+        return { ready, total, complete: ready === total };
+    }
+
     function stats() {
         const counts = {};
         for (const name of Object.values(CHUNK_STATE)) counts[name] = 0;
@@ -273,6 +314,8 @@ export function createWorldChunkStreamer({
             pruned: pruneCount,
             failures: failureCount,
             busy,
+            localRenderRing: readyWithinRadius(renderRadiusChunks),
+            localPrefetchRing: readyWithinRadius(prefetchRadiusChunks),
             states: counts,
         };
     }
@@ -304,6 +347,7 @@ export function createWorldChunkStreamer({
         isChunkReady,
         isWorldPositionAvailable,
         getChunkAtWorld,
+        readyWithinRadius,
         stats,
         dispose,
     };

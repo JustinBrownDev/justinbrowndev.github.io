@@ -13,6 +13,7 @@ const streamer = createWorldChunkStreamer({
   chunkSize: 64,
   worldSeed: 0x12345678,
   getPlayerPosition: () => position,
+  getPlayerHeading: () => ({ x: 1, z: 0 }),
   renderRadiusChunks: 1,
   prefetchRadiusChunks: 1,
   retentionRadiusChunks: 1,
@@ -43,6 +44,7 @@ streamer.ensureNeighborhood();
 const nearest = streamer.nearestQueuedChunk();
 assert.ok(nearest, 'spawn neighborhood must queue surrounding chunks');
 assert.equal(Math.max(Math.abs(nearest.x), Math.abs(nearest.z)), 1, 'nearest non-spawn work must be first ring');
+assert.equal(nearest.key, '1,0', 'equally-near chunks in front of the player must win the heading tie-break');
 await streamer.pump({ maxChunks: 1 });
 assert.equal(built.length, 1, 'one pump budget must build one complete chunk');
 assert.equal(streamer.chunks.get(built[0]).state, CHUNK_STATE.READY);

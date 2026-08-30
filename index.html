@@ -121,6 +121,33 @@
             overflow: hidden;
             text-overflow: ellipsis;
         }
+        #bootStreamFilters {
+            flex: 0 0 auto;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin: 0 0 8px;
+            pointer-events: auto;
+        }
+        #bootStreamFilters button {
+            min-height: 28px;
+            border: 1px solid #d9999938;
+            background: #0b0406;
+            color: #9f858a;
+            font: inherit;
+            font-size: .58rem;
+            letter-spacing: .055em;
+            text-transform: uppercase;
+            padding: 4px 8px;
+            cursor: pointer;
+        }
+        #bootStreamFilters button[aria-pressed="true"],
+        #bootStreamFilters button:hover,
+        #bootStreamFilters button:focus-visible {
+            color: #ffe1e6;
+            border-color: #d9999980;
+            outline: none;
+        }
         #bootStatusLog {
             min-height: 0;
             flex: 1 1 auto;
@@ -153,7 +180,7 @@
             line-height: 1.55;
         }
         #bootChoiceActions { display: grid; gap: 9px; }
-        #bootChoice a, #bootChoice button {
+        #escapeSiteButton {
             min-height: 44px;
             border: 1px solid #d9999960;
             background: #16070a;
@@ -164,13 +191,33 @@
             padding: 10px 12px;
             cursor: pointer;
             text-decoration: none;
+            display: flex;
+            align-items: center;
         }
-        #bootChoice a:hover, #bootChoice button:hover,
-        #bootChoice a:focus-visible, #bootChoice button:focus-visible {
+        #escapeSiteButton:hover,
+        #escapeSiteButton:focus-visible {
             border-color: #ffd0d8;
             background: #251015;
             outline: none;
         }
+        #escapeSiteButton.runtimeEscape {
+            position: fixed;
+            top: 12px;
+            right: 12px;
+            z-index: 45;
+            min-height: 36px;
+            width: auto;
+            max-width: min(320px, calc(100vw - 24px));
+            padding: 8px 10px;
+            background: #080305d9;
+            border-color: #d9999948;
+            color: #e8c9c9d9;
+            font-size: .66rem;
+            letter-spacing: .035em;
+            opacity: .78;
+        }
+        #escapeSiteButton.runtimeEscape:hover,
+        #escapeSiteButton.runtimeEscape:focus-visible { opacity: 1; }
         #bootStatus.bootDone { opacity: 0; pointer-events: none; }
         #bootStatus.bootFailed { background: #1a0505; pointer-events: auto; }
         #bootStatus.bootFailed #bootStatusLine { color: #ff5f5f; }
@@ -195,14 +242,20 @@
     <div id="bootStatus">
         <div id="bootTerminal" aria-live="polite">
             <div id="bootStatusLine">world stream / initializing</div>
+            <div id="bootStreamFilters" aria-label="Terminal stream filter">
+                <button type="button" data-stream="all" aria-pressed="true">all</button>
+                <button type="button" data-stream="world" aria-pressed="false">world</button>
+                <button type="button" data-stream="render" aria-pressed="false">render</button>
+                <button type="button" data-stream="physics" aria-pressed="false">physics</button>
+                <button type="button" data-stream="data" aria-pressed="false">data</button>
+            </div>
             <div id="bootStatusLog"></div>
         </div>
-        <aside id="bootChoice" aria-label="Choose site experience">
+        <aside id="bootChoice" aria-label="Site escape option">
             <h1>Hello.</h1>
-            <p>Do you just want Justin's portfolio, or would you prefer the website loading?</p>
+            <p>The interactive world is building its first complete chunk now. Watch the stream, or leave for the regular website at any time.</p>
             <div id="bootChoiceActions">
-                <a href="./old/">Just Justin's portfolio</a>
-                <button id="continueWorld" type="button">The website loading</button>
+                <a id="escapeSiteButton" href="./old/">Escape to regular website</a>
             </div>
         </aside>
     </div>
@@ -216,8 +269,10 @@
         (function () {
             const line = document.getElementById('bootStatusLine');
             const log = document.getElementById('bootStatusLog');
+            const filterButtons = [...document.querySelectorAll('#bootStreamFilters [data-stream]')];
             const t0 = performance.now();
             const rows = [];
+            let activeStream = 'all';
             const telemetry = [
                 'WORLD FORMAT  v1 stable identity', 'WORLD SINGULARS  map near origin',
                 'SPAWN CHUNK  priority=absolute', 'CHUNK 0,0  topology contract',
@@ -241,9 +296,27 @@
             const requestedNumericParams = [...new URLSearchParams(location.search).entries()].filter(([key]) =>
                 key === 'seed' || key === 'citySize' || key.startsWith('n.') || key.startsWith('cfg.'));
             function stamp() { return ((performance.now() - t0) / 1000).toFixed(2) + 's'; }
+            function streamFor(text) {
+                if (/PHYSICS|COLLISION|FRONTIER|STAIR|RAMP|SPACE/i.test(text)) return 'physics';
+                if (/RENDER|MATERIAL|MESH|LIGHT|OPTIMIZ|PAINT|GLTF|DECOR/i.test(text)) return 'render';
+                if (/NOISE|RNG|FORMAT|ENTITY|SINGULAR|PARAMETER|CORPUS|DATA/i.test(text)) return 'data';
+                return 'world';
+            }
+            function applyStreamFilter() {
+                for (const row of log.children) row.hidden = activeStream !== 'all' && row.dataset.stream !== activeStream;
+            }
+            for (const button of filterButtons) {
+                button.addEventListener('click', () => {
+                    activeStream = button.dataset.stream || 'all';
+                    for (const peer of filterButtons) peer.setAttribute('aria-pressed', String(peer === button));
+                    applyStreamFilter();
+                });
+            }
             function push(text, isError) {
                 const row = document.createElement('div');
+                row.dataset.stream = streamFor(text);
                 row.textContent = `[${stamp()}] ${text}`;
+                row.hidden = activeStream !== 'all' && row.dataset.stream !== activeStream;
                 if (isError) row.style.color = '#ff5f5f';
                 log.appendChild(row);
                 rows.push(text);
@@ -268,9 +341,14 @@
                 status(text) { line.textContent = text; push(text); console.log('[boot]', stamp(), text); },
                 ready() {
                     stopTelemetry();
-                    line.textContent = 'ready';
+                    line.textContent = 'ready · world stream continues around player';
+                    const escape = document.getElementById('escapeSiteButton');
+                    if (escape) {
+                        document.body.appendChild(escape);
+                        escape.classList.add('runtimeEscape');
+                    }
                     document.getElementById('bootStatus').classList.add('bootDone');
-                    console.log('[boot]', stamp(), 'ready -- overlay fading');
+                    console.log('[boot]', stamp(), 'ready -- overlay fading; background chunk stream remains active');
                 },
                 fail(text) {
                     stopTelemetry();
@@ -289,9 +367,6 @@
                 const preview = requestedNumericParams.slice(0, 6).map(([k, v]) => `${k}=${v}`).join(' · ');
                 push(`PARAMETERIZED LOAD: ${requestedNumericParams.length} numeric/query value${requestedNumericParams.length === 1 ? '' : 's'} requested${preview ? ' · ' + preview : ''}`);
             }
-            document.getElementById('continueWorld')?.addEventListener('click', () => {
-                document.getElementById('bootChoice')?.remove();
-            });
             window.__boot.status('initializing renderer + spawn chunk…' + (requestedNumericParams.length ? ` · ${requestedNumericParams.length} parameter value(s) in URL` : ''));
         })();
     </script>

@@ -71,6 +71,7 @@ export function createInfiniteCityChunkFactory({
     worldSeed = 0,
     spawnChunkKey = '0,0',
     microCells = 7,
+    landmarkSpacingChunks = 4,
     yieldControl = null,
 } = {}) {
     if (!THREE || !scene || !playerPhysics) throw new Error('createInfiniteCityChunkFactory requires THREE, scene, playerPhysics');
@@ -323,6 +324,37 @@ export function createInfiniteCityChunkFactory({
         }
     }
 
+    const districtLandmarkTypes = Object.freeze(['spire', 'stack', 'gatehouse', 'archive', 'beacon']);
+    const districtLandmarkSpacing = Math.max(3, Math.floor(landmarkSpacingChunks));
+
+    // Exactly one disposable/repeatable landmark chunk is selected inside each
+    // macro-cell. This gives the infinite city recurring authored-scale visual
+    // anchors without introducing any new world-singular state. The selection
+    // is coordinate deterministic, so unloading/revisiting never moves it.
+    function districtLandmarkFor(chunk) {
+        if (!chunk || chunk.key === spawnChunkKey) return null;
+        const macroX = Math.floor(chunk.x / districtLandmarkSpacing);
+        const macroZ = Math.floor(chunk.z / districtLandmarkSpacing);
+        const macroSeed = hashString32(`${worldSeed}:district-landmark:${macroX}:${macroZ}`);
+        let localX = macroSeed % districtLandmarkSpacing;
+        let localZ = (macroSeed >>> 8) % districtLandmarkSpacing;
+        let chunkX = macroX * districtLandmarkSpacing + localX;
+        let chunkZ = macroZ * districtLandmarkSpacing + localZ;
+        if (chunkX === 0 && chunkZ === 0) {
+            localX = (localX + 1) % districtLandmarkSpacing;
+            chunkX = macroX * districtLandmarkSpacing + localX;
+        }
+        if (chunk.x !== chunkX || chunk.z !== chunkZ) return null;
+        const type = districtLandmarkTypes[(macroSeed >>> 16) % districtLandmarkTypes.length];
+        return {
+            id: worldEntityId(worldSeed, chunk.x, chunk.z, 'district-landmark', type),
+            type,
+            macroX,
+            macroZ,
+            spacingChunks: districtLandmarkSpacing,
+        };
+    }
+
     function roadNeighborSides(c, r, roads) {
         const candidates = [];
         if (roads.has(key(c, r - 1))) candidates.push('north');
@@ -330,6 +362,62 @@ export function createInfiniteCityChunkFactory({
         if (roads.has(key(c - 1, r))) candidates.push('west');
         if (roads.has(key(c + 1, r))) candidates.push('east');
         return candidates;
+    }
+
+    function chooseDistrictLandmarkCell(roadPlan) {
+        let best = null;
+        for (let r = 0; r < microCells; r++) {
+            for (let c = 0; c < microCells; c++) {
+                if (roadPlan.roads.has(key(c, r))) continue;
+                const sides = roadNeighborSides(c, r, roadPlan.roads);
+                if (!sides.length) continue;
+                const dc = c - roadPlan.hub.c;
+                const dr = r - roadPlan.hub.r;
+                const score = dc * dc + dr * dr;
+                if (!best || score < best.score || (score === best.score && key(c, r) < best.key)) {
+                    best = { c, r, key: key(c, r), sides, score };
+                }
+            }
+        }
+        return best;
+    }
+
+    function buildDistrictLandmark({ chunk, spec, cell, physics, transforms, rng, cellCx, cellCz, cellSize }) {
+        const typeIndex = districtLandmarkTypes.indexOf(spec.type);
+        const weird = chunk.weirdness.sampled;
+        const floors = Math.min(12, 5 + typeIndex + Math.floor(weird * 3));
+        const halfX = cellSize * (spec.type === 'gatehouse' ? 0.46 : 0.42);
+        const halfZ = cellSize * (spec.type === 'stack' ? 0.46 : 0.42);
+        const doorSide = cell.sides[hashString32(`${spec.id}:door`) % cell.sides.length];
+        const materialIndex = hashString32(`${spec.id}:facade`) % wallMats.length;
+        buildBuilding({
+            physics,
+            transforms,
+            rng,
+            cx: cellCx,
+            cz: cellCz,
+            halfX,
+            halfZ,
+            floors,
+            doorSide,
+            wallList: transforms.wallGroups[materialIndex],
+        });
+
+        // Landmark crowns reuse the same instanced wall batch as ordinary
+        // buildings, so recurrence adds visual hierarchy without creating a
+        // per-landmark draw-call tax. Roof-level collision is explicit.
+        const floorH = 3.15;
+        const roofY = floors * floorH;
+        const crownH = 0.9 + typeIndex * 0.22 + weird * 0.8;
+        const crownHalfX = halfX * (0.72 - Math.min(0.24, typeIndex * 0.035));
+        const crownHalfZ = halfZ * (0.72 - Math.min(0.24, typeIndex * 0.035));
+        wallTransform(transforms.wallGroups[materialIndex], cellCx, roofY + crownH * 0.5, cellCz, crownHalfX * 2, crownH, crownHalfZ * 2);
+        pushWallSegments(physics.mazeWalls, cellCx, cellCz, crownHalfX, crownHalfZ, roofY, roofY + crownH);
+        if (spec.type === 'spire' || spec.type === 'beacon') {
+            const mastH = 2.4 + weird * 3.2;
+            wallTransform(transforms.wallGroups[materialIndex], cellCx, roofY + crownH + mastH * 0.5, cellCz, 0.22, mastH, 0.22);
+        }
+        return { ...spec, c: cell.c, r: cell.r, x: cellCx, z: cellCz, floors, doorSide, materialIndex };
     }
 
     function addOwnedBoundaryBarriers(chunk, roadPlan, physics, wallList, cellSize) {
@@ -358,13 +446,14 @@ export function createInfiniteCityChunkFactory({
     }
 
     function planChunk(chunk) {
-        if (chunk.key === spawnChunkKey) return { spawnDistrict: true, portals: null, roads: [] };
+        if (chunk.key === spawnChunkKey) return { spawnDistrict: true, portals: null, roads: [], districtLandmark: null };
         const roadPlan = planRoads(chunk);
         return {
             portals: { ...roadPlan.portals },
             hub: { ...roadPlan.hub },
             roads: [...roadPlan.roads].sort(),
             weirdness: chunk.weirdness,
+            districtLandmark: districtLandmarkFor(chunk),
         };
     }
 
@@ -373,6 +462,8 @@ export function createInfiniteCityChunkFactory({
 
         const rng = mulberry32(chunk.seed ^ (worldSeed >>> 0));
         const roadPlan = planRoads(chunk);
+        const districtLandmarkSpec = districtLandmarkFor(chunk);
+        const districtLandmarkCell = districtLandmarkSpec ? chooseDistrictLandmarkCell(roadPlan) : null;
         const root = new THREE.Group();
         root.name = `world-chunk:${chunk.key}`;
         root.userData.noSpatialChunk = true;
@@ -433,6 +524,25 @@ export function createInfiniteCityChunkFactory({
             const doorCandidates = roadNeighborSides(c, r, roadPlan.roads);
             const cellCx = cx0 - half + (c + 0.5) * cellSize;
             const cellCz = cz0 - half + (r + 0.5) * cellSize;
+
+            if (districtLandmarkCell && k === districtLandmarkCell.key) {
+                occupied.add(k);
+                const landmark = buildDistrictLandmark({
+                    chunk,
+                    spec: districtLandmarkSpec,
+                    cell: districtLandmarkCell,
+                    physics,
+                    transforms,
+                    rng,
+                    cellCx,
+                    cellCz,
+                    cellSize,
+                });
+                entities.push({ ...landmark, kind: 'district-landmark' });
+                buildings++;
+                if (yieldControl) await yieldControl(`building landmark ${chunk.key}`, entities.length, microCells * microCells);
+                continue;
+            }
 
             const buildingChance = 0.74 - weird * 0.16;
             if (!doorCandidates.length || rng() > buildingChance) {
@@ -502,6 +612,9 @@ export function createInfiniteCityChunkFactory({
             portals: { ...roadPlan.portals },
             roadCells: roadPlan.roads.size,
             weirdness: chunk.weirdness,
+            districtLandmark: districtLandmarkSpec
+                ? entities.find(entity => entity.kind === 'district-landmark') ?? null
+                : null,
             drawBatches: root.children.length,
             committed: false,
         };
@@ -540,5 +653,5 @@ export function createInfiniteCityChunkFactory({
         for (const mat of wallMats) mat.dispose();
     }
 
-    return { build, commit, unload, planChunk, disposeShared };
+    return { build, commit, unload, planChunk, districtLandmarkFor, disposeShared };
 }

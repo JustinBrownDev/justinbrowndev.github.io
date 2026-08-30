@@ -1,0 +1,79 @@
+AGGRESSIVE INFINITE CHUNK STREAMING - FINAL VALIDATION
+Date: 2026-08-29
+
+SHIPPING ROUTES
+- / is the only interactive 3D runtime.
+- /old/ remains the regular portfolio / escape target.
+- /test/ removed completely.
+- /synchronous/ removed completely after audit found no named generator/runtime function unique to its older main.js.
+- Regression tests moved to /tests/ so QA survives without shipping alternate runtime surfaces.
+
+STARTUP / UX
+- One unified fast streaming terminal.
+- Stream filters: ALL / WORLD / RENDER / PHYSICS / DATA.
+- Exactly one user action: "Escape to regular website" -> ./old/.
+- No redundant "load/continue website" button.
+- Escape action persists at top-right after gameplay handoff.
+- Stream-filter and escape clicks are excluded from pointer-lock capture.
+
+POST-HANDOFF STREAMING POLICY
+- Spawn chunk 0,0 remains the only startup gate.
+- Normal movement/jump/F/P/pointer-lock runtime starts immediately after spawn READY.
+- No 120ms one-chunk drip timer remains.
+- One cooperative multi-chunk pump stays active after handoff.
+- 5x5 READY render neighborhood target (radius 2).
+- 7x7 warm prefetch neighborhood target (radius 3).
+- retention radius 4 to avoid boundary churn while keeping memory local.
+- Up to 4 chunks per pump while render ring is incomplete.
+- Up to 3 chunks per pump while prefetch ring is incomplete.
+- Queue refreshes between chunks so movement during a long pump reprioritizes immediately.
+- Current camera heading biases equally-near chunks in front of the player.
+- Chunk construction still yields on frame/input pressure; this is aggressive utilization, not a return to blocking whole-world loading.
+- Streaming policy is centralized under CONFIG.streaming and therefore available to cfg.* reload parameterization.
+
+LANDMARK POLICY
+- Six world-singular authored areas remain confined to pinned spawn chunk 0,0.
+- Infinite terrain gets repeatable/disposable district landmarks instead of more singulars.
+- Exactly one district landmark is selected per 3x3 chunk macrocell.
+- District landmark families: spire, stack, gatehouse, archive, beacon.
+- Landmark identity/placement is coordinate deterministic and survives unload/regeneration.
+- Landmarks reuse chunk instancing/batching instead of creating a large draw-call tax.
+
+INFINITE WORLD CONTRACTS
+- Stable/versioned chunk/entity/owner IDs retained.
+- Weirdness gradient retained for future farther-from-spawn -> stranger content.
+- Generic chunks build off-scene and commit render + physics atomically.
+- Physics/render state is chunk-owned and removable.
+- Far chunk scene/physics state and scheduler metadata are pruned.
+- Pinned authored spawn remains resident during normal streaming.
+- Shared road boundary portals remain deterministic across independently generated neighbors.
+
+LEAN REPO CLEANUP
+- Removed obsolete historical patch artifacts and superseded validation reports from the shipping tree.
+- STREAMING-WORLD-ARCHITECTURE.md is explicitly exempted from the repo's *.md ignore rule so the next normal git add keeps the architecture contract.
+
+VALIDATION PASSED
+- node --check main.js
+- node --check world-chunk-streamer.js
+- node --check infinite-city-chunks.js
+- node --check world-contract.js
+- world-contract-selftest.mjs
+- world-chunk-streamer-selftest.mjs
+- infinite-city-chunks-selftest.mjs
+- city-performance-selftest.mjs
+- player-physics-selftest.mjs
+- parameter-system-selftest.mjs
+- parameter-catalog-selftest.mjs (9,328 catalog entries)
+- tests/full-fidelity-selftest.mjs
+- tests/homepage-priority-selftest.mjs
+- tests/progressive-optimizer-selftest.mjs
+- tdz-boot-audit.cjs main.js (0 hazards)
+- tdz-generation-audit.cjs main.js (0 hazards)
+- runtime-handoff-audit.cjs main.js (0 hazards)
+- local relative static/dynamic import resolution check
+- route-surface assertion: / + /old only; /tests contains QA, not a site route
+
+BROWSER SMOKE LIMITATION
+- A current headless Chromium smoke attempt was made against a local HTTP server.
+- Container Chromium cannot initialize EGL/ANGLE/SwiftShader (EGL_NOT_INITIALIZED / xcb_connect failed) and timed out before a meaningful WebGL application run.
+- No application-level crash was observed before the renderer environment failed; real-browser/GPU visual validation remains the only environment-dependent check.

@@ -5498,7 +5498,7 @@ function hydrateFullNoiseCorpus() {
 // is ever missing/stale.
 function bootStatus(text) { window.__boot?.status(text); }
 function bootElapsed() { return window.__boot ? window.__boot.elapsed().toFixed(__qp0) + 's' : '?s (no __boot -- index.html out of sync with main.js)'; }
-console.log('[perf] imports resolved (three.js + full noise corpus fetched+parsed) at', bootElapsed(), 'since page start');
+console.log('[perf] engine + compact bootstrap corpus imports resolved at', bootElapsed(), 'since page start');
 bootStatus(`imports resolved at ${bootElapsed()} -- starting maze/city generation…`);
 
 // =====================================================================
@@ -5597,6 +5597,20 @@ const CONFIG = {
         far: 380,
         eyeHeight: 1.65,
         playerRadius: 0.22,
+    },
+
+    // Permanent live-world loading policy. These live in CONFIG rather than
+    // hard-coded scheduler literals so the existing cfg.* parameter system can
+    // tune them on a reload without rewriting the chunk engine.
+    streaming: {
+        renderRadiusChunks: 2,
+        prefetchRadiusChunks: 3,
+        retentionRadiusChunks: 4,
+        landmarkSpacingChunks: 3,
+        urgentPumpChunks: 4,
+        prefetchPumpChunks: 3,
+        warmPumpChunks: 1,
+        warmCooldownMs: 90,
     },
 
     lighting: {
@@ -6598,10 +6612,9 @@ scene.add(sun);
 // permanently starving the block the player is actually standing in.
 let dynamicLightsRemaining = QUALITY.maxDynamicLights * __qp189;
 
-// ---------- /test progressive-runtime scheduler ----------
-// /test is deliberately the SAME world generator as /.  The only legal
-// divergence is scheduling: expensive deterministic work is allowed to yield
-// so the browser can paint/respond between real generation steps.
+// ---------- progressive runtime scheduler ----------
+// Expensive deterministic work yields cooperatively so the browser can paint,
+// accept input, and keep the live chunk stream moving without a second runtime.
 const TEST_STREAMING_RUNTIME = true;
 const _testParams = new URLSearchParams(location.search);
 const TEST_FRAME_BUDGET_MS = Math.max(2, Math.min(12, Number(_testParams.get('frameBudget')) || (QUALITY === CONFIG.quality.desktop ? 7 : 5)));
@@ -6671,7 +6684,7 @@ function testEarlyKeyUp(e) {
     }
 }
 function testEarlyClick(e) {
-    if (IS_TOUCH || e.target.closest?.('#parameterEditorRoot')) return;
+    if (IS_TOUCH || e.target.closest?.('#parameterEditorRoot, #bootStreamFilters, #escapeSiteButton')) return;
     if (!controls.isLocked) controls.lock();
 }
 document.addEventListener('keydown', testEarlyKeyDown);
@@ -6725,8 +6738,8 @@ function testBootstrapRenderLoop(now) {
     _testBootstrapFrame++;
 }
 requestAnimationFrame(testBootstrapRenderLoop);
-console.log(`[test-perf] progressive runtime active; frame work budget=${TEST_FRAME_BUDGET_MS}ms; authoritative generator=main.js copy`);
-window.__testStreaming = {
+console.log(`[stream-perf] progressive runtime active; frame work budget=${TEST_FRAME_BUDGET_MS}ms; authoritative runtime=main.js`);
+window.__streamingDebug = {
     mode: 'full-fidelity-progressive',
     frameBudgetMs: TEST_FRAME_BUDGET_MS,
     get phase() { return _testGenerationPhase; },
@@ -8338,7 +8351,7 @@ const spawnCol = startCol;
 const spawnRow = startRow;
 console.log(`[gen] maze grid ready at ${bootElapsed()}: ${GRID_COLS}x${GRID_ROWS} cells, ${allOpenCells.length} open, ${plazaCells.length} plazas, spawn=(${spawnCol},${spawnRow})`);
 bootStatus(`maze carved (${allOpenCells.length} open cells) -- building the city…`);
-// /test handoff point: the player now inhabits the REAL carved topology even
+// Bootstrap handoff point: the player now inhabits the REAL carved topology even
 // though most geometry has not been materialized yet.
 {
     const _testSpawn = cellToWorld(spawnCol, spawnRow);
@@ -16021,7 +16034,7 @@ function worldToCell(x, z) {
 
 // ---------- movement: shared input state ----------
 
-// `move` was created by the /test bootstrap and is intentionally reused.
+// `move` was created by the bootstrap controller and is intentionally reused.
 let freecamEnabled = false;
 let touchMoveVec = { x: __qp5301, y: __qp5302 };
 const velocity = new THREE.Vector3(); // normalized local input, not integrated motion
@@ -16089,8 +16102,13 @@ let playerPhysics = createPlayerPhysics({
 // The existing authored city is adopted as READY chunk 0,0. No second copy is
 // generated there. Neighboring coordinates are ordinary deterministic chunks;
 // their physics and draw batches are owned by that coordinate and can unload.
+const _worldStreamHeading = new THREE.Vector3();
 infiniteChunkFactory = createInfiniteCityChunkFactory({
     THREE, scene, playerPhysics, chunkSize: STREAM_CHUNK_SIZE, worldSeed: SEED, spawnChunkKey: '0,0',
+    // One disposable district-scale landmark per 3x3 macrocell: common enough
+    // to keep the streamed world visually anchored, sparse enough that the
+    // authored origin district still feels special.
+    landmarkSpacingChunks: CONFIG.streaming.landmarkSpacingChunks,
     // A generic chunk remains atomic to the player, but its off-scene build is
     // cooperative so a weak client keeps painting/input between construction slices.
     yieldControl: (phase, done, total) => testYieldIfNeeded(phase, done, total),
@@ -16099,9 +16117,10 @@ worldChunkStreamer = createWorldChunkStreamer({
     chunkSize: STREAM_CHUNK_SIZE,
     worldSeed: SEED,
     getPlayerPosition: () => camera.position,
-    renderRadiusChunks: 2,
-    prefetchRadiusChunks: 2,
-    retentionRadiusChunks: 3,
+    getPlayerHeading: () => camera.getWorldDirection(_worldStreamHeading),
+    renderRadiusChunks: CONFIG.streaming.renderRadiusChunks,
+    prefetchRadiusChunks: CONFIG.streaming.prefetchRadiusChunks,
+    retentionRadiusChunks: CONFIG.streaming.retentionRadiusChunks,
     pinnedChunkKeys: ['0,0'],
     weirdness: { startRadius: 1.5, fullRadius: 36, curve: 1.3 },
     buildChunk: chunk => infiniteChunkFactory.build(chunk),
@@ -16150,7 +16169,7 @@ if (IS_TOUCH) {
 
     document.addEventListener('click', (e) => {
         initAudio();
-        if (e.target.closest('#backLink, #parameterEditorRoot')) return;
+        if (e.target.closest('#escapeSiteButton, #parameterEditorRoot')) return;
         if (!controls.isLocked) controls.lock();
     });
     controls.addEventListener('lock', () => fadeHint(__qp5323));
@@ -16301,7 +16320,32 @@ const clock = new THREE.Clock();
 let elapsedTime = __qp5340; // hand-accumulated: clock.getElapsedTime() would double-consume delta
 let footstepTimer = __qp5341;
 let trafficSignalUpdateTimer = __qp5342;
-let worldChunkPumpTimer = 0;
+let worldChunkPumpPromise = null;
+let worldChunkNextKickAt = 0;
+
+function pumpWorldChunksAggressively() {
+    if (!worldChunkStreamer || worldChunkPumpPromise || performance.now() < worldChunkNextKickAt) return;
+    const before = worldChunkStreamer.stats();
+    const renderWarm = before.localRenderRing.complete;
+    const prefetchWarm = before.localPrefetchRing.complete;
+    // Missing playable-neighborhood chunks are urgent. Once the 5x5 render
+    // ring is complete, keep chewing through the 7x7 prefetch ring at almost
+    // the same pace. Chunk construction itself still yields on frame/input
+    // pressure, so this raises utilization without reintroducing a world-sized
+    // blocking phase.
+    const maxChunks = !renderWarm
+        ? CONFIG.streaming.urgentPumpChunks
+        : !prefetchWarm
+            ? CONFIG.streaming.prefetchPumpChunks
+            : CONFIG.streaming.warmPumpChunks;
+    const warmCooldownMs = renderWarm && prefetchWarm ? CONFIG.streaming.warmCooldownMs : 0;
+    worldChunkPumpPromise = worldChunkStreamer.pump({ maxChunks })
+        .catch(error => console.error('[world] chunk pump failed', error))
+        .finally(() => {
+            worldChunkPumpPromise = null;
+            worldChunkNextKickAt = performance.now() + warmCooldownMs;
+        });
+}
 
 function animate() {
     requestAnimationFrame(animate);
@@ -16312,13 +16356,10 @@ function animate() {
     updateDetailObjectCulling();
     staticWorldOptimizer?.updateVisibility();
     updateDecorationStreaming(delta);
-    worldChunkPumpTimer -= delta;
-    if (worldChunkPumpTimer <= 0) {
-        worldChunkPumpTimer = 0.12;
-        // The streamer internally refuses concurrent pumps. One chunk per pump
-        // keeps input/render latency bounded even on fast machines.
-        worldChunkStreamer?.pump({ maxChunks: 1 }).catch(error => console.error('[world] chunk pump failed', error));
-    }
+    // Keep the world factory busy after control handoff. There is no post-spawn
+    // loading phase: this is permanent runtime behavior that continuously
+    // maintains READY chunks around the current player.
+    pumpWorldChunksAggressively();
 
     for (const f of flickerLights) {
         f.light.intensity = f.mode === 'blink'
@@ -16580,7 +16621,7 @@ bootStatus(`spawn chunk ready (${bootElapsed()}) · world streaming`);
 // (movement/jump/F/P/pointer lock) already installed. Nothing below this line
 // is allowed to delay first real interactivity.
 _testBootstrapActive = false;
-console.log(`[test-perf] bootstrap handoff after ${_testBootstrapFrame} painted frames; full physics/runtime now authoritative`);
+console.log(`[stream-perf] bootstrap handoff after ${_testBootstrapFrame} painted frames; full physics/runtime now authoritative`);
 animate();
 window.__boot?.ready();
 scheduleTraversalValidation();

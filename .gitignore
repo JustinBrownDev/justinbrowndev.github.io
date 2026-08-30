@@ -2,6 +2,7 @@
 # None of this is meant to be published to the public site repo.
 *.md
 !README.md
+!STREAMING-WORLD-ARCHITECTURE.md
 neon_superhighway_prompt*.txt
 overpass_queries.txt
 physical_scene_taxonomy.txt

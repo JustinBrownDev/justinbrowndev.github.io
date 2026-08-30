@@ -1010,7 +1010,7 @@ export function createPlayerPhysics(options) {
         jumpBufferTimer = jumpBufferTime;
     }
 
-    function syncFromPosition({ forceAirborne = false, resetVelocity = true } = {}) {
+    function syncFromPosition({ forceAirborne = false, resetVelocity = true, allowLastSafeFallback = true } = {}) {
         feetY = position.y - eyeHeight;
         if (resetVelocity) verticalVelocity = __qp73;
 
@@ -1030,7 +1030,7 @@ export function createPlayerPhysics(options) {
 
         if (poseIsValid(position.x, position.z, feetY)) {
             rememberSafe();
-        } else if (lastSafe) {
+        } else if (allowLastSafeFallback && lastSafe) {
             restore(lastSafe);
         } else {
             const bootstrap = findBootstrapSafePose(position.x, position.z, feetY);
@@ -1064,6 +1064,80 @@ export function createPlayerPhysics(options) {
         };
     }
 
+    // SPAWN / SANITY HANDOFF: startup proof must exercise the real controller,
+    // but it must not move the real player, rewrite lastSafe, or trigger deferred
+    // owner activation. Probe commands therefore run through simulateSubstep and
+    // restore every mutable controller field before returning.
+    function captureMotionState() {
+        return {
+            x: position.x, z: position.z, feetY, verticalVelocity, grounded,
+            coyoteTimer, jumpBufferTimer, lastSafe: lastSafe ? { ...lastSafe } : null,
+        };
+    }
+
+    function restoreMotionState(snapshot) {
+        position.x = snapshot.x;
+        position.z = snapshot.z;
+        feetY = snapshot.feetY;
+        verticalVelocity = snapshot.verticalVelocity;
+        grounded = snapshot.grounded;
+        coyoteTimer = snapshot.coyoteTimer;
+        jumpBufferTimer = snapshot.jumpBufferTimer;
+        lastSafe = snapshot.lastSafe ? { ...snapshot.lastSafe } : null;
+        position.y = feetY + eyeHeight;
+    }
+
+    function probeControllerPath({ start = null, steps = [] } = {}) {
+        const saved = captureMotionState();
+        try {
+            if (start) {
+                position.x = start.x;
+                position.z = start.z;
+                feetY = start.feetY;
+                verticalVelocity = __qp73;
+                grounded = Math.abs(restingSupportHeightAt(position.x, position.z, feetY) - feetY) <= __qp74
+                    && poseIsValid(position.x, position.z, feetY);
+                coyoteTimer = grounded ? coyoteTime : __qp78;
+                jumpBufferTimer = __qp79;
+                lastSafe = null;
+                position.y = feetY + eyeHeight;
+                if (poseIsValid(position.x, position.z, feetY)) rememberSafe();
+            }
+
+            const originX = position.x;
+            const originZ = position.z;
+            const originFeetY = feetY;
+            if (!poseIsValid(originX, originZ, originFeetY)) {
+                return { validStart: false, validEnd: false, distance: __qp25, maxDistance: __qp25, completedSteps: __qp26 };
+            }
+
+            let maxDistance = __qp25;
+            let completedSteps = __qp26;
+            let validEnd = true;
+            for (const command of steps) {
+                if (!command || !Number.isFinite(command.dt) || command.dt <= __qp69) continue;
+                simulateSubstep(command.dt, command.wishVelocityX ?? __qp67, command.wishVelocityZ ?? __qp68);
+                completedSteps++;
+                if (!poseIsValid(position.x, position.z, feetY)) {
+                    validEnd = false;
+                    break;
+                }
+                maxDistance = Math.max(maxDistance, Math.hypot(position.x - originX, position.z - originZ));
+            }
+
+            return {
+                validStart: true,
+                validEnd,
+                distance: Math.hypot(position.x - originX, position.z - originZ),
+                maxDistance,
+                completedSteps,
+                end: { x: position.x, z: position.z, feetY, grounded },
+            };
+        } finally {
+            restoreMotionState(saved);
+        }
+    }
+
      
      
      
@@ -1082,5 +1156,6 @@ export function createPlayerPhysics(options) {
         getState,
         supportHeightAt,
         poseIsValid,
+        probeControllerPath,
     };
 }

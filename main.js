@@ -39,6 +39,7 @@ import { createFiniteCylinderSupportColliders } from './world/collision-shapes.j
 import { createFacadeLayoutSystem } from './world/facade-layout.js';
 import { createAuthoredContentHelpers } from './world/authored-content-helpers.js';
 import { createSpawnMazePlan, createSpawnBuildingSitePlan } from './world/spawn-district-plan.js';
+import { provePlayableSpawn } from './world/spawn-proof.js';
 import { createDynamicLightPool } from './systems/dynamic-light-pool.js';
 import { createRuntimeLatencyTelemetry } from './systems/runtime-latency.js';
 import { createMaterialRefinementController } from './systems/material-refinement.js';
@@ -3735,9 +3736,27 @@ if (urlLandmark) {
     }
 }
 
-playerPhysics.syncFromPosition({ forceAirborne: false, resetVelocity: false });
+// SPAWN / SANITY HANDOFF: the physics object existed before the final spawn was
+// selected, so its historical lastSafe is not proof that this requested spawn is
+// playable. Index every current collider first, then prove a nearby capsule pose
+// has a real controller-driven escape route before releasing the safety gate.
 playerPhysics.syncDynamicWorld();
-await testYieldNow('minimum-safe authored district collision-ready · releasing construction safety gate');
+const requestedSpawnPose = {
+    x: camera.position.x,
+    z: camera.position.z,
+    feetY: camera.position.y - CONFIG.camera.eyeHeight,
+};
+const spawnProof = provePlayableSpawn({ playerPhysics, origin: requestedSpawnPose });
+if (!spawnProof.ok) {
+    throw new Error(`[spawn-proof] refused unplayable spawn: ${spawnProof.reason}; candidates=${spawnProof.searchedCandidates}; probes=${spawnProof.probes}; best=${spawnProof.bestDistance?.toFixed?.(2) ?? 'n/a'}m`);
+}
+camera.position.set(spawnProof.pose.x, spawnProof.pose.feetY + CONFIG.camera.eyeHeight, spawnProof.pose.z);
+playerPhysics.syncFromPosition({ forceAirborne: false, resetVelocity: false, allowLastSafeFallback: false });
+if (!playerPhysics.poseIsValid(camera.position.x, camera.position.z, playerPhysics.getState().feetY)) {
+    throw new Error('[spawn-proof] proven pose became invalid during authoritative startup sync');
+}
+console.log(`[spawn-proof] PASS · candidate=${spawnProof.candidateIndex} ring=${spawnProof.candidateRing} · route=${spawnProof.routeKind} · escape=${spawnProof.escapeDistance.toFixed(2)}m · probes=${spawnProof.probes}`);
+await testYieldNow('minimum-safe authored district collision-ready + spawn escape proven · releasing construction safety gate');
 
  
  

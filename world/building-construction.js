@@ -287,6 +287,7 @@ export function createBuildingConstructionSystem(deps) {
         const exposedSetbackSidesByFloor = [];
     
         const floors = [];
+        buildingWallSegments.set(`${row},${col}`, { floors });
         for (let fl = QP[1889]; fl < floorCount; fl++) {
             const gaps = baseGaps.filter(g => (g.floorOnly === undefined || g.floorOnly === fl) && (g.floorMax === undefined || fl < g.floorMax));
             const exposedThisFloor = CELL_SIDE_DEFS.filter(s => {
@@ -305,7 +306,6 @@ export function createBuildingConstructionSystem(deps) {
             floors.push({ yMin: fl * floorHeight, yMax: fl * floorHeight + floorHeight, segments });
             yield { phase: 'floor', row, col, floor: fl };
         }
-        buildingWallSegments.set(`${row},${col}`, { floors });
     
          
          

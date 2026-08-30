@@ -23,8 +23,8 @@ ok(homepage.includes('Escape to regular website'), 'regular-site escape action m
 ok(!homepage.includes('The website loading'), 'redundant load-site choice still present');
 
 ok(main.includes('function buildingSiteDistanceSqToPlayer(site)'), 'spawn building priority helper missing');
-ok(main.includes("await testYieldNow('streaming nearest real buildings'"), 'spawn buildings are not cooperatively painted nearest-first');
-ok(ground.includes("await testYieldNow('streaming nearest real streets/alleys'"), 'spawn ground is not cooperatively painted nearest-first');
+ok(main.includes("await testYieldNow('building minimum-safe authored neighborhood'") && main.includes('pumpAuthoredBuildingJobs({'), 'spawn buildings must hand off after a minimum-safe neighborhood and continue in live prioritized turns');
+ok(ground.includes('function pumpOpenCellSurfaces(') && ground.includes('ensureOpenCellSurfaceNeighborhood'), 'spawn ground must expose a live nearest-first chunk pump plus minimum-safe readiness');
 ok(adornment.includes('function sortPlacementRequestsNearestToPlayer(requests)'), 'spawn async model placements are not player-prioritized');
 ok(main.includes('sortDecorationQueueNearPlayer'), 'spawn deferred decoration is not player-prioritized');
 
@@ -45,7 +45,7 @@ ok(chunks.includes("kind: 'district-landmark'"), 'district landmarks must be exp
 
 ok(main.includes('createProgressiveStaticWorldOptimizer({'), 'spawn optimizer must remain cooperative');
 ok(main.includes('staticWorldOptimizer.beginIncremental();'), 'spawn optimizer must begin incremental batching before authored construction');
-ok(main.includes('await staticWorldOptimizer.flushDirtyChunks({'), 'spawn sites must flush local optimizer work incrementally');
+ok(main.includes('staticWorldOptimizer.optimizeNearestDirtyChunk(') && perf.includes('function optimizeNearestDirtyChunk('), 'spawn sites must optimize nearest dirty authored chunks incrementally during live runtime');
 const animateAt = main.indexOf('\nanimate();');
 const finalizeAt = main.indexOf('await staticWorldOptimizer.finalizeIncremental({');
 ok(animateAt >= 0 && finalizeAt > animateAt, 'expensive final optimizer refinement must occur after live runtime handoff');

@@ -29,7 +29,7 @@ ok(signatures.includes("yield { phase: 'signature-lore-cycle-stage'") && signatu
 
 const optimizerAt = main.indexOf('createProgressiveStaticWorldOptimizer({');
 const physicsAt = main.indexOf('playerPhysics = createPlayerPhysics({');
-const authoredLoopAt = main.indexOf('while (pendingBuildingSites.length)');
+const authoredLoopAt = main.indexOf("while ([...minimumSafeAuthoredSiteIds].some");
 ok((main.match(/createProgressiveStaticWorldOptimizer\(\{/g) || []).length === 1, 'there must be exactly one authored-world optimizer owner');
 ok(optimizerAt >= 0 && optimizerAt < authoredLoopAt, 'optimizer ownership must precede authored background construction');
 ok(physicsAt >= 0 && physicsAt < authoredLoopAt, 'real player physics must precede authored background construction');
@@ -39,7 +39,7 @@ const compileStageEnabledAt = main.indexOf('_bootstrapCompileStagingEnabled = tr
 const compileStageLastDisableAt = main.lastIndexOf('_bootstrapCompileStagingEnabled = false;');
 ok(compileStageEnabledAt >= 0 && compileStageLastDisableAt < compileStageEnabledAt, 'live handoff must not disable compile staging after bootstrap enables it');
 ok(main.includes('staticWorldOptimizer?.markDirtyObject(leaf);'), 'compiled staged leaves must dirty their spatial chunk for later batching');
-ok(main.includes("_spawnDistrictStructuresComplete = true;\nawait testYieldNow('nearest authored district collision-ready"), 'construction safety gate must release only after nearest authored content is collision-ready');
+ok(main.includes("await testYieldNow('minimum-safe authored district collision-ready · releasing construction safety gate')"), 'construction safety gate must release only after the minimum-safe authored neighborhood is collision-ready');
 
 if (failures.length) {
   console.error(`[progressive-generation-selftest] FAIL (${failures.length})`);

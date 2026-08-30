@@ -120,6 +120,8 @@ assert.ok(richBuildings.some(e => e.partitionSegments > 0), 'generic interiors m
 assert.ok(richBuildings.some(e => e.balconySide), 'generic buildings must include navigable structural balcony modules');
 assert.ok(payloadA.physics.mazeWalls.length > payloadA.buildings * 8, 'rich building walls/parapets/partitions must publish paired collision');
 assert.ok(payloadA.refinement.tasks.length > payloadA.buildings * 2, 'each chunk must own a substantial resumable detail queue after structural READY');
+assert.ok(richBuildings.some(e => e.scaffoldLandings > 0), 'generic buildings must include climbable exterior scaffold/fire-escape structures');
+assert.ok(payloadA.entities.some(e => e.kind === 'plaza' && e.climbTiers >= 3), 'generic plazas must include climbable stacked junk topology');
 const detailKinds = new Set(payloadA.refinement.tasks.map(task => task.kind));
 for (const kind of ['sign', 'graffiti', 'pipe', 'awning', 'ivy']) assert.ok(detailKinds.has(kind), `chunk refinement must include ${kind} work`);
 const stableTaskContract = payloadA.refinement.tasks.map(({ kind, entityId, seed }) => ({ kind, entityId, seed }));
@@ -163,4 +165,6 @@ console.log('[infinite-city-chunks-selftest] PASS', {
   modularBuildings: richBuildings.filter(e => e.modularSetbacks > 0).length,
   partitionSegments: richBuildings.reduce((n, e) => n + e.partitionSegments, 0),
   refinementTasks: stableTaskContract.length,
+  scaffoldBuildings: richBuildings.filter(e => e.scaffoldLandings > 0).length,
+  climbablePlazas: payloadA.entities.filter(e => e.kind === 'plaza' && e.climbTiers > 0).length,
 });

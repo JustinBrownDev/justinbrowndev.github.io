@@ -1485,36 +1485,23 @@ function localRng(seed) {
 function runWithStableStreamingRng(key, work) {
     const previous = _rngSource;
     const local = localRng(hashString32(`${SEED}:stream:${key}`));
-    let draws = 0;
-    _rngSource = () => { draws++; return local(); };
+    _rngSource = local;
     try {
         return work();
     } finally {
         _rngSource = previous;
-        if (previous === _globalRng) {
-            for (let i = 0; i < draws; i++) _globalRng();
-        }
     }
 }
 
 function createStableStreamingRngStepper(key, iteratorFactory) {
     const local = localRng(hashString32(`${SEED}:stream:${key}`));
-    let draws = 0;
-    let globalAdvanced = 0;
-    const source = () => { draws++; return local(); };
     const scoped = (work) => {
         const previous = _rngSource;
-        _rngSource = source;
+        _rngSource = local;
         try {
             return work();
         } finally {
             _rngSource = previous;
-            if (previous === _globalRng) {
-                while (globalAdvanced < draws) {
-                    _globalRng();
-                    globalAdvanced++;
-                }
-            }
         }
     };
     const iterator = scoped(iteratorFactory);
@@ -1817,10 +1804,12 @@ let flushHorizontalPlaneBatches;
 let buildCoreFloor;
 let buildRooftopMechanicalRoom;
 let buildRooftopCatwalks;
+let buildRooftopCatwalkSteps;
 let maybeAddMezzanine;
 let maybeAddElevator;
 let buildFireEscape;
 let buildHangingBridges;
+let buildHangingBridgeSteps;
 let addBalcony;
 let addDebugRectOutline;
 let fireEscapeDimensions;
@@ -1977,10 +1966,12 @@ verticalCirculationSystem = createVerticalCirculationSystem({
     buildCoreFloor,
     buildRooftopMechanicalRoom,
     buildRooftopCatwalks,
+    buildRooftopCatwalkSteps,
     maybeAddMezzanine,
     maybeAddElevator,
     buildFireEscape,
     buildHangingBridges,
+    buildHangingBridgeSteps,
     addBalcony,
     addDebugRectOutline,
     fireEscapeDimensions,
@@ -2020,6 +2011,7 @@ const {
     addWallPoster,
     addTerminalPlaque,
     mountContentCards,
+    mountContentCardSteps,
     flickerLights,
 } = signageSystem;
 adornmentSystem.setStandoffPanelMounter(mountStandoffPanel);
@@ -2113,15 +2105,20 @@ const STREAM_CHUNK_SIZE = Math.max(GRID_W, GRID_H);
 let worldChunkStreamer = null;
 let infiniteChunkFactory = null;
 let _spawnDistrictStructuresComplete = false;
+let _spawnGroundPositionReady = null;
+let authoredCompletedSiteIds = null;
 function isStreamingWorldPositionAvailable(x, z) {
-    if (!_spawnDistrictStructuresComplete) {
+    const insideSpawn = Math.abs(x) <= GRID_W / QP[559] && Math.abs(z) <= GRID_H / QP[560];
+    if (insideSpawn) {
         if (!_testTopologyReady) return true;
-        if (Math.abs(x) > GRID_W / QP[559] || Math.abs(z) > GRID_H / QP[560]) return false;
+        if (_spawnGroundPositionReady && !_spawnGroundPositionReady(x, z)) return false;
         const { col, row } = worldToCellIndex(x, z);
-        return grid[row]?.[col] === false;
+        if (grid[row]?.[col] === false) return true;
+        const siteId = siteIdOf[row]?.[col] ?? QP[775];
+        return siteId >= QP[1015] && authoredCompletedSiteIds?.has(siteId) === true;
     }
     if (worldChunkStreamer) return worldChunkStreamer.isWorldPositionAvailable(x, z);
-    return Math.abs(x) <= STREAM_CHUNK_SIZE * 0.5 && Math.abs(z) <= STREAM_CHUNK_SIZE * 0.5;
+    return false;
 }
 function worldToCell(x, z) {
     return worldToCellIndex(x, z);
@@ -2197,122 +2194,186 @@ function sortBuildingSitesNearestToPlayer(sites) {
     sites.sort((a, b) => buildingSiteDistanceSqToPlayer(b) - buildingSiteDistanceSqToPlayer(a) || b.id - a.id);
 }
 
-{
-    const buildStart = performance.now();
-    _testGenerationTotal = buildingSites.length;
-    _testGenerationDone = 0;
+const authoredBuildStart = performance.now();
+_testGenerationTotal = buildingSites.length;
+_testGenerationDone = QP[1015];
+const authoredBuildingJobs = buildingSites.map(site => {
+    const iteratorFactory = site.signatureType
+        ? () => buildSignatureSiteSteps(site)
+        : () => addBuildingSiteSteps(site);
+    return {
+        site,
+        stepper: createStableStreamingRngStepper(`building:${site.id}`, iteratorFactory),
+        turns: QP[1015],
+        completed: false,
+        startedAt: QP[1015],
+        lastPhase: 'pending',
+    };
+});
+const authoredBuildingJobBySiteId = new Map(authoredBuildingJobs.map(job => [job.site.id, job]));
+authoredCompletedSiteIds = new Set();
+let authoredSchedulerTurns = QP[1015];
+let authoredStructuralSyncs = QP[1015];
+let authoredBuildingsResolve;
+const authoredBuildingsCompletePromise = new Promise(resolve => { authoredBuildingsResolve = resolve; });
+let authoredBuildingsResolved = false;
 
-    // The authored district is no longer allowed to consume one entire site before
-    // another site gets a turn. Every site owns its deterministic RNG stream and
-    // generator, and the scheduler advances exactly one semantic generator step at
-    // a time. All jobs at the same turn count are ordered nearest-player-first.
-    // This makes authored construction behave like chunk refinement: friends taking
-    // turns, not one giant privileged spawn builder monopolizing the thread.
-    const authoredJobs = buildingSites.map(site => {
-        const iteratorFactory = site.signatureType
-            ? () => buildSignatureSiteSteps(site)
-            : () => addBuildingSiteSteps(site);
-        return {
-            site,
-            stepper: createStableStreamingRngStepper(`building:${site.id}`, iteratorFactory),
-            turns: 0,
-            completed: false,
-            startedAt: 0,
-        };
-    });
-    let schedulerTurns = 0;
-    let structuralSyncs = 0;
-    await testYieldNow('streaming authored sites · fair semantic turns', _testGenerationDone, _testGenerationTotal);
-
-    while (authoredJobs.length) {
-        authoredJobs.sort((a, b) =>
-            a.turns - b.turns
-            || buildingSiteDistanceSqToPlayer(a.site) - buildingSiteDistanceSqToPlayer(b.site)
-            || a.site.id - b.site.id
-        );
-        const job = authoredJobs[0];
-        const site = job.site;
-        if (!job.startedAt) job.startedAt = performance.now();
-
-        const _stepStarted = performance.now();
-        _generationAddedRoots = [];
-        let step;
-        let addedRoots = [];
-        let deferredVisualPhase = false;
-        try {
-            step = job.stepper.step();
-        } finally {
-            addedRoots = _generationAddedRoots;
-            _generationAddedRoots = null;
-            deferredVisualPhase = !!(step && !step.done && shouldDeferBootstrapVisualPhase(site, step.value?.phase));
-            if (deferredVisualPhase) {
-                const hidden = deferBootstrapVisualRoots(addedRoots);
-                if (hidden) runtimeLatency.record('visual.defer-bootstrap', 0, { siteId: site.id, type: site.signatureType || 'ordinary', phase: step.value?.phase, hidden });
+function collectMinimumSafeAuthoredSiteIds() {
+    const wanted = new Set();
+    const visited = new Set();
+    const queue = [{ c: spawnCol, r: spawnRow, depth: QP[1015] }];
+    const maxDepth = QP[4];
+    while (queue.length) {
+        const cur = queue.shift();
+        const key = `${cur.c},${cur.r}`;
+        if (visited.has(key)) continue;
+        visited.add(key);
+        for (const [dc, dr] of [[QP[1024], QP[1015]], [-QP[1024], QP[1015]], [QP[1015], QP[1024]], [QP[1015], -QP[1024]]]) {
+            const nc = cur.c + dc, nr = cur.r + dr;
+            if (nr < QP[1015] || nr >= GRID_ROWS || nc < QP[1015] || nc >= GRID_COLS) continue;
+            const siteId = siteIdOf[nr]?.[nc] ?? QP[775];
+            if (siteId >= QP[1015]) {
+                wanted.add(siteId);
+                continue;
             }
+            if (cur.depth < maxDepth && grid[nr]?.[nc] === false) queue.push({ c: nc, r: nr, depth: cur.depth + QP[1024] });
         }
+    }
+    return wanted;
+}
 
-        const _stepMs = performance.now() - _stepStarted;
-        const _stepCategory = site.signatureType ? 'generation.signature-step' : 'generation.building-step';
-        runtimeLatency.record(_stepCategory, _stepMs, {
-            siteId: site.id,
-            type: site.signatureType || 'ordinary',
-            phase: step.value?.phase || 'complete',
-            cells: site.cells.length,
-            schedulerTurn: schedulerTurns,
-            siteTurn: job.turns,
-        });
-        if (_stepMs > 8) console.warn(`[latency] ${_stepCategory} ${_stepMs.toFixed(1)}ms · site=${site.id} · type=${site.signatureType || 'ordinary'} · phase=${step.value?.phase || 'complete'} · cells=${site.cells.length}`);
+function sortAuthoredBuildingJobsNearPlayer(jobs = authoredBuildingJobs) {
+    jobs.sort((a, b) =>
+        buildingSiteDistanceSqToPlayer(a.site) - buildingSiteDistanceSqToPlayer(b.site)
+        || a.turns - b.turns
+        || a.site.id - b.site.id
+    );
+}
 
-        job.turns++;
-        schedulerTurns++;
+function authoredStructuralRevision(site) {
+    let floorRecords = QP[1015];
+    for (const cell of site.cells) floorRecords += buildingWallSegments.get(`${cell.row},${cell.col}`)?.floors?.length ?? QP[1015];
+    return {
+        floorRecords,
+        platforms: elevatedPlatforms.length,
+        ramps: rampRuns.length,
+        ceilings: overheadCeilings.length,
+        props: propColliders.length,
+    };
+}
 
-        // Structural geometry becomes collision-authoritative at the same semantic
-        // publication boundary. Cosmetic/deferred phases never force a physics rebuild.
-        if (addedRoots.length && !deferredVisualPhase) {
-            const _physicsSyncStarted = performance.now();
-            const _physicsSyncStats = playerPhysics.syncDynamicWorld();
-            structuralSyncs++;
-            runtimeLatency.record('physics.sync-authored-step', performance.now() - _physicsSyncStarted, {
-                siteId: site.id,
-                phase: step.value?.phase || 'complete',
-                schedulerTurn: schedulerTurns,
-                ..._physicsSyncStats,
-            });
+function authoredStructuralRevisionChanged(before, after) {
+    return before.floorRecords !== after.floorRecords
+        || before.platforms !== after.platforms
+        || before.ramps !== after.ramps
+        || before.ceilings !== after.ceilings
+        || before.props !== after.props;
+}
+
+function stepAuthoredBuildingJob(job) {
+    const site = job.site;
+    if (!job.startedAt) job.startedAt = performance.now();
+    const stepStarted = performance.now();
+    const structuralBefore = authoredStructuralRevision(site);
+    _generationAddedRoots = [];
+    let step;
+    let addedRoots = [];
+    let deferredVisualPhase = false;
+    try {
+        step = job.stepper.step();
+    } finally {
+        addedRoots = _generationAddedRoots;
+        _generationAddedRoots = null;
+        deferredVisualPhase = !!(step && !step.done && shouldDeferBootstrapVisualPhase(site, step.value?.phase));
+        if (deferredVisualPhase) {
+            const hidden = deferBootstrapVisualRoots(addedRoots);
+            if (hidden) runtimeLatency.record('visual.defer-bootstrap', QP[1015], { siteId: site.id, type: site.signatureType || 'ordinary', phase: step.value?.phase, hidden });
         }
-
-        if (step.done) {
-            const _siteMs = performance.now() - job.startedAt;
-            runtimeLatency.record(site.signatureType ? 'generation.signature-site-wall' : 'generation.ordinary-site-wall', _siteMs, {
-                siteId: site.id,
-                type: site.signatureType || 'ordinary',
-                cells: site.cells.length,
-                semanticTurns: job.turns,
-            });
-            _testGenerationDone++;
-            authoredJobs.shift();
-
-            await testCompileSceneIfDirty();
-            refreshAnimatedMaterials();
-            const _flushStarted = performance.now();
-            await staticWorldOptimizer.flushDirtyChunks({
-                phaseLabel: 'batching completed authored chunks',
-                yieldControl: async () => {
-                    const elapsed = performance.now() - _testSliceStartedAt;
-                    const inputPending = !!navigator.scheduling?.isInputPending?.({ includeContinuous: true });
-                    if (!inputPending && elapsed < TEST_FRAME_BUDGET_MS) return false;
-                    await testPublishAndYieldNow('streaming authored sites · fair semantic turns', _testGenerationDone, _testGenerationTotal);
-                    return true;
-                },
-            });
-            runtimeLatency.record('optimizer.incremental-site-flush-wall', performance.now() - _flushStarted, { siteId: site.id, type: site.signatureType || 'ordinary' });
-        }
-
-        await testPublishAndYieldIfNeeded('streaming authored sites · fair semantic turns', _testGenerationDone, _testGenerationTotal);
     }
 
-    console.log(`[perf:test] ${buildingSites.length} authoritative building sites completed in fair semantic turns in ${(performance.now() - buildStart).toFixed(QP[4723])}ms wall-clock (${bootElapsed()} total); schedulerTurns=${schedulerTurns}; structuralSyncs=${structuralSyncs}`);
-    console.log(`[testing] same-site height mismatches: ${buildingConstructionSystem.stats().totalExposedSetbackWalls} exterior setback wall-floors generated where a same-site neighbor stopped short (floor-aware internal-edge fix -- was structurally always 0 before)`);
+    const stepMs = performance.now() - stepStarted;
+    const phase = step.value?.phase || 'complete';
+    job.lastPhase = phase;
+    job.turns++;
+    authoredSchedulerTurns++;
+    const stepCategory = site.signatureType ? 'generation.signature-step' : 'generation.building-step';
+    runtimeLatency.record(stepCategory, stepMs, {
+        siteId: site.id,
+        type: site.signatureType || 'ordinary',
+        phase,
+        cells: site.cells.length,
+        schedulerTurn: authoredSchedulerTurns,
+        siteTurn: job.turns,
+    });
+    if (stepMs > QP[8]) console.warn(`[latency] ${stepCategory} ${stepMs.toFixed(QP[1])}ms · site=${site.id} · type=${site.signatureType || 'ordinary'} · phase=${phase} · cells=${site.cells.length}`);
+
+    // Physics synchronization follows structural state changes, not scene.add().
+    // Appendable floor instance pages can gain a floor without adding a new root, so
+    // scene-root counting is insufficient. Conversely, signs/graffiti must not rebuild
+    // collision indexes. The revision snapshot catches both sides of that contract.
+    const structuralAfter = authoredStructuralRevision(site);
+    if (authoredStructuralRevisionChanged(structuralBefore, structuralAfter)) {
+        const syncStarted = performance.now();
+        const syncStats = playerPhysics.syncDynamicWorld();
+        authoredStructuralSyncs++;
+        runtimeLatency.record('physics.sync-authored-step', performance.now() - syncStarted, {
+            siteId: site.id,
+            phase,
+            schedulerTurn: authoredSchedulerTurns,
+            deferredVisualPhase,
+            structuralBefore,
+            structuralAfter,
+            ...syncStats,
+        });
+    }
+
+    if (step.done) {
+        job.completed = true;
+        authoredCompletedSiteIds.add(site.id);
+        _testGenerationDone++;
+        refreshAnimatedMaterials();
+        runtimeLatency.record(site.signatureType ? 'generation.signature-site-wall' : 'generation.ordinary-site-wall', performance.now() - job.startedAt, {
+            siteId: site.id,
+            type: site.signatureType || 'ordinary',
+            cells: site.cells.length,
+            semanticTurns: job.turns,
+        });
+        const idx = authoredBuildingJobs.indexOf(job);
+        if (idx >= QP[1015]) authoredBuildingJobs.splice(idx, QP[1024]);
+        if (!authoredBuildingJobs.length && !authoredBuildingsResolved) {
+            authoredBuildingsResolved = true;
+            authoredBuildingsResolve();
+            console.log(`[perf:test] all ${buildingSites.length} authored sites completed progressively in ${(performance.now() - authoredBuildStart).toFixed(QP[1])}ms wall-clock; schedulerTurns=${authoredSchedulerTurns}; structuralSyncs=${authoredStructuralSyncs}`);
+            console.log(`[testing] same-site height mismatches: ${buildingConstructionSystem.stats().totalExposedSetbackWalls} exterior setback wall-floors generated where a same-site neighbor stopped short`);
+        }
+    }
+    return { step, stepMs, phase, addedRoots: addedRoots.length, completed: job.completed };
 }
+
+function pumpAuthoredBuildingJobs({ maxSteps = QP[0], maxMillis = QP[1], onlySiteIds = null } = {}) {
+    const started = performance.now();
+    let steps = QP[1015];
+    let completed = QP[1015];
+    while (steps < maxSteps && performance.now() - started < maxMillis) {
+        const candidates = onlySiteIds
+            ? authoredBuildingJobs.filter(job => onlySiteIds.has(job.site.id))
+            : authoredBuildingJobs;
+        if (!candidates.length) break;
+        sortAuthoredBuildingJobsNearPlayer(candidates);
+        const result = stepAuthoredBuildingJob(candidates[QP[1015]]);
+        steps++;
+        if (result.completed) completed++;
+    }
+    return { steps, completed, pending: authoredBuildingJobs.length, ms: performance.now() - started };
+}
+
+const minimumSafeAuthoredSiteIds = collectMinimumSafeAuthoredSiteIds();
+await testYieldNow('building minimum-safe authored neighborhood', authoredCompletedSiteIds.size, minimumSafeAuthoredSiteIds.size);
+while ([...minimumSafeAuthoredSiteIds].some(id => !authoredCompletedSiteIds.has(id))) {
+    pumpAuthoredBuildingJobs({ maxSteps: QP[0], maxMillis: TEST_FRAME_BUDGET_MS, onlySiteIds: minimumSafeAuthoredSiteIds });
+    await testPublishAndYieldNow('building minimum-safe authored neighborhood', [...minimumSafeAuthoredSiteIds].filter(id => authoredCompletedSiteIds.has(id)).length, minimumSafeAuthoredSiteIds.size);
+}
+console.log(`[stream-perf] minimum-safe authored neighborhood ready: ${minimumSafeAuthoredSiteIds.size} boundary sites complete; ${authoredBuildingJobs.length}/${buildingSites.length} authored sites remain for live background construction`);
 
  
  
@@ -2361,30 +2422,117 @@ function validateFacadeOccupancy() {
     console.log(`[testing] world-space projection intersection self-test: ${projectionIntersections === QP[4734] ? 'PASS' : `FAIL (${projectionIntersections} intersecting pairs)`} across ${exteriorDecorationVolumes.length} registered projections`);
 }
 
-await testCompileSceneIfDirty();
-await testYieldNow('mounting real wall content');
-mountContentCards();  
-await testCompileSceneIfDirty();
-await testYieldNow('validating real facades');
-validateFacadeOccupancy();
-addFacadeDebugOverlay();
-addSignatureDebugOverlay();
-await testCompileSceneIfDirty();
-await testYieldNow('building rooftop catwalks');
-const rooftopCatwalkCount = buildRooftopCatwalks();  
-await testCompileSceneIfDirty();
-await testYieldNow('building hanging bridges');
-const hangingBridgeCount = buildHangingBridges();  
-await testCompileSceneIfDirty();
-await testYieldNow('city structure complete · streaming ground/props');
-bootStatus(`city built, ${GRID_COLS * GRID_ROWS} cells -- placing props/decoration…`);
+let rooftopCatwalkCount = QP[1015];
+let hangingBridgeCount = QP[1015];
+let authoredPostStructureStarted = false;
+let authoredPostStructureFinished = false;
+let authoredPostStructureResolve;
+const authoredPostStructureCompletePromise = new Promise(resolve => { authoredPostStructureResolve = resolve; });
+const authoredPostStructureJobs = [];
+
+function* authoredPostOneShotSteps(phase, work) {
+    yield { phase: `${phase}-ready` };
+    return work();
+}
+
+function finishAuthoredPostStructurePipeline() {
+    if (authoredPostStructureFinished) return;
+    authoredPostStructureFinished = true;
+    authoredPostStructureResolve();
+    console.log(`[stream-perf] authored relationship pass complete in live runtime · catwalks=${rooftopCatwalkCount} bridges=${hangingBridgeCount}`);
+}
+
+function maybeStartAuthoredPostStructurePipeline() {
+    if (authoredPostStructureStarted || authoredBuildingJobs.length) return false;
+    authoredPostStructureStarted = true;
+    authoredPostStructureJobs.push(
+        {
+            id: 'narrative-dead-ends',
+            structural: false,
+            stepper: createStableStreamingRngStepper('authored:narrative-dead-ends', () => placeNarrativeDeadEndBillboardSteps()),
+        },
+        {
+            id: 'content-cards',
+            structural: false,
+            stepper: createStableStreamingRngStepper('authored:content-cards', () => mountContentCardSteps()),
+        },
+        {
+            id: 'facade-validation',
+            structural: false,
+            stepper: createStableStreamingRngStepper('authored:facade-validation', () => authoredPostOneShotSteps('facade-validation', () => {
+                validateFacadeOccupancy();
+                addFacadeDebugOverlay();
+                addSignatureDebugOverlay();
+                return QP[1024];
+            })),
+        },
+        {
+            id: 'rooftop-catwalks',
+            structural: true,
+            onComplete: value => { rooftopCatwalkCount = value ?? QP[1015]; },
+            stepper: createStableStreamingRngStepper('authored:rooftop-catwalks', () => buildRooftopCatwalkSteps()),
+        },
+        {
+            id: 'hanging-bridges',
+            structural: true,
+            onComplete: value => { hangingBridgeCount = value ?? QP[1015]; },
+            stepper: createStableStreamingRngStepper('authored:hanging-bridges', () => buildHangingBridgeSteps()),
+        },
+        {
+            id: 'horizontal-plane-summary',
+            structural: false,
+            stepper: createStableStreamingRngStepper('authored:horizontal-plane-summary', () => authoredPostOneShotSteps('horizontal-plane-summary', () => flushHorizontalPlaneBatches())),
+        },
+    );
+    console.log(`[stream-perf] authored relationship queue armed with ${authoredPostStructureJobs.length} resumable phases; outer render ring retains priority`);
+    return true;
+}
+
+function pumpAuthoredPostStructurePipeline({ maxSteps = QP[1024], maxMillis = QP[1024] } = {}) {
+    const started = performance.now();
+    let steps = QP[1015];
+    while (authoredPostStructureJobs.length && steps < maxSteps && performance.now() - started < maxMillis) {
+        const job = authoredPostStructureJobs[QP[1015]];
+        const stepStarted = performance.now();
+        let result;
+        try {
+            result = job.stepper.step();
+        } catch (error) {
+            console.error(`[runtime] authored post-structure job ${job.id} failed; continuing remaining live world`, error);
+            authoredPostStructureJobs.shift();
+            steps++;
+            continue;
+        }
+        const stepMs = performance.now() - stepStarted;
+        runtimeLatency.record('authored-post.live-step', stepMs, {
+            job: job.id,
+            phase: result.value?.phase || (result.done ? 'complete' : 'step'),
+            remainingJobs: authoredPostStructureJobs.length,
+        });
+        if (job.structural && !result.done) {
+            const syncStarted = performance.now();
+            const syncStats = playerPhysics.syncDynamicWorld();
+            runtimeLatency.record('physics.sync-authored-post-step', performance.now() - syncStarted, { job: job.id, ...syncStats });
+        }
+        if (result.done) {
+            job.onComplete?.(result.value);
+            authoredPostStructureJobs.shift();
+        }
+        steps++;
+    }
+    if (!authoredPostStructureJobs.length && authoredPostStructureStarted) finishAuthoredPostStructurePipeline();
+    return { steps, pendingJobs: authoredPostStructureJobs.length, ms: performance.now() - started };
+}
+
+await testYieldNow('minimum-safe authored structure ready · preparing progressive spawn ground');
+bootStatus(`minimum-safe spawn ready; ${authoredBuildingJobs.length} authored sites remain -- starting live chunk systems…`);
 
  
  
  
  
  
-{
+function* placeNarrativeDeadEndBillboardSteps() {
     const dist = new Map();
     const key = (c, r) => `${c},${r}`;
     dist.set(key(spawnCol, spawnRow), QP[4735]);
@@ -2413,10 +2561,15 @@ bootStatus(`city built, ${GRID_COLS * GRID_ROWS} cells -- placing props/decorati
     deadEnds.sort((a, b) => b.d - a.d);
 
     const placements = [CONFIG.billboards.signal, ...CONFIG.billboards.nearMissSignals];
-    placements.forEach((content, i) => {
+    for (let i = QP[4735]; i < placements.length; i++) {
+        const content = placements[i];
         const cell = deadEnds[i];
-        if (!cell) return;
+        if (!cell) {
+            yield { phase: 'narrative-billboard', index: i, total: placements.length, placed: false };
+            continue;
+        }
         const { c: sc, r: sr } = cell;
+        let placed = false;
         for (const [dc, dr] of [[QP[4747], QP[4748]], [QP[4749], QP[4750]], [QP[4751], QP[4752]], [QP[4753], QP[4754]]]) {
             const bc = sc + dc, br = sr + dr;
             if (!grid[br]?.[bc]) continue;  
@@ -2441,9 +2594,20 @@ bootStatus(`city built, ${GRID_COLS * GRID_ROWS} cells -- placing props/decorati
             } else {
                 addSign(p.x, p.y, p.z, facade.rotY, content.title, content.subtitle, content.color);
             }
+            placed = true;
             break;
         }
-    });
+        yield { phase: 'narrative-billboard', index: i, total: placements.length, placed };
+    }
+    return placements.length;
+}
+
+
+function placeNarrativeDeadEndBillboards() {
+    const iterator = placeNarrativeDeadEndBillboardSteps();
+    let step = iterator.next();
+    while (!step.done) step = iterator.next();
+    return step.value;
 }
 
  
@@ -2453,87 +2617,162 @@ function nextPlazaCell() {
     return plazaCursor < shuffledPlazas.length ? shuffledPlazas[plazaCursor++] : null;
 }
 
+// Reserve the authored plaza program up front, but do not construct it during
+// bootstrap. Reservation fixes identity and park ownership deterministically;
+// execution is a nearest-player background queue after the live streamer owns
+// the frame loop.
+const parkCells = new Set();
+const specialPlazaJobs = [];
+let specialPlazaJobsTotal = QP[1015];
+let specialPlazaJobsCompleted = QP[1015];
+let specialPlazaWorstMs = QP[1015];
+
+function* specialPlazaOneShotSteps(run) {
+    yield { phase: 'plaza-job-ready' };
+    return run();
+}
+
+function reserveSpecialPlazaJob(kind, cell, ordinal, structural, run, stepsFactory = null) {
+    if (!cell) return false;
+    specialPlazaJobs.push({
+        id: `${kind}:${cell[QP[4772]]},${cell[QP[4773]]}:${ordinal}`,
+        kind,
+        c: cell[QP[4772]],
+        r: cell[QP[4773]],
+        structural,
+        run,
+        stepsFactory,
+        stepper: null,
+    });
+    specialPlazaJobsTotal++;
+    return true;
+}
+
 for (let i = QP[4771]; i < CONFIG.props.maxSpecialFeatures.statues; i++) {
     const cell = nextPlazaCell();
     if (!cell) break;
-    const { x, z } = cellToWorld(cell[QP[4772]], cell[QP[4773]]);
-    const r = addStatue(x, z);
-    propColliders.push({ x, z, radius: r, height: QP[4774] });
+    reserveSpecialPlazaJob('statue', cell, i, true, () => {
+        const { x, z } = cellToWorld(cell[QP[4772]], cell[QP[4773]]);
+        const r = addStatue(x, z);
+        propColliders.push({ x, z, radius: r, height: QP[4774] });
+    });
 }
 for (let i = QP[4775]; i < CONFIG.props.maxSpecialFeatures.constructionZones; i++) {
     const cell = nextPlazaCell();
     if (!cell) break;
-    const { x, z } = cellToWorld(cell[QP[4776]], cell[QP[4777]]);
-    const r = addConstructionZone(x, z);
-     
-     
-    propColliders.push({ x, z, radius: r, height: Infinity });
+    reserveSpecialPlazaJob('construction-zone', cell, i, true, () => {
+        const { x, z } = cellToWorld(cell[QP[4776]], cell[QP[4777]]);
+        const r = addConstructionZone(x, z);
+        propColliders.push({ x, z, radius: r, height: Infinity });
+    });
 }
 for (let i = QP[4778]; i < CONFIG.props.maxSpecialFeatures.crimeScenes; i++) {
     const cell = nextPlazaCell();
     if (!cell) break;
-    const { x, z } = cellToWorld(cell[QP[4779]], cell[QP[4780]]);
-    addCrimeScene(x, z);  
+    reserveSpecialPlazaJob('crime-scene', cell, i, false, () => {
+        const { x, z } = cellToWorld(cell[QP[4779]], cell[QP[4780]]);
+        addCrimeScene(x, z);
+    });
 }
 for (let i = QP[4781]; i < CONFIG.props.maxSpecialFeatures.newsstands; i++) {
     const cell = nextPlazaCell();
     if (!cell) break;
-    const { x, z } = cellToWorld(cell[QP[4782]], cell[QP[4783]]);
-    const r = addNewsstand(x, z, plazaFacingRotY(cell[QP[4784]], cell[QP[4785]]));
-    propColliders.push({ x, z, radius: r, height: QP[4786] });
+    reserveSpecialPlazaJob('newsstand', cell, i, true, () => {
+        const { x, z } = cellToWorld(cell[QP[4782]], cell[QP[4783]]);
+        const r = addNewsstand(x, z, plazaFacingRotY(cell[QP[4784]], cell[QP[4785]]));
+        propColliders.push({ x, z, radius: r, height: QP[4786] });
+    });
 }
 for (let i = QP[4787]; i < CONFIG.props.maxSpecialFeatures.phoneBooths; i++) {
     const cell = nextPlazaCell();
     if (!cell) break;
-    const { x, z } = cellToWorld(cell[QP[4788]], cell[QP[4789]]);
-    const r = addPhoneBooth(x, z);
-    propColliders.push({ x, z, radius: r, height: QP[4790] });
+    reserveSpecialPlazaJob('phone-booth', cell, i, true, () => {
+        const { x, z } = cellToWorld(cell[QP[4788]], cell[QP[4789]]);
+        const r = addPhoneBooth(x, z);
+        propColliders.push({ x, z, radius: r, height: QP[4790] });
+    });
 }
 for (let i = QP[4791]; i < CONFIG.props.maxSpecialFeatures.atmKiosks; i++) {
     const cell = nextPlazaCell();
     if (!cell) break;
-    const { x, z } = cellToWorld(cell[QP[4792]], cell[QP[4793]]);
-    const r = addAtmKiosk(x, z, plazaFacingRotY(cell[QP[4794]], cell[QP[4795]]));
-    propColliders.push({ x, z, radius: r, height: QP[4796] });
+    reserveSpecialPlazaJob('atm-kiosk', cell, i, true, () => {
+        const { x, z } = cellToWorld(cell[QP[4792]], cell[QP[4793]]);
+        const r = addAtmKiosk(x, z, plazaFacingRotY(cell[QP[4794]], cell[QP[4795]]));
+        propColliders.push({ x, z, radius: r, height: QP[4796] });
+    });
 }
-const parkCells = new Set();  
 for (let i = QP[4797]; i < CONFIG.props.maxSpecialFeatures.parks; i++) {
     const cell = nextPlazaCell();
     if (!cell) break;
-    const { x, z } = cellToWorld(cell[QP[4798]], cell[QP[4799]]);
-     
-     
-     
-     
-     
-     
-     
-     
-     
-    addPark(x, z, cell[QP[4800]], cell[QP[4801]]);
     parkCells.add(`${cell[QP[4802]]},${cell[QP[4803]]}`);
+    reserveSpecialPlazaJob('park', cell, i, true, () => {
+        const { x, z } = cellToWorld(cell[QP[4798]], cell[QP[4799]]);
+        addPark(x, z, cell[QP[4800]], cell[QP[4801]]);
+    }, () => {
+        const { x, z } = cellToWorld(cell[QP[4798]], cell[QP[4799]]);
+        return addParkSteps(x, z, cell[QP[4800]], cell[QP[4801]]);
+    });
 }
 for (let i = QP[4804]; i < CONFIG.props.maxSpecialFeatures.megaBillboards; i++) {
     const cell = nextPlazaCell();
     if (!cell) break;
-    const { x, z } = cellToWorld(cell[QP[4805]], cell[QP[4806]]);
-    const r = addMegaBillboard(x, z);
-     
-     
-    propColliders.push({ x, z, radius: r, height: Infinity });
+    reserveSpecialPlazaJob('mega-billboard', cell, i, true, () => {
+        const { x, z } = cellToWorld(cell[QP[4805]], cell[QP[4806]]);
+        const r = addMegaBillboard(x, z);
+        propColliders.push({ x, z, radius: r, height: Infinity });
+    });
 }
 
- 
- 
 for (const [pc, pr] of plazaCells) {
-    const { x, z } = cellToWorld(pc, pr);
-    addPlazaGlow(x, z);
-    if (rng() < QP[4807] * QUALITY.propDensity) scatterJunk('plaza', x, z, QP[4808] + Math.floor(rng() * QP[4809]), Math.min(colHalf(pc), rowHalf(pr)) * QP[4810]);
+    const cell = [pc, pr];
+    reserveSpecialPlazaJob('plaza-atmosphere', cell, QP[1015], true, () => {
+        const { x, z } = cellToWorld(pc, pr);
+        addPlazaGlow(x, z);
+        if (rng() < QP[4807] * QUALITY.propDensity) scatterJunk('plaza', x, z, QP[4808] + Math.floor(rng() * QP[4809]), Math.min(colHalf(pc), rowHalf(pr)) * QP[4810]);
+    });
 }
 
- 
- 
- 
+function sortSpecialPlazaJobsNearPlayer() {
+    specialPlazaJobs.sort((a, b) => {
+        const ap = cellToWorld(a.c, a.r), bp = cellToWorld(b.c, b.r);
+        const adx = ap.x - camera.position.x, adz = ap.z - camera.position.z;
+        const bdx = bp.x - camera.position.x, bdz = bp.z - camera.position.z;
+        return (adx * adx + adz * adz) - (bdx * bdx + bdz * bdz) || a.id.localeCompare(b.id);
+    });
+}
+
+function pumpSpecialPlazaJobs({ maxJobs = QP[1024], maxMillis = QP[1] } = {}) {
+    if (!specialPlazaJobs.length) return { jobs: QP[1015], pending: QP[1015], ms: QP[1015], worstMs: specialPlazaWorstMs };
+    sortSpecialPlazaJobsNearPlayer();
+    const started = performance.now();
+    let steps = QP[1015];
+    let jobs = QP[1015];
+    while (specialPlazaJobs.length && steps < maxJobs) {
+        if (steps > QP[1015] && performance.now() - started >= maxMillis) break;
+        const job = specialPlazaJobs[QP[1015]];
+        if (!job.stepper) {
+            const iteratorFactory = job.stepsFactory || (() => specialPlazaOneShotSteps(job.run));
+            job.stepper = createStableStreamingRngStepper(`plaza:${job.id}`, iteratorFactory);
+        }
+        const stepStarted = performance.now();
+        const collidersBefore = propColliders.length;
+        const result = job.stepper.step();
+        const colliderDelta = propColliders.length - collidersBefore;
+        const stepMs = performance.now() - stepStarted;
+        specialPlazaWorstMs = Math.max(specialPlazaWorstMs, stepMs);
+        steps++;
+        runtimeLatency.record('plaza.live-job', stepMs, { id: job.id, kind: job.kind, phase: result.value?.phase || (result.done ? 'complete' : 'step'), structural: job.structural, colliderDelta, pending: specialPlazaJobs.length });
+        if (job.structural && colliderDelta > QP[1015]) playerPhysics.syncDynamicWorld();
+        if (stepMs > QP[8]) console.warn(`[latency] plaza.live-job ${stepMs.toFixed(QP[1])}ms · ${job.id}`);
+        if (result.done) {
+            specialPlazaJobs.shift();
+            specialPlazaJobsCompleted++;
+            jobs++;
+        }
+    }
+    return { steps, jobs, pending: specialPlazaJobs.length, ms: performance.now() - started, worstMs: specialPlazaWorstMs };
+}
+
 const WALL_HUGGING_PROPS = new Set([
     'trashCan', 'vendingMachine', 'museumPlacard', 'trafficSign', 'trafficSignal', 'mileMarker', 'wantedPoster',
     'lantern', 'weeds', 'fenceSegment', 'stickerTag', 'businessCardLitter',
@@ -2550,7 +2789,20 @@ const groundSurfaceSystem = createGroundSurfaceSystem({
     colSize, rowSize, colHalf, rowHalf, cellToWorld, wallDirections, parkCells, makePixelTexture,
     scene, camera, testYieldNow: testPublishAndYieldNow, testYieldIfNeeded: testPublishAndYieldIfNeeded,
 });
-const { isStreetCell, roadOpenMask, layOpenCellSurfaces } = groundSurfaceSystem;
+const { isStreetCell, roadOpenMask, prepareOpenCellSurfaces, pumpOpenCellSurfaces, ensureOpenCellSurfaceNeighborhood, isWorldPositionReady: isSpawnGroundPositionReady, layOpenCellSurfaces } = groundSurfaceSystem;
+_spawnGroundPositionReady = isSpawnGroundPositionReady;
+
+function maybeMarkSpawnDistrictStructuresComplete() {
+    if (_spawnDistrictStructuresComplete) return true;
+    if (authoredBuildingJobs.length) return false;
+    if (!authoredPostStructureFinished) return false;
+    if (specialPlazaJobs.length) return false;
+    if (groundSurfaceSystem.stats().pendingChunks) return false;
+    _spawnDistrictStructuresComplete = true;
+    const groundStats = groundSurfaceSystem.stats();
+    console.log(`[stream-perf] authored spawn district structurally complete in live runtime · ground=${groundStats.readyChunks}/${groundStats.totalChunks} · plazas=${specialPlazaJobsCompleted}/${specialPlazaJobsTotal}`);
+    return true;
+}
 
 function addBench(x, z, rotY) {
     const g = new THREE.Group();
@@ -2642,7 +2894,7 @@ function sharedGrassMaterial() {
     return _sharedGrassMaterial;
 }
 
-function addPark(x, z, col = null, row = null) {
+function* addParkSteps(x, z, col = null, row = null) {
      
      
      
@@ -2654,6 +2906,7 @@ function addPark(x, z, col = null, row = null) {
     grass.scale.set(hwx * QP[4999] * QP[5000], hwz * QP[5001] * QP[5002], QP[5003]);
     grass.position.set(x, QP[5004], z);
     scene.add(grass);
+    yield { phase: 'park-grass' };
 
     const clusterCount = QP[5005] + Math.floor(rng() * QP[5006]);
     for (let i = QP[5007]; i < clusterCount; i++) {
@@ -2661,12 +2914,23 @@ function addPark(x, z, col = null, row = null) {
         const pz = z + randRange(-hwz * QP[5010], hwz * QP[5011]);
         addTree(px, pz);
         propColliders.push({ x: px, z: pz, radius: QP[5012], height: PROP_HEIGHTS.tree });
+        yield { phase: 'park-tree', index: i, total: clusterCount };
     }
     const benchAngle = randRange(QP[5013], Math.PI * QP[5014]);
     addBench(x + Math.cos(benchAngle) * QP[5015], z + Math.sin(benchAngle) * QP[5016], benchAngle + Math.PI / QP[5017]);
+    yield { phase: 'park-bench' };
     scatterJunk('park', x, z, QP[5018], Math.min(hwx, hwz) * QP[5019]);
-    if (rng() < QP[5020]) placeRealModel('ironGate', x, z - hwz * QP[5021], QP[5022]);  
+    yield { phase: 'park-junk' };
+    if (rng() < QP[5020]) placeRealModel('ironGate', x, z - hwz * QP[5021], QP[5022]);
+    yield { phase: 'park-model' };
     return Math.min(hwx, hwz);
+}
+
+function addPark(x, z, col = null, row = null) {
+    const iterator = addParkSteps(x, z, col, row);
+    let step = iterator.next();
+    while (!step.done) step = iterator.next();
+    return step.value;
 }
 
 function wallDirections(c, r) {
@@ -2787,9 +3051,11 @@ function findClearSpot(cx, cz, radius, tryOffsets) {
 }
 
 flushHorizontalPlaneBatches();
-await layOpenCellSurfaces();
-await testCompileSceneIfDirty();
-await testYieldNow('ground complete · seeding nearby real props');
+prepareOpenCellSurfaces();
+const minimumSafeGroundCenter = cellToWorld(spawnCol, spawnRow);
+const minimumSafeGround = await ensureOpenCellSurfaceNeighborhood(minimumSafeGroundCenter.x, minimumSafeGroundCenter.z, QP[1024]);
+console.log(`[stream-perf] minimum-safe ground ready ${minimumSafeGround.ready}/${minimumSafeGround.total}; ${groundSurfaceSystem.stats().pendingChunks} spawn-ground chunks remain for live streaming`);
+await testYieldNow('minimum-safe ground ready · deferring remaining streets/alleys to live runtime');
 
  
  
@@ -3034,7 +3300,7 @@ for (const sector of decorationSectors) {
 
 let initialDecorationCells = QP[5274];
 let initialDecorationSectors = QP[5275];
-const initialDecorationCount = Math.min(decorationSectors.length, (QP[5276] * 2 + 1) ** 2);
+const initialDecorationCount = QP[1015];
 const initialDecorationOrder = decorationSectors.slice().sort((a, b) => {
     const adx = a.centerX - camera.position.x, adz = a.centerZ - camera.position.z;
     const bdx = b.centerX - camera.position.x, bdz = b.centerZ - camera.position.z;
@@ -3190,8 +3456,7 @@ if (urlLandmark) {
 
 playerPhysics.syncFromPosition({ forceAirborne: false, resetVelocity: false });
 playerPhysics.syncDynamicWorld();
-_spawnDistrictStructuresComplete = true;
-await testYieldNow('nearest authored district collision-ready · releasing construction safety gate');
+await testYieldNow('minimum-safe authored district collision-ready · releasing construction safety gate');
 
  
  
@@ -3424,6 +3689,7 @@ let footstepTimer = QP[5341];
 let trafficSignalUpdateTimer = QP[5342];
 let worldChunkPumpPromise = null;
 let worldChunkNextKickAt = 0;
+let authoredOptimizerNextAt = 0;
 let backgroundEnrichmentReleased = false;
 let wikiEnrichmentScheduled = false;
 
@@ -3433,7 +3699,7 @@ function maybeReleaseBackgroundEnrichment() {
      
      
      
-    if (!worldStats.localPrefetchRing.complete) return false;
+    if (!worldStats.localPrefetchRing.complete || !_spawnDistrictStructuresComplete) return false;
     backgroundEnrichmentReleased = true;
     adornmentLoadQueue.resume();
     console.log('[asset] structural 7x7 warm · releasing bounded adornment queue', adornmentLoadQueue.stats());
@@ -3486,6 +3752,14 @@ function pumpWorldChunksAggressively() {
         });
 }
 
+function pumpAuthoredOptimizer(now) {
+    if (now < authoredOptimizerNextAt || !worldChunkStreamer?.stats().localRenderRing.complete) return false;
+    if (!staticWorldOptimizer?.getStats().dirtyChunks) return false;
+    const optimized = staticWorldOptimizer.optimizeNearestDirtyChunk('optimizing nearest live authored chunk');
+    authoredOptimizerNextAt = now + QP[5331];
+    return optimized;
+}
+
 function animate(now = performance.now()) {
     runtimeLatency.raf(now, { runtime: 'full', phase: _testGenerationPhase });
     requestAnimationFrame(animate);
@@ -3498,11 +3772,31 @@ function animate(now = performance.now()) {
      
     staticWorldOptimizer?.updateVisibility();
     worldChunkStreamer?.updateVisibility();
-    updateDecorationStreaming(delta);
-     
-     
-     
+
     pumpWorldChunksAggressively();
+    const groundPump = pumpOpenCellSurfaces({ maxChunks: QP[1024], maxMillis: QP[1024] });
+    if (groundPump.chunks) runtimeLatency.record('spawn-ground.pump', groundPump.ms, { ...groundPump, ...groundSurfaceSystem.stats() });
+
+    if (authoredBuildingJobs.length) {
+        const authoredPump = pumpAuthoredBuildingJobs({
+            maxSteps: QUALITY === CONFIG.quality.desktop ? QP[0] : QP[1024],
+            maxMillis: QUALITY === CONFIG.quality.desktop ? QP[1] : QP[1024],
+        });
+        if (authoredPump.steps) runtimeLatency.record('authored-live.pump', authoredPump.ms, authoredPump);
+    } else if (worldChunkStreamer?.stats().localRenderRing.complete) {
+        maybeStartAuthoredPostStructurePipeline();
+        const authoredPostPump = pumpAuthoredPostStructurePipeline({ maxSteps: QP[1024], maxMillis: QP[1024] });
+        if (authoredPostPump.steps) runtimeLatency.record('authored-post.live-pump', authoredPostPump.ms, authoredPostPump);
+    }
+
+    if (worldChunkStreamer?.stats().localRenderRing.complete && specialPlazaJobs.length) {
+        const plazaPump = pumpSpecialPlazaJobs({ maxJobs: QP[1024], maxMillis: QP[1] });
+        if (plazaPump.steps) runtimeLatency.record('plaza.live-pump', plazaPump.ms, plazaPump);
+    }
+
+    maybeMarkSpawnDistrictStructuresComplete();
+    if (_spawnDistrictStructuresComplete) updateDecorationStreaming(delta);
+    pumpAuthoredOptimizer(now);
     maybeReleaseBackgroundEnrichment();
 
     for (const f of flickerLights) {
@@ -3763,7 +4057,11 @@ animate();
 window.__boot?.ready();
 
 void (async function continuePostHandoffWorldRefinement() {
-    await testYieldNow('optimizing spawn chunk · background refinement');
+    await authoredBuildingsCompletePromise;
+    maybeStartAuthoredPostStructurePipeline();
+    await authoredPostStructureCompletePromise;
+    while (!_spawnDistrictStructuresComplete) await testNextPaint();
+    await testYieldNow('optimizing completed spawn chunk · background refinement');
     const staticOptimizeStart = performance.now();
     await staticWorldOptimizer.finalizeIncremental({
         yieldControl: (phase, done, total) => testYieldIfNeeded(phase, done, total),
@@ -3856,6 +4154,16 @@ window.__debug = {
             const c = worldChunkStreamer?.getChunkAtWorld(camera.position.x, camera.position.z);
             return c?.weirdness ?? worldWeirdnessAt(0, 0, { worldSeed: SEED });
         })(),
+        authored: {
+            pendingSites: authoredBuildingJobs.length,
+            completedSites: authoredCompletedSiteIds?.size ?? QP[1015],
+            minimumSafeSites: minimumSafeAuthoredSiteIds.size,
+            schedulerTurns: authoredSchedulerTurns,
+            structuralSyncs: authoredStructuralSyncs,
+            structuresComplete: _spawnDistrictStructuresComplete,
+            ground: groundSurfaceSystem.stats(),
+            plazas: { total: specialPlazaJobsTotal, completed: specialPlazaJobsCompleted, pending: specialPlazaJobs.length, worstMs: specialPlazaWorstMs },
+        },
         city: {
             cols: GRID_COLS, rows: GRID_ROWS, sites: buildingSites.length,
             rooftopDecks: rooftopDecks.length, propColliders: propColliders.length,

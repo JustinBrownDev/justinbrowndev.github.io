@@ -19,12 +19,23 @@ export function createVerticalCirculationSystem(deps) {
     let fireEscapeStoryCount = QP[2030];
 
     const horizontalPlaneBatches = new Map();
+    const HORIZONTAL_PLANE_PAGE_CAPACITY = QP[4875];
     const _horizontalBatchMatrix = new THREE.Matrix4();
     const _horizontalBatchPos = new THREE.Vector3();
     const _horizontalBatchScale = new THREE.Vector3();
     const _horizontalBatchQuat = new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / QP[1012], QP[1013], QP[1014]));
     let horizontalPlaneBatchStats = { draws: QP[1015], instances: QP[1016] };
-    
+
+    function createHorizontalPlanePage(key, bucket) {
+        const mesh = new THREE.InstancedMesh(unitPlaneGeo, bucket.mat, HORIZONTAL_PLANE_PAGE_CAPACITY);
+        mesh.name = `horizontalPlanes:${key}:page${bucket.pages.length}`;
+        mesh.receiveShadow = true;
+        mesh.count = QP[1015];
+        const page = { mesh, count: QP[1015] };
+        bucket.pages.push(page);
+        return page;
+    }
+
     function addHorizontalPlane(rect, y, mat) {
         if (rect.hx < QP[1017] || rect.hz < QP[1018]) return;
         const chunkX = Math.floor(rect.x / STATIC_BATCH_CHUNK);
@@ -32,37 +43,34 @@ export function createVerticalCirculationSystem(deps) {
         const key = `${mat.uuid}|${chunkX}|${chunkZ}`;
         let bucket = horizontalPlaneBatches.get(key);
         if (!bucket) {
-            bucket = { mat, transforms: [] };
+            bucket = { mat, chunkX, chunkZ, pages: [], instances: QP[1015] };
             horizontalPlaneBatches.set(key, bucket);
         }
-        bucket.transforms.push([rect.x, y, rect.z, rect.hx * QP[1019], rect.hz * QP[1020]]);
+        let page = bucket.pages[bucket.pages.length - QP[1024]];
+        if (!page || page.count >= HORIZONTAL_PLANE_PAGE_CAPACITY) page = createHorizontalPlanePage(key, bucket);
+
+        _horizontalBatchPos.set(rect.x, y, rect.z);
+        _horizontalBatchScale.set(rect.hx * QP[1019], rect.hz * QP[1020], QP[1024]);
+        _horizontalBatchMatrix.compose(_horizontalBatchPos, _horizontalBatchQuat, _horizontalBatchScale);
+        page.mesh.setMatrixAt(page.count, _horizontalBatchMatrix);
+        page.count++;
+        page.mesh.count = page.count;
+        page.mesh.instanceMatrix.needsUpdate = true;
+        page.mesh.computeBoundingBox?.();
+        page.mesh.computeBoundingSphere?.();
+        bucket.instances++;
+
+        if (page.count === QP[1024]) scene.add(page.mesh);
     }
-    
+
     function flushHorizontalPlaneBatches() {
         let draws = QP[1021], instances = QP[1022];
-        for (const [key, bucket] of horizontalPlaneBatches) {
-            const list = bucket.transforms;
-            if (!list.length) continue;
-            const mesh = new THREE.InstancedMesh(unitPlaneGeo, bucket.mat, list.length);
-            mesh.name = `horizontalPlanes:${key}`;
-            mesh.receiveShadow = true;
-            for (let i = QP[1023]; i < list.length; i++) {
-                const [x, y, z, sx, sz] = list[i];
-                _horizontalBatchPos.set(x, y, z);
-                _horizontalBatchScale.set(sx, sz, QP[1024]);
-                _horizontalBatchMatrix.compose(_horizontalBatchPos, _horizontalBatchQuat, _horizontalBatchScale);
-                mesh.setMatrixAt(i, _horizontalBatchMatrix);
-            }
-            mesh.instanceMatrix.needsUpdate = true;
-            mesh.computeBoundingBox?.();
-            mesh.computeBoundingSphere?.();
-            scene.add(mesh);
-            draws++;
-            instances += list.length;
+        for (const bucket of horizontalPlaneBatches.values()) {
+            draws += bucket.pages.length;
+            instances += bucket.instances;
         }
-        horizontalPlaneBatches.clear();
         horizontalPlaneBatchStats = { draws, instances };
-        console.log(`[perf] horizontal building plates: ${instances} floor/ceiling rectangles emitted as ${draws} chunked instance batches`);
+        console.log(`[perf] horizontal building plates: ${instances} floor/ceiling rectangles live in ${draws} appendable chunk instance pages`);
         return horizontalPlaneBatchStats;
     }
     
@@ -335,7 +343,7 @@ export function createVerticalCirculationSystem(deps) {
      
      
      
-    function buildRooftopCatwalks() {
+    function* buildRooftopCatwalkSteps() {
         let built = QP[1155];
          
          
@@ -380,9 +388,17 @@ export function createVerticalCirculationSystem(deps) {
                 addCatwalk(a, b);
                 built++;
             }
+            yield { phase: 'rooftop-catwalk-anchor', index: i, built, total: rooftopDecks.length };
         }
         console.log(`[gen] ${built} rooftop catwalks built (${rooftopDecks.length} candidate rooftop decks)`);
         return built;
+    }
+
+    function buildRooftopCatwalks() {
+        const iterator = buildRooftopCatwalkSteps();
+        let step = iterator.next();
+        while (!step.done) step = iterator.next();
+        return step.value;
     }
     
      
@@ -924,7 +940,7 @@ export function createVerticalCirculationSystem(deps) {
         return true;
     }
     
-    function buildHangingBridges() {
+    function* buildHangingBridgeSteps() {
         if (elevatedBridgeAnchors.length < QP[1542]) {
             console.log(`[gen] 0 upper-floor hanging bridges (${elevatedBridgeAnchors.length} landing anchors)`);
             return QP[1543];
@@ -942,6 +958,7 @@ export function createVerticalCirculationSystem(deps) {
         let built = QP[1553];
     
         for (const a of elevatedBridgeAnchors) {
+            yield { phase: 'hanging-bridge-anchor', anchor: a.__bridgeAnchorId, built, total: elevatedBridgeAnchors.length };
             if (built >= maxBuilt || used.has(a.__bridgeAnchorId)) continue;
             index.queryRadius(a.x, a.z, QP[1554], candidates);
             let best = null, bestGap = Infinity;
@@ -980,9 +997,17 @@ export function createVerticalCirculationSystem(deps) {
             const cables = new THREE.LineSegments(geo, hangingBridgeCableMat);
             cables.name = `hangingBridgeCables:${key}`;
             scene.add(cables);
+            yield { phase: 'hanging-bridge-cables', chunk: key, built, total: cableBuckets.size };
         }
         console.log(`[gen] ${built} upper-floor hanging bridges (${elevatedBridgeAnchors.length} landing anchors, ${cableBuckets.size} cable chunks)`);
         return built;
+    }
+
+    function buildHangingBridges() {
+        const iterator = buildHangingBridgeSteps();
+        let step = iterator.next();
+        while (!step.done) step = iterator.next();
+        return step.value;
     }
     
      
@@ -1126,10 +1151,12 @@ export function createVerticalCirculationSystem(deps) {
         buildCoreFloor,
         buildRooftopMechanicalRoom,
         buildRooftopCatwalks,
+        buildRooftopCatwalkSteps,
         maybeAddMezzanine,
         maybeAddElevator,
         buildFireEscape,
         buildHangingBridges,
+        buildHangingBridgeSteps,
         addBalcony,
         addDebugRectOutline,
         fireEscapeDimensions,

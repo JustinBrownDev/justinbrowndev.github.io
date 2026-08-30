@@ -57,7 +57,7 @@ ok(main.includes('hasPendingRefinement: (chunk, payload) => infiniteChunkFactory
 ok(chunks.includes('enhancementRng: mulberry32(hashString32(`${buildingId}:structure-v2`))'), 'rich generic structure must use a stable entity-local RNG stream instead of perturbing the legacy chunk stream');
 
 ok(main.includes('createProgressiveStaticWorldOptimizer({'), 'spawn chunk optimizer must remain cooperative');
-ok(main.includes("await testYieldNow('optimizing spawn chunk"), 'optimizer must remain a cooperative background refinement after structural handoff');
+ok(main.includes("await testYieldNow('optimizing completed spawn chunk"), 'optimizer must remain a cooperative background refinement after live authored completion');
 ok(main.includes('function pumpWorldChunksAggressively()'), 'live aggressive chunk streamer loop missing');
 ok(main.includes('CONFIG.streaming.urgentPumpChunks') && main.includes('CONFIG.streaming.prefetchPumpChunks') && main.includes('CONFIG.streaming.urgentBuildBudgetMs'), 'live stream must keep CPU busy with an explicit outer time budget until render/prefetch rings are warm');
 ok(main.includes('prefetchRadiusChunks: CONFIG.streaming.prefetchRadiusChunks'), 'live stream must maintain a larger prefetch ring after handoff');

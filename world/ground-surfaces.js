@@ -156,65 +156,147 @@ export function createGroundSurfaceSystem(deps) {
         }
     }
     
-    async function layOpenCellSurfaces() {
-        let roadCells = QP[4904], alleyCells = QP[4905], parkSkipped = QP[4906];
+    let openSurfacePrepared = false;
+    let pendingSurfaceChunks = [];
+    const readySurfaceChunks = new Set();
+    let surfaceRoadCells = QP[4904];
+    let surfaceAlleyCells = QP[4905];
+    let surfaceParkSkipped = QP[4906];
+    let surfaceDraws = QP[4883];
+    let surfaceInstances = QP[4884];
+
+    function surfaceChunkKey(chunkX, chunkZ) {
+        return `${chunkX},${chunkZ}`;
+    }
+
+    function prepareOpenCellSurfaces() {
+        if (openSurfacePrepared) return pendingSurfaceChunks.length;
+        openSurfacePrepared = true;
         const cellChunks = new Map();
         for (let r = QP[4907]; r < GRID_ROWS - QP[4908]; r++) {
             for (let c = QP[4909]; c < GRID_COLS - QP[4910]; c++) {
                 if (grid[r][c]) continue;
-                if (parkCells.has(`${c},${r}`)) { parkSkipped++; continue; }
+                // Parks now receive the same structural ground plate as every other open
+                // cell. The richer grass/trees/benches are a deferred plaza job, so skipping
+                // the base plate here would create a real temporary floor hole.
+                if (parkCells.has(`${c},${r}`)) surfaceParkSkipped++;
                 const { x, z } = cellToWorld(c, r);
                 const chunkX = Math.floor(x / JUNK_RENDER_CHUNK), chunkZ = Math.floor(z / JUNK_RENDER_CHUNK);
-                const key = `${chunkX},${chunkZ}`;
+                const key = surfaceChunkKey(chunkX, chunkZ);
                 let chunk = cellChunks.get(key);
-                if (!chunk) cellChunks.set(key, chunk = { chunkX, chunkZ, cells: [] });
+                if (!chunk) cellChunks.set(key, chunk = { key, chunkX, chunkZ, cells: [] });
                 chunk.cells.push({ c, r, x, z, street: isStreetCell(c, r) });
             }
         }
-    
-        const pendingChunks = [...cellChunks.values()];
-        const totalChunks = pendingChunks.length;
-        let doneChunks = 0, draws = 0, instances = 0;
-        let reprioritizeChunks = true;
-        await testYieldNow('streaming nearest real streets/alleys', doneChunks, totalChunks);
-        while (pendingChunks.length) {
-            if (reprioritizeChunks) {
-                pendingChunks.sort((a, b) => {
-                    const ax = (a.chunkX + 0.5) * JUNK_RENDER_CHUNK - camera.position.x;
-                    const az = (a.chunkZ + 0.5) * JUNK_RENDER_CHUNK - camera.position.z;
-                    const bx = (b.chunkX + 0.5) * JUNK_RENDER_CHUNK - camera.position.x;
-                    const bz = (b.chunkZ + 0.5) * JUNK_RENDER_CHUNK - camera.position.z;
-                    return (bx * bx + bz * bz) - (ax * ax + az * az);
-                });
-                reprioritizeChunks = false;
-            }
-            const chunk = pendingChunks.pop();
+        pendingSurfaceChunks = [...cellChunks.values()];
+        return pendingSurfaceChunks.length;
+    }
+
+    function sortPendingSurfaceChunksNear(x = camera.position.x, z = camera.position.z) {
+        pendingSurfaceChunks.sort((a, b) => {
+            const ax = (a.chunkX + QP[1024] / QP[1012]) * JUNK_RENDER_CHUNK - x;
+            const az = (a.chunkZ + QP[1024] / QP[1012]) * JUNK_RENDER_CHUNK - z;
+            const bx = (b.chunkX + QP[1024] / QP[1012]) * JUNK_RENDER_CHUNK - x;
+            const bz = (b.chunkZ + QP[1024] / QP[1012]) * JUNK_RENDER_CHUNK - z;
+            return (ax * ax + az * az) - (bx * bx + bz * bz);
+        });
+    }
+
+    function pumpOpenCellSurfaces({ maxChunks = QP[1024], maxMillis = QP[1028], x = camera.position.x, z = camera.position.z } = {}) {
+        prepareOpenCellSurfaces();
+        if (!pendingSurfaceChunks.length) return { chunks: QP[1015], ms: QP[1015], complete: true };
+        sortPendingSurfaceChunksNear(x, z);
+        const started = performance.now();
+        let chunks = QP[1015];
+        while (pendingSurfaceChunks.length && chunks < maxChunks) {
+            if (chunks > QP[1015] && performance.now() - started >= maxMillis) break;
+            const chunk = pendingSurfaceChunks.shift();
             for (const cell of chunk.cells) {
                 addStreetSurface(cell.c, cell.r, cell.x, cell.z, cell.street);
-                if (cell.street) roadCells++; else alleyCells++;
+                if (cell.street) surfaceRoadCells++; else surfaceAlleyCells++;
             }
             const batched = flushGroundSurfaceBatches(chunk.chunkX, chunk.chunkZ);
-            draws += batched.draws;
-            instances += batched.instances;
-            doneChunks++;
-            reprioritizeChunks = await testYieldIfNeeded('streaming nearest real streets/alleys', doneChunks, totalChunks);
+            surfaceDraws += batched.draws;
+            surfaceInstances += batched.instances;
+            readySurfaceChunks.add(chunk.key);
+            chunks++;
         }
-         
-         
-         
-        const spill = flushGroundSurfaceBatches();
-        draws += spill.draws;
-        instances += spill.instances;
-        groundSurfaceBatchStats = { draws, instances };
-        console.log(`[gen] explicit ground surfaces: ${roadCells} road + ${alleyCells} alley cells, ${parkSkipped} parks; ${instances} plates/sidewalks emitted directly as ${draws} nearest-first chunked instance batches (shared ${roadMaterialCache.size} road materials + 1 alley material)`);
+        groundSurfaceBatchStats = { draws: surfaceDraws, instances: surfaceInstances };
+        return { chunks, ms: performance.now() - started, complete: pendingSurfaceChunks.length === QP[1015] };
     }
+
+    function isWorldPositionReady(x, z) {
+        prepareOpenCellSurfaces();
+        return readySurfaceChunks.has(surfaceChunkKey(Math.floor(x / JUNK_RENDER_CHUNK), Math.floor(z / JUNK_RENDER_CHUNK)));
+    }
+
+    async function ensureOpenCellSurfaceNeighborhood(x, z, radiusChunks = QP[1024]) {
+        prepareOpenCellSurfaces();
+        const centerX = Math.floor(x / JUNK_RENDER_CHUNK), centerZ = Math.floor(z / JUNK_RENDER_CHUNK);
+        const wanted = new Set();
+        for (const chunk of pendingSurfaceChunks) {
+            if (Math.abs(chunk.chunkX - centerX) <= radiusChunks && Math.abs(chunk.chunkZ - centerZ) <= radiusChunks) wanted.add(chunk.key);
+        }
+        const total = wanted.size;
+        let done = QP[1015];
+        while (wanted.size) {
+            sortPendingSurfaceChunksNear(x, z);
+            const index = pendingSurfaceChunks.findIndex(chunk => wanted.has(chunk.key));
+            if (index < QP[1015]) break;
+            const chunk = pendingSurfaceChunks.splice(index, QP[1024])[QP[1015]];
+            for (const cell of chunk.cells) {
+                addStreetSurface(cell.c, cell.r, cell.x, cell.z, cell.street);
+                if (cell.street) surfaceRoadCells++; else surfaceAlleyCells++;
+            }
+            const batched = flushGroundSurfaceBatches(chunk.chunkX, chunk.chunkZ);
+            surfaceDraws += batched.draws;
+            surfaceInstances += batched.instances;
+            readySurfaceChunks.add(chunk.key);
+            wanted.delete(chunk.key);
+            done++;
+            groundSurfaceBatchStats = { draws: surfaceDraws, instances: surfaceInstances };
+            await testYieldIfNeeded('publishing minimum-safe spawn ground', done, total);
+        }
+        return { ready: done, total, complete: wanted.size === QP[1015] };
+    }
+
+    async function layOpenCellSurfaces() {
+        prepareOpenCellSurfaces();
+        const totalChunks = pendingSurfaceChunks.length;
+        let doneChunks = QP[1015];
+        await testYieldNow('streaming nearest real streets/alleys', doneChunks, totalChunks);
+        while (pendingSurfaceChunks.length) {
+            const result = pumpOpenCellSurfaces({ maxChunks: QP[1024], maxMillis: QP[1028] });
+            doneChunks += result.chunks;
+            await testYieldIfNeeded('streaming nearest real streets/alleys', doneChunks, totalChunks);
+        }
+        const spill = flushGroundSurfaceBatches();
+        surfaceDraws += spill.draws;
+        surfaceInstances += spill.instances;
+        groundSurfaceBatchStats = { draws: surfaceDraws, instances: surfaceInstances };
+        console.log(`[gen] explicit ground surfaces: ${surfaceRoadCells} road + ${surfaceAlleyCells} alley cells, ${surfaceParkSkipped} park cells retain structural base plates; ${surfaceInstances} plates/sidewalks emitted directly as ${surfaceDraws} progressive chunked instance batches (shared ${roadMaterialCache.size} road materials + 1 alley material)`);
+    }
+
     
      
 
     return Object.freeze({
         isStreetCell,
         roadOpenMask,
+        prepareOpenCellSurfaces,
+        pumpOpenCellSurfaces,
+        ensureOpenCellSurfaceNeighborhood,
+        isWorldPositionReady,
         layOpenCellSurfaces,
-        stats() { return { ...groundSurfaceBatchStats, roadMaterialPool: roadMaterialCache.size }; },
+        stats() {
+            return {
+                ...groundSurfaceBatchStats,
+                roadMaterialPool: roadMaterialCache.size,
+                prepared: openSurfacePrepared,
+                readyChunks: readySurfaceChunks.size,
+                pendingChunks: pendingSurfaceChunks.length,
+                totalChunks: readySurfaceChunks.size + pendingSurfaceChunks.length,
+            };
+        },
     });
 }

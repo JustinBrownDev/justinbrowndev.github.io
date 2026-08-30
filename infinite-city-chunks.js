@@ -23,6 +23,12 @@ function mulberry32(seed) {
 
 function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 function key(c, r) { return `${c},${r}`; }
+function oppositeSide(side) {
+    if (side === 'north') return 'south';
+    if (side === 'south') return 'north';
+    if (side === 'west') return 'east';
+    return 'west';
+}
 
 function pushWallSegments(out, cx, cz, halfX, halfZ, yMin, yMax, doorSide = null, doorWidth = 1.5) {
     const x0 = cx - halfX, x1 = cx + halfX, z0 = cz - halfZ, z1 = cz + halfZ;
@@ -367,6 +373,79 @@ export function createInfiniteCityChunkFactory({
         }
     }
 
+    function addExteriorScaffold({ physics, transforms, fp, floors, floorH, side, seed }) {
+        if (floors < 2) return 0;
+        const rng = mulberry32(seed);
+        const horizontalFace = side === 'north' || side === 'south';
+        const depth = 1.0;
+        const tangentSpan = Math.max(3.2, Math.min(6.4, (horizontalFace ? fp.halfX : fp.halfZ) * 1.7));
+        const outward = side === 'north' || side === 'west' ? -1 : 1;
+        const face = horizontalFace ? fp.cz : fp.cx;
+        const halfFace = horizontalFace ? fp.halfZ : fp.halfX;
+        const fixed = face + outward * (halfFace + depth * 0.62);
+        const landingDepth = 0.82;
+        const landingWidth = Math.min(tangentSpan, Math.max(2.4, tangentSpan * 0.72));
+        const slabT = 0.12;
+        const postH = floors * floorH + 0.75;
+        let landings = 0;
+
+        // Four skinny posts turn the stair into a recognizable exterior scaffold,
+        // not merely an invisible physics ramp.
+        for (const tangent of [-landingWidth * 0.5, landingWidth * 0.5]) {
+            for (const depthOffset of [-landingDepth * 0.38, landingDepth * 0.38]) {
+                const x = horizontalFace ? fp.cx + tangent : fixed + depthOffset;
+                const z = horizontalFace ? fixed + depthOffset : fp.cz + tangent;
+                transforms.props.push({ x, y: postH * 0.5, z, sx: 0.10, sy: postH, sz: 0.10 });
+            }
+        }
+
+        for (let level = 0; level <= floors; level++) {
+            const y = level * floorH;
+            const x = horizontalFace ? fp.cx : fixed;
+            const z = horizontalFace ? fixed : fp.cz;
+            transforms.slabs.push({
+                x, y: y - slabT * 0.5, z,
+                sx: horizontalFace ? landingWidth : landingDepth,
+                sy: slabT,
+                sz: horizontalFace ? landingDepth : landingWidth,
+            });
+            addRectPlatform(
+                physics.platforms,
+                x, z,
+                horizontalFace ? landingWidth : landingDepth,
+                horizontalFace ? landingDepth : landingWidth,
+                y,
+                'scaffold',
+            );
+            landings++;
+            if (level >= floors) continue;
+
+            const direction = ((level + (seed & 1)) & 1) ? -1 : 1;
+            const from = direction < 0 ? landingWidth * 0.38 : -landingWidth * 0.38;
+            const to = -from;
+            const axis = horizontalFace ? 'x' : 'z';
+            physics.ramps.push({
+                axis,
+                from: (horizontalFace ? fp.cx : fp.cz) + from,
+                to: (horizontalFace ? fp.cx : fp.cz) + to,
+                fixedCoord: fixed,
+                halfWidth: landingDepth * 0.34,
+                y0: y,
+                y1: y + floorH,
+                supportKind: 'scaffold',
+            });
+            const steps = 12;
+            for (let i = 0; i < steps; i++) {
+                const t = (i + 0.5) / steps;
+                const along = (horizontalFace ? fp.cx : fp.cz) + from + (to - from) * t;
+                const stepY = y + floorH * (i + 1) / steps - 0.07;
+                if (horizontalFace) transforms.steps.push({ x: along, y: stepY, z: fixed, sx: Math.abs(to - from) / steps * 1.08, sy: 0.14, sz: landingDepth * 0.72 });
+                else transforms.steps.push({ x: fixed, y: stepY, z: along, sx: landingDepth * 0.72, sy: 0.14, sz: Math.abs(to - from) / steps * 1.08 });
+            }
+        }
+        return landings;
+    }
+
     function addRoofParapet({ physics, wallList, fp, roofY }) {
         const h = 0.68, t = 0.12;
         wallTransform(wallList, fp.cx, roofY + h * 0.5, fp.cz - fp.halfZ, fp.halfX * 2, h, t);
@@ -394,6 +473,9 @@ export function createInfiniteCityChunkFactory({
         const footprints = buildModularFootprints({ cx, cz, halfX, halfZ, floors, stairCx, stairCz, stairGapW, stairGapD, enhancementRng });
         const balconySpec = floors >= 2 && enhancementRng() < 0.58
             ? { side: ['north', 'east', 'south', 'west'][(hashString32(`${entityId}:balcony`) >>> 0) % 4] }
+            : null;
+        const scaffoldSide = floors >= 2 && enhancementRng() < 0.48
+            ? oppositeSide(doorSide)
             : null;
         const partitionSpecs = footprints.map((fp, floor) => {
             if (fp.halfX < 1.8 || fp.halfZ < 1.8 || enhancementRng() > (floor === 0 ? 0.78 : 0.54)) return null;
@@ -467,6 +549,9 @@ export function createInfiniteCityChunkFactory({
         addRenderedNotchedSlab(transforms, top.cx, top.cz, top.halfX * 2 - wallT * 2, top.halfZ * 2 - wallT * 2, roofY, stairCx, stairCz, stairGapW, stairGapD);
         addRoofParapet({ physics, wallList, fp: top, roofY });
         if (balconySpec) addBalcony({ physics, transforms, wallList, fp: footprints[Math.min(1, footprints.length - 1)], y: floorH, side: balconySpec.side });
+        const scaffoldLandings = scaffoldSide
+            ? addExteriorScaffold({ physics, transforms, fp: footprints[0], floors, floorH, side: scaffoldSide, seed: hashString32(`${entityId}:scaffold`) })
+            : 0;
         addFacadeDetails(transforms, rng, { footprints, floorH, floors, doorSide, balconySpec });
 
         if (rng() < 0.58) {
@@ -484,7 +569,35 @@ export function createInfiniteCityChunkFactory({
             modularSetbacks: footprints.filter((fp, i) => i > 0 && (fp.cx !== footprints[i - 1].cx || fp.cz !== footprints[i - 1].cz || fp.halfX !== footprints[i - 1].halfX || fp.halfZ !== footprints[i - 1].halfZ)).length,
             partitionSegments,
             balconySide: balconySpec?.side ?? null,
+            scaffoldSide,
+            scaffoldLandings,
         };
+    }
+
+    function addClimbablePlazaPile({ physics, transforms, rng, cx, cz, cellSize, weird }) {
+        const tiers = 3 + Math.floor(rng() * (2 + weird * 3));
+        const baseWidth = cellSize * (0.22 + rng() * 0.10);
+        const driftX = (rng() - 0.5) * cellSize * 0.12;
+        const driftZ = (rng() - 0.5) * cellSize * 0.12;
+        let topY = 0;
+        for (let tier = 0; tier < tiers; tier++) {
+            const h = 0.24 + rng() * 0.13;
+            const shrink = Math.max(0.48, 1 - tier * 0.11);
+            const sx = baseWidth * shrink;
+            const sz = baseWidth * (0.78 + rng() * 0.36) * shrink;
+            const x = cx + driftX * tier / Math.max(1, tiers - 1);
+            const z = cz + driftZ * tier / Math.max(1, tiers - 1);
+            transforms.props.push({ x, y: topY + h * 0.5, z, sx, sy: h, sz });
+            physics.props.push({
+                x, z,
+                radius: Math.max(0.28, Math.min(sx, sz) * 0.42),
+                yMin: topY,
+                height: topY + h,
+                supportKind: 'junk-pile',
+            });
+            topY += h;
+        }
+        return { tiers, topY };
     }
 
     const districtLandmarkTypes = Object.freeze(['spire', 'stack', 'gatehouse', 'archive', 'beacon']);
@@ -728,7 +841,14 @@ export function createInfiniteCityChunkFactory({
                     transforms.props.push({ x: px, y: h * 0.5, z: pz, sx: w, sy: h, sz: 0.45 + rng() * 0.8 });
                     physics.props.push({ x: px, z: pz, radius: Math.max(0.3, w * 0.5), height: h });
                 }
-                entities.push({ id: plazaId, kind: 'plaza', c, r, x: cellCx, z: cellCz, clutter });
+                const climbPile = rng() < 0.38 + weird * 0.38
+                    ? addClimbablePlazaPile({ physics, transforms, rng, cx: cellCx, cz: cellCz, cellSize, weird })
+                    : null;
+                entities.push({
+                    id: plazaId, kind: 'plaza', c, r, x: cellCx, z: cellCz, clutter,
+                    climbTiers: climbPile?.tiers ?? 0,
+                    climbHeight: climbPile?.topY ?? 0,
+                });
                 if (yieldControl && (entities.length & 7) === 0) await yieldControl(`building chunk ${chunk.key}`, entities.length, microCells * microCells);
                 continue;
             }

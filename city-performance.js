@@ -599,6 +599,28 @@ export function createProgressiveStaticWorldOptimizer({
         return controller;
     }
 
+    function optimizeNearestDirtyChunk(phaseLabel = 'optimizing nearest streamed chunk') {
+        if (!enabled) beginIncremental();
+        let nearest = null;
+        let nearestDistance = Infinity;
+        for (const key of dirtyChunks) {
+            const group = chunks.get(key);
+            if (!group) continue;
+            const distance = chunkDistanceSq(group);
+            if (distance < nearestDistance) {
+                nearestDistance = distance;
+                nearest = group;
+            }
+        }
+        if (!nearest) return false;
+        optimizeChunkGroup(nearest);
+        phase = phaseLabel;
+        phaseDone++;
+        phaseTotal = Math.max(phaseTotal, phaseDone + dirtyChunks.size);
+        updateVisibility(true);
+        return true;
+    }
+
     async function flushDirtyChunks({ yieldControl = null, keys = null, phaseLabel = 'optimizing streamed chunks' } = {}) {
         if (!enabled) beginIncremental();
         const allowed = keys ? new Set(keys) : null;
@@ -729,6 +751,7 @@ export function createProgressiveStaticWorldOptimizer({
         optimize,
         beginIncremental,
         flushDirtyChunks,
+        optimizeNearestDirtyChunk,
         finalizeIncremental,
         updateVisibility,
         setDrawDistance(value) {

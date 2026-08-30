@@ -425,11 +425,10 @@ export function createPlayerPhysics(options) {
      
      
     // SANITY HANDOFF: already-valid player occupancy outranks late procedural
-    // geometry. Owned collision is staged against the current capsule; conflicting
-    // primitives stay non-authoritative until the player leaves them. This prevents
-    // streamed geometry from using historical lastSafe as its normal activation path.
-    // Render-unit parity is intentionally a later layer; this first landing protects
-    // controller authority without changing world-generation content or seeds.
+    // geometry. P1 staged conflicting collision per primitive; P3 closes the authority
+    // gap by staging the WHOLE owner when any primitive intersects the current capsule.
+    // That lets the render owner remain hidden too: no invisible sibling collision, no
+    // visible-but-non-solid structure, and no routine rollback to historical lastSafe.
     const ownedWorld = new Map();
     const ownedCompactionThreshold = Math.max(8, options.ownedCompactionThreshold ?? 48);
     let lastDeferredRetryX = Infinity;
@@ -539,19 +538,37 @@ export function createPlayerPhysics(options) {
         entry.activationState = 'deferred-player-overlap';
     }
 
+    function notifyOwnedActivation(record, previousState) {
+        if (record.activationState === previousState || typeof record.onActivationChange !== 'function') return;
+        try { record.onActivationChange(record); }
+        catch (error) { console.warn(`[physics] owned-world activation listener failed for ${record.ownerId}`, error); }
+    }
+
+    function ownedRecordOverlapsCurrentCapsule(record) {
+        return record.entries.some(ownedEntryOverlapsCurrentCapsule);
+    }
+
+    function deferOwnedRecord(record) {
+        const previousState = record.activationState;
+        for (const entry of record.entries) deferOwnedEntry(record, entry);
+        record.activationState = 'deferred-player-overlap';
+        record.deferredReason = 'player-capsule-overlap';
+        notifyOwnedActivation(record, previousState);
+    }
+
+    function activateOwnedRecord(record) {
+        const previousState = record.activationState;
+        for (const entry of record.entries) activateOwnedEntry(record, entry);
+        record.activationState = 'active';
+        record.deferredReason = null;
+        notifyOwnedActivation(record, previousState);
+    }
+
     function stageOwnedRecord(record) {
         record.active = true;
-        let deferredItems = 0;
-        for (const entry of record.entries) {
-            if (ownedEntryOverlapsCurrentCapsule(entry)) {
-                deferOwnedEntry(record, entry);
-                deferredItems++;
-            } else {
-                activateOwnedEntry(record, entry);
-            }
-        }
-        record.activationState = deferredItems ? 'deferred-player-overlap' : 'active';
-        record.deferredReason = deferredItems ? 'player-capsule-overlap' : null;
+        if (ownedRecordOverlapsCurrentCapsule(record)) deferOwnedRecord(record);
+        else activateOwnedRecord(record);
+        const deferredItems = record.activationState === 'deferred-player-overlap' ? record.entries.length : 0;
         return { deferredItems, activationState: record.activationState };
     }
 
@@ -589,10 +606,11 @@ export function createPlayerPhysics(options) {
         return { removedOwners, removedItems, ...ownedWorldStats() };
     }
 
-    function registerOwnedWorld(ownerId, data = {}) {
+    function registerOwnedWorld(ownerId, data = {}, lifecycle = {}) {
         if (ownerId === undefined || ownerId === null) throw new Error('registerOwnedWorld requires ownerId');
         const existing = ownedWorld.get(ownerId);
         if (existing) {
+            if (typeof lifecycle.onActivationChange === 'function') existing.onActivationChange = lifecycle.onActivationChange;
             stageOwnedRecord(existing);
             return existing;
         }
@@ -606,6 +624,7 @@ export function createPlayerPhysics(options) {
             active: true,
             activationState: 'staged',
             deferredReason: null,
+            onActivationChange: typeof lifecycle.onActivationChange === 'function' ? lifecycle.onActivationChange : null,
         };
         ownedWorld.set(ownerId, record);
         stageOwnedRecord(record);
@@ -615,6 +634,7 @@ export function createPlayerPhysics(options) {
     function unregisterOwnedWorld(ownerId) {
         const record = ownedWorld.get(ownerId);
         if (!record) return false;
+        const previousState = record.activationState;
         for (const entry of record.entries) {
             entry.item.__physicsDisabled = true;
             entry.activationState = 'inactive';
@@ -622,6 +642,10 @@ export function createPlayerPhysics(options) {
         record.active = false;
         record.activationState = 'inactive';
         record.deferredReason = null;
+        notifyOwnedActivation(record, previousState);
+        // Do not let an inactive collision tombstone retain its render payload through
+        // the lifecycle callback while waiting for the normal compaction threshold.
+        record.onActivationChange = null;
 
         let inactiveOwners = 0;
         for (const candidate of ownedWorld.values()) if (!candidate.active) inactiveOwners++;
@@ -644,20 +668,13 @@ export function createPlayerPhysics(options) {
         let activatedItems = 0;
         let pendingItems = 0;
         for (const record of ownedWorld.values()) {
-            if (!record.active) continue;
-            let recordPending = 0;
-            for (const entry of record.entries) {
-                if (entry.activationState !== 'deferred-player-overlap') continue;
-                if (ownedEntryOverlapsCurrentCapsule(entry)) {
-                    pendingItems++;
-                    recordPending++;
-                    continue;
-                }
-                activateOwnedEntry(record, entry);
-                activatedItems++;
+            if (!record.active || record.activationState !== 'deferred-player-overlap') continue;
+            if (ownedRecordOverlapsCurrentCapsule(record)) {
+                pendingItems += record.entries.length;
+                continue;
             }
-            record.activationState = recordPending ? 'deferred-player-overlap' : 'active';
-            record.deferredReason = recordPending ? 'player-capsule-overlap' : null;
+            activatedItems += record.entries.length;
+            activateOwnedRecord(record);
         }
         return { activatedItems, pendingItems, ...ownedWorldStats() };
     }

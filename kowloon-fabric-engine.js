@@ -1722,12 +1722,35 @@ export function createKowloonFabricEngine({
         return payload;
     }
 
+    // Render and collision are one owner-level authority unit. Streamer visibility
+    // is a REQUEST; actual publication additionally requires the physics owner to be
+    // active. If late geometry intersects the player, player-physics stages the whole
+    // owner and this root remains hidden until that same owner activates.
+    function applyPayloadVisibility(payload) {
+        if (!payload?.root) return false;
+        const physicsReady = !payload.physics || payload.physicsActivationState === 'active';
+        payload.root.visible = !!payload.requestedVisible && physicsReady;
+        payload.visible = payload.root.visible;
+        payload.renderPublished = payload.visible;
+        return payload.visible;
+    }
+
+    function updatePayloadPhysicsActivation(payload, record) {
+        if (!payload || payload.disposed) return;
+        payload.physicsActivationState = record?.activationState ?? 'active';
+        payload.physicsDeferredReason = record?.deferredReason ?? null;
+        applyPayloadVisibility(payload);
+    }
+
     async function commit(chunk, payload) {
         if (!payload || payload.committed) return payload;
         // ONE publication boundary for authored spawn, singular shells, surface
         // patches, cross-site links, and generic streamed chunks. Build stays
-        // off-scene; commit attaches render + owned collision atomically.
+        // off-scene. A player-conflicting owner may attach staged, but neither its
+        // render nor any of its collision becomes authoritative until the capsule clears.
         if (payload.root) {
+            payload.requestedVisible = payload.root.visible !== false;
+            payload.root.visible = false;
             const originComponent = authoredOriginChunkPayload?.committed
                 && payload !== authoredOriginChunkPayload
                 && payload.root.userData?.worldChunkKey === spawnChunkKey;
@@ -1741,19 +1764,26 @@ export function createKowloonFabricEngine({
             payload.worldMatricesReady = true;
         }
         if (payload.physics) {
-            playerPhysics.registerOwnedWorld(payload.ownerId, payload.physics);
+            const record = playerPhysics.registerOwnedWorld(payload.ownerId, payload.physics, {
+                onActivationChange: nextRecord => updatePayloadPhysicsActivation(payload, nextRecord),
+            });
             committedOwners.add(payload.ownerId);
             payload.physicsPublished = true;
+            payload.physicsActivationState = record?.activationState ?? 'active';
+            payload.physicsDeferredReason = record?.deferredReason ?? null;
+        } else {
+            payload.physicsActivationState = 'active';
+            payload.physicsDeferredReason = null;
         }
         payload.committed = true;
+        applyPayloadVisibility(payload);
         return payload;
     }
 
     function setVisible(chunk, payload, visible) {
         if (!payload || !payload.root) return false;
-        payload.root.visible = !!visible;
-        payload.visible = payload.root.visible;
-        return payload.visible;
+        payload.requestedVisible = !!visible;
+        return applyPayloadVisibility(payload);
     }
 
     function verifyReady(chunk, payload, expectedVisible) {
@@ -1768,8 +1798,11 @@ export function createKowloonFabricEngine({
             throw new Error(`chunk ${chunk.key} READY verification failed: legacy optimizer owns streamed root`);
         }
         if (!payload.worldMatricesReady) throw new Error(`chunk ${chunk.key} READY verification failed: world matrices not committed`);
-        if (!committedOwners.has(payload.ownerId)) throw new Error(`chunk ${chunk.key} READY verification failed: physics owner is not active`);
-        if (root.visible !== !!expectedVisible) throw new Error(`chunk ${chunk.key} READY verification failed: visibility does not match streamer authority`);
+        if (!committedOwners.has(payload.ownerId)) throw new Error(`chunk ${chunk.key} READY verification failed: physics owner is not registered`);
+        if (payload.requestedVisible !== !!expectedVisible) throw new Error(`chunk ${chunk.key} READY verification failed: visibility request does not match streamer authority`);
+        const physicsReady = !payload.physics || payload.physicsActivationState === 'active';
+        const expectedActualVisibility = !!expectedVisible && physicsReady;
+        if (root.visible !== expectedActualVisibility) throw new Error(`chunk ${chunk.key} READY verification failed: render/collision activation parity violated`);
         return true;
     }
 

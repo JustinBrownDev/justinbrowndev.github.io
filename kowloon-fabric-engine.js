@@ -103,7 +103,18 @@ export function createKowloonFabricEngine({
 } = {}) {
     if (!THREE || !scene || !playerPhysics) throw new Error('createKowloonFabricEngine requires THREE, scene, playerPhysics');
     const addStreamRoot = typeof directSceneAdd === 'function' ? directSceneAdd : scene.add.bind(scene);
-    const enrichment = createKowloonFabricEnrichment({ THREE, worldSeed });
+    const enrichment = createKowloonFabricEnrichment({
+        THREE,
+        worldSeed,
+        publishDetailPhysics(payload, kind, item) {
+            if (!payload?.physics || !item) return false;
+            if (!payload.committed) {
+                payload.physics[kind]?.push?.(item);
+                return true;
+            }
+            return playerPhysics.appendOwnedWorldItem?.(payload.ownerId, kind, item) ?? false;
+        },
+    });
     const committedOwners = new Set();
     let authoredOriginChunkPayload = null;
     if (microCells < 5 || microCells % 2 === 0) throw new Error('microCells must be an odd integer >= 5');
@@ -527,7 +538,10 @@ export function createKowloonFabricEngine({
             } else {
                 const cellCx = cx0 - half + (cell.col + 0.5) * cellSize;
                 const cellCz = cz0 - half + (cell.row + 0.5) * cellSize;
-                const streetSetback = cellSize * (0.055 + rng() * 0.055);
+                // Buildings deliberately trespass slightly into the nominal road cell.
+                // The topology centerline remains untouched, but opposing facades read
+                // as a cramped alley instead of a suburban setback.
+                const streetSetback = cellSize * (-0.14 + rng() * 0.07);
                 const partySetback = cellSize * (0.010 + rng() * 0.018);
                 const internalSetback = cellSize * 0.002;
                 const setbackFor = kind => kind === 'internal' ? internalSetback : kind === 'party' ? partySetback : streetSetback;
@@ -1431,7 +1445,7 @@ export function createKowloonFabricEngine({
                 const center = cellToWorld(cell.col, cell.row);
                 const hx = colHalf(cell.col), hz = rowHalf(cell.row);
                 const scale = Math.max(0.5, Math.min(hx * 2, hz * 2));
-                const streetSetback = scale * (0.055 + rng() * 0.055);
+                const streetSetback = scale * (-0.14 + rng() * 0.07);
                 const partySetback = scale * (0.010 + rng() * 0.018);
                 const internalSetback = scale * 0.002;
                 const setbackFor = kind => kind === 'internal' ? internalSetback : kind === 'party' ? partySetback : streetSetback;
@@ -1464,6 +1478,48 @@ export function createKowloonFabricEngine({
             formatVersion: WORLD_FORMAT_VERSION, ownerId, root, physics, chunk,
             entity, entities: [entity], buildings: 1, plazas: 0, skybridges: 0,
             committed: false, disposed: false, authoredSpawnFabric: true,
+        };
+        enrichment.initializePayload(chunk, payload);
+        freezeChunkRoot(root);
+        return payload;
+    }
+
+
+
+    function buildAuthoredPlaza({
+        col, row, cellToWorld, colHalf, rowHalf,
+        ownerId = `spawn-plaza:${col},${row}`, weirdness = 0.20, detailDensity = 0.38,
+    } = {}) {
+        if (!Number.isInteger(col) || !Number.isInteger(row) || !cellToWorld || !colHalf || !rowHalf) {
+            throw new Error('buildAuthoredPlaza requires col/row/cellToWorld/colHalf/rowHalf');
+        }
+        const center = cellToWorld(col, row);
+        const chunk = {
+            key: `spawn-plaza:${col},${row}`, x: 0, z: 0,
+            centerX: center.x, centerZ: center.z,
+            seed: hashString32(`${worldSeed}:spawn-plaza:${col},${row}`),
+            weirdness: { sampled: Math.max(0, Math.min(1, weirdness)) }, ownerId,
+        };
+        const root = new THREE.Group();
+        root.name = `kowloon-fabric:${chunk.key}`;
+        root.userData.noSpatialChunk = true;
+        root.userData.worldChunkRoot = true;
+        root.userData.worldChunkKey = '0,0';
+        root.userData.worldChunkOwnerId = ownerId;
+        root.userData.worldFormatVersion = WORLD_FORMAT_VERSION;
+        root.userData.renderAuthority = 'KowloonFabricEngine';
+        root.userData.authoredSpawnPlaza = true;
+        const { physics } = createFabricBuffers();
+        const entity = {
+            id: worldEntityId(worldSeed, 0, 0, 'spawn-plaza', `${col},${row}`),
+            kind: 'plaza', x: center.x, z: center.z,
+            halfX: colHalf(col), halfZ: rowHalf(row),
+            kowloonIntensity: chunk.weirdness.sampled, detailDensity: Math.max(0, Math.min(1, detailDensity)),
+        };
+        const payload = {
+            formatVersion: WORLD_FORMAT_VERSION, ownerId, root, physics, chunk,
+            entity, entities: [entity], buildings: 0, plazas: 1, skybridges: 0,
+            committed: false, disposed: false, authoredSpawnPlaza: true,
         };
         enrichment.initializePayload(chunk, payload);
         freezeChunkRoot(root);
@@ -1662,7 +1718,7 @@ export function createKowloonFabricEngine({
                     if (nc < 0 || nr < 0 || nc >= microCells || nr >= microCells || roadPlan.roads.has(key(nc, nr))) realRoadFaces++;
                 }
             }
-            const plazaChance = Math.max(0.06, 0.20 - weird * 0.07 - Math.max(0, site.cells.length - 2) * 0.025);
+            const plazaChance = Math.max(0.035, 0.135 - weird * 0.05 - Math.max(0, site.cells.length - 2) * 0.022);
             const isPlaza = realRoadFaces === 0 || siteRng() < plazaChance;
             return { site, signature, realRoadFaces, isPlaza, roll: siteRng() };
         });
@@ -1953,6 +2009,6 @@ export function createKowloonFabricEngine({
     const hasPendingRefinement = (_chunk, payload) => enrichment.hasPending(payload);
     const refine = (chunk, payload, budget) => enrichment.pump(chunk, payload, budget);
 
-    return { build, buildAuthoredOriginChunk, buildAuthoredSite, buildAuthoredSurfacePatch, buildAuthoredBridge, planAuthoredBridgeNetwork, commit, setVisible, verifyReady, unload, refine, hasPendingRefinement, planChunk, districtLandmarkFor, disposeShared };
+    return { build, buildAuthoredOriginChunk, buildAuthoredSite, buildAuthoredPlaza, buildAuthoredSurfacePatch, buildAuthoredBridge, planAuthoredBridgeNetwork, commit, setVisible, verifyReady, unload, refine, hasPendingRefinement, planChunk, districtLandmarkFor, disposeShared };
 }
 

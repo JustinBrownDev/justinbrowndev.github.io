@@ -45,7 +45,8 @@ export function createSignageSystem(deps) {
         const fittedWorld = fitBladeDimensions(width, armLength, safeDepth);
         if (!fittedWorld && Number.isFinite(safeDepth)) return null;
         if (fittedWorld) { width = fittedWorld.width; armLength = fittedWorld.armLength; }
-        const height = width * (shape.h / shape.w);
+        if (width < 1.02) return null;
+        const height = Math.max(0.52, width * (shape.h / shape.w));
         const panelDepth = randRange(QP[2893], QP[2894]);
 
         const tex = makePixelTexture((ctx, w, h) => {
@@ -133,7 +134,7 @@ export function createSignageSystem(deps) {
          
          
         const edgeMat = signEdgeMaterial;
-        const faceMat = new THREE.MeshBasicMaterial({ map: tex });
+        const faceMat = new THREE.MeshBasicMaterial({ map: tex, side: THREE.DoubleSide });
         const panel = new THREE.Mesh(skirtBoxGeo, [edgeMat, edgeMat, edgeMat, edgeMat, faceMat, faceMat]);
         panel.scale.set(width, height, panelDepth);
         panel.rotation.y = Math.PI / QP[2949];  
@@ -197,7 +198,7 @@ export function createSignageSystem(deps) {
         const width = randRange(QP[2977], QP[2978]);
         const plane = new THREE.Mesh(
             new THREE.PlaneGeometry(width, width * (texH / Math.max(QP[2979], text.length * fontSize * QP[2980]))),
-            new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false })
+            new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, side: THREE.DoubleSide })
         );
         plane.position.set(x, y, z);
         plane.rotation.y = rotY;

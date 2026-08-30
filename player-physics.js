@@ -631,6 +631,28 @@ export function createPlayerPhysics(options) {
         return record;
     }
 
+
+    function appendOwnedWorldItem(ownerId, kind, item) {
+        const record = ownedWorld.get(ownerId);
+        if (!record || !record.active || !item) return false;
+        if (!['platforms', 'ceilings', 'ramps', 'props', 'mazeWalls'].includes(kind)) {
+            throw new Error(`unknown owned physics kind: ${kind}`);
+        }
+        const entry = { kind, item, indexed: false, activationState: 'staged' };
+        record.data[kind].push(item);
+        record.items.push(item);
+        record.entries.push(entry);
+        item.__physicsOwner = record.ownerId;
+        if (ownedEntryOverlapsCurrentCapsule(entry)) {
+            // Late cosmetics must never pop collision through the current capsule.
+            // Defer this primitive only; the already-published structure stays live.
+            deferOwnedEntry(record, entry);
+        } else {
+            activateOwnedEntry(record, entry);
+        }
+        return entry.activationState;
+    }
+
     function unregisterOwnedWorld(ownerId) {
         const record = ownedWorld.get(ownerId);
         if (!record) return false;
@@ -668,13 +690,32 @@ export function createPlayerPhysics(options) {
         let activatedItems = 0;
         let pendingItems = 0;
         for (const record of ownedWorld.values()) {
-            if (!record.active || record.activationState !== 'deferred-player-overlap') continue;
-            if (ownedRecordOverlapsCurrentCapsule(record)) {
-                pendingItems += record.entries.length;
+            if (!record.active) continue;
+
+            // Initial chunk publication still obeys the owner-level parity rule.
+            if (record.activationState === 'deferred-player-overlap') {
+                if (ownedRecordOverlapsCurrentCapsule(record)) {
+                    pendingItems += record.entries.filter(entry => entry.activationState === 'deferred-player-overlap').length;
+                    continue;
+                }
+                const deferred = record.entries.filter(entry => entry.activationState === 'deferred-player-overlap').length;
+                activateOwnedRecord(record);
+                activatedItems += deferred;
                 continue;
             }
-            activatedItems += record.entries.length;
-            activateOwnedRecord(record);
+
+            // Detail published after commit is allowed to defer one primitive without
+            // blanking the already-safe chunk. Activate each such primitive as soon
+            // as the player clears it.
+            for (const entry of record.entries) {
+                if (entry.activationState !== 'deferred-player-overlap') continue;
+                if (ownedEntryOverlapsCurrentCapsule(entry)) {
+                    pendingItems++;
+                    continue;
+                }
+                activateOwnedEntry(record, entry);
+                activatedItems++;
+            }
         }
         return { activatedItems, pendingItems, ...ownedWorldStats() };
     }
@@ -1149,6 +1190,7 @@ export function createPlayerPhysics(options) {
         syncFromPosition,
         syncDynamicWorld,
         registerOwnedWorld,
+        appendOwnedWorldItem,
         unregisterOwnedWorld,
         retryDeferredOwnedWorld,
         compactOwnedWorld,

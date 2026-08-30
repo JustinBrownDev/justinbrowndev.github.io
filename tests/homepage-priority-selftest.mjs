@@ -8,7 +8,7 @@ const read = rel => fs.readFileSync(path.join(root, rel), 'utf8');
 const homepage = read('index.html');
 const main = read('main.js');
 const streamer = read('world-chunk-streamer.js');
-const chunks = read('infinite-city-chunks.js');
+const chunks = read('kowloon-fabric-engine.js');
 const perf = read('city-performance.js');
 const config = read('config/game-config.js');
 const ground = read('world/ground-surfaces.js');
@@ -36,7 +36,7 @@ ok(main.includes('CONFIG.streaming.urgentPumpChunks') && main.includes('CONFIG.s
 ok(main.includes('renderRadiusChunks: CONFIG.streaming.renderRadiusChunks') && main.includes('prefetchRadiusChunks: CONFIG.streaming.prefetchRadiusChunks'), 'stream must maintain render + warm prefetch rings');
 ok(chunks.includes('async function commit(chunk, payload)'), 'generic chunk must have atomic commit');
 ok(chunks.includes('freezeChunkRoot(root);'), 'generic chunk must be optimized/frozen before commit');
-ok(main.includes('commitChunk: (chunk, payload) => infiniteChunkFactory.commit(chunk, payload)'), 'streamer commit hook not wired');
+ok(main.includes('commitChunk: (chunk, payload) => cityFabricEngine.commit(chunk, payload)'), 'streamer commit hook not wired');
 
 ok(chunks.includes("districtLandmarkTypes = Object.freeze(['spire', 'stack', 'gatehouse', 'archive', 'beacon'])"), 'district landmark family missing');
 ok(config.includes('landmarkSpacingChunks: 3'), 'district landmark recurrence must be frequent but not every chunk');

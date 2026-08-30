@@ -10,7 +10,7 @@ import { QP } from './runtime/main-quantitative-literals.js';
 import { CONFIG } from './config/game-config.js';
 import * as BOOTSTRAP_NOISE from './noise-data-bootstrap.js';
 import { createWorldChunkStreamer } from './world-chunk-streamer.js';
-import { createInfiniteCityChunkFactory } from './infinite-city-chunks.js';
+import { createKowloonFabricEngine } from './kowloon-fabric-engine.js';
 import { createNoiseRemixer } from './systems/noise-remix.js';
 import { fitCanvasText, drawCanvasLines } from './systems/canvas-text.js';
 import { createOrganicGeometryTools, remapWallUV, computeNotchedRects, appendBoxData, boxesIntersect } from './systems/geometry-utils.js';
@@ -35,10 +35,8 @@ import { createAdornmentSystem } from './systems/adornment-assets.js';
 import { createSignageSystem } from './world/signage.js';
 import { createStreetPropsSystem } from './world/street-props.js';
 import { createGroundSurfaceSystem } from './world/ground-surfaces.js';
-import { createVerticalCirculationSystem } from './world/vertical-circulation.js';
 import { createFacadeLayoutSystem } from './world/facade-layout.js';
-import { createBuildingShellSystem } from './world/building-shell.js';
-import { createBuildingConstructionSystem } from './world/building-construction.js';
+import { createAuthoredContentHelpers } from './world/authored-content-helpers.js';
 import { createSpawnMazePlan, createSpawnBuildingSitePlan } from './world/spawn-district-plan.js';
 import { createDynamicLightPool } from './systems/dynamic-light-pool.js';
 import { createRuntimeLatencyTelemetry } from './systems/runtime-latency.js';
@@ -1799,28 +1797,21 @@ const rampRuns = [];
  
  
 const overheadCeilings = [];
-let verticalCirculationSystem = null;
-let flushHorizontalPlaneBatches;
-let buildCoreFloor;
-let buildRooftopMechanicalRoom;
-let buildRooftopCatwalks;
-let buildRooftopCatwalkSteps;
-let maybeAddMezzanine;
-let maybeAddElevator;
-let buildFireEscape;
-let buildHangingBridges;
-let buildHangingBridgeSteps;
-let addBalcony;
-let addDebugRectOutline;
-let fireEscapeDimensions;
-let fireEscapeSideFits;
-let fireEscapeDepth;
-
-const STATIC_BATCH_CHUNK = QP[1011];
-const buildingShellSystem = createBuildingShellSystem({
-    WALL_THICKNESS, randRange, scene, skirtBoxGeo, weightedPick,
-});
-const { buildWallWithGaps, buildExteriorPerimeter, wallIntersectsReservedRect, buildFloorLayout, drawFloorLayout } = buildingShellSystem;
+function flushHorizontalPlaneBatches() {
+    // All building plates are now emitted by KowloonFabricEngine. This legacy
+    // summary hook intentionally has no separate batch authority.
+    return { draws: 0, instances: 0, unifiedFabric: true };
+}
+function addDebugRectOutline(cx, cz, hwx, hwz, y, color) {
+    const pts = [
+        new THREE.Vector3(cx - hwx, y, cz - hwz),
+        new THREE.Vector3(cx + hwx, y, cz - hwz),
+        new THREE.Vector3(cx + hwx, y, cz + hwz),
+        new THREE.Vector3(cx - hwx, y, cz + hwz),
+    ];
+    const geo = new THREE.BufferGeometry().setFromPoints(pts);
+    scene.add(new THREE.LineLoop(geo, new THREE.LineBasicMaterial({ color })));
+}
 
 const facadeLayoutSystem = createFacadeLayoutSystem({
     GRID_COLS, GRID_ROWS, GRID_W, GRID_H, STREET, grid,
@@ -1951,34 +1942,6 @@ for (let r = QP[854]; r < GRID_ROWS; r++) {
     }
 }
 console.log(`[testing] maze topology: ${mazeSealWalls.length} cell boundaries sealed -- squeezing between adjacent buildings is no longer physically possible (same-site internal edges correctly excluded)`);
-verticalCirculationSystem = createVerticalCirculationSystem({
-    QUALITY, SEED, STATIC_BATCH_CHUNK, scene, unitPlaneGeo, skirtBoxGeo,
-    elevatedPlatforms, rampRuns, overheadCeilings, rooftopDecks,
-    exteriorDecorationVolumeIndex, grid,
-    buildExteriorPerimeter, buildFloorLayout, buildWallWithGaps, drawFloorLayout,
-    wallIntersectsReservedRect, facadeTangent, makeProjectionBox, projectionFits,
-    solidClearanceAhead, worldToCellIndex,
-    jitterGeometry, makePixelTexture, pick, pileJunkCluster, placeRealModel,
-    randRange, rng, takeDynamicLight,
-});
-({
-    flushHorizontalPlaneBatches,
-    buildCoreFloor,
-    buildRooftopMechanicalRoom,
-    buildRooftopCatwalks,
-    buildRooftopCatwalkSteps,
-    maybeAddMezzanine,
-    maybeAddElevator,
-    buildFireEscape,
-    buildHangingBridges,
-    buildHangingBridgeSteps,
-    addBalcony,
-    addDebugRectOutline,
-    fireEscapeDimensions,
-    fireEscapeSideFits,
-    fireEscapeDepth,
-} = verticalCirculationSystem);
-
 signageSystem = createSignageSystem({
     CONFIG,
     QUALITY,
@@ -2016,25 +1979,47 @@ const {
 } = signageSystem;
 adornmentSystem.setStandoffPanelMounter(mountStandoffPanel);
 
-const buildingConstructionSystem = createBuildingConstructionSystem({
-    DEBUG_FACADES, DEBUG_FOOTPRINTS, DEBUG_SIGNATURES, QUALITY, SEED, STREET, BLOCK, WALL_THICKNESS,
-    addAwning, addBalcony, addBench, addCrate, addDebugRectOutline, addGraffitiTag,
-    addIvyPatch, addPipeCluster, addPottedPlant, addRooftopClutter, addSecurityCamera, addWallFlyer,
-    buildCoreFloor, buildFireEscape, buildRooftopMechanicalRoom,
-    buildingFacades, buildingWallSegments, candidateFaces,
-    cellToWorld, colHalf, colSize, edgeKindForSite, elevatedPlatforms,
-    exteriorDecorationVolumes, facadeReserve, findFreeFacadeRect,
-    fireEscapeDepth, fireEscapeDimensions, fireEscapeSideFits, footprintOf,
-    hashString32, jitterGeometry, localRng, makeFacade, makePixelTexture, makeProjectionBox,
-    makeTopologyStainTexture, makeWindowGridTexture, maybeAddElevator, maybeAddMezzanine,
-    pick, pileJunkCluster, placeRealModel, placeSemanticCityAsset, placeSignsOnFacade, placeSignsOnFacadeSteps,
-    pointOnFacade, projectionFits, randRange, reserveProjectionVolume, rng, rooftopDecks,
-    rowHalf, rowSize, scatterJunk, scene, semanticCornerPoint, sharedBuildingFacadeMaterial,
-    signatureInstances, siteIdOf, skirtBoxGeo, takeDynamicLight, webAlignment, weightedPick,
+const {
+    buildCourtyardVoid, addSiteDebugOverlay, addFacadeDebugOverlay, addSignatureDebugOverlay, streetSetbackRoll,
+} = createAuthoredContentHelpers({
+    CONFIG, STREET, DEBUG_FACADES, DEBUG_FOOTPRINTS, DEBUG_SIGNATURES,
+    scene, buildingFacades, exteriorDecorationVolumes, signatureInstances,
+    pointOnFacade, cellToWorld, colHalf, rowHalf, addDebugRectOutline,
+    makePixelTexture, addPottedPlant, addBench, scatterJunk,
+    randRange, rng, takeDynamicLight,
+    publishSurfacePatch: patch => {
+        if (!cityFabricEngine) throw new Error('KowloonFabricEngine not initialized before reserved courtyard publication');
+        const payload = cityFabricEngine.buildAuthoredSurfacePatch({ ...patch, ownerId: `spawn-content-surface:${SEED}:${patch.patchKey}` });
+        cityFabricEngine.commit({ key: `spawn-content-surface:${patch.patchKey}` }, payload);
+        return payload;
+    },
 });
-const { addBuildingModule, addBuildingModuleSteps, addBuildingSite, addBuildingSiteSteps, buildCourtyardVoid, addSiteDebugOverlay, addFacadeDebugOverlay, addSignatureDebugOverlay, streetSetbackRoll } = buildingConstructionSystem;
 
-({ buildSignatureSite, buildSignatureSiteSteps, buildGalleryArtPanel } = createSignatureBuildingSystem({
+let activeUnifiedSignatureSite = null;
+let signatureContentSiteSteps = null;
+
+function* unifiedSignatureModuleAdapterSteps(cell, opts = {}) {
+    const site = activeUnifiedSignatureSite;
+    const payload = site ? unifiedSpawnFabricPayloads.get(site.id) : null;
+    const entity = payload?.entity;
+    if (!site || !entity) throw new Error('signature content recipe requested module metadata before unified fabric shell existed');
+    const moduleKey = `${cell.col},${cell.row}`;
+    const module = entity.footprintModules?.find(candidate => candidate.key === moduleKey);
+    if (!module) throw new Error(`unified signature fabric missing module ${moduleKey} for site ${site.id}`);
+    const legacyFacadeKey = `${cell.row},${cell.col}`;
+    const streetFacades = buildingFacades.filter(facade =>
+        facade.userData?.siteId === site.id && facade.moduleKey === legacyFacadeKey && facade.exposure === 'street'
+    );
+    const rect = {
+        cx: module.cx, cz: module.cz, hwx: module.halfX, hwz: module.halfZ,
+        height: module.floors * entity.floorH, floorCount: module.floors, floorHeight: entity.floorH,
+        streetFacades, unifiedFabric: true, edgeKinds: opts.edgeKinds || null,
+    };
+    yield { phase: 'signature-unified-module-ref', row: cell.row, col: cell.col, moduleKey };
+    return rect;
+}
+
+({ buildSignatureSiteSteps: signatureContentSiteSteps, buildGalleryArtPanel } = createSignatureBuildingSystem({
     CONFIG,
     QUALITY,
     scene,
@@ -2042,8 +2027,7 @@ const { addBuildingModule, addBuildingModuleSteps, addBuildingSite, addBuildingS
     photoImages,
     takeDynamicLight,
     addBench,
-    addBuildingModule,
-    addBuildingModuleSteps,
+    addBuildingModuleSteps: unifiedSignatureModuleAdapterSteps,
     addPottedPlant,
     addSign,
     addSiteDebugOverlay,
@@ -2103,7 +2087,7 @@ staticWorldOptimizer.updateVisibility(true);
 
 const STREAM_CHUNK_SIZE = Math.max(GRID_W, GRID_H);
 let worldChunkStreamer = null;
-let infiniteChunkFactory = null;
+let cityFabricEngine = null;
 let _spawnDistrictStructuresComplete = false;
 let _spawnGroundPositionReady = null;
 let authoredCompletedSiteIds = null;
@@ -2157,6 +2141,225 @@ playerPhysics = createPlayerPhysics({
 });
 console.log(`[stream-perf] full player physics active during authored construction at ${bootElapsed()}`);
 
+// ONE CITY-FABRIC ENGINE.  Ordinary authored spawn sites and streamed chunks
+// now use the same Kowloon compound renderer + physics publisher. Singular
+// landmarks are content recipes over this engine; the historical authored
+// geometry builder is not imported by the runtime.
+cityFabricEngine = createKowloonFabricEngine({
+    THREE, scene, playerPhysics, directSceneAdd: _origSceneAdd, chunkSize: STREAM_CHUNK_SIZE, worldSeed: SEED, spawnChunkKey: '0,0',
+    landmarkSpacingChunks: CONFIG.streaming.landmarkSpacingChunks,
+    yieldControl: null,
+});
+const spawnSingularManifest = createSpawnSingularManifest(SEED, signatureInstances);
+const authoredOriginChunkPayload = cityFabricEngine.buildAuthoredOriginChunk({ singulars: spawnSingularManifest });
+const _worldStreamHeading = new THREE.Vector3();
+worldChunkStreamer = createWorldChunkStreamer({
+    chunkSize: STREAM_CHUNK_SIZE,
+    worldSeed: SEED,
+    getPlayerPosition: () => camera.position,
+    getPlayerHeading: () => camera.getWorldDirection(_worldStreamHeading),
+    renderRadiusChunks: CONFIG.streaming.renderRadiusChunks,
+    prefetchRadiusChunks: CONFIG.streaming.prefetchRadiusChunks,
+    retentionRadiusChunks: CONFIG.streaming.retentionRadiusChunks,
+    pinnedChunkKeys: ['0,0'],
+    weirdness: { startRadius: 1.5, fullRadius: 36, curve: 1.3 },
+    buildChunk: chunk => chunk.key === '0,0' ? authoredOriginChunkPayload : cityFabricEngine.build(chunk),
+    commitChunk: (chunk, payload) => cityFabricEngine.commit(chunk, payload),
+    setChunkVisibility: (chunk, payload, visible) => cityFabricEngine.setVisible(chunk, payload, visible),
+    verifyChunkReady: (chunk, payload, visible) => cityFabricEngine.verifyReady(chunk, payload, visible),
+    refineChunk: (chunk, payload, budget) => cityFabricEngine.refine(chunk, payload, budget),
+    hasPendingRefinement: (chunk, payload) => cityFabricEngine.hasPendingRefinement(chunk, payload),
+    refineAfterPrefetchReady: true,
+    unloadChunk: (chunk, payload) => cityFabricEngine.unload(chunk, payload),
+    yieldControl: null,
+    onChunkState: (chunk, state) => {
+        if (state === 'ready' || state === 'unloaded') {
+            console.log(`[world] chunk ${chunk.key} ${state} · weirdness=${chunk.weirdness.sampled.toFixed(3)}`);
+        }
+    },
+});
+await worldChunkStreamer.buildSpawnChunk();
+worldChunkStreamer.ensureNeighborhood();
+const authoredFabricRelationshipPlan = cityFabricEngine.planAuthoredBridgeNetwork({
+    sites: buildingSites, siteIdOf, grid,
+    weirdness: Math.max(CONFIG.maze.loopChance, CONFIG.narrative.darkWeb.signChance),
+    maxBridges: 18,
+});
+console.log(`[kowloon] shared origin relationship plan: ${authoredFabricRelationshipPlan.bridgePlans.length} upper-level links reserved before shell publication`);
+
+const unifiedSpawnFabricPayloads = new Map();
+const unifiedSpawnRelationshipPayloads = [];
+const unifiedSpawnFabricRefinementQueue = [];
+let unifiedSpawnFabricExposedSetbackFaces = QP[1015];
+
+function registerUnifiedSpawnFabricSite(site, payload) {
+    const entity = payload?.entity;
+    if (!entity) return;
+    unifiedSpawnFabricPayloads.set(site.id, payload);
+    unifiedSpawnFabricRefinementQueue.push(payload);
+    unifiedSpawnFabricExposedSetbackFaces += entity.exposedSetbackFaces ?? QP[1015];
+
+    const moduleByKey = new Map((entity.footprintModules || []).map(module => [module.key, module]));
+    for (const module of entity.footprintModules || []) {
+        const [col, row] = module.key.split(',').map(Number);
+        if (!footprintOf[row]) continue;
+        footprintOf[row][col] = {
+            cx: module.cx, cz: module.cz, hwx: module.halfX, hwz: module.halfZ,
+            height: module.floors * entity.floorH, floorCount: module.floors,
+        };
+        // Preserve the authored registries consumed by validation and singular/post
+        // passes without duplicating collision.  Physics authority lives in the
+        // Kowloon fabric owner is published only by the shared atomic commit().
+        buildingWallSegments.set(`${row},${col}`, {
+            unifiedFabric: true,
+            floors: Array.from({ length: module.floors }, (_, floor) => ({
+                yMin: floor * entity.floorH, yMax: (floor + QP[1024]) * entity.floorH, segments: [],
+            })),
+        });
+        rooftopDecks.push({
+            x: module.cx, z: module.cz, hx: module.halfX, hz: module.halfZ,
+            y: module.floors * entity.floorH, buildingKey: `${row},${col}`, unifiedFabric: true,
+        });
+    }
+
+    // Rehydrate the old facade registry from the new shared structural faces.
+    // This keeps authored signage/content-card/relationship systems as consumers
+    // while removing their dependency on the legacy ordinary geometry builder.
+    const facadeGroups = new Map();
+    for (const face of entity.facades || []) {
+        const key = `${face.moduleKey}:${face.side}:${face.exposure || 'street'}`;
+        const existing = facadeGroups.get(key);
+        if (existing) {
+            existing.yMin = Math.min(existing.yMin, face.yMin);
+            existing.yMax = Math.max(existing.yMax, face.yMax);
+        } else facadeGroups.set(key, { ...face });
+    }
+    for (const face of facadeGroups.values()) {
+        const module = moduleByKey.get(face.moduleKey);
+        if (!module) continue;
+        const [col, row] = face.moduleKey.split(',').map(Number);
+        const dir = face.side === 'north' ? { dx: QP[1015], dz: -QP[1024] }
+            : face.side === 'south' ? { dx: QP[1015], dz: QP[1024] }
+                : face.side === 'west' ? { dx: -QP[1024], dz: QP[1015] }
+                    : { dx: QP[1024], dz: QP[1015] };
+        const isEntranceFace = (entity.entranceFaces || []).some(entrance =>
+            entrance.moduleKey === face.moduleKey && entrance.side === face.side
+        );
+        const facade = makeFacade(
+            { cx: module.cx, cz: module.cz, hwx: module.halfX, hwz: module.halfZ },
+            dir.dx, dir.dz, face.yMin, face.yMax, isEntranceFace ? dir : null, face.exposure || 'street', `${row},${col}`
+        );
+        facade.userData = { ...(facade.userData || {}), unifiedFabric: true, siteId: site.id };
+        buildingFacades.push(facade);
+        candidateFaces.push(facade);
+    }
+}
+
+function* buildUnifiedKowloonSiteSteps(site) {
+    yield { phase: 'unified-fabric-ready', siteId: site.id };
+    const payload = cityFabricEngine.buildAuthoredSite({
+        site, siteIdOf, grid, cellToWorld, colHalf, rowHalf,
+        ownerId: `spawn-fabric:${SEED}:${site.id}`,
+        weirdness: Math.max(CONFIG.maze.loopChance, CONFIG.narrative.darkWeb.signChance),
+        bridgePortalsBySite: authoredFabricRelationshipPlan.bridgePortalsBySite,
+    });
+    if (!payload) return [];
+    cityFabricEngine.commit(payload.chunk, payload);
+    registerUnifiedSpawnFabricSite(site, payload);
+    yield {
+        phase: 'unified-fabric-structure', siteId: site.id,
+        modules: payload.entity.moduleCount, floors: payload.entity.floors,
+        serviceCages: payload.entity.serviceCages, scaffoldLandings: payload.entity.scaffoldLandings,
+    };
+    return payload.entity.footprintModules || [];
+}
+
+function signatureFabricProfile(site) {
+    const type = site.signatureType;
+    const preferred = CONFIG.signatureBuildings[type]?.preferredFloors ?? 2;
+    const floors = type === 'artGallery' ? 2
+        : type === 'as400Archive' ? Math.max(3, Math.min(4, preferred))
+            : type === 'justinIndex' ? Math.max(4, Math.min(6, preferred))
+                : type === 'systemsWorkshop' ? Math.max(2, Math.min(3, preferred))
+                    : type === 'loreShrine' ? Math.max(2, Math.min(4, preferred))
+                        : Math.max(1, preferred);
+    const floorCountByCell = Object.fromEntries(site.cells.map(cell => [`${cell.col},${cell.row}`, floors]));
+    const entrances = [site.signatureInstance?.mainEntrance, site.signatureInstance?.secondaryEntrance]
+        .filter(Boolean)
+        .map(entrance => ({ col: entrance.cell.col, row: entrance.cell.row, dc: entrance.dc, dr: entrance.dr }));
+    return {
+        primaryFloors: floors, floorHeight: 3, floorCountByCell, entrances,
+        archetype: type === 'systemsWorkshop' ? 'workshop-warehouse'
+            : type === 'as400Archive' || type === 'justinIndex' ? 'vertical-stack'
+                : 'service-tenement',
+        courtyardCell: null,
+        suppressInteriorClutter: true,
+        suppressMezzanines: true,
+        singularRecipe: type,
+    };
+}
+
+function* buildUnifiedSignatureSiteSteps(site) {
+    // RESERVED is intentionally an empty singular parcel. It has no alternate
+    // building engine because it has no building at all; its recipe owns only
+    // courtyard/marker content.
+    if (site.signatureType === 'futurePlaceholder') {
+        activeUnifiedSignatureSite = site;
+        try {
+            yield* signatureContentSiteSteps(site);
+        } finally {
+            activeUnifiedSignatureSite = null;
+        }
+        return;
+    }
+
+    const payload = cityFabricEngine.buildAuthoredSite({
+        site, siteIdOf, grid, cellToWorld, colHalf, rowHalf,
+        ownerId: `spawn-singular-fabric:${SEED}:${site.id}`,
+        weirdness: Math.max(CONFIG.maze.loopChance, CONFIG.narrative.darkWeb.signChance),
+        structureProfile: signatureFabricProfile(site),
+        bridgePortalsBySite: authoredFabricRelationshipPlan.bridgePortalsBySite,
+    });
+    if (!payload) throw new Error(`unified fabric failed to build singular site ${site.id}`);
+    payload.singularRecipe = site.signatureType;
+    cityFabricEngine.commit(payload.chunk, payload);
+    registerUnifiedSpawnFabricSite(site, payload);
+    yield {
+        phase: 'signature-unified-shell', siteId: site.id, type: site.signatureType,
+        modules: payload.entity.moduleCount, floors: payload.entity.floors, renderAuthority: payload.root.userData.renderAuthority,
+    };
+
+    activeUnifiedSignatureSite = site;
+    try {
+        yield* signatureContentSiteSteps(site);
+    } finally {
+        activeUnifiedSignatureSite = null;
+    }
+}
+
+buildSignatureSiteSteps = buildUnifiedSignatureSiteSteps;
+buildSignatureSite = (site) => {
+    const iterator = buildUnifiedSignatureSiteSteps(site);
+    let step = iterator.next();
+    while (!step.done) step = iterator.next();
+    return step.value;
+};
+
+function pumpUnifiedSpawnFabricRefinement({ maxSteps = QP[1024], maxMillis = QP[1] } = {}) {
+    if (!unifiedSpawnFabricRefinementQueue.length) return { steps: QP[1015], pending: QP[1015], ms: QP[1015] };
+    const started = performance.now();
+    let steps = QP[1015];
+    let cursorGuard = unifiedSpawnFabricRefinementQueue.length;
+    while (unifiedSpawnFabricRefinementQueue.length && steps < maxSteps && cursorGuard-- > QP[1015]) {
+        const payload = unifiedSpawnFabricRefinementQueue.shift();
+        const result = cityFabricEngine.refine(payload.chunk, payload, { maxSteps: QP[1024], maxMillis });
+        steps += result.steps || QP[1015];
+        if (!result.complete) unifiedSpawnFabricRefinementQueue.push(payload);
+        if (performance.now() - started >= maxMillis) break;
+    }
+    return { steps, pending: unifiedSpawnFabricRefinementQueue.length, ms: performance.now() - started };
+}
+
 function shouldDeferBootstrapVisualPhase(site, phase) {
     if (!phase) return false;
     if (!site.signatureType) return phase === 'facade-sign' || phase === 'facade-signs';
@@ -2200,7 +2403,7 @@ _testGenerationDone = QP[1015];
 const authoredBuildingJobs = buildingSites.map(site => {
     const iteratorFactory = site.signatureType
         ? () => buildSignatureSiteSteps(site)
-        : () => addBuildingSiteSteps(site);
+        : () => buildUnifiedKowloonSiteSteps(site);
     return {
         site,
         stepper: createStableStreamingRngStepper(`building:${site.id}`, iteratorFactory),
@@ -2344,7 +2547,7 @@ function stepAuthoredBuildingJob(job) {
             authoredBuildingsResolved = true;
             authoredBuildingsResolve();
             console.log(`[perf:test] all ${buildingSites.length} authored sites completed progressively in ${(performance.now() - authoredBuildStart).toFixed(QP[1])}ms wall-clock; schedulerTurns=${authoredSchedulerTurns}; structuralSyncs=${authoredStructuralSyncs}`);
-            console.log(`[testing] same-site height mismatches: ${buildingConstructionSystem.stats().totalExposedSetbackWalls} exterior setback wall-floors generated where a same-site neighbor stopped short`);
+            console.log(`[testing] unified fabric exposed-setback faces: ${unifiedSpawnFabricExposedSetbackFaces} ordinary spawn faces generated by the same compound engine used outside spawn`);
         }
     }
     return { step, stepMs, phase, addedRoots: addedRoots.length, completed: job.completed };
@@ -2435,6 +2638,25 @@ function* authoredPostOneShotSteps(phase, work) {
     return work();
 }
 
+function* buildUnifiedAuthoredRelationshipSteps() {
+    let guarded = 0, hanging = 0, skipped = 0;
+    for (const bridge of authoredFabricRelationshipPlan.bridgePlans) {
+        const payload = cityFabricEngine.buildAuthoredBridge({
+            bridge, payloadBySite: unifiedSpawnFabricPayloads, ownerId: `spawn-link:${SEED}:${bridge.id}`,
+        });
+        if (!payload) {
+            skipped++;
+            yield { phase: 'kowloon-link-skipped', bridgeId: bridge.id, variant: bridge.variant };
+            continue;
+        }
+        cityFabricEngine.commit({ key: `spawn-link:${bridge.id}` }, payload);
+        unifiedSpawnRelationshipPayloads.push(payload);
+        if (bridge.variant === 'hanging-bridge') hanging++; else guarded++;
+        yield { phase: 'kowloon-link-published', bridgeId: bridge.id, variant: bridge.variant, guarded, hanging };
+    }
+    return { total: guarded + hanging, guarded, hanging, skipped };
+}
+
 function finishAuthoredPostStructurePipeline() {
     if (authoredPostStructureFinished) return;
     authoredPostStructureFinished = true;
@@ -2467,21 +2689,14 @@ function maybeStartAuthoredPostStructurePipeline() {
             })),
         },
         {
-            id: 'rooftop-catwalks',
+            id: 'kowloon-cross-site-links',
             structural: true,
-            onComplete: value => { rooftopCatwalkCount = value ?? QP[1015]; },
-            stepper: createStableStreamingRngStepper('authored:rooftop-catwalks', () => buildRooftopCatwalkSteps()),
-        },
-        {
-            id: 'hanging-bridges',
-            structural: true,
-            onComplete: value => { hangingBridgeCount = value ?? QP[1015]; },
-            stepper: createStableStreamingRngStepper('authored:hanging-bridges', () => buildHangingBridgeSteps()),
-        },
-        {
-            id: 'horizontal-plane-summary',
-            structural: false,
-            stepper: createStableStreamingRngStepper('authored:horizontal-plane-summary', () => authoredPostOneShotSteps('horizontal-plane-summary', () => flushHorizontalPlaneBatches())),
+            ownedWorldStructural: true,
+            onComplete: value => {
+                rooftopCatwalkCount = value?.guarded ?? QP[1015];
+                hangingBridgeCount = value?.hanging ?? QP[1015];
+            },
+            stepper: createStableStreamingRngStepper('authored:kowloon-links', () => buildUnifiedAuthoredRelationshipSteps()),
         },
     );
     console.log(`[stream-perf] authored relationship queue armed with ${authoredPostStructureJobs.length} resumable phases; outer render ring retains priority`);
@@ -2509,7 +2724,7 @@ function pumpAuthoredPostStructurePipeline({ maxSteps = QP[1024], maxMillis = QP
             phase: result.value?.phase || (result.done ? 'complete' : 'step'),
             remainingJobs: authoredPostStructureJobs.length,
         });
-        if (job.structural && !result.done) {
+        if (job.structural && !job.ownedWorldStructural && !result.done) {
             const syncStarted = performance.now();
             const syncStats = playerPhysics.syncDynamicWorld();
             runtimeLatency.record('physics.sync-authored-post-step', performance.now() - syncStarted, { job: job.id, ...syncStats });
@@ -2651,7 +2866,7 @@ function reserveSpecialPlazaJob(kind, cell, ordinal, structural, run, stepsFacto
 for (let i = QP[4771]; i < CONFIG.props.maxSpecialFeatures.statues; i++) {
     const cell = nextPlazaCell();
     if (!cell) break;
-    reserveSpecialPlazaJob('statue', cell, i, true, () => {
+    reserveSpecialPlazaJob('statue', cell, i, false, () => {
         const { x, z } = cellToWorld(cell[QP[4772]], cell[QP[4773]]);
         const r = addStatue(x, z);
         propColliders.push({ x, z, radius: r, height: QP[4774] });
@@ -2660,7 +2875,7 @@ for (let i = QP[4771]; i < CONFIG.props.maxSpecialFeatures.statues; i++) {
 for (let i = QP[4775]; i < CONFIG.props.maxSpecialFeatures.constructionZones; i++) {
     const cell = nextPlazaCell();
     if (!cell) break;
-    reserveSpecialPlazaJob('construction-zone', cell, i, true, () => {
+    reserveSpecialPlazaJob('construction-zone', cell, i, false, () => {
         const { x, z } = cellToWorld(cell[QP[4776]], cell[QP[4777]]);
         const r = addConstructionZone(x, z);
         propColliders.push({ x, z, radius: r, height: Infinity });
@@ -2677,7 +2892,7 @@ for (let i = QP[4778]; i < CONFIG.props.maxSpecialFeatures.crimeScenes; i++) {
 for (let i = QP[4781]; i < CONFIG.props.maxSpecialFeatures.newsstands; i++) {
     const cell = nextPlazaCell();
     if (!cell) break;
-    reserveSpecialPlazaJob('newsstand', cell, i, true, () => {
+    reserveSpecialPlazaJob('newsstand', cell, i, false, () => {
         const { x, z } = cellToWorld(cell[QP[4782]], cell[QP[4783]]);
         const r = addNewsstand(x, z, plazaFacingRotY(cell[QP[4784]], cell[QP[4785]]));
         propColliders.push({ x, z, radius: r, height: QP[4786] });
@@ -2686,7 +2901,7 @@ for (let i = QP[4781]; i < CONFIG.props.maxSpecialFeatures.newsstands; i++) {
 for (let i = QP[4787]; i < CONFIG.props.maxSpecialFeatures.phoneBooths; i++) {
     const cell = nextPlazaCell();
     if (!cell) break;
-    reserveSpecialPlazaJob('phone-booth', cell, i, true, () => {
+    reserveSpecialPlazaJob('phone-booth', cell, i, false, () => {
         const { x, z } = cellToWorld(cell[QP[4788]], cell[QP[4789]]);
         const r = addPhoneBooth(x, z);
         propColliders.push({ x, z, radius: r, height: QP[4790] });
@@ -2695,7 +2910,7 @@ for (let i = QP[4787]; i < CONFIG.props.maxSpecialFeatures.phoneBooths; i++) {
 for (let i = QP[4791]; i < CONFIG.props.maxSpecialFeatures.atmKiosks; i++) {
     const cell = nextPlazaCell();
     if (!cell) break;
-    reserveSpecialPlazaJob('atm-kiosk', cell, i, true, () => {
+    reserveSpecialPlazaJob('atm-kiosk', cell, i, false, () => {
         const { x, z } = cellToWorld(cell[QP[4792]], cell[QP[4793]]);
         const r = addAtmKiosk(x, z, plazaFacingRotY(cell[QP[4794]], cell[QP[4795]]));
         propColliders.push({ x, z, radius: r, height: QP[4796] });
@@ -2705,7 +2920,7 @@ for (let i = QP[4797]; i < CONFIG.props.maxSpecialFeatures.parks; i++) {
     const cell = nextPlazaCell();
     if (!cell) break;
     parkCells.add(`${cell[QP[4802]]},${cell[QP[4803]]}`);
-    reserveSpecialPlazaJob('park', cell, i, true, () => {
+    reserveSpecialPlazaJob('park', cell, i, false, () => {
         const { x, z } = cellToWorld(cell[QP[4798]], cell[QP[4799]]);
         addPark(x, z, cell[QP[4800]], cell[QP[4801]]);
     }, () => {
@@ -2716,7 +2931,7 @@ for (let i = QP[4797]; i < CONFIG.props.maxSpecialFeatures.parks; i++) {
 for (let i = QP[4804]; i < CONFIG.props.maxSpecialFeatures.megaBillboards; i++) {
     const cell = nextPlazaCell();
     if (!cell) break;
-    reserveSpecialPlazaJob('mega-billboard', cell, i, true, () => {
+    reserveSpecialPlazaJob('mega-billboard', cell, i, false, () => {
         const { x, z } = cellToWorld(cell[QP[4805]], cell[QP[4806]]);
         const r = addMegaBillboard(x, z);
         propColliders.push({ x, z, radius: r, height: Infinity });
@@ -2725,7 +2940,7 @@ for (let i = QP[4804]; i < CONFIG.props.maxSpecialFeatures.megaBillboards; i++) 
 
 for (const [pc, pr] of plazaCells) {
     const cell = [pc, pr];
-    reserveSpecialPlazaJob('plaza-atmosphere', cell, QP[1015], true, () => {
+    reserveSpecialPlazaJob('plaza-atmosphere', cell, QP[1015], false, () => {
         const { x, z } = cellToWorld(pc, pr);
         addPlazaGlow(x, z);
         if (rng() < QP[4807] * QUALITY.propDensity) scatterJunk('plaza', x, z, QP[4808] + Math.floor(rng() * QP[4809]), Math.min(colHalf(pc), rowHalf(pr)) * QP[4810]);
@@ -2762,7 +2977,7 @@ function pumpSpecialPlazaJobs({ maxJobs = QP[1024], maxMillis = QP[1] } = {}) {
         specialPlazaWorstMs = Math.max(specialPlazaWorstMs, stepMs);
         steps++;
         runtimeLatency.record('plaza.live-job', stepMs, { id: job.id, kind: job.kind, phase: result.value?.phase || (result.done ? 'complete' : 'step'), structural: job.structural, colliderDelta, pending: specialPlazaJobs.length });
-        if (job.structural && colliderDelta > QP[1015]) playerPhysics.syncDynamicWorld();
+        if (colliderDelta > QP[1015]) playerPhysics.syncDynamicWorld();
         if (stepMs > QP[8]) console.warn(`[latency] plaza.live-job ${stepMs.toFixed(QP[1])}ms · ${job.id}`);
         if (result.done) {
             specialPlazaJobs.shift();
@@ -2787,7 +3002,13 @@ const ROAD_ONLY_PROPS = new Set(['trafficSign', 'trafficSignal', 'mileMarker', '
 const groundSurfaceSystem = createGroundSurfaceSystem({
     CONFIG, JUNK_RENDER_CHUNK, GRID_ROWS, GRID_COLS, grid, groundTex, unitPlaneGeo, skirtBoxGeo,
     colSize, rowSize, colHalf, rowHalf, cellToWorld, wallDirections, parkCells, makePixelTexture,
-    scene, camera, testYieldNow: testPublishAndYieldNow, testYieldIfNeeded: testPublishAndYieldIfNeeded,
+    camera,
+    publishSurfacePatch: patch => {
+        const payload = cityFabricEngine.buildAuthoredSurfacePatch(patch);
+        cityFabricEngine.commit({ key: `spawn-surface:${patch.patchKey}` }, payload);
+        return payload;
+    },
+    testYieldNow: testPublishAndYieldNow, testYieldIfNeeded: testPublishAndYieldIfNeeded,
 });
 const { isStreetCell, roadOpenMask, prepareOpenCellSurfaces, pumpOpenCellSurfaces, ensureOpenCellSurfaceNeighborhood, isWorldPositionReady: isSpawnGroundPositionReady, layOpenCellSurfaces } = groundSurfaceSystem;
 _spawnGroundPositionReady = isSpawnGroundPositionReady;
@@ -2796,11 +3017,10 @@ function maybeMarkSpawnDistrictStructuresComplete() {
     if (_spawnDistrictStructuresComplete) return true;
     if (authoredBuildingJobs.length) return false;
     if (!authoredPostStructureFinished) return false;
-    if (specialPlazaJobs.length) return false;
     if (groundSurfaceSystem.stats().pendingChunks) return false;
     _spawnDistrictStructuresComplete = true;
     const groundStats = groundSurfaceSystem.stats();
-    console.log(`[stream-perf] authored spawn district structurally complete in live runtime · ground=${groundStats.readyChunks}/${groundStats.totalChunks} · plazas=${specialPlazaJobsCompleted}/${specialPlazaJobsTotal}`);
+    console.log(`[stream-perf] authored spawn district structurally complete in live runtime · ground=${groundStats.readyChunks}/${groundStats.totalChunks}; plaza content continues independently (${specialPlazaJobsCompleted}/${specialPlazaJobsTotal})`);
     return true;
 }
 
@@ -3050,7 +3270,7 @@ function findClearSpot(cx, cz, radius, tryOffsets) {
     return { x: cx + tryOffsets[QP[5067]][QP[5068]], z: cz + tryOffsets[QP[5069]][QP[5070]] };  
 }
 
-flushHorizontalPlaneBatches();
+flushHorizontalPlaneBatches(); // unified fabric owns all building plates
 prepareOpenCellSurfaces();
 const minimumSafeGroundCenter = cellToWorld(spawnCol, spawnRow);
 const minimumSafeGround = await ensureOpenCellSurfaceNeighborhood(minimumSafeGroundCenter.x, minimumSafeGroundCenter.z, QP[1024]);
@@ -3461,54 +3681,6 @@ await testYieldNow('minimum-safe authored district collision-ready · releasing 
  
  
  
-const _worldStreamHeading = new THREE.Vector3();
-infiniteChunkFactory = createInfiniteCityChunkFactory({
-    THREE, scene, playerPhysics, directSceneAdd: _origSceneAdd, chunkSize: STREAM_CHUNK_SIZE, worldSeed: SEED, spawnChunkKey: '0,0',
-     
-     
-     
-    landmarkSpacingChunks: CONFIG.streaming.landmarkSpacingChunks,
-     
-     
-     
-     
-     
-    yieldControl: null,
-});
-worldChunkStreamer = createWorldChunkStreamer({
-    chunkSize: STREAM_CHUNK_SIZE,
-    worldSeed: SEED,
-    getPlayerPosition: () => camera.position,
-    getPlayerHeading: () => camera.getWorldDirection(_worldStreamHeading),
-    renderRadiusChunks: CONFIG.streaming.renderRadiusChunks,
-    prefetchRadiusChunks: CONFIG.streaming.prefetchRadiusChunks,
-    retentionRadiusChunks: CONFIG.streaming.retentionRadiusChunks,
-    pinnedChunkKeys: ['0,0'],
-    weirdness: { startRadius: 1.5, fullRadius: 36, curve: 1.3 },
-    buildChunk: chunk => infiniteChunkFactory.build(chunk),
-    commitChunk: (chunk, payload) => infiniteChunkFactory.commit(chunk, payload),
-    setChunkVisibility: (chunk, payload, visible) => infiniteChunkFactory.setVisible(chunk, payload, visible),
-    verifyChunkReady: (chunk, payload, visible) => infiniteChunkFactory.verifyReady(chunk, payload, visible),
-    refineChunk: (chunk, payload, budget) => infiniteChunkFactory.refine(chunk, payload, budget),
-    hasPendingRefinement: (chunk, payload) => infiniteChunkFactory.hasPendingRefinement(chunk, payload),
-    refineAfterPrefetchReady: true,
-    unloadChunk: (chunk, payload) => infiniteChunkFactory.unload(chunk, payload),
-     
-     
-    yieldControl: null,
-    onChunkState: (chunk, state) => {
-        if (state === 'ready' || state === 'unloaded') {
-            console.log(`[world] chunk ${chunk.key} ${state} · weirdness=${chunk.weirdness.sampled.toFixed(3)}`);
-        }
-    },
-});
-const spawnSingularManifest = createSpawnSingularManifest(SEED, signatureInstances);
-worldChunkStreamer.markChunkReady(0, 0, {
-    formatVersion: WORLD_FORMAT_VERSION,
-    spawnDistrict: true,
-    singulars: spawnSingularManifest,
-});
-worldChunkStreamer.ensureNeighborhood();
 
  
 
@@ -3783,7 +3955,14 @@ function animate(now = performance.now()) {
             maxMillis: QUALITY === CONFIG.quality.desktop ? QP[1] : QP[1024],
         });
         if (authoredPump.steps) runtimeLatency.record('authored-live.pump', authoredPump.ms, authoredPump);
-    } else if (worldChunkStreamer?.stats().localRenderRing.complete) {
+    }
+
+    if (worldChunkStreamer?.stats().localRenderRing.complete && unifiedSpawnFabricRefinementQueue.length) {
+        const fabricDetailPump = pumpUnifiedSpawnFabricRefinement({ maxSteps: QP[1024], maxMillis: QP[1024] });
+        if (fabricDetailPump.steps) runtimeLatency.record('spawn-fabric.detail-pump', fabricDetailPump.ms, fabricDetailPump);
+    }
+
+    if (!authoredBuildingJobs.length && worldChunkStreamer?.stats().localRenderRing.complete) {
         maybeStartAuthoredPostStructurePipeline();
         const authoredPostPump = pumpAuthoredPostStructurePipeline({ maxSteps: QP[1024], maxMillis: QP[1024] });
         if (authoredPostPump.steps) runtimeLatency.record('authored-post.live-pump', authoredPostPump.ms, authoredPostPump);

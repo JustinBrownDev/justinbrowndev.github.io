@@ -5,7 +5,7 @@ import { ART_GALLERY_CATALOG, AS400_CONTENT } from '../content/signature-content
 export function createSignatureBuildingSystem(deps) {
     const {
         CONFIG, QUALITY, scene, pendingGalleryPanels, photoImages, takeDynamicLight,
-        addBench, addBuildingModule, addBuildingModuleSteps, addPottedPlant, addSign, addSiteDebugOverlay,
+        addBench, addBuildingModuleSteps, addPottedPlant, addSign, addSiteDebugOverlay,
         addTerminalPlaque, addWallPoster, buildCourtyardVoid, cellToWorld, colHalf, findFreeFacadeRect,
         jitterGeometry, makePixelTexture, makeWindowGridTexture, mountStandoffPanel, pick,
         pickRandomizedCuratedPair, placeCityAsset, placeSemanticCityAsset, pointOnFacade, randRange, rng,

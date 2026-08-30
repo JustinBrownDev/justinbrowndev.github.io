@@ -1,10 +1,10 @@
 // Shared structural grammar for both the authored origin and streamed infinity.
 //
-// The renderers are intentionally different: authored spawn can spend more on
-// singular content, while generic chunks stay aggressively instanced.  The
-// *structural plan* is shared: constrained multi-cell compounds, one site id per
-// occupied cell, topology-derived primary modules/courtyards, and common edge
-// semantics.  This is the one source of truth for city massing.
+// ONE STRUCTURAL LANGUAGE. Spawn, singular landmark shells, recurring district
+// landmarks, and streamed infinity all consume this topology through the same
+// KowloonFabricEngine renderer/collision publisher. Unique authored content is a
+// recipe layered on top; it is not allowed to define a second wall/floor/stair
+// system. This module is the one source of truth for city massing and edge semantics.
 
 export const KOWLOON_DIRS = Object.freeze([
     Object.freeze({ key: 'N', dc: 0, dr: -1, side: 'north' }),
@@ -207,7 +207,7 @@ export function chooseKowloonCompoundTargetSize(rng, weirdness = 0) {
     // small compounds remain common, but higher weirdness increasingly accretes
     // 4-7-cell masses rather than reverting to one-cell boxes.
     const base = [
-        [1, 18], [2, 24], [3, 26], [4, 17], [5, 9], [6, 4], [7, 2],
+        [1, 22], [2, 25], [3, 20], [4, 15], [5, 9], [6, 6], [7, 3],
     ];
     const adjusted = base.map(([size, weight]) => {
         const bonus = size >= 4 ? intensity.siteTargetBonus * (size - 2) * 2.5 : 0;

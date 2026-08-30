@@ -3,63 +3,26 @@ import { QP } from '../runtime/main-quantitative-literals.js';
 import { SPAWN_SINGULAR_TYPES, singularEntityId } from '../world-contract.js';
 import { outwardRotationY } from '../systems/cardinal.js';
 import { classifyKowloonEdge, partitionKowloonCompounds } from './kowloon-structure.js';
+import { createKowloonMazeTopology } from './kowloon-district-plan.js';
 
 export function createSpawnMazePlan({ GRID_COLS, GRID_ROWS, rng }) {
-    const grid = [];
-    for (let r = QP[715]; r < GRID_ROWS; r++) grid.push(new Array(GRID_COLS).fill(true));
-
-    const inBounds = (c, r) => c >= QP[716] && c < GRID_COLS - QP[717] && r >= QP[718] && r < GRID_ROWS - QP[719];
-    const startCol = Math.floor(GRID_COLS / QP[720]);
-    const startRow = Math.floor(GRID_ROWS / QP[721]);
-    grid[startRow][startCol] = false;
-
-    const stack = [[startCol, startRow]];
-    const dirsBase = [[QP[722], QP[723]], [QP[724], QP[725]], [QP[726], QP[727]], [QP[728], QP[729]]];
-    while (stack.length) {
-        const [c, r] = stack[stack.length - QP[730]];
-        const dirs = [...dirsBase].sort(() => rng() - QP[731]);
-        let carved = false;
-        for (const [dc, dr] of dirs) {
-            const nc = c + dc, nr = r + dr;
-            if (inBounds(nc, nr) && grid[nr][nc]) {
-                grid[nr][nc] = false;
-                grid[r + dr / QP[732]][c + dc / QP[733]] = false;
-                stack.push([nc, nr]);
-                carved = true;
-                break;
-            }
-        }
-        if (!carved) stack.pop();
-    }
-
-    for (let r = QP[734]; r < GRID_ROWS - QP[735]; r++) {
-        for (let c = QP[736]; c < GRID_COLS - QP[737]; c++) {
-            if (!grid[r][c]) continue;
-            const openNeighbors = [[QP[738], QP[739]], [QP[740], QP[741]], [QP[742], QP[743]], [QP[744], QP[745]]]
-                .filter(([dc, dr]) => !grid[r + dr]?.[c + dc]).length;
-            if (openNeighbors >= QP[746] && rng() < CONFIG.maze.loopChance) grid[r][c] = false;
-        }
-    }
-
-    for (let c = QP[715]; c < GRID_COLS; c++) grid[startRow][c] = false;
-    for (let r = QP[715]; r < GRID_ROWS; r++) grid[r][startCol] = false;
-
-    function openNeighborCount(c, r) {
-        return [[QP[747], QP[748]], [QP[749], QP[750]], [QP[751], QP[752]], [QP[753], QP[754]]]
-            .filter(([dc, dr]) => grid[r + dr]?.[c + dc] === false).length;
-    }
-
-    const plazaCells = [];
-    const allOpenCells = [];
-    for (let r = QP[755]; r < GRID_ROWS - QP[756]; r++) {
-        for (let c = QP[757]; c < GRID_COLS - QP[758]; c++) {
-            if (grid[r][c]) continue;
-            allOpenCells.push([c, r]);
-            if (openNeighborCount(c, r) >= QP[759]) plazaCells.push([c, r]);
-        }
-    }
-
-    return Object.freeze({ grid, startCol, startRow, spawnCol: startCol, spawnRow: startRow, plazaCells, allOpenCells, openNeighborCount });
+    const topology = createKowloonMazeTopology({
+        cols: GRID_COLS,
+        rows: GRID_ROWS,
+        rng,
+        loopChance: CONFIG.maze.loopChance,
+        forceCentralCross: true,
+    });
+    return Object.freeze({
+        grid: topology.grid,
+        startCol: topology.startCol,
+        startRow: topology.startRow,
+        spawnCol: topology.startCol,
+        spawnRow: topology.startRow,
+        plazaCells: topology.plazaCells,
+        allOpenCells: topology.allOpenCells,
+        openNeighborCount: topology.openNeighborCount,
+    });
 }
 
 export function createSpawnBuildingSitePlan(deps) {

@@ -3,7 +3,7 @@ const path = require('path');
 const ts = require('typescript');
 
 const ROOT = __dirname;
-const ROOTS = ['main.js', 'city-performance.js', 'infinite-city-chunks.js', 'world-chunk-streamer.js', 'world-contract.js', 'priority-load-queue.js', 'player-physics.js', 'numeric-parameters.js', 'parameter-editor.js', 'config', 'systems', 'world', 'content/curated', 'content/graffiti-content.js', 'content/junk-content.js', 'content/lore-fragments.js', 'content/photo-catalog.js', 'content/signature-content.js', 'content/text-style.js', 'content/wanted-content.js'];
+const ROOTS = ['main.js', 'city-performance.js', 'kowloon-fabric-engine.js', 'infinite-city-chunks.js', 'world-chunk-streamer.js', 'world-contract.js', 'priority-load-queue.js', 'player-physics.js', 'numeric-parameters.js', 'parameter-editor.js', 'config', 'systems', 'world', 'content/curated', 'content/graffiti-content.js', 'content/junk-content.js', 'content/lore-fragments.js', 'content/photo-catalog.js', 'content/signature-content.js', 'content/text-style.js', 'content/wanted-content.js'];
 
 function filesUnder(relative) {
     const absolute = path.join(ROOT, relative);

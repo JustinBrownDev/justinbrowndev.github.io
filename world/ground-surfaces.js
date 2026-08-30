@@ -5,7 +5,7 @@ export function createGroundSurfaceSystem(deps) {
     const {
         CONFIG, JUNK_RENDER_CHUNK, GRID_ROWS, GRID_COLS, grid, groundTex, unitPlaneGeo, skirtBoxGeo,
         colSize, rowSize, colHalf, rowHalf, cellToWorld, wallDirections, parkCells, makePixelTexture,
-        scene, camera, testYieldNow, testYieldIfNeeded,
+        camera, publishSurfacePatch, testYieldNow, testYieldIfNeeded,
     } = deps;
 
     function isStreetCell(c, r) {
@@ -83,19 +83,13 @@ export function createGroundSurfaceSystem(deps) {
      
     const groundSurfaceBuckets = new Map();
     let groundSurfaceBatchStats = { draws: QP[4878], instances: QP[4879] };
-    const _surfaceMatrix = new THREE.Matrix4();
-    const _surfacePos = new THREE.Vector3();
-    const _surfaceScale = new THREE.Vector3();
-    const _surfacePlaneQuat = new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / QP[4880], QP[4881], QP[4882]));
-    const _surfaceBoxQuat = new THREE.Quaternion();
-    
     function groundSurfaceBucket(kind, x, z, materialKey, material, geometry) {
         const chunkX = Math.floor(x / JUNK_RENDER_CHUNK);
         const chunkZ = Math.floor(z / JUNK_RENDER_CHUNK);
         const key = `${kind}|${chunkX}|${chunkZ}|${materialKey}`;
         let bucket = groundSurfaceBuckets.get(key);
         if (!bucket) {
-            bucket = { kind, chunkX, chunkZ, material, geometry, transforms: [] };
+            bucket = { key, kind, chunkX, chunkZ, materialKey, material, geometry, transforms: [] };
             groundSurfaceBuckets.set(key, bucket);
         }
         return bucket;
@@ -104,33 +98,22 @@ export function createGroundSurfaceSystem(deps) {
     function queueGroundSurface(kind, x, y, z, sx, sy, sz, materialKey, material, geometry, plane = false) {
         groundSurfaceBucket(kind, x, z, materialKey, material, geometry).transforms.push({ x, y, z, sx, sy, sz, plane });
     }
-    
+
+    let surfacePatchSerial = 0;
     function flushGroundSurfaceBatches(onlyChunkX = null, onlyChunkZ = null) {
-        let draws = QP[4883], instances = QP[4884];
+        const buckets = [];
         for (const [key, bucket] of [...groundSurfaceBuckets]) {
             if (onlyChunkX !== null && (bucket.chunkX !== onlyChunkX || bucket.chunkZ !== onlyChunkZ)) continue;
-            const list = bucket.transforms;
             groundSurfaceBuckets.delete(key);
-            if (!list.length) continue;
-            const mesh = new THREE.InstancedMesh(bucket.geometry, bucket.material, list.length);
-            mesh.name = `groundBatch:${key}`;
-            mesh.castShadow = false;
-            mesh.receiveShadow = true;
-            for (let i = QP[4885]; i < list.length; i++) {
-                const t = list[i];
-                _surfacePos.set(t.x, t.y, t.z);
-                _surfaceScale.set(t.sx, t.sy, t.sz);
-                _surfaceMatrix.compose(_surfacePos, t.plane ? _surfacePlaneQuat : _surfaceBoxQuat, _surfaceScale);
-                mesh.setMatrixAt(i, _surfaceMatrix);
-            }
-            mesh.instanceMatrix.needsUpdate = true;
-            mesh.computeBoundingBox?.();
-            mesh.computeBoundingSphere?.();
-            scene.add(mesh);
-            draws++;
-            instances += list.length;
+            if (!bucket.transforms.length) continue;
+            buckets.push(bucket);
         }
-        return { draws, instances };
+        if (!buckets.length) return { draws: 0, instances: 0 };
+        if (typeof publishSurfacePatch !== 'function') throw new Error('ground surface planner requires KowloonFabricEngine publishSurfacePatch');
+        const patchKey = onlyChunkX !== null
+            ? `${onlyChunkX},${onlyChunkZ}`
+            : `spill:${surfacePatchSerial++}`;
+        return publishSurfacePatch({ patchKey, buckets });
     }
     
     function addStreetSurface(c, r, x, z, street = isStreetCell(c, r)) {

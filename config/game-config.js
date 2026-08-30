@@ -75,6 +75,8 @@ export const CONFIG = {
          
          
         adornmentConcurrency: 4,
+        chunkRefinementStepsDesktop: 4,
+        chunkRefinementStepsWeak: 2,
     },
 
     lighting: {

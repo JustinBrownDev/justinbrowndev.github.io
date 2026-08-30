@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import * as THREE from './vendor/three/three.module.js';
-import { createInfiniteCityChunkFactory } from './infinite-city-chunks.js';
+import { createKowloonFabricEngine } from './kowloon-fabric-engine.js';
 import { createWorldChunkStreamer } from './world-chunk-streamer.js';
 
 const worldSeed = 671278205;
@@ -13,7 +13,7 @@ const physics = {
 };
 const position = { x: 0, z: 0 };
 const heading = { x: 1, z: 0 };
-const factory = createInfiniteCityChunkFactory({
+const factory = createKowloonFabricEngine({
   THREE,
   scene,
   playerPhysics: physics,
@@ -58,13 +58,16 @@ const visibleRoots = scene.children.filter(root => root.userData.worldChunkRoot 
 assert.equal(visibleRoots.length, 24, 'only procedural roots inside 5x5 render ring should be visible');
 for (const root of scene.children) {
   assert.equal(root.parent, scene, `${root.name} must remain a direct scene child`);
-  assert.equal(root.userData.renderAuthority, 'WorldChunkStreamer');
+  assert.equal(root.userData.renderAuthority, 'KowloonFabricEngine');
 }
 console.log('[streaming-throughput-selftest] PASS', {
   elapsedMs: Number(elapsed.toFixed(2)),
   avgBuildMs: Number(stats.throughput.avgBuildMs.toFixed(3)),
   avgCommitMs: Number(stats.throughput.avgCommitMs.toFixed(3)),
   avgCommitToVisibleMs: Number(stats.throughput.avgCommitToVisibleMs.toFixed(3)),
+  worstBuildMs: Number(stats.throughput.worstBuildMs.toFixed(3)),
+  worstCommitMs: Number(stats.throughput.worstCommitMs.toFixed(3)),
+  worstCommitToVisibleMs: Number(stats.throughput.worstCommitToVisibleMs.toFixed(3)),
   render: stats.localRenderRing,
   prefetch: stats.localPrefetchRing,
   directRoots: scene.children.length,

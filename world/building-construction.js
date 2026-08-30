@@ -3,6 +3,7 @@ import { CONFIG } from '../config/game-config.js';
 import { QP } from '../runtime/main-quantitative-literals.js';
 import { CELL_SIDE_DEFS, outwardRotationY } from '../systems/cardinal.js';
 import { computeNotchedRects } from '../systems/geometry-utils.js';
+import { analyzeKowloonCompound, selectKowloonCourtyardCell } from './kowloon-structure.js';
 
 export function createBuildingConstructionSystem(deps) {
     const {
@@ -287,6 +288,7 @@ export function createBuildingConstructionSystem(deps) {
         const exposedSetbackSidesByFloor = [];
     
         const floors = [];
+        buildingWallSegments.set(`${row},${col}`, { floors });
         for (let fl = QP[1889]; fl < floorCount; fl++) {
             const gaps = baseGaps.filter(g => (g.floorOnly === undefined || g.floorOnly === fl) && (g.floorMax === undefined || fl < g.floorMax));
             const exposedThisFloor = CELL_SIDE_DEFS.filter(s => {
@@ -305,7 +307,6 @@ export function createBuildingConstructionSystem(deps) {
             floors.push({ yMin: fl * floorHeight, yMax: fl * floorHeight + floorHeight, segments });
             yield { phase: 'floor', row, col, floor: fl };
         }
-        buildingWallSegments.set(`${row},${col}`, { floors });
     
          
          
@@ -423,33 +424,22 @@ export function createBuildingConstructionSystem(deps) {
          
          
          
-        const sideFacades = streetSides.map(s => {
+        const sideFacades = [];
+        for (const s of streetSides) {
             const isFireEscapeFace = fireEscapeSide && fireEscapeSide.dx === s.dx && fireEscapeSide.dz === s.dz;
-             
-             
-             
             const facade = makeFacade(rect, s.dx, s.dz, QP[1946], height, door, 'street', `${row},${col}`);
             if (isFireEscapeFace) {
                 const escapeHalf = fireEscapeDimensions(facade).accessHalf;
                 facadeReserve(facade, 'fireEscape', -escapeHalf, escapeHalf, QP[1947], height);
-                 
-                 
                 reserveProjectionVolume(makeProjectionBox(
                     facade, QP[1948], QP[1949], height, fireEscapeDepth + QP[1950], escapeHalf
                 ));
             }
             buildingFacades.push(facade);
-            return { s, facade, isFireEscapeFace };
-        });
-         
-         
-         
-         
-         
-         
-         
-         
-         
+            sideFacades.push({ s, facade, isFireEscapeFace });
+            yield { phase: 'facade-shell', row, col, facadeId: facade.id };
+        }
+
         rect.streetFacades = sideFacades.map(sf => sf.facade);
         if (signatureMode) {
             addRooftopClutter(cx, cz, hw * QP[1951], height, buildingContext.maintenance);
@@ -472,9 +462,13 @@ export function createBuildingConstructionSystem(deps) {
                 const signRolls = [QP[1955], QP[1956], QP[1957]];
                 for (const p of signRolls) { if (rng() < p) signCount++; else break; }
             }
-            const signsPlaced = placeSignsOnFacadeSteps
-                ? (yield* placeSignsOnFacadeSteps(facade, signCount, row))
-                : placeSignsOnFacade(facade, signCount, row);
+            const signStepper = placeSignsOnFacadeSteps(facade, signCount, row);
+            let signStep = signStepper.next();
+            while (!signStep.done) {
+                yield { phase: 'facade-sign', row, col, facadeId: facade.id, ...signStep.value };
+                signStep = signStepper.next();
+            }
+            const signsPlaced = signStep.value;
              
              
              
@@ -483,7 +477,7 @@ export function createBuildingConstructionSystem(deps) {
              
              
             if (signsPlaced === QP[1958]) candidateFaces.push(facade);
-            yield { phase: 'facade-signs', row, col, facadeId: facade.id };
+            yield { phase: 'facade-signs-complete', row, col, facadeId: facade.id };
     
              
              
@@ -513,6 +507,8 @@ export function createBuildingConstructionSystem(deps) {
              
              
              
+            yield { phase: 'facade-pipes', row, col, facadeId: facade.id };
+
             if (rng() < QP[1967]) {
                 const awningWidth = randRange(QP[1968], QP[1969]);
                 const awningHeight = awningWidth * QP[1970];
@@ -528,6 +524,8 @@ export function createBuildingConstructionSystem(deps) {
                 }
             }
              
+            yield { phase: 'facade-awning', row, col, facadeId: facade.id };
+
             if (rng() < QP[1978]) {
                 const spot = findFreeFacadeRect(facade, 'camera', QP[1979], QP[1980], QP[1981], Math.min(height - QP[1982], QP[1983]));
                 if (spot) {
@@ -538,6 +536,8 @@ export function createBuildingConstructionSystem(deps) {
     
              
              
+            yield { phase: 'facade-camera', row, col, facadeId: facade.id };
+
             if (rng() < QP[1984]) {
                 const flyerCount = rng() < QP[1985] ? QP[1986] : QP[1987];
                 for (let i = QP[1988]; i < flyerCount; i++) {
@@ -549,6 +549,8 @@ export function createBuildingConstructionSystem(deps) {
                 }
             }
              
+            yield { phase: 'facade-flyers', row, col, facadeId: facade.id };
+
             if (rng() < QP[1995]) {
                 const spot = findFreeFacadeRect(facade, 'ivy', QP[1996], QP[1997], QP[1998], Math.min(height - QP[1999], QP[2000]), QP[2001], QP[2002]);
                 if (spot) {
@@ -561,6 +563,8 @@ export function createBuildingConstructionSystem(deps) {
              
              
              
+            yield { phase: 'facade-ivy', row, col, facadeId: facade.id };
+
             const graffitiRolls = [QP[2003], QP[2004], QP[2005]];
             let graffitiPlaced = QP[2006];
             for (const p of graffitiRolls) {
@@ -590,7 +594,7 @@ export function createBuildingConstructionSystem(deps) {
                     addBalcony(p.x, p.y, p.z, rotY, buildingContext.maintenance);
                 }
             }
-            yield { phase: 'facade-detail', row, col, facadeId: facade.id };
+            yield { phase: 'facade-access', row, col, facadeId: facade.id };
         }
     
         addRooftopClutter(cx, cz, hw * QP[2024], height, buildingContext.maintenance);
@@ -767,12 +771,12 @@ export function createBuildingConstructionSystem(deps) {
      
     function* addBuildingSiteSteps(site) {
         const { cells } = site;
-        const degreeOf = (cell) => [[QP[2111], QP[2112]], [QP[2113], QP[2114]], [QP[2115], QP[2116]], [QP[2117], QP[2118]]].filter(([dc, dr]) => siteIdOf[cell.row + dr]?.[cell.col + dc] === site.id).length;
-        let primary = cells[QP[2119]], primaryDegree = QP[2120];
-        for (const cell of cells) {
-            const d = degreeOf(cell);
-            if (d > primaryDegree) { primaryDegree = d; primary = cell; }
-        }
+        // Ordinary authored massing and streamed infinity now share the same
+        // compound-topology analyzer.  This preserves the old spawn primary
+        // selection exactly while making its shape rules reusable by chunks.
+        const compoundTopology = analyzeKowloonCompound(site, siteIdOf, { courtyardMinCells: Number.POSITIVE_INFINITY });
+        const degreeOf = compoundTopology.degreeOf;
+        let primary = compoundTopology.primary;
     
         const isWarehouse = rng() < QP[2121];
          
@@ -794,13 +798,10 @@ export function createBuildingConstructionSystem(deps) {
         const streetSetbackZ = isWarehouse ? CONFIG.maze.buildingMarginMin / QP[2138] : isHeroTower ? Math.min(QP[2139], streetSetbackRoll()) : streetSetbackRoll();
         const partySetback = randRange(QP[2140], QP[2141]);
     
-        let voidCell = null;
-        if (cells.length >= QP[2142]) {
-            for (const cell of cells) {
-                if (cell === primary) continue;
-                if (degreeOf(cell) === QP[2143]) { voidCell = cell; break; }
-            }
-        }
+        const voidCell = selectKowloonCourtyardCell(site, degreeOf, primary, {
+            minCells: QP[2142],
+            degree: QP[2143],
+        });
     
         const maxFloorsForThis = isWarehouse ? Math.min(QUALITY.maxEnterableFloors, QP[2144]) : isHeroTower ? QUALITY.maxHeroFloors : QUALITY.maxEnterableFloors;
         const weights = isHeroTower ? CONFIG.buildings.heroFloorCountWeights : CONFIG.buildings.floorCountWeights;

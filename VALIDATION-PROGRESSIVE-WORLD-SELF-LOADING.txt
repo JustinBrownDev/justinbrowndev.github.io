@@ -1,0 +1,62 @@
+jweb.dev progressive world self-loading landing
+baseline live commit: 92a4386fc80d3efdf6a33e77731609ea07284e9f
+
+PASS: all non-vendor JS/MJS/CJS syntax checks
+PASS: parameter-system-selftest.mjs
+PASS: parameter-catalog-selftest.mjs
+PASS: world-contract-selftest.mjs
+PASS: world-chunk-streamer-selftest.mjs
+PASS: infinite-city-chunks-selftest.mjs
+PASS: priority-load-queue-selftest.mjs
+PASS: city-performance-selftest.mjs
+PASS: player-physics-selftest.mjs
+PASS: tests/progressive-optimizer-selftest.mjs
+PASS: tests/progressive-generation-selftest.mjs
+PASS: tests/homepage-priority-selftest.mjs
+PASS: tests/full-fidelity-selftest.mjs
+PASS: streaming-throughput-selftest.mjs
+PASS: tests/progressive-runtime-selftest.mjs
+PASS: streaming-architecture-audit.cjs main.js
+PASS: tdz-boot-audit.cjs main.js
+PASS: tdz-generation-audit.cjs main.js
+PASS: runtime-handoff-audit.cjs main.js
+PASS: progressive-spawn-checkpoint-audit.cjs main.js
+
+Synthesized architecture assertions include:
+- minimum-safe authored handoff
+- live authored semantic turns
+- generic outer chunks pumped first
+- floor/wall/collision atomicity
+- progressive spawn ground chunks
+- deferred plaza jobs
+- park base-plate safety
+- resumable authored relationship passes
+- resumable park enrichment
+- nearest-dirty authored optimization
+- deterministic full curated corpus exciter
+
+Latest throughput sample:
+- elapsed 102.12 ms
+- avg build 2.053 ms
+- avg commit 0.007 ms
+- avg commit-to-visible 0.005 ms
+- render 25/25 READY
+- prefetch 49/49 READY
+
+Infinite reference chunk:
+- 16 buildings
+- 15 plazas
+- 46 ramps
+- 4 scaffold-equipped buildings
+- 5 climbable plazas
+- 38 partition segments
+- 86 refinement tasks
+
+Corpus:
+- 3,627 canonical entries
+- 512 fragments
+- 150 corpus-only curated compositions
+- 15 world-design axioms
+
+Real-browser note:
+Chromium/WebGL2 is present, but managed browser policy prevents the modified local site from being requested over loopback, local hostname, or the container private address. No real-browser PASS is claimed for the modified worktree.

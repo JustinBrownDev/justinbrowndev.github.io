@@ -55,7 +55,7 @@ optimizer.beginIncremental();
 const streamedRoot = new THREE.Group();
 streamedRoot.name = 'world-chunk:4,2';
 streamedRoot.userData.worldChunkRoot = true;
-streamedRoot.userData.renderAuthority = 'WorldChunkStreamer';
+streamedRoot.userData.renderAuthority = 'KowloonFabricEngine';
 streamedRoot.visible = true;
 rawSceneAdd(streamedRoot);
 optimizer.registerLateObject(streamedRoot);

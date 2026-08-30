@@ -480,7 +480,7 @@ export function createProgressiveStaticWorldOptimizer({
     }
 
     function placeObject(obj, isLate = false) {
-        if (!obj || obj.userData?.__perfChunkGroup) return false;
+        if (!obj || obj.userData?.__perfChunkGroup || obj.userData?.worldChunkRoot) return false;
         const b = boundsOf(obj);
         if (shouldStayGlobal(obj, b)) {
             if (isLate && !dynamicRoots.has(obj)) freezeObject(obj);
@@ -616,7 +616,7 @@ export function createProgressiveStaticWorldOptimizer({
         // intentionally never belonged to a spatial chunk. Freeze them one root
         // at a time without disabling scene-wide matrix updates: async assets and
         // deferred decoration are still allowed to arrive after this point.
-        const globalRoots = [...scene.children].filter(obj => !obj.userData?.__perfChunkGroup && !dynamicRoots.has(obj));
+        const globalRoots = [...scene.children].filter(obj => !obj.userData?.__perfChunkGroup && !obj.userData?.worldChunkRoot && !dynamicRoots.has(obj));
         phaseTotal = globalRoots.length;
         for (let done = __qp72; done < globalRoots.length; done++) {
             const obj = globalRoots[done];
@@ -651,7 +651,7 @@ export function createProgressiveStaticWorldOptimizer({
         // every object up front. Exact bounds are still computed by placeObject
         // before a root is assigned to a render chunk.
         const roots = [...scene.children]
-            .filter(obj => !obj.userData?.__perfChunkGroup)
+            .filter(obj => !obj.userData?.__perfChunkGroup && !obj.userData?.worldChunkRoot)
             .sort((a, b) => roughDistanceSq(b) - roughDistanceSq(a));
         phaseTotal = roots.length;
         for (let done = __qp72; roots.length; done++) {
@@ -680,7 +680,7 @@ export function createProgressiveStaticWorldOptimizer({
         // Anything too large/dynamic to live in a render chunk remains a scene
         // root. Static globals still get material dedupe + one-time matrix
         // freezing, one root per cooperative slice.
-        const globalRoots = [...scene.children].filter(obj => !obj.userData?.__perfChunkGroup && !dynamicRoots.has(obj));
+        const globalRoots = [...scene.children].filter(obj => !obj.userData?.__perfChunkGroup && !obj.userData?.worldChunkRoot && !dynamicRoots.has(obj));
         phaseTotal = globalRoots.length;
         for (let done = __qp72; done < globalRoots.length; done++) {
             const obj = globalRoots[done];
@@ -718,7 +718,7 @@ export function createProgressiveStaticWorldOptimizer({
             updateVisibility(true);
         },
         registerLateObject(obj) {
-            if (!obj || obj.userData?.__perfChunkGroup) return;
+            if (!obj || obj.userData?.__perfChunkGroup || obj.userData?.worldChunkRoot) return;
             if (!enabled) {
                 pendingLateObjects.push(obj);
                 return;
@@ -776,7 +776,13 @@ export function createStaticWorldOptimizer({
     let lateObjects = __qp72;
     let activeDrawDistance = drawDistance;
 
-    const materialStats = dedupeMaterials(scene, dynamicMaterials);
+    const canonicalMaterials = new Map();
+    let materialReplacements = 0;
+    for (const root of scene.children) {
+        if (root.userData?.worldChunkRoot) continue;
+        materialReplacements += dedupeMaterialsInto(root, dynamicMaterials, canonicalMaterials);
+    }
+    const materialStats = { replacements: materialReplacements, uniqueMaterials: canonicalMaterials.size };
 
     function chunkKey(ix, iz) { return `${ix},${iz}`; }
     function getChunk(ix, iz) {
@@ -830,7 +836,7 @@ export function createStaticWorldOptimizer({
     }
 
     function placeObject(obj, isLate = false) {
-        if (!obj || obj.userData?.__perfChunkGroup) return false;
+        if (!obj || obj.userData?.__perfChunkGroup || obj.userData?.worldChunkRoot) return false;
         const b = boundsOf(obj);
         if (shouldStayGlobal(obj, b)) {
             if (isLate && !dynamicRoots.has(obj)) freezeObject(obj);
@@ -849,7 +855,9 @@ export function createStaticWorldOptimizer({
     }
 
     // Copy because placeObject reparents children out of scene.children.
-    for (const obj of [...scene.children]) placeObject(obj, false);
+    for (const obj of [...scene.children]) {
+        if (!obj.userData?.worldChunkRoot) placeObject(obj, false);
+    }
 
     let batchStats = { sourceMeshes: __qp73, mergedMeshes: __qp74, drawCallsSaved: __qp75, emptyGroupsPruned: __qp76 };
     for (const group of chunks.values()) {
@@ -865,7 +873,7 @@ export function createStaticWorldOptimizer({
     // The renderer otherwise walks every Object3D every frame even if its
     // transform has not changed since generation.
     for (const obj of scene.children) {
-        if (!dynamicRoots.has(obj)) freezeObject(obj);
+        if (!obj.userData?.worldChunkRoot && !dynamicRoots.has(obj)) freezeObject(obj);
     }
     scene.updateMatrixWorld(true);
     if ('matrixWorldAutoUpdate' in scene) scene.matrixWorldAutoUpdate = false;
@@ -917,7 +925,7 @@ export function createStaticWorldOptimizer({
             updateVisibility(true);
         },
         registerLateObject(obj) {
-            if (!enabled || !obj || obj.userData?.__perfChunkGroup) return;
+            if (!enabled || !obj || obj.userData?.__perfChunkGroup || obj.userData?.worldChunkRoot) return;
             placeObject(obj, true);
         },
         updateDynamicObject(obj) {

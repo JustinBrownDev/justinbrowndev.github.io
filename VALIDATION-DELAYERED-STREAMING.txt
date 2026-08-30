@@ -1,0 +1,105 @@
+JUSTINBROWNDEV.GITHUB.IO - DELAYERED STREAMING VALIDATION
+Date: 2026-08-29
+
+PURPOSE
+Final ownership/performance correction for the shipping infinite-world runtime. The goal is one
+unambiguous path from deterministic chunk coordinate -> structural pixels + collision, while legacy
+spawn optimization and nonessential network enrichment remain outside that path.
+
+ROOT CAUSES CORRECTED
+1. Double render/spatial ownership.
+   - Infinite chunks previously committed through ordinary scene.add().
+   - scene.add() is intercepted by the legacy authored-world optimizer.
+   - A streamed chunk could therefore report READY while a legacy perf-chunk group had re-parented
+     and hidden it.
+   - Infinite chunks now commit through the original/raw scene add path and carry explicit
+     worldChunkRoot / chunk key / owner / render-authority metadata.
+   - Both legacy optimizer variants defensively reject worldChunkRoot objects.
+
+2. Missing streamer-owned visibility contract.
+   - WorldChunkStreamer now owns render-ring visibility for streamed chunks.
+   - Prefetch READY chunks can remain structurally committed but hidden until they enter render
+     distance.
+   - Visibility is applied before READY is published and is updated synchronously by chunk-center
+     changes.
+
+3. READY was not externally strong enough.
+   READY is now verified only after:
+   - direct attachment to the real scene;
+   - world-matrix update after attachment;
+   - chunk-owned physics registration;
+   - streamer visibility application;
+   - verification that no legacy perf-chunk owns the root.
+
+4. Nonstructural request contention.
+   - GLB adornment, photos, and optional live Wikipedia enrichment now share one bounded priority
+     queue.
+   - The queue is paused during structural startup and is released only after the current 7x7
+     structural prefetch neighborhood is READY.
+   - Failures are one-shot and do not block structural READY or create retry storms.
+   - Structural infinite chunks contain no fetch/Image/GLTF dependency.
+
+5. Obsolete scheduler surface.
+   - Removed unused createWorldChunkScheduler() finite compatibility API.
+   - createWorldChunkStreamer() is the only shipping chunk scheduler API.
+
+ROUTE SURFACE
+- /              one interactive streaming runtime
+- /old/          static escape site
+- /tests/        QA/regression material, not a runtime surface
+- /test/         absent
+- /synchronous/  absent
+
+MEASURED STRUCTURAL THROUGHPUT
+Test: streaming-throughput-selftest.mjs
+Seed: 671278205
+Latest validation run:
+- 7x7 neighborhood total: 49/49 READY (spawn + 48 procedural chunks)
+- 5x5 render ring: 25/25 READY
+- 48 procedural roots attached directly to the scene
+- 24 procedural roots visible inside the 5x5 render ring (spawn root is authored separately)
+- total test elapsed: approximately 69.57 ms CPU in the final staged validation
+- average procedural build: approximately 1.376 ms
+- average atomic commit: approximately 0.009 ms
+- average commit-to-visible: approximately 0.009 ms
+These are local test-machine measurements, not browser/network promises.
+
+REGRESSION / ARCHITECTURE TESTS PASSED
+- parameter-system-selftest.mjs
+- parameter-catalog-selftest.mjs: 9,328 authored numeric parameters
+- world-contract-selftest.mjs
+- world-chunk-streamer-selftest.mjs
+- world-chunk visibility contract self-test
+- infinite-city-chunks-selftest.mjs
+- priority-load-queue-selftest.mjs
+- city-performance-selftest.mjs
+- streamed-root legacy-optimizer ownership self-test
+- player-physics-selftest.mjs (stairs, roofs, low ceilings, slide, ladder, late collision,
+  chunk-owned unload/revisit/compaction)
+- tests/progressive-optimizer-selftest.mjs
+- tests/homepage-priority-selftest.mjs
+- tests/full-fidelity-selftest.mjs
+- streaming-throughput-selftest.mjs
+- tdz-boot-audit.cjs main.js: zero hazards
+- tdz-generation-audit.cjs main.js: zero hazards
+- runtime-handoff-audit.cjs main.js: zero hazards
+- streaming-architecture-audit.cjs
+
+STATIC / MODULE VALIDATION
+- node --check: PASS for all non-vendor .js/.mjs/.cjs files
+- production module graph from main.js: 27 executable modules, zero missing local imports
+- route audit: PASS; /old exists, /test and /synchronous absent
+
+BROWSER SMOKE LIMITATION
+A local HTTP/headless Chromium smoke attempt could not meaningfully execute the WebGL application
+because the container GPU stack fails before app rendering. Chromium repeatedly reports:
+- ANGLE Display initialize error
+- eglInitialize SwANGLE EGL_NOT_INITIALIZED
+- Initialization of all EGL display types failed
+- GPU process exiting during initialization
+The application was not modified to work around this container-only renderer failure. Final visual
+validation remains a real-browser/GPU check after deployment.
+
+SHIPPING INVARIANT
+For streamed infinite terrain there is one owner: WorldChunkStreamer. No legacy system is allowed
+to re-chunk, re-parent, freeze, hide, or otherwise reinterpret a READY streamed root.

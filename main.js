@@ -11,6 +11,7 @@ import { announceParameterOverrides, parameterNumber, registerConfigLiveParamete
 import * as BOOTSTRAP_NOISE from './noise-data-bootstrap.js';
 import { createWorldChunkStreamer } from './world-chunk-streamer.js';
 import { createInfiniteCityChunkFactory } from './infinite-city-chunks.js';
+import { createPriorityLoadQueue } from './priority-load-queue.js';
 import {
     WORLD_FORMAT_VERSION,
     SPAWN_SINGULAR_TYPES,
@@ -5617,6 +5618,10 @@ const CONFIG = {
         prefetchBuildBudgetMs: 8,
         warmBuildBudgetMs: 4,
         warmCooldownMs: 0,
+        // Decorative GLTF work is explicitly non-structural. Requests queue
+        // during boot but do not start until the nearby 7x7 structural world
+        // is READY, then this small cap prevents network/decode stampedes.
+        adornmentConcurrency: 4,
     },
 
     lighting: {
@@ -6510,17 +6515,23 @@ const detailCullObjects = new Set();
 let _detailCullTick = __qp181;
 let staticWorldOptimizer = null;
 const _origSceneAdd = scene.add.bind(scene);
+function isWorldStreamRoot(obj) {
+    return !!obj?.userData?.worldChunkRoot;
+}
 scene.add = function (...objs) {
     for (const o of objs) {
         if (o && o.isPointLight) allDynamicLights.push(o);
         if (o?.userData?.detailCullDistance) detailCullObjects.add(o);
     }
     const result = _origSceneAdd(...objs);
-    // Once generation is complete the static-world optimizer owns spatial
-    // render chunks. Async GLTF/photo callbacks still use scene.add(), so
-    // hand those late arrivals to the same chunk/freeze path immediately.
+    // Legacy authored/async spawn detail may still use the static optimizer.
+    // Infinite world roots are explicitly excluded: WorldChunkStreamer owns
+    // their parentage and visibility for their entire lifetime. This guard is
+    // defensive; the real infinite commit path uses _origSceneAdd directly.
     if (staticWorldOptimizer) {
-        for (const o of objs) staticWorldOptimizer.registerLateObject(o);
+        for (const o of objs) {
+            if (!isWorldStreamRoot(o)) staticWorldOptimizer.registerLateObject(o);
+        }
     }
     return result;
 };
@@ -7222,6 +7233,39 @@ gltfLoader.setPath('./vendor/models/');
 // sites were still sparse. A second instance with no path set (every
 // city-pack call already passes a full relative path) fixes it for good.
 const cityAssetLoader = new GLTFLoader();
+
+// ONE bounded queue owns all non-structural GLTF fetch/decode work. It starts
+// paused: signature buildings may request adornment while the spawn structure
+// is being authored, but those requests must not compete with first interaction
+// or the first nearby streamed chunks. The live world releases this queue only
+// after its structural prefetch ring is READY.
+const adornmentLoadQueue = createPriorityLoadQueue({
+    concurrency: CONFIG.streaming.adornmentConcurrency,
+    paused: true,
+});
+const failedRealModelLoads = new Set();
+const failedCityAssetLoads = new Set();
+const failedPhotoLoads = new Set();
+
+function nearestAdornmentPriority(requests, fallback = Number.POSITIVE_INFINITY) {
+    if (!requests?.length) return fallback;
+    let best = Number.POSITIVE_INFINITY;
+    const px = camera.position.x, pz = camera.position.z;
+    for (const req of requests) {
+        const dx = req.x - px, dz = req.z - pz;
+        const d2 = dx * dx + dz * dz;
+        if (d2 < best) best = d2;
+    }
+    return best;
+}
+
+function queuedGltfLoad(loader, url, key, priority) {
+    return adornmentLoadQueue.enqueue({
+        key,
+        priority,
+        run: () => new Promise((resolve, reject) => loader.load(url, resolve, undefined, reject)),
+    });
+}
 const REAL_MODEL_DEFS = {
     tyre: { file: 'old_tyre.gltf', scale: __qp357 },
     trashbag: { file: 'trashbag.gltf', scale: __qp358 },
@@ -7277,25 +7321,31 @@ function scheduleRealModelFlush(name) {
 }
 
 function ensureRealModelLoaded(name) {
-    if (realModelTemplates.has(name) || realModelLoads.has(name)) return;
+    if (realModelTemplates.has(name) || realModelLoads.has(name) || failedRealModelLoads.has(name)) return;
     const def = REAL_MODEL_DEFS[name];
     if (!def) return;
     realModelLoads.add(name);
-    gltfLoader.load(def.file, (gltf) => {
+    queuedGltfLoad(
+        gltfLoader,
+        def.file,
+        `real:${name}`,
+        () => nearestAdornmentPriority(pendingRealModelPlacements[name]),
+    ).then(gltf => {
         const template = gltf.scene;
         template.scale.setScalar(def.scale);
         realModelTemplates.set(name, template);
         realModelLoads.delete(name);
         flushRealModelPlacements(name);
-    }, undefined, (err) => {
+    }).catch(err => {
         realModelLoads.delete(name);
+        failedRealModelLoads.add(name);
         pendingRealModelPlacements[name].length = __qp385;
-        console.warn(`[testing] real model "${name}" didn't load, skipping`, err);
+        console.warn(`[asset] real model "${name}" failed once; structural world unaffected`, err?.message ?? err);
     });
 }
 
 function placeRealModel(name, x, z, rotY, opts = {}) {
-    if (!REAL_MODEL_DEFS[name]) return false;
+    if (!REAL_MODEL_DEFS[name] || failedRealModelLoads.has(name)) return false;
     const budget = REAL_MODEL_BUDGETS[name] ?? Infinity;
     if (realModelPlacedCount[name] >= budget) return false;
     realModelPlacedCount[name]++;
@@ -7433,24 +7483,32 @@ function scheduleCityAssetFlush(id) {
 // GLB finishes loading, in whatever order that happens.
 function placeCityAsset(id, x, z, rotY = __qp406, opts = {}) {
     const def = CITY_ASSET_BY_ID.get(id);
-    if (!def) { console.warn(`[testing] unknown city-pack asset "${id}"`); return; }
+    if (!def) { console.warn(`[testing] unknown city-pack asset "${id}"`); return false; }
+    if (failedCityAssetLoads.has(id)) return false;
     const req = { x, y: opts.y ?? __qp407, z, rotY, scale: opts.scale };
     if (cityAssetTemplates.has(id)) {
         let pending = cityAssetPending.get(id);
         if (!pending) cityAssetPending.set(id, pending = []);
         pending.push(req);
         scheduleCityAssetFlush(id);
-        return;
+        return true;
     }
-    if (cityAssetPending.has(id)) { cityAssetPending.get(id).push(req); return; }
+    if (cityAssetPending.has(id)) { cityAssetPending.get(id).push(req); return true; }
     cityAssetPending.set(id, [req]);
-    cityAssetLoader.load('./vendor/city-pack/' + def.file, (gltf) => {
+    queuedGltfLoad(
+        cityAssetLoader,
+        './vendor/city-pack/' + def.file,
+        `city:${id}`,
+        () => nearestAdornmentPriority(cityAssetPending.get(id)),
+    ).then(gltf => {
         cityAssetTemplates.set(id, gltf.scene);
         flushCityAssetPending(id);
-    }, undefined, (err) => {
-        console.warn(`[testing] city-pack asset "${id}" didn't load, skipping`, err);
+    }).catch(err => {
+        failedCityAssetLoads.add(id);
         cityAssetPending.delete(id);
+        console.warn(`[asset] city-pack "${id}" failed once; structural world unaffected`, err?.message ?? err);
     });
+    return true;
 }
 
 // every asset in one category (e.g. 'street', 'trash_climbable',
@@ -7630,21 +7688,30 @@ const photoImages = {};
 const pendingPhotoPlacements = {};
 
 function loadPhoto(key, file) {
-    const img = new Image();
-    img.onload = () => {
+    adornmentLoadQueue.enqueue({
+        key: `photo:${key}`,
+        priority: () => nearestAdornmentPriority([
+            ...(pendingPhotoPlacements[key] || []),
+            ...(pendingGalleryPanels?.[key] || []),
+        ]),
+        run: () => new Promise((resolve, reject) => {
+            const img = new Image();
+            img.onload = () => resolve(img);
+            img.onerror = () => reject(new Error(`photo ${key} failed`));
+            img.src = './vendor/photos/' + file;
+        }),
+    }).then(img => {
         photoImages[key] = img;
         for (const req of (pendingPhotoPlacements[key] || [])) buildPhotoPosterMesh(img, req);
         pendingPhotoPlacements[key] = [];
-        // same pattern, for the Art Gallery's real-aspect panels (see
-        // mountGalleryPiece) -- pendingGalleryPanels is declared later in
-        // the file, but this callback only ever runs once the image
-        // actually loads (well after the whole module has finished
-        // executing top-to-bottom), so it's always defined by then.
         for (const req of (pendingGalleryPanels[key] || [])) buildGalleryArtPanel(img, req.x, req.y, req.z, req.rotY, req.widthUnits, req.title, req.subtitle);
         pendingGalleryPanels[key] = [];
-    };
-    img.onerror = () => console.warn(`[testing] photo "${key}" didn't load, skipping`);
-    img.src = './vendor/photos/' + file;
+    }).catch(err => {
+        failedPhotoLoads.add(key);
+        pendingPhotoPlacements[key] = [];
+        if (typeof pendingGalleryPanels !== 'undefined') pendingGalleryPanels[key] = [];
+        console.warn(`[asset] photo "${key}" failed once; structural world unaffected`, err?.message ?? err);
+    });
 }
 
 function buildPhotoPosterMesh(img, req) {
@@ -8219,18 +8286,25 @@ function addWantedPoster(x, z, rotY, placement = null) {
 // scales with total world size.
 function fetchRandomWikiArticles(count) {
     for (let i = __qp680; i < count; i++) {
-        fetch('https://en.wikipedia.org/api/rest_v1/page/random/summary')
-            .then(r => (r.ok ? r.json() : null))
-            .then(data => {
-                if (!data?.title || !wantedPosterMeshes.length) return;
-                const mesh = pick(wantedPosterMeshes);
-                mesh.material.map = makeWantedTexture(
-                    data.title.toUpperCase(),
-                    (data.description || 'wikipedia article').slice(__qp681, __qp682)
-                );
-                mesh.material.needsUpdate = true;
-            })
-            .catch(() => {}); // offline/blocked -- static fallback stands, no harm done
+        adornmentLoadQueue.enqueue({
+            key: `wiki:${i}`,
+            // Optional live trivia is deliberately lower priority than every
+            // spatial adornment request. One queue means it can never create
+            // a separate request storm beside GLTF/photo loading.
+            priority: Number.MAX_SAFE_INTEGER,
+            run: async () => {
+                const response = await fetch('https://en.wikipedia.org/api/rest_v1/page/random/summary');
+                return response.ok ? response.json() : null;
+            },
+        }).then(data => {
+            if (!data?.title || !wantedPosterMeshes.length) return;
+            const mesh = pick(wantedPosterMeshes);
+            mesh.material.map = makeWantedTexture(
+                data.title.toUpperCase(),
+                (data.description || 'wikipedia article').slice(__qp681, __qp682)
+            );
+            mesh.material.needsUpdate = true;
+        }).catch(() => {}); // offline/blocked -- static fallback stands, no harm done
     }
 }
 
@@ -16016,7 +16090,7 @@ function updateDecorationStreaming(delta) {
 
 console.log(`[perf] decoration streaming: ${initialDecorationCells} nearby cells in ${initialDecorationSectors}/${decorationSectors.length} sectors generated synchronously; remaining sectors load near the camera during idle time`);
 
-fetchRandomWikiArticles(__qp5300); // live random articles start swapping into the static wanted posters
+// Live Wikipedia enrichment is released only after the nearby structural world is warm.
 
 // ---------- player physics ----------
 
@@ -16110,7 +16184,7 @@ let playerPhysics = createPlayerPhysics({
 // their physics and draw batches are owned by that coordinate and can unload.
 const _worldStreamHeading = new THREE.Vector3();
 infiniteChunkFactory = createInfiniteCityChunkFactory({
-    THREE, scene, playerPhysics, chunkSize: STREAM_CHUNK_SIZE, worldSeed: SEED, spawnChunkKey: '0,0',
+    THREE, scene, playerPhysics, directSceneAdd: _origSceneAdd, chunkSize: STREAM_CHUNK_SIZE, worldSeed: SEED, spawnChunkKey: '0,0',
     // One disposable district-scale landmark per 3x3 macrocell: common enough
     // to keep the streamed world visually anchored, sparse enough that the
     // authored origin district still feels special.
@@ -16134,6 +16208,8 @@ worldChunkStreamer = createWorldChunkStreamer({
     weirdness: { startRadius: 1.5, fullRadius: 36, curve: 1.3 },
     buildChunk: chunk => infiniteChunkFactory.build(chunk),
     commitChunk: (chunk, payload) => infiniteChunkFactory.commit(chunk, payload),
+    setChunkVisibility: (chunk, payload, visible) => infiniteChunkFactory.setVisible(chunk, payload, visible),
+    verifyChunkReady: (chunk, payload, visible) => infiniteChunkFactory.verifyReady(chunk, payload, visible),
     unloadChunk: (chunk, payload) => infiniteChunkFactory.unload(chunk, payload),
     // No unconditional per-chunk frame sleep. pump({ maxMillis }) is the single
     // scheduler authority for post-handoff CPU usage.
@@ -16333,6 +16409,27 @@ let footstepTimer = __qp5341;
 let trafficSignalUpdateTimer = __qp5342;
 let worldChunkPumpPromise = null;
 let worldChunkNextKickAt = 0;
+let backgroundEnrichmentReleased = false;
+let wikiEnrichmentScheduled = false;
+
+function maybeReleaseBackgroundEnrichment() {
+    if (backgroundEnrichmentReleased || !worldChunkStreamer) return false;
+    const worldStats = worldChunkStreamer.stats();
+    // Structural pixels + collision win every startup race. Decorative GLTFs
+    // and live web trivia do not begin until the complete local prefetch ring
+    // is READY around the player's CURRENT position.
+    if (!worldStats.localPrefetchRing.complete) return false;
+    backgroundEnrichmentReleased = true;
+    adornmentLoadQueue.resume();
+    console.log('[asset] structural 7x7 warm · releasing bounded adornment queue', adornmentLoadQueue.stats());
+    if (!wikiEnrichmentScheduled) {
+        wikiEnrichmentScheduled = true;
+        const runWiki = () => fetchRandomWikiArticles(__qp5300);
+        if ('requestIdleCallback' in window) requestIdleCallback(runWiki, { timeout: 2000 });
+        else setTimeout(runWiki, 0);
+    }
+    return true;
+}
 
 function pumpWorldChunksAggressively() {
     if (!worldChunkStreamer || worldChunkPumpPromise || performance.now() < worldChunkNextKickAt) return;
@@ -16360,7 +16457,9 @@ function pumpWorldChunksAggressively() {
             if (!builtAny) return;
             const after = worldChunkStreamer.stats();
             const t = after.throughput;
-            console.log(`[world-perf] pump ${t.lastPumpBuilt} chunk(s) in ${t.lastPumpMs.toFixed(1)}ms · avg build ${t.avgBuildMs.toFixed(2)}ms · render ${after.localRenderRing.ready}/${after.localRenderRing.total} · prefetch ${after.localPrefetchRing.ready}/${after.localPrefetchRing.total}`);
+            const assets = adornmentLoadQueue.stats();
+            console.log(`[world-perf] pump ${t.lastPumpBuilt} chunk(s) in ${t.lastPumpMs.toFixed(1)}ms · avg build ${t.avgBuildMs.toFixed(2)}ms · commit→visible ${t.avgCommitToVisibleMs.toFixed(2)}ms · render ${after.localRenderRing.ready}/${after.localRenderRing.total} · prefetch ${after.localPrefetchRing.ready}/${after.localPrefetchRing.total} · assets ${assets.active}/${assets.concurrency} active + ${assets.pending} pending · failed ${assets.failed}`);
+            maybeReleaseBackgroundEnrichment();
         })
         .catch(error => console.error('[world] chunk pump failed', error))
         .finally(() => {
@@ -16376,12 +16475,16 @@ function animate() {
     elapsedTime += delta;
     updateDynamicLightCulling();
     updateDetailObjectCulling();
+    // Two deliberately separate domains: the legacy optimizer culls only the
+    // authored spawn district; WorldChunkStreamer alone controls infinite roots.
     staticWorldOptimizer?.updateVisibility();
+    worldChunkStreamer?.updateVisibility();
     updateDecorationStreaming(delta);
     // Keep the world factory busy after control handoff. There is no post-spawn
     // loading phase: this is permanent runtime behavior that continuously
     // maintains READY chunks around the current player.
     pumpWorldChunksAggressively();
+    maybeReleaseBackgroundEnrichment();
 
     for (const f of flickerLights) {
         f.light.intensity = f.mode === 'blink'
@@ -16722,6 +16825,11 @@ window.__debug = {
         },
         decoration: {
             ...deferredDecorationStats,
+            adornmentQueue: adornmentLoadQueue.stats(),
+            backgroundEnrichmentReleased,
+            failedCityAssets: failedCityAssetLoads.size,
+            failedRealModels: failedRealModelLoads.size,
+            failedPhotos: failedPhotoLoads.size,
             expensiveModelsPlaced: { ...realModelPlacedCount },
             expensiveModelBudgets: { ...REAL_MODEL_BUDGETS },
             shortRangeDetailObjects: detailCullObjects.size,

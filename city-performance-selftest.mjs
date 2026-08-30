@@ -1,4 +1,5 @@
-import { SpatialHash2D } from './city-performance.js';
+import * as THREE from './vendor/three/three.module.js';
+import { SpatialHash2D, createProgressiveStaticWorldOptimizer } from './city-performance.js';
 
 function assert(cond, msg) {
     if (!cond) throw new Error(msg);
@@ -40,3 +41,26 @@ for (let q = 0; q < 500; q++) {
 }
 
 console.log(`[perf-selftest] PASS: ${items.length} indexed boxes, 500 randomized broadphase queries, no misses/duplicates`);
+
+// A future accidental registerLateObject(worldChunkRoot) must be a no-op.
+// The old optimizer is allowed to own authored spawn detail, never infinite
+// streamed roots.
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera();
+const rawSceneAdd = scene.add.bind(scene);
+const optimizer = createProgressiveStaticWorldOptimizer({
+    THREE, scene, camera, rawSceneAdd, drawDistance: 100, chunkSize: 24,
+});
+optimizer.beginIncremental();
+const streamedRoot = new THREE.Group();
+streamedRoot.name = 'world-chunk:4,2';
+streamedRoot.userData.worldChunkRoot = true;
+streamedRoot.userData.renderAuthority = 'WorldChunkStreamer';
+streamedRoot.visible = true;
+rawSceneAdd(streamedRoot);
+optimizer.registerLateObject(streamedRoot);
+optimizer.updateVisibility(true);
+assert(streamedRoot.parent === scene, 'legacy optimizer must not re-parent streamed world roots');
+assert(streamedRoot.visible === true, 'legacy optimizer must not hide streamed world roots');
+assert(optimizer.getStats().lateObjects === 0, 'streamed world roots must not count as optimizer late objects');
+console.log('[perf-world-ownership-selftest] PASS');

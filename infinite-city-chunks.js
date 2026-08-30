@@ -67,6 +67,7 @@ export function createInfiniteCityChunkFactory({
     THREE,
     scene,
     playerPhysics,
+    directSceneAdd = null,
     chunkSize = 64,
     worldSeed = 0,
     spawnChunkKey = '0,0',
@@ -75,6 +76,8 @@ export function createInfiniteCityChunkFactory({
     yieldControl = null,
 } = {}) {
     if (!THREE || !scene || !playerPhysics) throw new Error('createInfiniteCityChunkFactory requires THREE, scene, playerPhysics');
+    const addStreamRoot = typeof directSceneAdd === 'function' ? directSceneAdd : scene.add.bind(scene);
+    const committedOwners = new Set();
     if (microCells < 5 || microCells % 2 === 0) throw new Error('microCells must be an odd integer >= 5');
 
     const unitBox = new THREE.BoxGeometry(1, 1, 1);
@@ -467,11 +470,17 @@ export function createInfiniteCityChunkFactory({
         const root = new THREE.Group();
         root.name = `world-chunk:${chunk.key}`;
         root.userData.noSpatialChunk = true;
+        root.userData.worldChunkRoot = true;
         root.userData.worldChunkKey = chunk.key;
         root.userData.worldChunkOwnerId = chunk.ownerId ?? worldChunkOwnerId(worldSeed, chunk.x, chunk.z);
         root.userData.worldFormatVersion = WORLD_FORMAT_VERSION;
+        root.userData.renderAuthority = 'WorldChunkStreamer';
         root.userData.weirdness = chunk.weirdness;
         root.userData.roadPortals = { ...roadPlan.portals };
+        // Prefetched chunks are structurally complete but stay hidden until the
+        // streamer says they are inside its render ring. No other visibility
+        // system is allowed to own this root.
+        root.visible = false;
 
         const transforms = {
             wallGroups: wallMats.map(() => []),
@@ -622,15 +631,46 @@ export function createInfiniteCityChunkFactory({
 
     async function commit(chunk, payload) {
         if (!payload || payload.spawnDistrict || payload.committed) return payload;
-        scene.add(payload.root);
+        // Infinite chunks bypass scene.add() on purpose. main.js intercepts
+        // ordinary scene.add calls for legacy spawn-district optimization; a
+        // streamed root must never be re-parented, re-chunked, frozen or hidden
+        // by that older system. WorldChunkStreamer is the sole render owner.
+        addStreamRoot(payload.root);
+        payload.root.updateMatrixWorld(true);
         playerPhysics.registerOwnedWorld(payload.ownerId, payload.physics);
+        committedOwners.add(payload.ownerId);
+        payload.worldMatricesReady = true;
         payload.committed = true;
         return payload;
+    }
+
+    function setVisible(chunk, payload, visible) {
+        if (!payload || payload.spawnDistrict || !payload.root) return false;
+        payload.root.visible = !!visible;
+        payload.visible = payload.root.visible;
+        return payload.visible;
+    }
+
+    function verifyReady(chunk, payload, expectedVisible) {
+        if (!payload || payload.spawnDistrict) return true;
+        const root = payload.root;
+        if (!payload.committed) throw new Error(`chunk ${chunk.key} READY verification failed: payload not committed`);
+        if (!root || root.parent !== scene) throw new Error(`chunk ${chunk.key} READY verification failed: root is not attached directly to scene`);
+        if (!root.userData?.worldChunkRoot) throw new Error(`chunk ${chunk.key} READY verification failed: worldChunkRoot identity missing`);
+        if (root.userData.renderAuthority !== 'WorldChunkStreamer') throw new Error(`chunk ${chunk.key} READY verification failed: wrong render authority`);
+        if (root.parent?.userData?.__perfChunkGroup || root.parent?.name?.startsWith?.('perf-chunk:')) {
+            throw new Error(`chunk ${chunk.key} READY verification failed: legacy optimizer owns streamed root`);
+        }
+        if (!payload.worldMatricesReady) throw new Error(`chunk ${chunk.key} READY verification failed: world matrices not committed`);
+        if (!committedOwners.has(payload.ownerId)) throw new Error(`chunk ${chunk.key} READY verification failed: physics owner is not active`);
+        if (root.visible !== !!expectedVisible) throw new Error(`chunk ${chunk.key} READY verification failed: visibility does not match streamer authority`);
+        return true;
     }
 
     async function unload(chunk, payload) {
         if (chunk.key === spawnChunkKey || payload?.spawnDistrict) return;
         if (payload?.committed) playerPhysics.unregisterOwnedWorld(payload.ownerId);
+        if (payload?.ownerId) committedOwners.delete(payload.ownerId);
         const root = payload?.root;
         if (root?.parent) root.parent.remove(root);
         // All GPU geometries/materials are shared factory resources. Clearing
@@ -653,5 +693,5 @@ export function createInfiniteCityChunkFactory({
         for (const mat of wallMats) mat.dispose();
     }
 
-    return { build, commit, unload, planChunk, districtLandmarkFor, disposeShared };
+    return { build, commit, setVisible, verifyReady, unload, planChunk, districtLandmarkFor, disposeShared };
 }

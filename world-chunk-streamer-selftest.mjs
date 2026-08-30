@@ -90,3 +90,42 @@ assert.equal(worldWeirdnessAt(10, 0, { worldSeed: 55 }).grain, worldWeirdnessAt(
 await streamer.dispose();
 assert.equal(streamer.chunks.size, 0, 'dispose must release scheduler metadata too');
 console.log('[world-chunk-streamer-selftest] PASS', { built, unloaded, w0, w10, w36 });
+
+// Visibility is part of the streamer's ownership contract, not a side effect
+// of an unrelated render optimizer. Prefetched READY chunks may be hidden, but
+// entering their render ring must flip them visible immediately without a
+// rebuild or another spatial authority.
+const visibilityPosition = { x: 0, z: 0 };
+const visibilityEvents = [];
+const visibilityStreamer = createWorldChunkStreamer({
+  chunkSize: 64,
+  worldSeed: 99,
+  getPlayerPosition: () => visibilityPosition,
+  renderRadiusChunks: 0,
+  prefetchRadiusChunks: 1,
+  retentionRadiusChunks: 2,
+  buildChunk: async chunk => ({ key: chunk.key, committed: false, visible: false }),
+  commitChunk: async (chunk, payload) => { payload.committed = true; },
+  setChunkVisibility: (chunk, payload, visible) => {
+    payload.visible = visible;
+    visibilityEvents.push(`${chunk.key}:${visible}`);
+  },
+  verifyChunkReady: async (chunk, payload, expectedVisible) => {
+    assert.equal(payload.committed, true, 'READY verification must run after commit');
+    assert.equal(payload.visible, expectedVisible, 'visibility must be applied before READY');
+  },
+});
+visibilityStreamer.markChunkReady(0, 0, { authored: true });
+const eastChunk = visibilityStreamer.ensureChunk(1, 0);
+await visibilityStreamer.buildOne(eastChunk);
+assert.equal(eastChunk.state, CHUNK_STATE.READY);
+assert.equal(eastChunk.visible, false, 'prefetched READY chunk outside render radius must stay hidden');
+assert.equal(eastChunk.payload.visible, false);
+visibilityPosition.x = 64;
+await visibilityStreamer.updateVisibility();
+assert.equal(eastChunk.visible, true, 'moving render center onto READY chunk must expose it immediately');
+assert.equal(eastChunk.payload.visible, true);
+assert.equal(visibilityStreamer.isChunkVisible(1, 0), true);
+assert.ok(visibilityStreamer.stats().throughput.avgCommitToVisibleMs >= 0);
+await visibilityStreamer.dispose();
+console.log('[world-chunk-visibility-selftest] PASS', { visibilityEvents });

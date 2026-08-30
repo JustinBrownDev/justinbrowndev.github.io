@@ -6,13 +6,24 @@ import { WORLD_FORMAT_VERSION, worldChunkOwnerId } from './world-contract.js';
 
 const worldSeed = 0x13572468;
 const scene = new THREE.Scene();
+const rawSceneAdd = scene.add.bind(scene);
+const fakeLegacyPerfGroup = new THREE.Group();
+fakeLegacyPerfGroup.name = 'perf-chunk:fake';
+fakeLegacyPerfGroup.userData.__perfChunkGroup = true;
+rawSceneAdd(fakeLegacyPerfGroup);
+let interceptedSceneAdds = 0;
+scene.add = function (...objects) {
+  interceptedSceneAdds += objects.length;
+  for (const object of objects) fakeLegacyPerfGroup.add(object);
+  return this;
+};
 const owners = new Map();
 const physics = {
   registerOwnedWorld(id, data) { owners.set(id, data); },
   unregisterOwnedWorld(id) { return owners.delete(id); },
 };
 const factory = createInfiniteCityChunkFactory({
-  THREE, scene, playerPhysics: physics, worldSeed, chunkSize: 64,
+  THREE, scene, playerPhysics: physics, directSceneAdd: rawSceneAdd, worldSeed, chunkSize: 64,
   landmarkSpacingChunks: 3,
   yieldControl: null,
 });
@@ -86,8 +97,15 @@ assert.ok(payloadA.entities.length > 0, 'chunk must expose stable high-level ent
 assert.equal(new Set(payloadA.entities.map(e => e.id)).size, payloadA.entities.length, 'entity ids must be unique inside chunk');
 assert.equal(scene.children.includes(payloadA.root), false, 'atomic off-scene build must remain invisible until commit');
 await factory.commit(a, payloadA);
+assert.equal(interceptedSceneAdds, 0, 'streamed commit must bypass intercepted scene.add entirely');
 assert.equal(scene.children.includes(payloadA.root), true, 'commit must publish complete root atomically');
+assert.equal(payloadA.root.parent, scene, 'streamed root must remain a direct scene child');
+assert.equal(payloadA.root.userData.worldChunkRoot, true, 'streamed root must carry explicit ownership identity');
+assert.equal(payloadA.root.userData.renderAuthority, 'WorldChunkStreamer');
 assert.equal(owners.has(payloadA.ownerId), true, 'commit must publish chunk-owned collision');
+factory.setVisible(a, payloadA, true);
+assert.equal(payloadA.root.visible, true, 'streamer visibility callback must directly control root visibility');
+assert.equal(factory.verifyReady(a, payloadA, true), true, 'READY contract must verify parentage, matrices, physics and visibility');
 assert.ok(payloadA.buildings > 0, 'generic chunk must contain enterable building fabric');
 assert.ok(payloadA.roadCells > 0, 'generic chunk must render deterministic roads');
 assert.ok(payloadA.drawBatches < 16, `chunk must remain aggressively batched, got ${payloadA.drawBatches}`);

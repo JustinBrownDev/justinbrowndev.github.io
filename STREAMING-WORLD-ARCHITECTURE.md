@@ -156,3 +156,45 @@ prefetch ring. A pump is bounded by both a chunk cap and a millisecond budget;
 a fast client therefore builds several chunks per rendered frame while a slow
 client naturally completes fewer. Visual and physics publication remain one
 atomic commit per chunk.
+
+## Render authority: one owner, no nesting
+
+Infinite streamed roots carry `userData.worldChunkRoot = true` and
+`userData.renderAuthority = 'WorldChunkStreamer'`. They are committed with the raw scene add
+function, bypassing the authored-spawn `scene.add()` interception entirely. Both legacy static
+optimizer variants also explicitly reject these roots as a defensive invariant.
+
+For an infinite chunk, `READY` is published only after all of the following are true:
+
+- the chunk root is attached directly to the real scene;
+- world matrices have been updated after attachment;
+- chunk-owned physics is registered;
+- `WorldChunkStreamer` has applied the current render-ring visibility state;
+- the READY verifier confirms no legacy `perf-chunk:*` group owns the root.
+
+The streamer is therefore the sole visibility authority for infinite chunks. The legacy optimizer
+remains a compatibility/performance system for authored spawn content only. Do not route streamed
+roots back through it, even if a future feature uses ordinary `scene.add()` for other content.
+
+## Non-structural network/adornment policy
+
+Structural infinite chunks contain no `fetch`, `Image`, or GLTF dependency. Roads, ground,
+buildings, walls, floors, stairs, ramps, collision, basic props, and repeatable district landmarks
+are built entirely from resident geometry/materials and can reach READY offline.
+
+All decorative model/photo loading is routed through one bounded priority queue. The queue starts
+paused while spawn and the nearby structural world are being prepared. It is released only after
+the current 7x7 structural prefetch neighborhood is READY, then uses a small concurrency cap and
+re-evaluates spatial priority against the current camera before starting queued work. Failed assets
+are marked failed after one attempt so they cannot create retry storms; structural world state is
+unaffected.
+
+Live Wikipedia poster enrichment is also deferred until the structural prefetch neighborhood is
+warm. It is optional decoration, never a world-generation dependency.
+
+## Scheduler API rule
+
+There is one shipping chunk scheduler API: `createWorldChunkStreamer()`. The obsolete finite
+`createWorldChunkScheduler()` compatibility wrapper was removed. Do not reintroduce a second
+scheduler abstraction for streamed terrain; specialized producers should feed descriptors/payloads
+into the streamer ownership lifecycle instead.

@@ -36,6 +36,8 @@ export function createWorldChunkStreamer({
     retentionRadiusChunks = Math.max(5, prefetchRadiusChunks + 2),
     buildChunk,
     commitChunk = null,
+    setChunkVisibility = null,
+    verifyChunkReady = null,
     unloadChunk = null,
     yieldControl = null,
     onChunkState = null,
@@ -60,6 +62,12 @@ export function createWorldChunkStreamer({
     let totalCommitMs = 0;
     let lastPumpBuilt = 0;
     let lastPumpMs = 0;
+    let visibleReadyCount = 0;
+    let visibilityUpdates = 0;
+    let commitToVisibleCount = 0;
+    let totalCommitToVisibleMs = 0;
+    let lastVisibilityCenterX = Number.NaN;
+    let lastVisibilityCenterZ = Number.NaN;
 
     const keyOf = worldChunkKey;
     const coordsForWorld = (x, z) => ({ x: Math.floor((x + chunkSize * 0.5) / chunkSize), z: Math.floor((z + chunkSize * 0.5) / chunkSize) });
@@ -88,6 +96,9 @@ export function createWorldChunkStreamer({
             createdAt: performance.now(),
             updatedAt: performance.now(),
             readyAt: 0,
+            committedAt: 0,
+            visibleAt: 0,
+            visible: false,
             payload: null,
             error: null,
         };
@@ -128,6 +139,44 @@ export function createWorldChunkStreamer({
 
     function ringDistance(chunk, center) {
         return Math.max(Math.abs(chunk.x - center.x), Math.abs(chunk.z - center.z));
+    }
+
+    function shouldBeVisible(chunk, center = playerChunkCoords()) {
+        return ringDistance(chunk, center) <= renderRadiusChunks;
+    }
+
+    function applyChunkVisibility(chunk, center = playerChunkCoords()) {
+        if (!chunk || !chunk.payload) return false;
+        const next = shouldBeVisible(chunk, center);
+        const previous = !!chunk.visible;
+        if (previous === next && chunk.visibilityInitialized) return next;
+        if (setChunkVisibility) setChunkVisibility(chunk, chunk.payload, next);
+        chunk.visible = next;
+        chunk.visibilityInitialized = true;
+        visibilityUpdates++;
+        if (chunk.state === CHUNK_STATE.READY) {
+            if (!previous && next) visibleReadyCount++;
+            else if (previous && !next) visibleReadyCount = Math.max(0, visibleReadyCount - 1);
+        }
+        if (next && !chunk.visibleAt) {
+            chunk.visibleAt = performance.now();
+            if (chunk.committedAt) {
+                commitToVisibleCount++;
+                totalCommitToVisibleMs += Math.max(0, chunk.visibleAt - chunk.committedAt);
+            }
+        }
+        return next;
+    }
+
+    function updateVisibility(center = playerChunkCoords(), force = false) {
+        if (!force && center.x === lastVisibilityCenterX && center.z === lastVisibilityCenterZ) return visibleReadyCount;
+        lastVisibilityCenterX = center.x;
+        lastVisibilityCenterZ = center.z;
+        for (const chunk of chunks.values()) {
+            if (chunk.state !== CHUNK_STATE.READY || !chunk.payload) continue;
+            applyChunkVisibility(chunk, center);
+        }
+        return visibleReadyCount;
     }
 
     function ensureNeighborhood() {
@@ -183,8 +232,12 @@ export function createWorldChunkStreamer({
             const commitStarted = performance.now();
             if (commitChunk) await commitChunk(chunk, chunk.payload);
             totalCommitMs += performance.now() - commitStarted;
+            chunk.committedAt = performance.now();
+            const expectedVisible = applyChunkVisibility(chunk);
+            if (verifyChunkReady) await verifyChunkReady(chunk, chunk.payload, expectedVisible);
             chunk.readyAt = performance.now();
             state(chunk, CHUNK_STATE.READY);
+            if (chunk.visible) visibleReadyCount++;
             return chunk;
         } catch (error) {
             chunk.error = error;
@@ -228,6 +281,10 @@ export function createWorldChunkStreamer({
         pending.sort((a, b) => ringDistance(b, center) - ringDistance(a, center));
         for (const chunk of pending) {
             state(chunk, CHUNK_STATE.UNLOADING);
+            if (chunk.visible) {
+                visibleReadyCount = Math.max(0, visibleReadyCount - 1);
+                chunk.visible = false;
+            }
             try {
                 await unloadChunk?.(chunk, chunk.payload);
             } finally {
@@ -248,6 +305,7 @@ export function createWorldChunkStreamer({
         try {
             const center = ensureNeighborhood();
             await unloadFarChunks(center);
+            updateVisibility(center);
             let built = 0;
             const chunkCap = Number.isFinite(maxChunks) ? Math.max(0, Math.floor(maxChunks)) : Infinity;
             const timeCap = Number.isFinite(maxMillis) ? Math.max(0, maxMillis) : Infinity;
@@ -288,7 +346,11 @@ export function createWorldChunkStreamer({
         const chunk = ensureChunk(x, z);
         chunk.payload = payload;
         chunk.readyAt = performance.now();
+        chunk.committedAt = chunk.readyAt;
+        chunk.visible = shouldBeVisible(chunk);
+        chunk.visibilityInitialized = true;
         state(chunk, CHUNK_STATE.READY);
+        if (chunk.visible) visibleReadyCount++;
         return chunk;
     }
 
@@ -332,6 +394,8 @@ export function createWorldChunkStreamer({
             pinned: pinned.size,
             chunks: chunks.size,
             ready: readyCount,
+            visibleReady: visibleReadyCount,
+            visibilityUpdates,
             unloads: unloadCount,
             pruned: pruneCount,
             failures: failureCount,
@@ -342,6 +406,7 @@ export function createWorldChunkStreamer({
                 totalCommitMs,
                 avgBuildMs: buildCount ? totalBuildMs / buildCount : 0,
                 avgCommitMs: buildCount ? totalCommitMs / buildCount : 0,
+                avgCommitToVisibleMs: commitToVisibleCount ? totalCommitToVisibleMs / commitToVisibleCount : 0,
                 lastPumpBuilt,
                 lastPumpMs,
             },
@@ -356,11 +421,16 @@ export function createWorldChunkStreamer({
         const all = [...chunks.values()].filter(c => c.state === CHUNK_STATE.READY);
         for (const chunk of all) {
             state(chunk, CHUNK_STATE.UNLOADING);
+            if (chunk.visible) {
+                visibleReadyCount = Math.max(0, visibleReadyCount - 1);
+                chunk.visible = false;
+            }
             try { await unloadChunk?.(chunk, chunk.payload); }
             finally { chunk.payload = null; state(chunk, CHUNK_STATE.UNLOADED); }
         }
         chunks.clear();
         readyCount = 0;
+        visibleReadyCount = 0;
     }
 
     return {
@@ -375,59 +445,13 @@ export function createWorldChunkStreamer({
         buildOne,
         pump,
         unloadFarChunks,
+        updateVisibility,
         isChunkReady,
+        isChunkVisible: (x, z) => !!chunks.get(keyOf(x, z))?.visible,
         isWorldPositionAvailable,
         getChunkAtWorld,
         readyWithinRadius,
         stats,
         dispose,
-    };
-}
-
-// Compatibility wrapper for the earlier finite scheduler API. Existing tools
-// can keep using it while new code moves to createWorldChunkStreamer().
-export function createWorldChunkScheduler(options = {}) {
-    const jobsByChunk = new Map();
-    const streamer = createWorldChunkStreamer({
-        ...options,
-        buildChunk: async chunk => {
-            const jobs = jobsByChunk.get(chunk.key) ?? [];
-            for (let i = 0; i < jobs.length; i++) {
-                await jobs[i].run({ chunk, job: jobs[i] });
-                if (options.yieldControl) await options.yieldControl(`world chunk ${chunk.key}`, i + 1, jobs.length);
-            }
-            return null;
-        },
-        commitChunk: options.onChunkCommit,
-    });
-    let nextJobId = 1;
-    function registerJob({ id = null, points = [], run, phase = 'structure', metadata = null } = {}) {
-        if (typeof run !== 'function') throw new Error('world chunk job requires run()');
-        const job = { id: id ?? `job:${nextJobId++}`, points, run, phase, metadata, status: 'pending' };
-        const seen = new Set();
-        for (const point of points) {
-            if (!point || !Number.isFinite(point.x) || !Number.isFinite(point.z)) continue;
-            const chunk = streamer.ensureChunk(Math.floor((point.x + streamer.chunkSize * 0.5) / streamer.chunkSize), Math.floor((point.z + streamer.chunkSize * 0.5) / streamer.chunkSize));
-            if (seen.has(chunk.key)) continue;
-            seen.add(chunk.key);
-            if (!jobsByChunk.has(chunk.key)) jobsByChunk.set(chunk.key, []);
-            jobsByChunk.get(chunk.key).push(job);
-        }
-        if (!seen.size) throw new Error('world chunk job requires at least one finite point');
-        return job;
-    }
-    return {
-        ...streamer,
-        registerJob,
-        buildChunk: streamer.buildOne,
-        buildNearestChunk: async options => {
-            streamer.ensureNeighborhood();
-            const next = streamer.nearestQueuedChunk();
-            return next ? streamer.buildOne(next, options?.label) : null;
-        },
-        hasUnreadyChunks: () => [...streamer.chunks.values()].some(c => c.state !== CHUNK_STATE.READY),
-        chunkForWorld: streamer.getChunkAtWorld,
-        stats: streamer.stats,
-        jobs: jobsByChunk,
     };
 }

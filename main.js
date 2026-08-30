@@ -42,7 +42,8 @@ import { createBuildingConstructionSystem } from './world/building-construction.
 import { createSpawnMazePlan, createSpawnBuildingSitePlan } from './world/spawn-district-plan.js';
 import { createDynamicLightPool } from './systems/dynamic-light-pool.js';
 import { createRuntimeLatencyTelemetry } from './systems/runtime-latency.js';
-import { createMusicSidecar } from './systems/music-sidecar.js';
+import { createMaterialRefinementController } from './systems/material-refinement.js';
+import { createMusicPlayer } from './systems/music-player.js';
 
  
  
@@ -456,11 +457,77 @@ const allDynamicLights = [];
 const detailCullObjects = new Set();
 let _detailCullTick = QP[181];
 let staticWorldOptimizer = null;
+let _backgroundCompileSchedulingEnabled = false;
 let _sceneMaterialRevision = 0;
 let _bootstrapCompileStagingEnabled = false;
 const _bootstrapCompileStaged = new Map();
 const _bootstrapCompileQueue = [];
 const _bootstrapCompileQueued = new Set();
+const _bootstrapCompileGroups = new Map();
+const _bootstrapCompiledPrograms = new Set();
+let _bootstrapCompilePumpPromise = null;
+let _generationAddedRoots = null;
+function bootstrapMaterialProgramKey(material) {
+    if (!material) return 'none';
+    const defines = material.defines && typeof material.defines === 'object'
+        ? Object.entries(material.defines).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => `${k}:${v}`).join(',')
+        : '';
+    const customKey = typeof material.customProgramCacheKey === 'function' ? material.customProgramCacheKey() : '';
+    return [
+        material.type,
+        material.side,
+        material.transparent ? 1 : 0,
+        material.alphaTest > 0 ? 1 : 0,
+        material.vertexColors ? 1 : 0,
+        material.flatShading ? 1 : 0,
+        material.fog === false ? 0 : 1,
+        material.toneMapped === false ? 0 : 1,
+        material.wireframe ? 1 : 0,
+        material.map ? 1 : 0,
+        material.alphaMap ? 1 : 0,
+        material.aoMap ? 1 : 0,
+        material.lightMap ? 1 : 0,
+        material.emissiveMap ? 1 : 0,
+        material.bumpMap ? 1 : 0,
+        material.normalMap ? 1 : 0,
+        material.displacementMap ? 1 : 0,
+        material.roughnessMap ? 1 : 0,
+        material.metalnessMap ? 1 : 0,
+        material.envMap ? 1 : 0,
+        defines,
+        customKey,
+    ].join('|');
+}
+function bootstrapProgramKey(leaf) {
+    const materials = Array.isArray(leaf.material) ? leaf.material : [leaf.material];
+    const attrs = Object.keys(leaf.geometry?.attributes || {}).sort().join(',');
+    const morph = Object.keys(leaf.geometry?.morphAttributes || {}).sort().join(',');
+    return [
+        leaf.type,
+        leaf.isInstancedMesh ? 'instanced' : 'plain',
+        leaf.isSkinnedMesh ? 'skinned' : 'rigid',
+        attrs,
+        morph,
+        materials.map(bootstrapMaterialProgramKey).join('||'),
+    ].join('::');
+}
+function stageBootstrapCompileLeaf(leaf) {
+    if (!(leaf?.isMesh || leaf?.isLine || leaf?.isPoints || leaf?.isSprite) || !leaf.material) return;
+    const key = bootstrapProgramKey(leaf);
+    if (_bootstrapCompiledPrograms.has(key)) return;
+    if (!_bootstrapCompileStaged.has(leaf)) _bootstrapCompileStaged.set(leaf, leaf.visible);
+    leaf.visible = false;
+    let group = _bootstrapCompileGroups.get(key);
+    if (!group) {
+        group = { key, representative: leaf, leaves: new Set() };
+        _bootstrapCompileGroups.set(key, group);
+    }
+    group.leaves.add(leaf);
+    if (!_bootstrapCompileQueued.has(key)) {
+        _bootstrapCompileQueued.add(key);
+        _bootstrapCompileQueue.push(key);
+    }
+}
 const _origSceneAdd = scene.add.bind(scene);
 const dynamicLightPool = createDynamicLightPool({ THREE, directSceneAdd: _origSceneAdd, scene, maxVisible: QUALITY.maxDynamicLights });
 dynamicLightPool.attach();
@@ -476,15 +543,7 @@ scene.add = function (...objs) {
         }
         if (o?.userData?.detailCullDistance) detailCullObjects.add(o);
         if (_bootstrapCompileStagingEnabled && o && (o.isMesh || o.isLine || o.isPoints || o.isSprite || o.isGroup) && !isWorldStreamRoot(o)) {
-            o.traverse?.(leaf => {
-                if (!(leaf.isMesh || leaf.isLine || leaf.isPoints || leaf.isSprite) || !leaf.material) return;
-                if (!_bootstrapCompileStaged.has(leaf)) _bootstrapCompileStaged.set(leaf, leaf.visible);
-                leaf.visible = false;
-                if (!_bootstrapCompileQueued.has(leaf)) {
-                    _bootstrapCompileQueued.add(leaf);
-                    _bootstrapCompileQueue.push(leaf);
-                }
-            });
+            o.traverse?.(stageBootstrapCompileLeaf);
         }
         renderables.push(o);
     }
@@ -494,6 +553,9 @@ scene.add = function (...objs) {
         for (const o of renderables) {
             if (!isWorldStreamRoot(o)) staticWorldOptimizer.registerLateObject(o);
         }
+    }
+    if (_generationAddedRoots) {
+        for (const o of renderables) if (o && !isWorldStreamRoot(o)) _generationAddedRoots.push(o);
     }
     return result;
 };
@@ -508,6 +570,7 @@ function updateDetailObjectCulling() {
     const px = camera.position.x, pz = camera.position.z;
     for (const obj of detailCullObjects) {
         if (!obj.parent) { detailCullObjects.delete(obj); continue; }
+        if (obj.userData?.__bootstrapDeferredVisual) continue;
         const cx = obj.userData.detailCullCenterX ?? obj.position.x;
         const cz = obj.userData.detailCullCenterZ ?? obj.position.z;
         const dx = cx - px, dz = cz - pz;
@@ -534,7 +597,10 @@ renderer.debug.checkShaderErrors = new URLSearchParams(location.search).get('sha
  
  
 renderer.info.autoReset = false;
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, QUALITY.maxPixelRatio));
+const TARGET_PIXEL_RATIO = Math.min(window.devicePixelRatio, QUALITY.maxPixelRatio);
+const PROGRESSIVE_PIXEL_RATIO = Math.min(1, TARGET_PIXEL_RATIO);
+let finalRenderQualityRestored = PROGRESSIVE_PIXEL_RATIO === TARGET_PIXEL_RATIO && !QUALITY.bloom;
+renderer.setPixelRatio(PROGRESSIVE_PIXEL_RATIO);
 renderer.setSize(window.innerWidth, window.innerHeight);
 document.body.appendChild(renderer.domElement);
 
@@ -550,7 +616,21 @@ if (QUALITY.bloom) {
         QUALITY.bloom.radius,
         QUALITY.bloom.threshold
     );
+    bloomPass.enabled = false;
     composer.addPass(bloomPass);
+}
+
+function restoreFinalRenderQuality() {
+    if (finalRenderQualityRestored) return;
+    if (TARGET_PIXEL_RATIO !== PROGRESSIVE_PIXEL_RATIO) {
+        renderer.setPixelRatio(TARGET_PIXEL_RATIO);
+        composer.setPixelRatio?.(TARGET_PIXEL_RATIO);
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        composer.setSize(window.innerWidth, window.innerHeight);
+    }
+    if (bloomPass) bloomPass.enabled = true;
+    finalRenderQualityRestored = true;
+    console.log(`[perf] final render quality restored · pixelRatio=${TARGET_PIXEL_RATIO.toFixed(2)} · bloom=${!!bloomPass}`);
 }
 
 window.addEventListener('resize', () => {
@@ -609,44 +689,76 @@ let _testCompileTotalMs = 0;
 let _testCompileMaxMs = 0;
 let _testCompileCount = 0;
 
-async function testCompileSceneIfDirty() {
-    if (!_bootstrapCompileQueue.length || typeof renderer.compileAsync !== 'function') return false;
-    const started = performance.now();
-    const revision = _sceneMaterialRevision;
-    let compiledLeaves = 0;
-    _testCompileBarrierActive = true;
-    try {
-        while (_bootstrapCompileQueue.length) {
-            const leaf = _bootstrapCompileQueue.shift();
-            _bootstrapCompileQueued.delete(leaf);
-            if (!leaf?.material || !leaf.parent) {
-                _bootstrapCompileStaged.delete(leaf);
-                continue;
-            }
-            const leafStarted = performance.now();
-            await renderer.compileAsync(leaf, camera, scene);
-            const leafMs = performance.now() - leafStarted;
-            runtimeLatency.record('shader.compile-leaf', leafMs, {
-                type: leaf.type,
-                material: Array.isArray(leaf.material) ? 'array' : leaf.material?.type,
-            });
-            compiledLeaves++;
-            const originalVisible = _bootstrapCompileStaged.get(leaf);
-            if (leaf.parent && originalVisible !== undefined) leaf.visible = originalVisible;
-            _bootstrapCompileStaged.delete(leaf);
-            if (leafMs > 16) console.warn(`[latency] shader.compile-leaf ${leafMs.toFixed(1)}ms · ${leaf.type} · ${Array.isArray(leaf.material) ? 'material[]' : leaf.material?.type || 'material'}`);
-            if (compiledLeaves > 0 && performance.now() - started >= TEST_FRAME_BUDGET_MS) break;
-        }
-    } finally {
-        _testCompileBarrierActive = false;
+async function runBootstrapCompilePump() {
+    if (typeof renderer.compileAsync !== 'function') {
+        for (const [leaf, visible] of _bootstrapCompileStaged) if (leaf.parent) leaf.visible = visible;
+        _bootstrapCompileStaged.clear();
+        _bootstrapCompileQueue.length = 0;
+        _bootstrapCompileQueued.clear();
+        _bootstrapCompileGroups.clear();
+        return;
     }
-    const ms = performance.now() - started;
-    _testCompileCount++;
-    _testCompileTotalMs += ms;
-    _testCompileMaxMs = Math.max(_testCompileMaxMs, ms);
-    if (!_bootstrapCompileQueue.length) _testCompiledSceneRevision = Math.max(_testCompiledSceneRevision, revision);
-    if (ms > 16) console.log(`[shader-prewarm] ${ms.toFixed(1)}ms sliced wait · ${compiledLeaves} leaf material(s) · ${_bootstrapCompileQueue.length} pending`);
-    return compiledLeaves > 0;
+    while (_bootstrapCompileQueue.length) {
+        const key = _bootstrapCompileQueue.shift();
+        _bootstrapCompileQueued.delete(key);
+        const group = _bootstrapCompileGroups.get(key);
+        if (!group) continue;
+        let representative = group.representative;
+        if (!representative?.material || !representative.parent) {
+            representative = [...group.leaves].find(leaf => leaf?.material && leaf.parent) ?? null;
+            group.representative = representative;
+        }
+        if (!representative) {
+            for (const leaf of group.leaves) _bootstrapCompileStaged.delete(leaf);
+            _bootstrapCompileGroups.delete(key);
+            continue;
+        }
+        const started = performance.now();
+        _testCompileBarrierActive = true;
+        try {
+            await renderer.compileAsync(representative, camera, scene);
+        } catch (error) {
+            console.warn('[shader-prewarm] program-family compile failed; publishing staged leaves for normal lazy compile', error);
+        } finally {
+            _testCompileBarrierActive = false;
+        }
+        const ms = performance.now() - started;
+        runtimeLatency.record('shader.compile-program', ms, {
+            type: representative.type,
+            material: Array.isArray(representative.material) ? 'array' : representative.material?.type,
+            stagedLeaves: group.leaves.size,
+        });
+        _testCompileCount++;
+        _testCompileTotalMs += ms;
+        _testCompileMaxMs = Math.max(_testCompileMaxMs, ms);
+        _bootstrapCompiledPrograms.add(key);
+        for (const leaf of group.leaves) {
+            const originalVisible = _bootstrapCompileStaged.get(leaf);
+            if (leaf.parent && originalVisible !== undefined) {
+                leaf.visible = originalVisible;
+                staticWorldOptimizer?.markDirtyObject(leaf);
+            }
+            _bootstrapCompileStaged.delete(leaf);
+        }
+        _bootstrapCompileGroups.delete(key);
+        if (ms > 16) console.warn(`[latency] shader.compile-program ${ms.toFixed(1)}ms · ${representative.type} · ${Array.isArray(representative.material) ? 'material[]' : representative.material?.type || 'material'} · ${group.leaves.size} staged leaf/leaves`);
+        await new Promise(resolve => requestAnimationFrame(resolve));
+    }
+}
+
+function scheduleBootstrapCompilePump() {
+    if (!_backgroundCompileSchedulingEnabled && !_testBootstrapActive) return null;
+    if (!_bootstrapCompileQueue.length || _bootstrapCompilePumpPromise) return _bootstrapCompilePumpPromise;
+    _bootstrapCompilePumpPromise = runBootstrapCompilePump().finally(() => {
+        _bootstrapCompilePumpPromise = null;
+        if (_bootstrapCompileQueue.length) scheduleBootstrapCompilePump();
+    });
+    return _bootstrapCompilePumpPromise;
+}
+
+async function testCompileSceneIfDirty() {
+    scheduleBootstrapCompilePump();
+    return false;
 }
 
 function testStatus(phase, done = _testGenerationDone, total = _testGenerationTotal) {
@@ -680,7 +792,7 @@ async function testYieldIfNeeded(phase = _testGenerationPhase, done = _testGener
 
 async function testPublishAndYieldNow(phase = _testGenerationPhase, done = _testGenerationDone, total = _testGenerationTotal) {
     testStatus(phase, done, total);
-    await testCompileSceneIfDirty();
+    scheduleBootstrapCompilePump();
     await testNextPaint();
 }
 
@@ -698,6 +810,10 @@ async function testPublishAndYieldIfNeeded(phase = _testGenerationPhase, done = 
 const controls = new PointerLockControls(camera, renderer.domElement);
 controls.pointerSpeed = CONFIG.desktopControls.pointerSpeed;
 const move = { forward: false, back: false, left: false, right: false, sprint: false, flyUp: false, flyDown: false };
+let playerPhysics = null;
+let freecamEnabled = false;
+const _bootstrapMoveForwardWorld = new THREE.Vector3();
+const _bootstrapMoveRightWorld = new THREE.Vector3();
 
 function testEarlyKeyDown(e) {
     switch (e.code) {
@@ -706,6 +822,22 @@ function testEarlyKeyDown(e) {
         case 'KeyA': case 'ArrowLeft': move.left = true; break;
         case 'KeyD': case 'ArrowRight': move.right = true; break;
         case 'ShiftLeft': case 'ShiftRight': move.sprint = true; break;
+        case 'Space':
+            playerPhysics?.bufferJump();
+            move.flyUp = true;
+            e.preventDefault();
+            break;
+        case 'KeyC': move.flyDown = true; break;
+        case 'KeyF':
+            freecamEnabled = !freecamEnabled;
+            if (!freecamEnabled) playerPhysics?.syncFromPosition({ forceAirborne: true, resetVelocity: true });
+            break;
+        case 'KeyP':
+            if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement) break;
+            e.preventDefault();
+            if (controls.isLocked) controls.unlock();
+            import('./parameter-editor.js').then(mod => mod.toggleParameterEditor({ seed: SEED })).catch(err => console.error('[params] parameter editor failed to load', err));
+            break;
     }
 }
 function testEarlyKeyUp(e) {
@@ -715,10 +847,12 @@ function testEarlyKeyUp(e) {
         case 'KeyA': case 'ArrowLeft': move.left = false; break;
         case 'KeyD': case 'ArrowRight': move.right = false; break;
         case 'ShiftLeft': case 'ShiftRight': move.sprint = false; break;
+        case 'Space': move.flyUp = false; break;
+        case 'KeyC': move.flyDown = false; break;
     }
 }
 function testEarlyClick(e) {
-    if (IS_TOUCH || e.target.closest?.('#parameterEditorRoot, #bootStreamFilters, #escapeSiteButton')) return;
+    if (IS_TOUCH || e.target.closest?.('#parameterEditorRoot, #bootStreamFilters, #escapeSiteButton, #musicPlayer')) return;
     if (!controls.isLocked) controls.lock();
 }
 document.addEventListener('keydown', testEarlyKeyDown);
@@ -737,6 +871,10 @@ function testBootstrapCanStand(x, z) {
     return grid[row]?.[col] === false;
 }
 
+const bootstrapPreviewMaterial = new THREE.MeshBasicMaterial({ color: 0x171a20, fog: true });
+let bootstrapPreviewOverrideActive = true;
+let materialRefinementController = null;
+let materialRefinementReprioritizeAt = 0;
 let _testBootstrapLast = performance.now();
 function testBootstrapRenderLoop(now) {
     if (!_testBootstrapActive) return;
@@ -749,18 +887,38 @@ function testBootstrapRenderLoop(now) {
         let f = (move.forward ? 1 : 0) - (move.back ? 1 : 0);
         let r = (move.right ? 1 : 0) - (move.left ? 1 : 0);
         const len = Math.hypot(f, r);
-        if (len > 0) {
-            f /= len; r /= len;
+        if (len > 0) { f /= len; r /= len; }
+        const speed = TEST_BOOT_MOVE_SPEED * (move.sprint ? CONFIG.movement.sprintMultiplier : 1);
+        if (freecamEnabled) {
+            if (len > 0) {
+                controls.moveRight(r * speed * dt);
+                controls.moveForward(f * speed * dt);
+                _testBootstrapHasMoved = true;
+            }
+            const vertical = (move.flyUp ? 1 : 0) - (move.flyDown ? 1 : 0);
+            camera.position.y += vertical * speed * 2 * dt;
+        } else if (playerPhysics) {
+            let wishVelocityX = 0;
+            let wishVelocityZ = 0;
+            if (len > 0) {
+                camera.getWorldDirection(_bootstrapMoveForwardWorld);
+                _bootstrapMoveForwardWorld.y = 0;
+                if (_bootstrapMoveForwardWorld.lengthSq() > 0) _bootstrapMoveForwardWorld.normalize();
+                else _bootstrapMoveForwardWorld.set(0, 0, -1);
+                _bootstrapMoveRightWorld.crossVectors(_bootstrapMoveForwardWorld, camera.up);
+                if (_bootstrapMoveRightWorld.lengthSq() > 0) _bootstrapMoveRightWorld.normalize();
+                else _bootstrapMoveRightWorld.set(1, 0, 0);
+                wishVelocityX = (_bootstrapMoveRightWorld.x * r + _bootstrapMoveForwardWorld.x * f) * speed;
+                wishVelocityZ = (_bootstrapMoveRightWorld.z * r + _bootstrapMoveForwardWorld.z * f) * speed;
+                _testBootstrapHasMoved = true;
+            }
+            playerPhysics.step(dt, wishVelocityX, wishVelocityZ);
+        } else if (len > 0) {
             const yaw = camera.rotation.y;
-            const speed = TEST_BOOT_MOVE_SPEED * (move.sprint ? CONFIG.movement.sprintMultiplier : 1) * dt;
-            const dx = (-Math.sin(yaw) * f + Math.cos(yaw) * r) * speed;
-            const dz = (-Math.cos(yaw) * f - Math.sin(yaw) * r) * speed;
+            const dx = (-Math.sin(yaw) * f + Math.cos(yaw) * r) * speed * dt;
+            const dz = (-Math.cos(yaw) * f - Math.sin(yaw) * r) * speed * dt;
             const nx = camera.position.x + dx;
             const nz = camera.position.z + dz;
-             
-             
-             
-             
             if (testBootstrapCanStand(nx, camera.position.z)) camera.position.x = nx;
             if (testBootstrapCanStand(camera.position.x, nz)) camera.position.z = nz;
             camera.position.y = CONFIG.camera.eyeHeight;
@@ -769,14 +927,15 @@ function testBootstrapRenderLoop(now) {
     }
 
     updateDynamicLightCulling();
-    if (!_testCompileBarrierActive) {
-        renderer.info.reset();
-        const _renderStarted = performance.now();
-        renderer.render(scene, camera);
-        const _renderMs = performance.now() - _renderStarted;
-        runtimeLatency.record('render.bootstrap', _renderMs, { phase: _testGenerationPhase, sceneChildren: scene.children.length });
-        if (_renderMs > 8) console.warn(`[latency] render.bootstrap ${_renderMs.toFixed(1)}ms · phase=${_testGenerationPhase} · scene=${scene.children.length}`);
-    }
+    renderer.info.reset();
+    const _renderStarted = performance.now();
+    const _previousOverrideMaterial = scene.overrideMaterial;
+    if (bootstrapPreviewOverrideActive) scene.overrideMaterial = bootstrapPreviewMaterial;
+    renderer.render(scene, camera);
+    scene.overrideMaterial = _previousOverrideMaterial;
+    const _renderMs = performance.now() - _renderStarted;
+    runtimeLatency.record('render.bootstrap', _renderMs, { phase: _testGenerationPhase, sceneChildren: scene.children.length, drawCalls: renderer.info.render.calls, triangles: renderer.info.render.triangles, compileActive: _testCompileBarrierActive });
+    if (_renderMs > 8) console.warn(`[latency] render.bootstrap ${_renderMs.toFixed(1)}ms · phase=${_testGenerationPhase} · scene=${scene.children.length} · calls=${renderer.info.render.calls} · compile=${_testCompileBarrierActive ? 'yes' : 'no'}`);
     _testBootstrapFrame++;
 }
 requestAnimationFrame(testBootstrapRenderLoop);
@@ -798,6 +957,8 @@ window.__streamingDebug = {
     get shaderCompileCount() { return _testCompileCount; },
     get shaderCompileMaxMs() { return _testCompileMaxMs; },
     get shaderCompileTotalMs() { return _testCompileTotalMs; },
+    get shaderProgramFamiliesPending() { return _bootstrapCompileQueue.length; },
+    get shaderStagedLeaves() { return _bootstrapCompileStaged.size; },
     latencySnapshot() { return runtimeLatency.snapshot(); },
 };
 
@@ -995,12 +1156,13 @@ function updateWebGradient(worldZ, worldY, elapsed) {
  
  
  
-const musicSidecar = createMusicSidecar({ QP });
-const initAudio = musicSidecar.init;
-const updateAudioGradient = musicSidecar.updateGradient;
-const playFootstep = musicSidecar.playFootstep;
+const musicPlayer = createMusicPlayer();
 
- 
+function updateAudioGradient(t, vt = QP[302]) {
+    musicPlayer.setWorldMix(t, vt);
+}
+
+function playFootstep() {}
 
 const RAIN_COUNT = IS_TOUCH ? QP[327] : QP[328];
 const RAIN_SPAN = QP[329], RAIN_HEIGHT = QP[330];
@@ -1109,9 +1271,10 @@ let _pixelTextureMaxMs = 0;
 function makePixelTexture(draw, w, h) {
     const _textureStarted = performance.now();
     const canvas = document.createElement('canvas');
-    canvas.width = Math.max(QP[533], Math.round(w * TEXTURE_SUPERSAMPLE)); canvas.height = Math.max(QP[534], Math.round(h * TEXTURE_SUPERSAMPLE));
+    const activeSupersample = _testBootstrapActive ? Math.min(1, TEXTURE_SUPERSAMPLE) : TEXTURE_SUPERSAMPLE;
+    canvas.width = Math.max(QP[533], Math.round(w * activeSupersample)); canvas.height = Math.max(QP[534], Math.round(h * activeSupersample));
     const ctx = canvas.getContext('2d');
-    ctx.scale(TEXTURE_SUPERSAMPLE, TEXTURE_SUPERSAMPLE);
+    ctx.scale(activeSupersample, activeSupersample);
     ctx.imageSmoothingEnabled = true;
     const _allocationDone = performance.now();
     draw(ctx, w, h);
@@ -1872,7 +2035,7 @@ const buildingConstructionSystem = createBuildingConstructionSystem({
     fireEscapeDepth, fireEscapeDimensions, fireEscapeSideFits, footprintOf,
     hashString32, jitterGeometry, localRng, makeFacade, makePixelTexture, makeProjectionBox,
     makeTopologyStainTexture, makeWindowGridTexture, maybeAddElevator, maybeAddMezzanine,
-    pick, pileJunkCluster, placeRealModel, placeSemanticCityAsset, placeSignsOnFacadeSteps,
+    pick, pileJunkCluster, placeRealModel, placeSemanticCityAsset, placeSignsOnFacade, placeSignsOnFacadeSteps,
     pointOnFacade, projectionFits, randRange, reserveProjectionVolume, rng, rooftopDecks,
     rowHalf, rowSize, scatterJunk, scene, semanticCornerPoint, sharedBuildingFacadeMaterial,
     signatureInstances, siteIdOf, skirtBoxGeo, takeDynamicLight, webAlignment, weightedPick,
@@ -1916,7 +2079,14 @@ const { addBuildingModule, addBuildingModuleSteps, addBuildingSite, addBuildingS
 }));
 adornmentSystem.setGalleryPanelBuilder(buildGalleryArtPanel);
 
-const authoredDynamicMaterials = new Set();
+const animatedMaterials = new Set();
+function refreshAnimatedMaterials() {
+    for (const signal of trafficSignals) {
+        animatedMaterials.add(signal.redMat);
+        animatedMaterials.add(signal.yellowMat);
+        animatedMaterials.add(signal.greenMat);
+    }
+}
 staticWorldOptimizer = createProgressiveStaticWorldOptimizer({
     THREE,
     scene,
@@ -1925,18 +2095,92 @@ staticWorldOptimizer = createProgressiveStaticWorldOptimizer({
     drawDistance: QUALITY.drawDistance,
     chunkSize: JUNK_RENDER_CHUNK,
     dynamicRoots: new Set([rain]),
-    dynamicMaterials: authoredDynamicMaterials,
+    dynamicMaterials: animatedMaterials,
     mergeMinMeshes: QP[5424],
     mergeMaxVertices: QP[5425],
+    onChunkOptimized: ({ ms, key, sourceMeshes, mergedMeshes, drawCallsSaved }) => {
+        runtimeLatency.record('optimizer.chunk-step', ms, { key, sourceMeshes, mergedMeshes, drawCallsSaved });
+        if (ms > 8) console.warn(`[latency] optimizer.chunk-step ${ms.toFixed(1)}ms · ${key} · ${sourceMeshes}->${mergedMeshes} · saved=${drawCallsSaved}`);
+    },
 });
 staticWorldOptimizer.beginIncremental();
-console.log(`[stream-perf] authored spawn spatial ownership active before construction; distant work stays culled while nearest deterministic sites stream`);
- 
- 
- 
- 
- 
- 
+for (const root of [...scene.children]) {
+    if (!root.userData?.__perfChunkGroup && !root.userData?.worldChunkRoot) staticWorldOptimizer.registerLateObject(root);
+}
+staticWorldOptimizer.updateVisibility(true);
+
+const STREAM_CHUNK_SIZE = Math.max(GRID_W, GRID_H);
+let worldChunkStreamer = null;
+let infiniteChunkFactory = null;
+let _spawnDistrictStructuresComplete = false;
+function isStreamingWorldPositionAvailable(x, z) {
+    if (!_spawnDistrictStructuresComplete) {
+        if (!_testTopologyReady) return true;
+        if (Math.abs(x) > GRID_W / QP[559] || Math.abs(z) > GRID_H / QP[560]) return false;
+        const { col, row } = worldToCellIndex(x, z);
+        return grid[row]?.[col] === false;
+    }
+    if (worldChunkStreamer) return worldChunkStreamer.isWorldPositionAvailable(x, z);
+    return Math.abs(x) <= STREAM_CHUNK_SIZE * 0.5 && Math.abs(z) <= STREAM_CHUNK_SIZE * 0.5;
+}
+function worldToCell(x, z) {
+    return worldToCellIndex(x, z);
+}
+const PHYSICS_TUNING = {
+    bodyHeight: CONFIG.camera.eyeHeight + QP[5303],
+    headClearance: QP[5304],
+    maxStepHeight: QP[5305],
+    stepDownTolerance: QP[5306],
+    jumpSpeed: QP[5307],
+    gravity: QP[5308],
+    maxFallSpeed: QP[5309],
+    coyoteTime: QP[5310],
+    jumpBufferTime: QP[5311],
+    maxSubstepSeconds: QP[5312] / QP[5313],
+    maxHorizontalSubstep: Math.max(QP[5314], CONFIG.camera.playerRadius * QP[5315]),
+    maxVerticalSubstep: QP[5316],
+    maxSubsteps: QP[5317],
+};
+playerPhysics = createPlayerPhysics({
+    position: camera.position,
+    eyeHeight: CONFIG.camera.eyeHeight,
+    playerRadius: CONFIG.camera.playerRadius,
+    wallThickness: WALL_THICKNESS,
+    worldToCell,
+    grid,
+    buildingWallSegments,
+    mazeSealWalls,
+    propColliders,
+    elevatedPlatforms,
+    rampRuns,
+    overheadCeilings,
+    boundsHalf: Infinity,
+    isWorldPositionAvailable: isStreamingWorldPositionAvailable,
+    ...PHYSICS_TUNING,
+});
+console.log(`[stream-perf] full player physics active during authored construction at ${bootElapsed()}`);
+
+function shouldDeferBootstrapVisualPhase(site, phase) {
+    if (!phase) return false;
+    if (!site.signatureType) return phase === 'facade-sign' || phase === 'facade-signs';
+    if (phase === 'floor' || phase === 'rooftop' || phase.endsWith('-module') || phase === 'signature-futurePlaceholder') return false;
+    return phase !== 'complete';
+}
+
+function deferBootstrapVisualRoots(roots) {
+    let hidden = 0;
+    for (const root of roots) {
+        root?.traverse?.(obj => {
+            if (!(obj.isMesh || obj.isLine || obj.isPoints || obj.isSprite) || !obj.visible || obj.userData?.__bootstrapDeferredVisual) return;
+            obj.userData.__bootstrapDeferredVisual = true;
+            obj.userData.__bootstrapDeferredVisible = obj.visible;
+            obj.visible = false;
+            hidden++;
+        });
+    }
+    return hidden;
+}
+
 function buildingSiteDistanceSqToPlayer(site) {
     let best = Infinity;
     for (const cell of site.cells) {
@@ -1976,7 +2220,17 @@ function sortBuildingSitesNearestToPlayer(sites) {
             let step;
             do {
                 const _stepStarted = performance.now();
-                step = stepper.step();
+                _generationAddedRoots = [];
+                try {
+                    step = stepper.step();
+                } finally {
+                    const addedRoots = _generationAddedRoots;
+                    _generationAddedRoots = null;
+                    if (step && !step.done && shouldDeferBootstrapVisualPhase(site, step.value?.phase)) {
+                        const hidden = deferBootstrapVisualRoots(addedRoots);
+                        if (hidden) runtimeLatency.record('visual.defer-bootstrap', 0, { siteId: site.id, type: site.signatureType || 'ordinary', phase: step.value?.phase, hidden });
+                    }
+                }
                 const _stepMs = performance.now() - _stepStarted;
                 const _stepCategory = site.signatureType ? 'generation.signature-step' : 'generation.building-step';
                 runtimeLatency.record(_stepCategory, _stepMs, { siteId: site.id, type: site.signatureType || 'ordinary', phase: step.value?.phase || 'complete', cells: site.cells.length });
@@ -1989,8 +2243,23 @@ function sortBuildingSitesNearestToPlayer(sites) {
         if (_siteMs > 8) console.warn(`[latency] generation.building-site ${_siteMs.toFixed(1)}ms · site=${site.id} · type=${site.signatureType || 'ordinary'} · cells=${site.cells.length}`);
         _testGenerationDone++;
         await testCompileSceneIfDirty();
-         
-         
+        refreshAnimatedMaterials();
+        const _flushStarted = performance.now();
+        await staticWorldOptimizer.flushDirtyChunks({
+            phaseLabel: 'batching nearest authored chunks',
+            yieldControl: async () => {
+                const elapsed = performance.now() - _testSliceStartedAt;
+                const inputPending = !!navigator.scheduling?.isInputPending?.({ includeContinuous: true });
+                if (!inputPending && elapsed < TEST_FRAME_BUDGET_MS) return false;
+                await testPublishAndYieldNow('streaming nearest real buildings', _testGenerationDone, _testGenerationTotal);
+                yieldedWithinSite = true;
+                return true;
+            },
+        });
+        runtimeLatency.record('optimizer.incremental-site-flush-wall', performance.now() - _flushStarted, { siteId: site.id, type: site.signatureType || 'ordinary' });
+        const _physicsSyncStarted = performance.now();
+        const _physicsSyncStats = playerPhysics.syncDynamicWorld();
+        runtimeLatency.record('physics.sync-dynamic', performance.now() - _physicsSyncStarted, { siteId: site.id, ..._physicsSyncStats });
         reprioritize = yieldedWithinSite || await testPublishAndYieldIfNeeded('streaming nearest real buildings', _testGenerationDone, _testGenerationTotal);
     }
     console.log(`[perf:test] ${buildingSites.length} authoritative building sites streamed nearest-player-first in ${(performance.now() - buildStart).toFixed(QP[4723])}ms wall-clock (${bootElapsed()} total)`);
@@ -2840,24 +3109,6 @@ console.log(`[perf] decoration streaming: ${initialDecorationCells} nearby cells
  
  
  
-const STREAM_CHUNK_SIZE = Math.max(GRID_W, GRID_H);
-let worldChunkStreamer = null;
-let infiniteChunkFactory = null;
-function isStreamingWorldPositionAvailable(x, z) {
-    if (worldChunkStreamer) return worldChunkStreamer.isWorldPositionAvailable(x, z);
-    return Math.abs(x) <= STREAM_CHUNK_SIZE * 0.5 && Math.abs(z) <= STREAM_CHUNK_SIZE * 0.5;
-}
-
- 
- 
-function worldToCell(x, z) {
-    return worldToCellIndex(x, z);
-}
-
- 
-
- 
-let freecamEnabled = false;
 let touchMoveVec = { x: QP[5301], y: QP[5302] };
 const velocity = new THREE.Vector3();  
 const _moveForwardWorld = new THREE.Vector3();
@@ -2866,21 +3117,7 @@ const _moveRightWorld = new THREE.Vector3();
  
  
  
-const PHYSICS_TUNING = {
-    bodyHeight: CONFIG.camera.eyeHeight + QP[5303],
-    headClearance: QP[5304],
-    maxStepHeight: QP[5305],
-    stepDownTolerance: QP[5306],
-    jumpSpeed: QP[5307],
-    gravity: QP[5308],
-    maxFallSpeed: QP[5309],
-    coyoteTime: QP[5310],
-    jumpBufferTime: QP[5311],
-    maxSubstepSeconds: QP[5312] / QP[5313],
-    maxHorizontalSubstep: Math.max(QP[5314], CONFIG.camera.playerRadius * QP[5315]),
-    maxVerticalSubstep: QP[5316],
-    maxSubsteps: QP[5317],
-};
+
 
 const spawn = cellToWorld(spawnCol, spawnRow);
 if (!_testBootstrapHasMoved) camera.position.set(spawn.x, CONFIG.camera.eyeHeight, spawn.z);
@@ -2903,23 +3140,10 @@ if (urlLandmark) {
     }
 }
 
-let playerPhysics = createPlayerPhysics({
-    position: camera.position,
-    eyeHeight: CONFIG.camera.eyeHeight,
-    playerRadius: CONFIG.camera.playerRadius,
-    wallThickness: WALL_THICKNESS,
-    worldToCell,
-    grid,
-    buildingWallSegments,
-    mazeSealWalls,
-    propColliders,
-    elevatedPlatforms,
-    rampRuns,
-    overheadCeilings,
-    boundsHalf: Infinity,
-    isWorldPositionAvailable: isStreamingWorldPositionAvailable,
-    ...PHYSICS_TUNING,
-});
+playerPhysics.syncFromPosition({ forceAirborne: false, resetVelocity: false });
+playerPhysics.syncDynamicWorld();
+_spawnDistrictStructuresComplete = true;
+await testYieldNow('nearest authored district collision-ready · releasing construction safety gate');
 
  
  
@@ -2991,14 +3215,12 @@ if (IS_TOUCH) {
     document.getElementById('lookZone').style.display = 'block';
     showHint('left half: move · right half: drag to look');
     fadeHint(QP[5322]);
-    document.addEventListener('touchstart', initAudio, { once: true });
 } else {
     crosshair.style.display = 'block';
     showHint('click to look around · WASD to move · space to jump · shift to sprint · F freecam · P parameters · ESC to release');
 
     document.addEventListener('click', (e) => {
-        initAudio();
-        if (e.target.closest('#escapeSiteButton, #parameterEditorRoot')) return;
+        if (e.target.closest('#escapeSiteButton, #parameterEditorRoot, #musicPlayer')) return;
         if (!controls.isLocked) controls.lock();
     });
     controls.addEventListener('lock', () => fadeHint(QP[5323]));
@@ -3292,8 +3514,11 @@ function animate(now = performance.now()) {
         updateWebGradient(camera.position.z, camera.position.y, elapsedTime);
         updateRain(delta);
         const _freecamRenderStarted = performance.now();
+        const _freecamOverrideMaterial = scene.overrideMaterial;
+        if (bootstrapPreviewOverrideActive) scene.overrideMaterial = bootstrapPreviewMaterial;
         composer.render();
-        runtimeLatency.record('render.full', performance.now() - _freecamRenderStarted, { mode: 'freecam', sceneChildren: scene.children.length });
+        scene.overrideMaterial = _freecamOverrideMaterial;
+        runtimeLatency.record('render.full', performance.now() - _freecamRenderStarted, { mode: 'freecam', sceneChildren: scene.children.length, drawCalls: renderer.info.render.calls, preview: bootstrapPreviewOverrideActive });
         return;
     }
 
@@ -3321,9 +3546,26 @@ function animate(now = performance.now()) {
     updateWebGradient(camera.position.z, camera.position.y, elapsedTime);
     updateRain(delta);
 
+    if (materialRefinementController) {
+        if (now >= materialRefinementReprioritizeAt) {
+            const priorityResult = materialRefinementController.reprioritize();
+            if (priorityResult.sorted) runtimeLatency.record('material.refinement-priority', priorityResult.ms, priorityResult);
+            materialRefinementReprioritizeAt = now + 750;
+        }
+        const refinementResult = materialRefinementController.pump({ maxItems: QUALITY === CONFIG.quality.desktop ? 6 : 3, maxReveals: 1, maxMillis: 2 });
+        if (refinementResult.restored) runtimeLatency.record('material.refinement-pump', refinementResult.ms, { ...refinementResult, ...materialRefinementController.stats() });
+        if (materialRefinementController.stats().complete && _testRefinementActive) {
+            _testRefinementActive = false;
+            restoreFinalRenderQuality();
+            console.log('[perf] authored material refinement complete', materialRefinementController.stats());
+        }
+    }
     const _runtimeRenderStarted = performance.now();
+    const _runtimeOverrideMaterial = scene.overrideMaterial;
+    if (bootstrapPreviewOverrideActive) scene.overrideMaterial = bootstrapPreviewMaterial;
     composer.render();
-    runtimeLatency.record('render.full', performance.now() - _runtimeRenderStarted, { mode: 'player', sceneChildren: scene.children.length });
+    scene.overrideMaterial = _runtimeOverrideMaterial;
+    runtimeLatency.record('render.full', performance.now() - _runtimeRenderStarted, { mode: 'player', sceneChildren: scene.children.length, drawCalls: renderer.info.render.calls, preview: bootstrapPreviewOverrideActive, materialPending: materialRefinementController?.stats().pending ?? 0 });
 
      
      
@@ -3454,34 +3696,44 @@ function scheduleTraversalValidation() {
 
 await testCompileSceneIfDirty();
 
-for (const signal of trafficSignals) {
-    authoredDynamicMaterials.add(signal.redMat);
-    authoredDynamicMaterials.add(signal.yellowMat);
-    authoredDynamicMaterials.add(signal.greenMat);
-}
+refreshAnimatedMaterials();
 
-await testYieldNow('optimizing spawn chunk · nearest spatial batches first');
-const staticOptimizeStart = performance.now();
-await staticWorldOptimizer.finalizeIncremental({
-    yieldControl: (phase, done, total) => testYieldIfNeeded(phase, done, total),
-});
-const staticWorldStats = staticWorldOptimizer.getStats();
-_testRefinementActive = false;
-console.log(`[perf] authored spatial refinement ${(performance.now() - staticOptimizeStart).toFixed(QP[5426])}ms wall-clock:`, staticWorldStats);
-
-console.log(`[perf] spawn structural handoff at ${bootElapsed()} since page start -- optimized local chunks are authoritative`);
-testStatus('spawn playable · procedural world streaming');
+console.log(`[perf] spawn structural handoff at ${bootElapsed()} since page start -- starting live world stream before static refinement`);
+testStatus('spawn playable · refinement continues in live runtime');
 bootStatus(`spawn playable (${bootElapsed()}) · world streaming`);
-_bootstrapCompileStagingEnabled = false;
-for (const [object, visible] of _bootstrapCompileStaged) if (object.parent) object.visible = visible;
-_bootstrapCompileStaged.clear();
-_bootstrapCompileQueue.length = 0;
-_bootstrapCompileQueued.clear();
+_backgroundCompileSchedulingEnabled = true;
+scheduleBootstrapCompilePump();
 _testBootstrapActive = false;
 console.log(`[stream-perf] bootstrap handoff after ${_testBootstrapFrame} painted frames; full physics/runtime now authoritative`);
 animate();
 window.__boot?.ready();
 
+await testYieldNow('optimizing spawn chunk · background refinement');
+const staticOptimizeStart = performance.now();
+await staticWorldOptimizer.finalizeIncremental({
+    yieldControl: (phase, done, total) => testYieldIfNeeded(phase, done, total),
+});
+const staticWorldStats = staticWorldOptimizer.getStats();
+materialRefinementController = createMaterialRefinementController({
+    scene,
+    camera,
+    previewMaterial: bootstrapPreviewMaterial,
+    dynamicMaterials: animatedMaterials,
+});
+console.log(`[perf] background static-world refinement ${(performance.now() - staticOptimizeStart).toFixed(QP[5426])}ms wall-clock:`, staticWorldStats);
+while (!worldChunkStreamer.stats().localRenderRing.complete) {
+    testStatus('warming playable chunk ring', worldChunkStreamer.stats().localRenderRing.ready, worldChunkStreamer.stats().localRenderRing.total);
+    await testNextPaint();
+}
+const materialRefinementStart = materialRefinementController.prepare();
+bootstrapPreviewOverrideActive = false;
+materialRefinementReprioritizeAt = performance.now();
+if (materialRefinementStart.complete) {
+    _testRefinementActive = false;
+    restoreFinalRenderQuality();
+}
+console.log('[perf] playable 5x5 chunk ring warm · staged authored material refinement started', materialRefinementStart);
+console.log(`[perf] spawn refinement complete at ${bootElapsed()} since page start; live world remained authoritative throughout`);
 scheduleTraversalValidation();
 
  

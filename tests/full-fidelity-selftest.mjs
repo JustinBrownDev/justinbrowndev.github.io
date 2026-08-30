@@ -4,13 +4,14 @@ import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.dirname(here);
-const main = fs.readFileSync(path.join(root, 'main.js'), 'utf8');
-const indexHtml = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
-const contract = fs.readFileSync(path.join(root, 'world-contract.js'), 'utf8');
-const streamer = fs.readFileSync(path.join(root, 'world-chunk-streamer.js'), 'utf8');
-const chunks = fs.readFileSync(path.join(root, 'infinite-city-chunks.js'), 'utf8');
-const config = fs.readFileSync(path.join(root, 'config', 'game-config.js'), 'utf8');
-const spawnPlan = fs.readFileSync(path.join(root, 'world', 'spawn-district-plan.js'), 'utf8');
+const read = rel => fs.readFileSync(path.join(root, rel), 'utf8');
+const main = read('main.js');
+const indexHtml = read('index.html');
+const contract = read('world-contract.js');
+const streamer = read('world-chunk-streamer.js');
+const chunks = read('infinite-city-chunks.js');
+const config = read('config/game-config.js');
+const spawnPlan = read('world/spawn-district-plan.js');
 const failures = [];
 const ok = (condition, message) => { if (!condition) failures.push(message); };
 
@@ -28,8 +29,8 @@ ok(config.includes('cols: 13'), 'authored spawn district must remain compact');
 ok(config.includes('rows: 13'), 'authored spawn district must remain compact');
 ok(main.includes('const STREAM_CHUNK_SIZE = Math.max(GRID_W, GRID_H);'), 'stream chunk size must align exactly to authored spawn footprint');
 ok(spawnPlan.includes('grid[startRow][c] = false') && spawnPlan.includes('grid[r][startCol] = false'), 'spawn district must expose real cardinal gateways to infinite neighbors');
-ok(spawnPlan.includes('SPAWN_SINGULAR_TYPES'), 'spawn district must reserve the singular landmark contract');
-ok(contract.includes('singularEntityId'), 'singulars must receive stable world identity');
+ok(spawnPlan.includes("const SIGNATURE_TYPES = ['artGallery', 'as400Archive', 'justinIndex', 'systemsWorkshop', 'loreShrine', 'futurePlaceholder'];"), 'spawn district must reserve five authored landmarks plus future slot');
+ok(spawnPlan.includes('entityId: singularEntityId(SEED, type)'), 'singulars must receive stable world identity');
 ok(main.includes('createSpawnSingularManifest(SEED, signatureInstances)'), 'spawn singular manifest must be materialized into chunk 0,0');
 
 ok(contract.includes('export const WORLD_FORMAT_VERSION = 1;'), 'world format must be explicitly versioned');
@@ -54,16 +55,18 @@ ok(config.includes('landmarkSpacingChunks: 3') && main.includes('landmarkSpacing
 ok(main.includes('yieldControl: null') && main.includes('pump({ maxChunks, maxMillis })'), 'generic chunks must be atomic and outer pump must own the live frame budget');
 
 ok(main.includes('createProgressiveStaticWorldOptimizer({'), 'spawn chunk optimizer must remain cooperative');
-ok(main.includes("await testYieldNow('optimizing spawn chunk"), 'optimizer must be explicitly scoped to spawn chunk startup');
+ok(main.includes("await testYieldNow('optimizing spawn chunk"), 'optimizer must remain a cooperative background refinement after structural handoff');
 ok(main.includes('function pumpWorldChunksAggressively()'), 'live aggressive chunk streamer loop missing');
 ok(main.includes('CONFIG.streaming.urgentPumpChunks') && main.includes('CONFIG.streaming.prefetchPumpChunks') && main.includes('CONFIG.streaming.urgentBuildBudgetMs'), 'live stream must keep CPU busy with an explicit outer time budget until render/prefetch rings are warm');
 ok(main.includes('prefetchRadiusChunks: CONFIG.streaming.prefetchRadiusChunks'), 'live stream must maintain a larger prefetch ring after handoff');
 ok(!main.includes('worldChunkPumpTimer = 0.12'), 'old 120ms chunk drip-feed must remain removed');
 const readyAt = main.indexOf('window.__boot?.ready();');
-const animateAt = main.indexOf('\nanimate();', main.indexOf('Atomic handoff'));
+const animateAt = main.indexOf('\nanimate();');
 const traversalScheduleAt = main.indexOf('scheduleTraversalValidation();');
+const optimizerFinalizeAt = main.indexOf('await staticWorldOptimizer.finalizeIncremental({');
 ok(animateAt >= 0 && readyAt >= 0 && animateAt < readyAt, 'normal runtime must start before the startup overlay is dismissed');
-ok(traversalScheduleAt > readyAt, 'traversal QA must be deferred until after first real interactivity');
+ok(optimizerFinalizeAt > readyAt, 'static authored refinement must not gate first live runtime');
+ok(traversalScheduleAt > optimizerFinalizeAt, 'traversal QA must be deferred until after live runtime and background refinement');
 
 ok(indexHtml.includes('id="bootTerminal"'), 'startup must use unified terminal presentation');
 ok(indexHtml.includes('id="escapeSiteButton" href="./old/"'), 'startup must expose one clear escape to regular website');
@@ -79,4 +82,4 @@ if (failures.length) {
   for (const failure of failures) console.error(` - ${failure}`);
   process.exit(1);
 }
-console.log('[full-fidelity] PASS: one root runtime, spawn-to-live handoff, aggressive infinite chunk stream');
+console.log('[full-fidelity] PASS: modular spawn planning, early live handoff, aggressive infinite chunk stream');

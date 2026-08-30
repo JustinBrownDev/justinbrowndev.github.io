@@ -1,0 +1,8 @@
+jweb.dev music playlist
+
+Tracks: Rainy Forest, Bartender, Cat caffe, A cup of tea, Countryside, Cue, Oceanside, Florist, Morning rain
+Author: TAD
+Source: https://opengameart.org/content/lofi-compilation
+License listed by source: CC0 / Creative Commons Zero
+
+The runtime intentionally uses preload="none" and starts no music until the visitor presses Play in the music player. The original procedural oscillator/noise/shimmer ambience is not used.

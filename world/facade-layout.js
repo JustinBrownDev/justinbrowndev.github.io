@@ -236,16 +236,17 @@ export function createFacadeLayoutSystem(deps) {
                 chosen = { spec, u, centerY, box };
                 break;
             }
-            if (chosen === null) continue;  
-            const { spec, u, centerY, box } = chosen;
-            facadeReserve(facade, 'sign', u - spec.wallFootprintWidth / QP[1732], u + spec.wallFootprintWidth / QP[1733], centerY - spec.height / QP[1734], centerY + spec.height / QP[1735]);
-            reserveProjectionVolume(box);
-            const p = pointOnFacade(facade, u, centerY);
-            const content = pickSignContent(p.x, p.z);
-            const neon = pickNeonForRow(row);
-            addSign(p.x, p.y, p.z, facade.rotY, content.title, content.subtitle, neon, content.flicker, spec.width, spec.shape, spec.armLength);
-            placed++;
-            yield { phase: 'facade-sign', facadeId: facade.id, placed, requested: count };
+            if (chosen !== null) {
+                const { spec, u, centerY, box } = chosen;
+                facadeReserve(facade, 'sign', u - spec.wallFootprintWidth / QP[1732], u + spec.wallFootprintWidth / QP[1733], centerY - spec.height / QP[1734], centerY + spec.height / QP[1735]);
+                reserveProjectionVolume(box);
+                const p = pointOnFacade(facade, u, centerY);
+                const content = pickSignContent(p.x, p.z);
+                const neon = pickNeonForRow(row);
+                addSign(p.x, p.y, p.z, facade.rotY, content.title, content.subtitle, neon, content.flicker, spec.width, spec.shape, spec.armLength);
+                placed++;
+            }
+            yield { signIndex: i, placed };
         }
         return placed;
     }

@@ -16,7 +16,7 @@ export function createBuildingConstructionSystem(deps) {
         fireEscapeDepth, fireEscapeDimensions, fireEscapeSideFits, footprintOf,
         hashString32, jitterGeometry, localRng, makeFacade, makePixelTexture, makeProjectionBox,
         makeTopologyStainTexture, makeWindowGridTexture, maybeAddElevator, maybeAddMezzanine,
-        pick, pileJunkCluster, placeRealModel, placeSemanticCityAsset, placeSignsOnFacadeSteps,
+        pick, pileJunkCluster, placeRealModel, placeSemanticCityAsset, placeSignsOnFacade, placeSignsOnFacadeSteps,
         pointOnFacade, projectionFits, randRange, reserveProjectionVolume, rng, rooftopDecks,
         rowHalf, rowSize, scatterJunk, scene, semanticCornerPoint, sharedBuildingFacadeMaterial,
         signatureInstances, siteIdOf, skirtBoxGeo, takeDynamicLight, webAlignment, weightedPick,
@@ -423,33 +423,22 @@ export function createBuildingConstructionSystem(deps) {
          
          
          
-        const sideFacades = streetSides.map(s => {
+        const sideFacades = [];
+        for (const s of streetSides) {
             const isFireEscapeFace = fireEscapeSide && fireEscapeSide.dx === s.dx && fireEscapeSide.dz === s.dz;
-             
-             
-             
             const facade = makeFacade(rect, s.dx, s.dz, QP[1946], height, door, 'street', `${row},${col}`);
             if (isFireEscapeFace) {
                 const escapeHalf = fireEscapeDimensions(facade).accessHalf;
                 facadeReserve(facade, 'fireEscape', -escapeHalf, escapeHalf, QP[1947], height);
-                 
-                 
                 reserveProjectionVolume(makeProjectionBox(
                     facade, QP[1948], QP[1949], height, fireEscapeDepth + QP[1950], escapeHalf
                 ));
             }
             buildingFacades.push(facade);
-            return { s, facade, isFireEscapeFace };
-        });
-         
-         
-         
-         
-         
-         
-         
-         
-         
+            sideFacades.push({ s, facade, isFireEscapeFace });
+            yield { phase: 'facade-shell', row, col, facadeId: facade.id };
+        }
+
         rect.streetFacades = sideFacades.map(sf => sf.facade);
         if (signatureMode) {
             addRooftopClutter(cx, cz, hw * QP[1951], height, buildingContext.maintenance);
@@ -472,7 +461,13 @@ export function createBuildingConstructionSystem(deps) {
                 const signRolls = [QP[1955], QP[1956], QP[1957]];
                 for (const p of signRolls) { if (rng() < p) signCount++; else break; }
             }
-            const signsPlaced = yield* placeSignsOnFacadeSteps(facade, signCount, row);
+            const signStepper = placeSignsOnFacadeSteps(facade, signCount, row);
+            let signStep = signStepper.next();
+            while (!signStep.done) {
+                yield { phase: 'facade-sign', row, col, facadeId: facade.id, ...signStep.value };
+                signStep = signStepper.next();
+            }
+            const signsPlaced = signStep.value;
              
              
              
@@ -511,6 +506,8 @@ export function createBuildingConstructionSystem(deps) {
              
              
              
+            yield { phase: 'facade-pipes', row, col, facadeId: facade.id };
+
             if (rng() < QP[1967]) {
                 const awningWidth = randRange(QP[1968], QP[1969]);
                 const awningHeight = awningWidth * QP[1970];
@@ -526,6 +523,8 @@ export function createBuildingConstructionSystem(deps) {
                 }
             }
              
+            yield { phase: 'facade-awning', row, col, facadeId: facade.id };
+
             if (rng() < QP[1978]) {
                 const spot = findFreeFacadeRect(facade, 'camera', QP[1979], QP[1980], QP[1981], Math.min(height - QP[1982], QP[1983]));
                 if (spot) {
@@ -536,6 +535,8 @@ export function createBuildingConstructionSystem(deps) {
     
              
              
+            yield { phase: 'facade-camera', row, col, facadeId: facade.id };
+
             if (rng() < QP[1984]) {
                 const flyerCount = rng() < QP[1985] ? QP[1986] : QP[1987];
                 for (let i = QP[1988]; i < flyerCount; i++) {
@@ -547,6 +548,8 @@ export function createBuildingConstructionSystem(deps) {
                 }
             }
              
+            yield { phase: 'facade-flyers', row, col, facadeId: facade.id };
+
             if (rng() < QP[1995]) {
                 const spot = findFreeFacadeRect(facade, 'ivy', QP[1996], QP[1997], QP[1998], Math.min(height - QP[1999], QP[2000]), QP[2001], QP[2002]);
                 if (spot) {
@@ -559,6 +562,8 @@ export function createBuildingConstructionSystem(deps) {
              
              
              
+            yield { phase: 'facade-ivy', row, col, facadeId: facade.id };
+
             const graffitiRolls = [QP[2003], QP[2004], QP[2005]];
             let graffitiPlaced = QP[2006];
             for (const p of graffitiRolls) {
@@ -588,7 +593,7 @@ export function createBuildingConstructionSystem(deps) {
                     addBalcony(p.x, p.y, p.z, rotY, buildingContext.maintenance);
                 }
             }
-            yield { phase: 'facade-detail', row, col, facadeId: facade.id };
+            yield { phase: 'facade-access', row, col, facadeId: facade.id };
         }
     
         addRooftopClutter(cx, cz, hw * QP[2024], height, buildingContext.maintenance);

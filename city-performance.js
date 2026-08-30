@@ -292,7 +292,7 @@ function mergeGeometryList(THREE, geometries) {
 }
 
 function canBatchMesh(mesh, dynamicMaterials) {
-    if (!mesh?.isMesh || mesh.isInstancedMesh || mesh.isSkinnedMesh || !mesh.visible) return false;
+    if (!mesh?.isMesh || mesh.isInstancedMesh || mesh.isSkinnedMesh || !mesh.visible || mesh.userData?.__perfBatched) return false;
     if (!mesh.geometry?.attributes?.position || mesh.children.length) return false;
     if (Array.isArray(mesh.material) || !mesh.material) return false;
     if (dynamicMaterials?.has(mesh.material)) return false;
@@ -348,6 +348,7 @@ function batchChunkMeshes(THREE, group, dynamicMaterials, minMeshes = __qp50, ma
             merged.receiveShadow = sample.receiveShadow;
             if (sample.layers && merged.layers) merged.layers.mask = sample.layers.mask;
             merged.frustumCulled = true;
+            merged.userData.__perfBatched = true;
             group.add(merged);
             for (const m of batch) m.parent?.remove(m);
             sourceMeshes += batch.length;
@@ -408,6 +409,7 @@ export function createProgressiveStaticWorldOptimizer({
     maxChunkSpan = chunkSize * __qp69,
     mergeMinMeshes = __qp70,
     mergeMaxVertices = __qp71,
+    onChunkOptimized = null,
 } = {}) {
     if (!THREE || !scene || !camera || !rawSceneAdd) throw new Error('createProgressiveStaticWorldOptimizer missing required scene arguments');
 
@@ -441,18 +443,21 @@ export function createProgressiveStaticWorldOptimizer({
         group.userData.__perfChunkGroup = true;
         group.userData.chunkX = ix;
         group.userData.chunkZ = iz;
-        const centerX = (ix + __qp77) * chunkSize;
-        const centerZ = (iz + __qp78) * chunkSize;
-        const dx = centerX - camera.position.x;
-        const dz = centerZ - camera.position.z;
-        const maxDist = activeDrawDistance + Math.SQRT2 * chunkSize;
-        group.visible = dx * dx + dz * dz <= maxDist * maxDist;
-        if (group.visible) visibleKeys.add(key);
+        group.visible = false;
         rawSceneAdd(group);
         if (enabled) {
             group.updateMatrixWorld(true);
             group.matrixAutoUpdate = false;
             group.matrixWorldAutoUpdate = false;
+            const centerX = (ix + __qp77) * chunkSize;
+            const centerZ = (iz + __qp78) * chunkSize;
+            const dx = centerX - camera.position.x;
+            const dz = centerZ - camera.position.z;
+            const maxDist = activeDrawDistance + Math.SQRT2 * chunkSize;
+            if (dx * dx + dz * dz <= maxDist * maxDist) {
+                group.visible = true;
+                visibleKeys.add(key);
+            }
         }
         chunks.set(key, group);
         return group;
@@ -556,6 +561,7 @@ export function createProgressiveStaticWorldOptimizer({
 
     function optimizeChunkGroup(group) {
         if (!group) return;
+        const startedAt = typeof performance !== 'undefined' ? performance.now() : Date.now();
          
          
          
@@ -571,6 +577,14 @@ export function createProgressiveStaticWorldOptimizer({
         batchStats.emptyGroupsPruned += pruneEmptyGroups(group);
         freezeObject(group);
         dirtyChunks.delete(chunkKey(group.userData.chunkX, group.userData.chunkZ));
+        const endedAt = typeof performance !== 'undefined' ? performance.now() : Date.now();
+        onChunkOptimized?.({
+            ms: endedAt - startedAt,
+            key: chunkKey(group.userData.chunkX, group.userData.chunkZ),
+            sourceMeshes: stats.sourceMeshes,
+            mergedMeshes: stats.mergedMeshes,
+            drawCallsSaved: stats.drawCallsSaved,
+        });
     }
 
     function beginIncremental() {
@@ -809,6 +823,15 @@ export function createStaticWorldOptimizer({
             group.updateMatrixWorld(true);
             group.matrixAutoUpdate = false;
             group.matrixWorldAutoUpdate = false;
+            const centerX = (ix + __qp77) * chunkSize;
+            const centerZ = (iz + __qp78) * chunkSize;
+            const dx = centerX - camera.position.x;
+            const dz = centerZ - camera.position.z;
+            const maxDist = activeDrawDistance + Math.SQRT2 * chunkSize;
+            if (dx * dx + dz * dz <= maxDist * maxDist) {
+                group.visible = true;
+                visibleKeys.add(key);
+            }
         }
         chunks.set(key, group);
         return group;

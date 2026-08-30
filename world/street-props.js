@@ -7,7 +7,7 @@ import { outwardRotationY } from '../systems/cardinal.js';
 export function createStreetPropsSystem(deps) {
     const {
         CELL, CONFIG, STATIC_BATCH_CHUNK, grid, scene, unitPlaneGeo, takeDynamicLight,
-        getStaticWorldOptimizer, getPoetryShort, getPoetryMedium, getPickPoetryTag,
+        getStaticWorldOptimizer, registerAnimatedMaterial, getPoetryShort, getPoetryMedium, getPickPoetryTag,
         addFissureCrack, addWantedPoster, hexToCss, jitterGeometry, laneOffset, makePixelTexture,
         pick, pickCityNoisePair, pickInkColor, pickNetworkNoise, pickPaperColor,
         pickRandomizedCuratedPair, pickRandomizedLorePair, pickTextFont, placeRealModel,
@@ -156,6 +156,9 @@ export function createStreetPropsSystem(deps) {
         const redMat = new THREE.MeshBasicMaterial({ color: QP[3376] });
         const yellowMat = new THREE.MeshBasicMaterial({ color: QP[3377] });
         const greenMat = new THREE.MeshBasicMaterial({ color: QP[3378] });
+        registerAnimatedMaterial?.(redMat);
+        registerAnimatedMaterial?.(yellowMat);
+        registerAnimatedMaterial?.(greenMat);
         const red = new THREE.Mesh(lampGeo, redMat); red.position.set(QP[3379], QP[3380], QP[3381]);
         const yellow = new THREE.Mesh(lampGeo, yellowMat); yellow.position.set(QP[3382], QP[3383], QP[3384]);
         const green = new THREE.Mesh(lampGeo, greenMat); green.position.set(QP[3385], QP[3386], QP[3387]);

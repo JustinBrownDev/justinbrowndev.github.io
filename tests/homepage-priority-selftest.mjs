@@ -4,11 +4,15 @@ import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.dirname(here);
-const homepage = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
-const main = fs.readFileSync(path.join(root, 'main.js'), 'utf8');
-const streamer = fs.readFileSync(path.join(root, 'world-chunk-streamer.js'), 'utf8');
-const chunks = fs.readFileSync(path.join(root, 'infinite-city-chunks.js'), 'utf8');
-const perf = fs.readFileSync(path.join(root, 'city-performance.js'), 'utf8');
+const read = rel => fs.readFileSync(path.join(root, rel), 'utf8');
+const homepage = read('index.html');
+const main = read('main.js');
+const streamer = read('world-chunk-streamer.js');
+const chunks = read('infinite-city-chunks.js');
+const perf = read('city-performance.js');
+const config = read('config/game-config.js');
+const ground = read('world/ground-surfaces.js');
+const adornment = read('systems/adornment-assets.js');
 const failures = [];
 const ok = (v, msg) => { if (!v) failures.push(msg); };
 
@@ -18,14 +22,12 @@ ok(!fs.existsSync(path.join(root, 'synchronous')), 'obsolete /synchronous route 
 ok(homepage.includes('Escape to regular website'), 'regular-site escape action missing');
 ok(!homepage.includes('The website loading'), 'redundant load-site choice still present');
 
- 
 ok(main.includes('function buildingSiteDistanceSqToPlayer(site)'), 'spawn building priority helper missing');
 ok(main.includes("await testYieldNow('streaming nearest real buildings'"), 'spawn buildings are not cooperatively painted nearest-first');
-ok(main.includes('layOpenCellSurfaces'), 'spawn ground construction path missing');
-ok(main.includes('sortDecorationQueueNearPlayer'), 'spawn placement work is not player-prioritized');
+ok(ground.includes("await testYieldNow('streaming nearest real streets/alleys'"), 'spawn ground is not cooperatively painted nearest-first');
+ok(adornment.includes('function sortPlacementRequestsNearestToPlayer(requests)'), 'spawn async model placements are not player-prioritized');
 ok(main.includes('sortDecorationQueueNearPlayer'), 'spawn deferred decoration is not player-prioritized');
 
- 
 ok(streamer.includes('function chunkPriorityScore(chunk)'), 'heading-aware infinite stream priority helper missing');
 ok(streamer.includes('const forwardDot ='), 'chunk priority must bias the player heading');
 ok(streamer.includes('function nearestQueuedChunk()'), 'infinite stream nearest-chunk selector missing');
@@ -36,13 +38,17 @@ ok(chunks.includes('async function commit(chunk, payload)'), 'generic chunk must
 ok(chunks.includes('freezeChunkRoot(root);'), 'generic chunk must be optimized/frozen before commit');
 ok(main.includes('commitChunk: (chunk, payload) => infiniteChunkFactory.commit(chunk, payload)'), 'streamer commit hook not wired');
 
- 
 ok(chunks.includes("districtLandmarkTypes = Object.freeze(['spire', 'stack', 'gatehouse', 'archive', 'beacon'])"), 'district landmark family missing');
-ok(main.includes('landmarkSpacingChunks: CONFIG.streaming.landmarkSpacingChunks'), 'district landmark recurrence must be configured');
+ok(config.includes('landmarkSpacingChunks: 3'), 'district landmark recurrence must be frequent but not every chunk');
+ok(main.includes('landmarkSpacingChunks: CONFIG.streaming.landmarkSpacingChunks'), 'district landmark spacing config is not wired into streamed chunks');
 ok(chunks.includes("kind: 'district-landmark'"), 'district landmarks must be exposed in chunk entity metadata');
 
 ok(main.includes('createProgressiveStaticWorldOptimizer({'), 'spawn optimizer must remain cooperative');
-ok(main.includes('await staticWorldOptimizer.finalizeIncremental({'), 'spawn optimizer must finalize local chunks before handoff');
+ok(main.includes('staticWorldOptimizer.beginIncremental();'), 'spawn optimizer must begin incremental batching before authored construction');
+ok(main.includes('await staticWorldOptimizer.flushDirtyChunks({'), 'spawn sites must flush local optimizer work incrementally');
+const animateAt = main.indexOf('\nanimate();');
+const finalizeAt = main.indexOf('await staticWorldOptimizer.finalizeIncremental({');
+ok(animateAt >= 0 && finalizeAt > animateAt, 'expensive final optimizer refinement must occur after live runtime handoff');
 ok(perf.includes('optimizing static world · merging nearest chunks'), 'spawn optimizer lost nearest-chunk cooperative merge phase');
 
 if (failures.length) {
@@ -50,4 +56,4 @@ if (failures.length) {
   for (const f of failures) console.error(` - ${f}`);
   process.exit(1);
 }
-console.log('[homepage-priority] PASS: nearest spawn work -> continuous heading-aware chunk stream');
+console.log('[homepage-priority] PASS: modular nearest spawn work -> live handoff -> continuous heading-aware chunk stream');

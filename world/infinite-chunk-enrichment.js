@@ -30,13 +30,28 @@ const AWNING_COLORS = Object.freeze([0x6b3d3b, 0x35595f, 0x6a5d36, 0x4d496d, 0x5
 const PIPE_COLORS = Object.freeze([0x5f625f, 0x725d4a, 0x40565a, 0x615959]);
 const IVY_COLORS = Object.freeze([0x394f32, 0x465a35, 0x2f4634, 0x52603b]);
 
-function facadePoint(entity, side, along = 0, y = 2) {
-    const halfX = entity.halfX ?? 2;
-    const halfZ = entity.halfZ ?? 2;
-    if (side === 'north') return { x: entity.x + along * halfX, y, z: entity.z - halfZ - 0.02, ry: 0 };
-    if (side === 'south') return { x: entity.x - along * halfX, y, z: entity.z + halfZ + 0.02, ry: Math.PI };
-    if (side === 'west') return { x: entity.x - halfX - 0.02, y, z: entity.z - along * halfZ, ry: Math.PI * 0.5 };
-    return { x: entity.x + halfX + 0.02, y, z: entity.z + along * halfZ, ry: -Math.PI * 0.5 };
+function facadePoint(entity, side, along = 0, y = 2, facadeIndex = null) {
+    const facade = Number.isInteger(facadeIndex) ? entity.facades?.[facadeIndex] : null;
+    const x0 = facade?.x ?? entity.x;
+    const z0 = facade?.z ?? entity.z;
+    const halfX = facade?.halfX ?? entity.halfX ?? 2;
+    const halfZ = facade?.halfZ ?? entity.halfZ ?? 2;
+    const actualSide = facade?.side ?? side;
+    if (actualSide === 'north') return { x: x0 + along * halfX, y, z: z0 - halfZ - 0.02, ry: 0 };
+    if (actualSide === 'south') return { x: x0 - along * halfX, y, z: z0 + halfZ + 0.02, ry: Math.PI };
+    if (actualSide === 'west') return { x: x0 - halfX - 0.02, y, z: z0 - along * halfZ, ry: Math.PI * 0.5 };
+    return { x: x0 + halfX + 0.02, y, z: z0 + along * halfZ, ry: -Math.PI * 0.5 };
+}
+
+function chooseFacadeIndex(entity, rng, preferredSide = null) {
+    const facades = entity.facades || [];
+    if (!facades.length) return null;
+    const candidates = [];
+    for (let i = 0; i < facades.length; i++) {
+        if (!preferredSide || facades[i].side === preferredSide) candidates.push(i);
+    }
+    const pool = candidates.length ? candidates : facades.map((_, i) => i);
+    return pool[Math.floor(rng() * pool.length) % pool.length];
 }
 
 function oppositeSide(side) {
@@ -149,6 +164,9 @@ export function createInfiniteChunkEnrichment({ THREE, worldSeed = 0 } = {}) {
         const front = entity.doorSide || 'north';
         const side = adjacentSide(front, rng() < 0.5);
         const back = oppositeSide(front);
+        const frontFacadeIndex = chooseFacadeIndex(entity, rng, front);
+        const sideFacadeIndex = chooseFacadeIndex(entity, rng, side);
+        const backFacadeIndex = chooseFacadeIndex(entity, rng, back);
         const floors = Math.max(1, entity.floors || 1);
         const wallHeight = floors * (entity.floorH || 3.15);
 
@@ -157,7 +175,7 @@ export function createInfiniteChunkEnrichment({ THREE, worldSeed = 0 } = {}) {
             const basePair = pickMassiveNoisePair(labelRng);
             const [title, subtitle] = textExciter.pairFor(chunk, entity.id, 'sign-label', basePair);
             tasks.push({
-                kind: 'sign', entityId: entity.id, side: front,
+                kind: 'sign', entityId: entity.id, side: front, facadeIndex: frontFacadeIndex,
                 y: clamp(2.45 + rng() * Math.min(2.6, wallHeight * 0.28), 2.25, Math.max(2.4, wallHeight - 0.8)),
                 along: (rng() - 0.5) * 0.5,
                 width: clamp((entity.halfX ?? 2) * 0.95, 1.65, 3.9),
@@ -174,7 +192,7 @@ export function createInfiniteChunkEnrichment({ THREE, worldSeed = 0 } = {}) {
                 : BASE_GRAFFITI_TAGS[Math.floor(graffitiRng() * BASE_GRAFFITI_TAGS.length) % BASE_GRAFFITI_TAGS.length];
             const text = textExciter.tagFor(chunk, entity.id, 'graffiti-label', baseText);
             tasks.push({
-                kind: 'graffiti', entityId: entity.id, side,
+                kind: 'graffiti', entityId: entity.id, side, facadeIndex: sideFacadeIndex,
                 y: 0.95 + rng() * 1.1, along: (rng() - 0.5) * 0.9,
                 width: 1.1 + rng() * 1.8, height: 0.5 + rng() * 0.65,
                 text, seed: taskSeed(chunk, entity.id, 'graffiti'),
@@ -184,7 +202,7 @@ export function createInfiniteChunkEnrichment({ THREE, worldSeed = 0 } = {}) {
         const pipeCount = 1 + (rng() < 0.38 ? 1 : 0);
         for (let i = 0; i < pipeCount; i++) {
             tasks.push({
-                kind: 'pipe', entityId: entity.id, side: i ? back : side,
+                kind: 'pipe', entityId: entity.id, side: i ? back : side, facadeIndex: i ? backFacadeIndex : sideFacadeIndex,
                 y: wallHeight * 0.48,
                 height: clamp(wallHeight * (0.58 + rng() * 0.34), 2.5, wallHeight - 0.3),
                 along: (rng() - 0.5) * 1.25,
@@ -194,7 +212,7 @@ export function createInfiniteChunkEnrichment({ THREE, worldSeed = 0 } = {}) {
 
         if (rng() < 0.58) {
             tasks.push({
-                kind: 'awning', entityId: entity.id, side: front,
+                kind: 'awning', entityId: entity.id, side: front, facadeIndex: frontFacadeIndex,
                 y: 2.52, along: 0,
                 width: clamp((front === 'north' || front === 'south' ? entity.halfX : entity.halfZ) * 1.25, 1.6, 4.4),
                 depth: 0.72 + rng() * 0.45,
@@ -204,7 +222,7 @@ export function createInfiniteChunkEnrichment({ THREE, worldSeed = 0 } = {}) {
 
         if (floors >= 2 && rng() < 0.62) {
             tasks.push({
-                kind: 'ivy', entityId: entity.id, side: back,
+                kind: 'ivy', entityId: entity.id, side: back, facadeIndex: backFacadeIndex,
                 y: clamp(wallHeight * (0.35 + rng() * 0.26), 2.2, wallHeight - 1),
                 height: clamp(wallHeight * (0.35 + rng() * 0.34), 1.8, wallHeight - 0.5),
                 along: (rng() - 0.5) * 0.8,
@@ -215,7 +233,7 @@ export function createInfiniteChunkEnrichment({ THREE, worldSeed = 0 } = {}) {
 
         if (rng() < 0.44) {
             tasks.push({
-                kind: 'security', entityId: entity.id, side,
+                kind: 'security', entityId: entity.id, side, facadeIndex: sideFacadeIndex,
                 y: clamp(2.6 + rng() * 1.6, 2.5, Math.max(2.6, wallHeight - 0.7)),
                 along: (rng() - 0.5) * 1.15,
                 seed: taskSeed(chunk, entity.id, 'security'),
@@ -267,7 +285,7 @@ export function createInfiniteChunkEnrichment({ THREE, worldSeed = 0 } = {}) {
     function createPanel(payload, task, graffiti = false) {
         const entity = getEntity(payload, task.entityId);
         if (!entity) return null;
-        const point = facadePoint(entity, task.side, task.along, task.y);
+        const point = facadePoint(entity, task.side, task.along, task.y, task.facadeIndex);
         const texture = graffiti
             ? graffitiTexture(THREE, task.text, task.seed)
             : canvasTextTexture(THREE, task.title, task.subtitle, task.seed);
@@ -299,7 +317,7 @@ export function createInfiniteChunkEnrichment({ THREE, worldSeed = 0 } = {}) {
     function createPipe(payload, task) {
         const entity = getEntity(payload, task.entityId);
         if (!entity) return null;
-        const point = facadePoint(entity, task.side, task.along, task.y);
+        const point = facadePoint(entity, task.side, task.along, task.y, task.facadeIndex);
         const mat = pipeMaterials[task.seed % pipeMaterials.length];
         const mesh = new THREE.Mesh(pipeGeo, mat);
         mesh.name = `chunk-pipe:${task.entityId}`;
@@ -312,7 +330,7 @@ export function createInfiniteChunkEnrichment({ THREE, worldSeed = 0 } = {}) {
     function createAwning(payload, task) {
         const entity = getEntity(payload, task.entityId);
         if (!entity) return null;
-        const point = facadePoint(entity, task.side, task.along, task.y);
+        const point = facadePoint(entity, task.side, task.along, task.y, task.facadeIndex);
         const mesh = new THREE.Mesh(unitBox, awningMaterials[task.seed % awningMaterials.length]);
         mesh.name = `chunk-awning:${task.entityId}`;
         const horizontal = task.side === 'north' || task.side === 'south';
@@ -332,7 +350,7 @@ export function createInfiniteChunkEnrichment({ THREE, worldSeed = 0 } = {}) {
         const entity = getEntity(payload, task.entityId);
         if (!entity) return null;
         const rng = mulberry32(task.seed);
-        const point = facadePoint(entity, task.side, task.along, task.y);
+        const point = facadePoint(entity, task.side, task.along, task.y, task.facadeIndex);
         const mesh = new THREE.InstancedMesh(leafGeo, ivyMaterials[task.seed % ivyMaterials.length], task.count);
         mesh.name = `chunk-ivy:${task.entityId}`;
         const m = new THREE.Matrix4();
@@ -360,7 +378,7 @@ export function createInfiniteChunkEnrichment({ THREE, worldSeed = 0 } = {}) {
     function createSecurity(payload, task) {
         const entity = getEntity(payload, task.entityId);
         if (!entity) return null;
-        const point = facadePoint(entity, task.side, task.along, task.y);
+        const point = facadePoint(entity, task.side, task.along, task.y, task.facadeIndex);
         const group = new THREE.Group();
         group.name = `chunk-security:${task.entityId}`;
         group.position.set(point.x, point.y, point.z);

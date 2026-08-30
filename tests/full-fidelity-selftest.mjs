@@ -12,6 +12,7 @@ const streamer = read('world-chunk-streamer.js');
 const chunks = read('infinite-city-chunks.js');
 const config = read('config/game-config.js');
 const spawnPlan = read('world/spawn-district-plan.js');
+const kowloon = read('world/kowloon-structure.js');
 const failures = [];
 const ok = (condition, message) => { if (!condition) failures.push(message); };
 
@@ -54,7 +55,9 @@ ok(chunks.includes('districtLandmarkFor'), 'repeatable district landmark contrac
 ok(config.includes('landmarkSpacingChunks: 3') && main.includes('landmarkSpacingChunks: CONFIG.streaming.landmarkSpacingChunks'), 'district landmarks must recur every few chunks through cfg.streaming');
 ok(main.includes('yieldControl: null') && main.includes('pump({ maxChunks, maxMillis, maxRefinements })'), 'generic chunks must be atomic while the outer pump owns both structural and chunk-local refinement budgets');
 ok(main.includes('hasPendingRefinement: (chunk, payload) => infiniteChunkFactory.hasPendingRefinement(chunk, payload)') && streamer.includes('nearestRefinableChunk'), 'each generic chunk must carry independently resumable enrichment work scheduled by the outer streamer');
-ok(chunks.includes('enhancementRng: mulberry32(hashString32(`${buildingId}:structure-v2`))'), 'rich generic structure must use a stable entity-local RNG stream instead of perturbing the legacy chunk stream');
+ok(chunks.includes('kowloon-partition:') && chunks.includes('kowloon-site-class:') && chunks.includes('kowloon-compound:') && chunks.includes('kowloon-bridge:'), 'rich generic structure must use independent stable partition/site/compound/bridge RNG streams');
+ok(chunks.includes('partitionKowloonCompounds({') && chunks.includes('buildKowloonCompound({'), 'generic normal fabric must consume the shared compound grammar');
+ok(kowloon.includes('export function partitionKowloonCompounds') && kowloon.includes('export function analyzeKowloonCompound'), 'shared Kowloon structural source of truth missing');
 
 ok(main.includes('createProgressiveStaticWorldOptimizer({'), 'spawn chunk optimizer must remain cooperative');
 ok(main.includes("await testYieldNow('optimizing completed spawn chunk"), 'optimizer must remain a cooperative background refinement after live authored completion');

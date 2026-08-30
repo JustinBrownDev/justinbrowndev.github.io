@@ -1,0 +1,95 @@
+KOWLOON ONE-SOURCE HARD PUSH VALIDATION
+=======================================
+
+Authoritative baseline
+----------------------
+Live main: db67d6d0386a3235d144cfd20765f14dc88d3f6f
+Local release was verified byte-identical to live for main.js,
+world/building-construction.js, and infinite-city-chunks.js before refactor.
+
+Consolidation
+-------------
+PASS  shared world/kowloon-structure.js owns ordinary compound partition/topology
+PASS  spawn ordinary sites consume shared partition + edge semantics
+PASS  authored construction consumes shared compound topology
+PASS  infinite ordinary fabric consumes shared partition + compound topology
+PASS  old normal one-cell rectangle builder removed as a generic path
+PASS  rectangle tower helper is district-landmark-only
+PASS  compound-aware enrichment preserved across real exposed module facades
+PASS  real upper-level skybridge wall portals are planned before shell emission
+PASS  reachable exterior service cages reserve wall openings before shell emission
+PASS  deterministic partition/site/compound/bridge/plaza RNG streams are independent
+
+Fidelity / no-loss checks
+-------------------------
+PASS  content/ tree: zero byte-level differences versus live baseline
+PASS  world/signature-buildings.js unchanged versus live baseline
+PASS  world/signage.js unchanged versus live baseline
+PASS  world/street-props.js unchanged versus live baseline
+PASS  player-physics.js unchanged versus live baseline
+PASS  frozen pre-refactor authored partition algorithm == shared partitioner output
+PASS  singular authored landmark contract preserved
+PASS  full curated corpus preserved: 3,627 canonical + 512 fragments + 150 corpus-only poems
+PASS  procedural design doctrine expanded to 27 architecture/world axioms
+
+Live optimizer crash
+--------------------
+PASS  progressive optimizer now exposes markDirtyObject()
+PASS  same controller used by main.js shader-family compile pump is tested directly
+PASS  authored chunk can be marked dirty and flushed
+PASS  worldChunkRoot is rejected by authored optimizer dirty marking
+
+80-chunk deterministic structural sample
+----------------------------------------
+chunks:                    80
+ordinary buildings:        832
+multi-cell compounds:      609 (73.2%)
+compound structural cells: 2,057
+real skybridges:            54
+accessible service cages:  298
+courtyards/lightwells:      12
+ramps/stair physics:        4,898
+interior partition segments: 8,334
+max compound size:          7 cells
+
+Streaming throughput harness
+----------------------------
+5x5 render ring:   25/25 READY
+7x7 prefetch ring: 49/49 READY
+Direct procedural roots: 48
+Visible procedural roots: 24
+Latest cold-run avg build: ~3.7 ms/chunk
+Latest cold-run worst build: ~29.5 ms (first/JIT-heavy chunk)
+Dedicated second-pass profile: ~2.28 ms average, ~4.51 ms worst
+
+Validation suite
+----------------
+PASS  all non-vendor JS/MJS/CJS syntax checks
+PASS  parameter-system-selftest.mjs
+PASS  parameter-catalog-selftest.mjs (9,328 literals)
+PASS  world-contract-selftest.mjs
+PASS  world-chunk-streamer-selftest.mjs + visibility/refinement
+PASS  priority-load-queue-selftest.mjs
+PASS  city-performance-selftest.mjs + world ownership
+PASS  player-physics-selftest.mjs
+PASS  world/kowloon-structure-selftest.mjs
+PASS  infinite-city-chunks-selftest.mjs
+PASS  streaming-throughput-selftest.mjs
+PASS  tests/progressive-optimizer-selftest.mjs
+PASS  tests/progressive-generation-selftest.mjs
+PASS  tests/progressive-runtime-selftest.mjs
+PASS  tests/homepage-priority-selftest.mjs
+PASS  tests/full-fidelity-selftest.mjs
+PASS  kowloon-consolidation-audit.cjs
+PASS  progressive-spawn-checkpoint-audit.cjs
+PASS  streaming-architecture-audit.cjs
+PASS  tdz-boot-audit.cjs main.js (0 hazards)
+PASS  tdz-generation-audit.cjs main.js (0 hazards)
+PASS  runtime-handoff-audit.cjs main.js (0 hazards)
+
+Browser limitation
+------------------
+A real local HTTP server responds normally to curl, but managed Chromium in this
+execution environment does not issue a GET to loopback/private local addresses.
+No browser PASS is claimed. The pushed jweb.dev build remains the authoritative
+visual/WebGL trial.

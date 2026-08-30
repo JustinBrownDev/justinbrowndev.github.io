@@ -115,6 +115,9 @@ assert.ok(payloadA.root.children.some(o => o.isInstancedMesh), 'streamed fabric 
 assert.ok(payloadA.root.children.every(o => o.matrixAutoUpdate === false), 'committed chunk objects must be statically frozen');
 
 const richBuildings = payloadA.entities.filter(e => e.kind === 'building');
+assert.ok(richBuildings.some(e => e.compoundCells?.length > 1), 'generic fabric must contain real multi-cell compound buildings, not one-cell boxes');
+assert.ok(richBuildings.some(e => e.internalOpenFaces > 0), 'same-site compound modules must share open internal circulation edges');
+assert.ok(richBuildings.some(e => e.serviceCages > 0), 'generic compounds must grow structural service cages/ledges on exposed facades');
 assert.ok(richBuildings.some(e => e.modularSetbacks > 0), 'generic fabric must contain stacked modular/setback building silhouettes');
 assert.ok(richBuildings.some(e => e.partitionSegments > 0), 'generic interiors must include real partition-wall maze structure');
 assert.ok(richBuildings.some(e => e.balconySide), 'generic buildings must include navigable structural balcony modules');
@@ -147,6 +150,12 @@ assert.deepEqual(payloadA2.refinement.tasks.map(({ kind, entityId, seed }) => ({
 await factory.commit(a, payloadA2);
 await factory.unload(a, payloadA2);
 
+const eastPayload = await factory.build(east);
+assert.ok(eastPayload.skybridges > 0, 'sample outer chunk must contain a real upper-level skybridge with paired wall openings/collision');
+assert.ok(eastPayload.entities.some(e => e.kind === 'skybridge'), 'skybridge must be represented as stable chunk-owned structural metadata');
+await factory.commit(east, eastPayload);
+await factory.unload(east, eastPayload);
+
 const landmarkPayload = await factory.build(landmarkChunk);
 assert.ok(landmarkPayload.districtLandmark, 'selected landmark chunk must materialize its landmark');
 assert.equal(landmarkPayload.districtLandmark.id, factory.districtLandmarkFor(landmarkChunk).id, 'landmark identity must be coordinate deterministic');
@@ -167,4 +176,7 @@ console.log('[infinite-city-chunks-selftest] PASS', {
   refinementTasks: stableTaskContract.length,
   scaffoldBuildings: richBuildings.filter(e => e.scaffoldLandings > 0).length,
   climbablePlazas: payloadA.entities.filter(e => e.kind === 'plaza' && e.climbTiers > 0).length,
+  multiCellCompounds: richBuildings.filter(e => e.compoundCells?.length > 1).length,
+  serviceCages: richBuildings.reduce((n, e) => n + (e.serviceCages || 0), 0),
+  sampledSkybridges: eastPayload.skybridges,
 });

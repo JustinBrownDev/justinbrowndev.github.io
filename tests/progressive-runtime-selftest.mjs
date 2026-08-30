@@ -13,6 +13,7 @@ const facade = read('world/facade-layout.js');
 const chunks = read('infinite-city-chunks.js');
 const streamer = read('world-chunk-streamer.js');
 const chunkEnrichment = read('world/infinite-chunk-enrichment.js');
+const kowloon = read('world/kowloon-structure.js');
 const failures = [];
 const ok = (value, message) => { if (!value) failures.push(message); };
 
@@ -37,7 +38,13 @@ ok(facade.includes('function* placeSignsOnFacadeSteps(') && facade.includes('yie
 
 // Infinite chunks use the same structural-first philosophy without smuggling frame sleeps
 // into the millisecond-scale structural factory. Each payload owns deterministic local work.
-ok(chunks.includes('enhancementRng: mulberry32(hashString32(`${buildingId}:structure-v2`))'), 'generic rich structure must be isolated behind stable entity-local RNG');
+ok(chunks.includes('kowloon-partition:${chunk.key}:${chunk.seed}')
+    && chunks.includes('kowloon-site-class:${chunk.key}:${signature}')
+    && chunks.includes('kowloon-compound:${chunk.key}:${siteSignature}')
+    && chunks.includes('kowloon-bridge:${identity}')
+    && chunks.includes('kowloon-plaza:${chunk.key}:${signature}'), 'generic rich structure must use independent stable partition/site/compound/bridge/plaza RNG streams');
+ok(chunks.includes('partitionKowloonCompounds({') && chunks.includes('buildKowloonCompound({'), 'generic city fabric must use the shared multi-cell Kowloon compound grammar');
+ok(kowloon.includes('export function partitionKowloonCompounds') && kowloon.includes('export function analyzeKowloonCompound'), 'spawn and infinity must share one structural planning module');
 ok(chunks.includes('enrichment.initializePayload(chunk, payload)'), 'generic chunk must create its own progressive detail state before publication');
 ok(chunks.includes('const refine = (chunk, payload, budget) => enrichment.pump(chunk, payload, budget)'), 'generic chunk must expose resumable local refinement');
 ok(!chunks.includes('requestAnimationFrame('), 'generic structural factory must not contain inner requestAnimationFrame sleeps');

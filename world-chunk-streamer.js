@@ -63,12 +63,15 @@ export function createWorldChunkStreamer({
     let buildCount = 0;
     let totalBuildMs = 0;
     let totalCommitMs = 0;
+    let worstBuildMs = 0;
+    let worstCommitMs = 0;
     let lastPumpBuilt = 0;
     let lastPumpMs = 0;
     let visibleReadyCount = 0;
     let visibilityUpdates = 0;
     let commitToVisibleCount = 0;
     let totalCommitToVisibleMs = 0;
+    let worstCommitToVisibleMs = 0;
     let lastVisibilityCenterX = Number.NaN;
     let lastVisibilityCenterZ = Number.NaN;
     let refinementSerial = 0;
@@ -175,7 +178,9 @@ export function createWorldChunkStreamer({
             chunk.visibleAt = performance.now();
             if (chunk.committedAt) {
                 commitToVisibleCount++;
-                totalCommitToVisibleMs += Math.max(0, chunk.visibleAt - chunk.committedAt);
+                const commitToVisibleMs = Math.max(0, chunk.visibleAt - chunk.committedAt);
+                totalCommitToVisibleMs += commitToVisibleMs;
+                worstCommitToVisibleMs = Math.max(worstCommitToVisibleMs, commitToVisibleMs);
             }
         }
         return next;
@@ -297,13 +302,17 @@ export function createWorldChunkStreamer({
              
             const buildStarted = performance.now();
             const payload = await buildChunk(chunk);
-            totalBuildMs += performance.now() - buildStarted;
+            const buildMs = performance.now() - buildStarted;
+            totalBuildMs += buildMs;
+            worstBuildMs = Math.max(worstBuildMs, buildMs);
             buildCount++;
             chunk.payload = payload ?? null;
             state(chunk, CHUNK_STATE.COMMITTING);
             const commitStarted = performance.now();
             if (commitChunk) await commitChunk(chunk, chunk.payload);
-            totalCommitMs += performance.now() - commitStarted;
+            const commitMs = performance.now() - commitStarted;
+            totalCommitMs += commitMs;
+            worstCommitMs = Math.max(worstCommitMs, commitMs);
             chunk.committedAt = performance.now();
             const expectedVisible = applyChunkVisibility(chunk);
             if (verifyChunkReady) await verifyChunkReady(chunk, chunk.payload, expectedVisible);
@@ -486,6 +495,9 @@ export function createWorldChunkStreamer({
                 avgBuildMs: buildCount ? totalBuildMs / buildCount : 0,
                 avgCommitMs: buildCount ? totalCommitMs / buildCount : 0,
                 avgCommitToVisibleMs: commitToVisibleCount ? totalCommitToVisibleMs / commitToVisibleCount : 0,
+                worstBuildMs,
+                worstCommitMs,
+                worstCommitToVisibleMs,
                 lastPumpBuilt,
                 lastPumpRefined,
                 lastPumpMs,

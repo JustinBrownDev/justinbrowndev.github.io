@@ -12,14 +12,13 @@ function makePhysics({ x = 0, z = 0, props = [], mazeWalls = [] } = {}) {
         worldToCell: (px, pz) => ({ col: Math.floor(px / 4) + 8, row: Math.floor(pz / 4) + 8 }),
         grid: Array.from({ length: 17 }, () => Array(17).fill(false)),
         buildingWallSegments: new Map(),
-        mazeSealWalls: mazeWalls,
         propColliders: props,
         elevatedPlatforms: [],
         rampRuns: [],
         overheadCeilings: [],
         boundsHalf: 100,
-        isWorldPositionAvailable: () => true,
     });
+    if (mazeWalls.length) physics.registerOwnedWorld('spawn-proof:test-walls', { mazeWalls });
     return { physics, position };
 }
 

@@ -590,19 +590,19 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
         sign: 0, awning: 0, graffiti: 0, flyer: 0,
         pipe: 1, ivy: 1, security: 1, 'elevator-hardware': 1, 'street-fixture': 1,
         'overhead-cable': 2, 'roof-clutter': 2, 'roof-topper': 2,
-        marker: 3, 'spray-cans': 3, 'semantic-identity': 3,
+        'spray-cans': 3, 'semantic-identity': 3,
         'semantic-functional': 4, 'interior-prop': 4, 'semantic-life': 5,
     });
 
     const FIRST_PASS_KIND_ORDER = Object.freeze([
         'sign', 'awning', 'pipe', 'street-fixture', 'graffiti', 'security', 'elevator-hardware',
-        'ivy', 'roof-topper', 'roof-clutter', 'spray-cans', 'flyer', 'marker',
+        'ivy', 'roof-topper', 'roof-clutter', 'spray-cans', 'flyer',
     ]);
     function firstPassClass(kind) {
         if (kind === 'sign' || kind === 'awning' || kind === 'graffiti' || kind === 'flyer') return 'facade';
         if (kind === 'pipe' || kind === 'ivy' || kind === 'security' || kind === 'elevator-hardware' || kind === 'spray-cans' || kind === 'street-fixture') return 'fixture';
         if (kind === 'interior-prop' || String(kind).startsWith('semantic-') || kind === 'overhead-cable') return 'hidden';
-        if (kind === 'roof-clutter' || kind === 'roof-topper' || kind === 'marker' || String(kind).startsWith('plaza-')) return 'cap';
+        if (kind === 'roof-clutter' || kind === 'roof-topper' || String(kind).startsWith('plaza-')) return 'cap';
         return 'other';
     }
 
@@ -1244,26 +1244,7 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
             if (texture) { payload.detailResources.textures.add(texture); payload.detailResources.materials.add(material); }
         };
         switch (task.kind) {
-            case 'plaza-statue': {
-                addBox(plazaConcreteMat, 0, 0.22, 0, 1.15, 0.44, 1.15);
-                addBox(roofHardwareMat, 0, 1.18, 0, 0.38, 1.55, 0.38, rng() * 0.5);
-                addBox(roofHardwareMat, 0.16, 2.04, 0, 0.48, 0.36, 0.42, rng() * 0.7);
-                break;
-            }
-            case 'plaza-construction-zone': {
-                for (const side of [-1, 1]) addBox(plazaTapeMat, side * 0.72, 0.62, 0, 1.15, 0.12, 0.10, side * 0.08);
-                for (const x of [-0.95, 0.95]) addBox(plazaDarkMat, x, 0.36, 0, 0.10, 0.72, 0.10);
-                for (let i = 0; i < 3; i++) addBox(awningMaterials[(task.seed+i)%awningMaterials.length], -0.55 + i*0.55, 0.22, 0.72, 0.22, 0.44, 0.22);
-                break;
-            }
-            case 'plaza-crime-scene': {
-                for (const z of [-0.65, 0.65]) addBox(plazaTapeMat, 0, 0.62, z, 1.55, 0.055, 0.055);
-                for (const x of [-0.8, 0.8]) addBox(plazaTapeMat, x, 0.62, 0, 0.055, 0.055, 1.35);
-                const trace = addBox(flyerFallbackMat, 0.12, 0.014, -0.08, 0.9, 0.025, 0.32, rng() * Math.PI);
-                trace.userData.chunkCosmetic = true;
-                break;
-            }
-            case 'plaza-newsstand': {
+                                                case 'plaza-newsstand': {
                 addBox(plazaDarkMat, 0, 0.86, 0, 1.55, 1.72, 0.95);
                 addBox(awningMaterials[task.seed%awningMaterials.length], 0, 1.82, 0.05, 1.78, 0.14, 1.18);
                 addLabel(1.35, 0.48, 1.34, 0.50);
@@ -1292,13 +1273,7 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
                 addBox(plazaConcreteMat, 0, 0.28, -0.85, 1.35, 0.15, 0.42);
                 break;
             }
-            case 'plaza-mega-billboard': {
-                for (const x of [-0.85, 0.85]) addBox(plazaDarkMat, x, 1.45, 0, 0.13, 2.90, 0.13);
-                addBox(plazaDarkMat, 0, 2.65, 0, 2.25, 1.12, 0.12);
-                addLabel(2.05, 0.92, 2.65, 0.07);
-                break;
-            }
-            default: return null;
+                        default: return null;
         }
         group.rotation.y = (rng() - 0.5) * 0.32;
         const rotateOffset = (x, z) => ({ x: task.x + Math.cos(group.rotation.y) * x + Math.sin(group.rotation.y) * z, z: task.z - Math.sin(group.rotation.y) * x + Math.cos(group.rotation.y) * z });
@@ -1308,12 +1283,9 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
             physics.push({ kind: 'props', item: { ...local, x: p.x, z: p.z } });
         }
         delete group.userData.localDetailPhysics;
-        if (task.kind === 'plaza-statue') physics.push({ kind: 'props', item: { x: task.x, z: task.z, radius: 0.62, height: 2.25 } });
-        else if (task.kind === 'plaza-newsstand') physics.push({ kind: 'props', item: { x: task.x, z: task.z, radius: 0.78, height: 1.86 } });
+        if (task.kind === 'plaza-newsstand') physics.push({ kind: 'props', item: { x: task.x, z: task.z, radius: 0.78, height: 1.86 } });
         else if (task.kind === 'plaza-phone-booth') physics.push({ kind: 'props', item: { x: task.x, z: task.z, radius: 0.48, height: 2.20 } });
         else if (task.kind === 'plaza-atm-kiosk') physics.push({ kind: 'props', item: { x: task.x, z: task.z, radius: 0.52, height: 1.86 } });
-        else if (task.kind === 'plaza-construction-zone') { for (const x of [-0.95, 0.95]) { const p = rotateOffset(x, 0); physics.push({ kind: 'props', item: { x: p.x, z: p.z, radius: 0.16, height: 0.74 } }); } }
-        else if (task.kind === 'plaza-mega-billboard') { for (const x of [-0.85, 0.85]) { const p = rotateOffset(x, 0); physics.push({ kind: 'props', item: { x: p.x, z: p.z, radius: 0.12, height: 2.90 } }); } }
         else if (task.kind === 'plaza-park') { const p = rotateOffset(0, -0.85); physics.push({ kind: 'props', item: { x: p.x, z: p.z, radius: 0.58, height: 0.36 } }); }
         group.userData.chunkCosmetic = true;
         group.userData.detailKind = task.kind;
@@ -1321,22 +1293,6 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
         return group;
     }
 
-    function createMarker(payload, task) {
-        const rng = mulberry32(task.seed);
-        const group = new THREE.Group();
-        group.name = `chunk-marker:${task.entityId}`;
-        const count = 3 + Math.floor(rng() * 4);
-        for (let i = 0; i < count; i++) {
-            const box = new THREE.Mesh(unitBox, awningMaterials[(task.seed + i) % awningMaterials.length]);
-            box.position.set(task.x + (rng() - 0.5) * 0.75, 0.12 + i * 0.19, task.z + (rng() - 0.5) * 0.75);
-            box.rotation.y = rng() * Math.PI;
-            box.scale.set(0.32 + rng() * 0.28, 0.18 + rng() * 0.2, 0.30 + rng() * 0.34);
-            group.add(box);
-        }
-        group.userData.chunkCosmetic = true;
-        group.userData.detailPhysics = [{ kind: 'props', item: { x: task.x, z: task.z, radius: 0.62, height: 1.28 } }];
-        return group;
-    }
 
     function applyTask(chunk, payload, task) {
         if (!payload?.detailRoot || payload.disposed) return false;
@@ -1357,7 +1313,6 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
         else if (task.kind === 'interior-prop') object = createInteriorProp(payload, task);
         else if (task.kind === 'roof-topper') object = createRoofTopper(payload, task);
         else if (task.kind.startsWith('plaza-')) object = createPlazaFeature(payload, task);
-        else if (task.kind === 'marker') object = createMarker(payload, task);
         if (!object) return false;
         payload.detailRoot.add(object);
         publishObjectPhysics(payload, object);

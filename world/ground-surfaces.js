@@ -4,7 +4,7 @@ import { QP } from '../runtime/main-quantitative-literals.js';
 export function createGroundSurfaceSystem(deps) {
     const {
         CONFIG, JUNK_RENDER_CHUNK, GRID_ROWS, GRID_COLS, grid, groundTex, unitPlaneGeo, skirtBoxGeo,
-        colSize, rowSize, colHalf, rowHalf, cellToWorld, wallDirections, parkCells, makePixelTexture,
+        colSize, rowSize, colHalf, rowHalf, cellToWorld, wallDirections, makePixelTexture,
         camera, publishSurfacePatch, testYieldNow, testYieldIfNeeded,
     } = deps;
 
@@ -144,7 +144,6 @@ export function createGroundSurfaceSystem(deps) {
     const readySurfaceChunks = new Set();
     let surfaceRoadCells = QP[4904];
     let surfaceAlleyCells = QP[4905];
-    let surfaceParkSkipped = QP[4906];
     let surfaceDraws = QP[4883];
     let surfaceInstances = QP[4884];
 
@@ -159,10 +158,6 @@ export function createGroundSurfaceSystem(deps) {
         for (let r = QP[4907]; r < GRID_ROWS - QP[4908]; r++) {
             for (let c = QP[4909]; c < GRID_COLS - QP[4910]; c++) {
                 if (grid[r][c]) continue;
-                // Parks now receive the same structural ground plate as every other open
-                // cell. The richer grass/trees/benches are a deferred plaza job, so skipping
-                // the base plate here would create a real temporary floor hole.
-                if (parkCells.has(`${c},${r}`)) surfaceParkSkipped++;
                 const { x, z } = cellToWorld(c, r);
                 const chunkX = Math.floor(x / JUNK_RENDER_CHUNK), chunkZ = Math.floor(z / JUNK_RENDER_CHUNK);
                 const key = surfaceChunkKey(chunkX, chunkZ);
@@ -257,7 +252,7 @@ export function createGroundSurfaceSystem(deps) {
         surfaceDraws += spill.draws;
         surfaceInstances += spill.instances;
         groundSurfaceBatchStats = { draws: surfaceDraws, instances: surfaceInstances };
-        console.log(`[gen] explicit ground surfaces: ${surfaceRoadCells} road + ${surfaceAlleyCells} alley cells, ${surfaceParkSkipped} park cells retain structural base plates; ${surfaceInstances} plates/sidewalks emitted directly as ${surfaceDraws} progressive chunked instance batches (shared ${roadMaterialCache.size} road materials + 1 alley material)`);
+        console.log(`[gen] explicit ground surfaces: ${surfaceRoadCells} road + ${surfaceAlleyCells} alley cells, ${surfaceInstances} plates/sidewalks emitted directly as ${surfaceDraws} progressive chunked instance batches (shared ${roadMaterialCache.size} road materials + 1 alley material)`);
     }
 
     

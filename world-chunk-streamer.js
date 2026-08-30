@@ -26,12 +26,6 @@ export const CHUNK_STATE = Object.freeze({
     FAILED: 'failed',
 });
 
-export const WORLD_SPACE_STATE = Object.freeze({
-    AUTHORITATIVE: 'authoritative',
-    UNKNOWN: 'unknown',
-    FORBIDDEN: 'forbidden',
-});
-
 export function createWorldChunkStreamer({
     chunkSize,
     worldSeed = 0,
@@ -1044,92 +1038,12 @@ export function createWorldChunkStreamer({
     // publication + authoritative physics. Predictive demand should keep this
     // frontier ahead of normal travel; if the player catches it, movement waits a
     // few frames instead of creating a late-geometry/player-overlap deadlock.
-    function classifyWorldPosition(x, z) {
-        const c = coordsForWorld(x, z);
-        const chunk = chunks.get(keyOf(c.x, c.z));
-        if (chunk?.payload) syncChunkPublication(chunk);
-        if (chunk?.state === CHUNK_STATE.READY && chunk.renderPublished && chunk.physicsAuthoritative) {
-            return {
-                state: WORLD_SPACE_STATE.AUTHORITATIVE,
-                chunkKey: chunk.key,
-                provisionalSupportY: null,
-                renderPublished: true,
-                physicsAuthoritative: true,
-            };
-        }
-        return {
-            state: WORLD_SPACE_STATE.UNKNOWN,
-            chunkKey: keyOf(c.x, c.z),
-            provisionalSupportY: 0,
-            structuralReady: chunk?.state === CHUNK_STATE.READY,
-            renderPublished: !!chunk?.renderPublished,
-            physicsAuthoritative: !!chunk?.physicsAuthoritative,
-            reason: chunk?.publicationReason ?? null,
-        };
-    }
 
-    function requestWorldPosition(x, z, {
-        headingX = null,
-        headingZ = null,
-        reason = 'player-frontier',
-        neighborhood = 1,
-    } = {}) {
-        const c = coordsForWorld(x, z);
-        const radius = Math.max(0, Math.floor(Number(neighborhood) || 0));
-        const requested = [];
-        const mark = (cx, cz, priority) => {
-            const chunk = ensureChunk(cx, cz);
-            if (chunk.state === CHUNK_STATE.PLANNED || chunk.state === CHUNK_STATE.UNLOADED) {
-                state(chunk, CHUNK_STATE.QUEUED);
-            }
-            if (chunk.state === CHUNK_STATE.QUEUED || chunk.state === CHUNK_STATE.PLANNED) {
-                chunk.demandPriority = Math.max(Number(chunk.demandPriority) || 0, priority);
-                chunk.demandReason = reason;
-                requested.push(chunk.key);
-            }
-            return chunk;
-        };
-
-        // Destination occupancy is the hard deadline. Nearby cells are insurance
-        // against turning; one forward cell is predictive travel-corridor work.
-        mark(c.x, c.z, 3);
-        for (let dz = -radius; dz <= radius; dz++) {
-            for (let dx = -radius; dx <= radius; dx++) {
-                if (!dx && !dz) continue;
-                mark(c.x + dx, c.z + dz, 1);
-            }
-        }
-
-        let hx = Number(headingX);
-        let hz = Number(headingZ);
-        if (!Number.isFinite(hx) || !Number.isFinite(hz)) {
-            const h = typeof getPlayerHeading === 'function' ? getPlayerHeading() : null;
-            hx = Number(h?.x) || 0;
-            hz = Number(h?.z) || 0;
-        }
-        if (Math.abs(hx) > Math.abs(hz) && hx) mark(c.x + Math.sign(hx), c.z, 2);
-        else if (hz) mark(c.x, c.z + Math.sign(hz), 2);
-
-        return { chunkKey: keyOf(c.x, c.z), requested };
-    }
 
     // Existing player physics asks a boolean question. UNKNOWN now means a short
     // generation frontier: demand the destination immediately, but do not let the
     // capsule occupy deterministic geometry that has not published yet. FORBIDDEN
     // remains a permanent prohibition; UNKNOWN is expected to clear quickly.
-    function isWorldPositionAvailable(x, z) {
-        let classification = classifyWorldPosition(x, z);
-        if (classification.state === WORLD_SPACE_STATE.UNKNOWN) {
-            requestWorldPosition(x, z, { reason: 'player-frontier', neighborhood: 1 });
-            const c = coordsForWorld(x, z);
-            const chunk = chunks.get(keyOf(c.x, c.z));
-            if (chunk?.state === CHUNK_STATE.READY && chunk.payload) {
-                applyChunkVisibility(chunk);
-                classification = classifyWorldPosition(x, z);
-            }
-        }
-        return classification.state === WORLD_SPACE_STATE.AUTHORITATIVE;
-    }
 
     function getChunkAtWorld(x, z) {
         const c = coordsForWorld(x, z);
@@ -1319,9 +1233,6 @@ export function createWorldChunkStreamer({
         updateVisibility,
         isChunkReady,
         isChunkVisible: (x, z) => !!chunks.get(keyOf(x, z))?.visible,
-        classifyWorldPosition,
-        requestWorldPosition,
-        isWorldPositionAvailable,
         getChunkAtWorld,
         readyWithinRadius,
         publicationWithinRadius,

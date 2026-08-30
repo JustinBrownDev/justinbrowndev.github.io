@@ -6,7 +6,6 @@ function emptyWorld(extra = {}) {
     worldToCell: () => ({ col: 0, row: 0 }),
     grid: [[true]],
     buildingWallSegments: new Map(),
-    mazeSealWalls: [],
     propColliders: [],
     elevatedPlatforms: [],
     rampRuns: [],

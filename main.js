@@ -35,7 +35,6 @@ import { createAdornmentSystem } from './systems/adornment-assets.js';
 import { createSignageSystem } from './world/signage.js';
 import { createStreetPropsSystem } from './world/street-props.js';
 import { createGroundSurfaceSystem } from './world/ground-surfaces.js';
-import { createFiniteCylinderSupportColliders } from './world/collision-shapes.js';
 import { createFacadeLayoutSystem } from './world/facade-layout.js';
 import { createAuthoredContentHelpers } from './world/authored-content-helpers.js';
 import { createSpawnMazePlan, createSpawnBuildingSitePlan } from './world/spawn-district-plan.js';
@@ -1709,15 +1708,6 @@ const sitePlan = createSpawnBuildingSitePlan({
 });
 const { siteIdOf, buildingSites, SIGNATURE_TYPES, signatureInstances, cellEdgeKind } = sitePlan;
 
-const mazeSealWalls = [];  
- 
- 
- 
- 
- 
-
- 
-
 const skirtBoxGeo = new THREE.BoxGeometry(QP[874], QP[875], QP[876]);
  
  
@@ -1726,7 +1716,6 @@ const unitPlaneGeo = new THREE.PlaneGeometry(QP[877], QP[878]);
  
 const sharedBenchMaterial = new THREE.MeshStandardMaterial({ color: QP[879], roughness: QP[880] });
  
-let _sharedGrassMaterial = null;
 
  
  
@@ -1831,46 +1820,12 @@ const candidateFaces = [];
 const JUNK_RENDER_CHUNK_SIZE = QP[1011];
 
 const {
-    addTrashCan,
-    addTrafficCone,
-    addMileMarker,
-    addTrafficSign,
-    addTrafficSignal,
-    addCrate,
-    addLantern,
-    addVendingMachine,
-    addMuseumPlacard,
-    addStickerTag,
-    addWallFlyer,
-    addBusinessCardLitter,
-    addManhole,
-    addPigeon,
-    addOverheadCable,
-    finalizeOverheadCables,
-    addAwning,
-    addTree,
     addPottedPlant,
-    addTableWithClutter,
-    addIvyPatch,
-    addPipeCluster,
-    addWeeds,
-    addPlazaGlow,
-    addThicketShade,
-    addStatue,
     scatterJunk,
     pileJunkCluster,
-    addConstructionZone,
-    addNewsstand,
-    addPhoneBooth,
-    addAtmKiosk,
-    addCrimeScene,
-    trafficSignals,
     JUNK_RENDER_CHUNK,
-    PROP_BUILDERS,
-    PROP_HEIGHTS,
     propColliders,
     propCandidatesNear,
-    plazaFacingRotY,
 } = createStreetPropsSystem({
     CELL,
     CONFIG,
@@ -2030,13 +1985,6 @@ function* unifiedSignatureModuleAdapterSteps(cell, opts = {}) {
 adornmentSystem.setGalleryPanelBuilder(buildGalleryArtPanel);
 
 const animatedMaterials = new Set();
-function refreshAnimatedMaterials() {
-    for (const signal of trafficSignals) {
-        animatedMaterials.add(signal.redMat);
-        animatedMaterials.add(signal.yellowMat);
-        animatedMaterials.add(signal.greenMat);
-    }
-}
 staticWorldOptimizer = createProgressiveStaticWorldOptimizer({
     THREE,
     scene,
@@ -2063,22 +2011,8 @@ const STREAM_CHUNK_SIZE = Math.max(GRID_W, GRID_H);
 let worldChunkStreamer = null;
 let cityFabricEngine = null;
 let _spawnDistrictStructuresComplete = false;
-let _spawnGroundPositionReady = null;
 let authoredCompletedSiteIds = null;
 let authoredStructuralReadySiteIds = null;
-function isStreamingWorldPositionAvailable(x, z) {
-    const insideSpawn = Math.abs(x) <= GRID_W / QP[559] && Math.abs(z) <= GRID_H / QP[560];
-    if (insideSpawn) {
-        if (!_testTopologyReady) return true;
-        if (_spawnGroundPositionReady && !_spawnGroundPositionReady(x, z)) return false;
-        const { col, row } = worldToCellIndex(x, z);
-        if (grid[row]?.[col] === false) return true;
-        const siteId = siteIdOf[row]?.[col] ?? QP[775];
-        return siteId >= QP[1015] && authoredStructuralReadySiteIds?.has(siteId) === true;
-    }
-    if (worldChunkStreamer) return worldChunkStreamer.isWorldPositionAvailable(x, z);
-    return false;
-}
 function worldToCell(x, z) {
     return worldToCellIndex(x, z);
 }
@@ -2105,13 +2039,11 @@ playerPhysics = createPlayerPhysics({
     worldToCell,
     grid,
     buildingWallSegments,
-    mazeSealWalls,
     propColliders,
     elevatedPlatforms,
     rampRuns,
     overheadCeilings,
     boundsHalf: Infinity,
-    isWorldPositionAvailable: isStreamingWorldPositionAvailable,
     ...PHYSICS_TUNING,
 });
 console.log(`[stream-perf] full player physics active during authored construction at ${bootElapsed()}`);
@@ -2542,7 +2474,6 @@ function stepAuthoredBuildingJob(job) {
         job.completed = true;
         authoredCompletedSiteIds.add(site.id);
         _testGenerationDone++;
-        refreshAnimatedMaterials();
         runtimeLatency.record(site.signatureType ? 'generation.signature-site-wall' : 'generation.ordinary-site-wall', performance.now() - job.startedAt, {
             siteId: site.id,
             type: site.signatureType || 'ordinary',
@@ -2741,11 +2672,6 @@ bootStatus(`minimum-safe spawn ready; ${authoredBuildingJobs.length} authored si
  
  
  
-// Legacy spawn-only special-feature roulette is retired. Plaza cells below are
-// admitted into KowloonFabricEngine.buildAuthoredPlaza() and refine normally.
-const parkCells = new Set();
-// Compatibility for dormant legacy plaza helpers; no runtime scheduler calls them.
-const SPAWN_GROUND_CLUTTER_SCALE = 0;
 
 
  
@@ -2755,7 +2681,7 @@ const SPAWN_GROUND_CLUTTER_SCALE = 0;
  
 const groundSurfaceSystem = createGroundSurfaceSystem({
     CONFIG, JUNK_RENDER_CHUNK, GRID_ROWS, GRID_COLS, grid, groundTex, unitPlaneGeo, skirtBoxGeo,
-    colSize, rowSize, colHalf, rowHalf, cellToWorld, wallDirections, parkCells, makePixelTexture,
+    colSize, rowSize, colHalf, rowHalf, cellToWorld, wallDirections, makePixelTexture,
     camera,
     publishSurfacePatch: patch => {
         const payload = cityFabricEngine.buildAuthoredSurfacePatch(patch);
@@ -2765,7 +2691,6 @@ const groundSurfaceSystem = createGroundSurfaceSystem({
     testYieldNow: testPublishAndYieldNow, testYieldIfNeeded: testPublishAndYieldIfNeeded,
 });
 const { isStreetCell, roadOpenMask, prepareOpenCellSurfaces, pumpOpenCellSurfaces, ensureOpenCellSurfaceNeighborhood, isWorldPositionReady: isSpawnGroundPositionReady, layOpenCellSurfaces } = groundSurfaceSystem;
-_spawnGroundPositionReady = isSpawnGroundPositionReady;
 
 // Spawn plazas are now thin adapters into the universal chunk enrichment path.
 // Admission waits for each plaza's real ground patch, then common fabric owns
@@ -2847,123 +2772,9 @@ function addBench(x, z, rotY) {
  
  
  
-function addMegaBillboard(x, z) {
-    const rotY = randRange(QP[4930], Math.PI * QP[4931]);
-    const frameMat = new THREE.MeshStandardMaterial({ color: QP[4932], roughness: QP[4933], metalness: QP[4934] });
-    const g = new THREE.Group();
-    for (const side of [QP[4935], QP[4936]]) {
-        const leg = new THREE.Mesh(jitterGeometry(new THREE.CylinderGeometry(QP[4937], QP[4938], QP[4939], QP[4940]), QP[4941]), frameMat);
-        leg.position.set(side * QP[4942], QP[4943], QP[4944]);
-        g.add(leg);
-    }
-    for (let i = QP[4945]; i < QP[4946]; i++) {
-        const content = i === QP[4945] ? toContent(pick(CODE_LORE_PAIRS)) : pickSignContent(x, z);
-        const neon = pick(CONFIG.neonPalette);
-        const font = pickTextFont();
-        const backing = pick(SIGN_BACKINGS);
-        const tex = makePixelTexture((ctx, w, h) => {
-            const color = hexToCss(neon);
-            ctx.fillStyle = backing;
-            ctx.fillRect(QP[4947], QP[4948], w, h);
-            ctx.strokeStyle = color;
-            ctx.lineWidth = QP[4949];
-            ctx.strokeRect(QP[4950], QP[4951], w - QP[4952], h - QP[4953]);
-            ctx.fillStyle = color;
-            ctx.textAlign = 'center';
-            ctx.font = `bold 34px ${font}`;
-            ctx.fillText(content.title, w / QP[4954], h / QP[4955] - QP[4956], w - QP[4957]);
-            ctx.font = `18px ${font}`;
-            ctx.fillText(content.subtitle, w / QP[4958], h / QP[4959] + QP[4960], w - QP[4961]);
-        }, QP[4962], QP[4963]);
-        const panel = new THREE.Mesh(
-            new THREE.PlaneGeometry(QP[4964], QP[4965]),
-            new THREE.MeshBasicMaterial({ map: tex })
-        );
-        panel.position.set(QP[4966], QP[4967] + i * QP[4968], QP[4969]);
-        g.add(panel);
 
-        if (dynamicLightsRemaining > QP[4970]) {
-            dynamicLightsRemaining--;
-            const light = new THREE.PointLight(neon, QP[4971], QP[4972], QP[4973]);
-            light.position.set(QP[4974], QP[4975] + i * QP[4976], QP[4977]);
-            g.add(light);
-        }
-    }
-    g.rotation.y = rotY;
-    g.position.set(x, QP[4978], z);
-    scene.add(g);
 
-    // RENDER / COLLISION SANITY HANDOFF: derive collision from the same cylinder
-    // dimensions and local support offsets used above. The panel stays non-solid;
-    // the visibly open space between the legs therefore remains real traversal.
-    const supportColliders = createFiniteCylinderSupportColliders({
-        originX: x,
-        originZ: z,
-        rotationY: rotY,
-        localXOffsets: [QP[4935] * QP[4942], QP[4936] * QP[4942]],
-        localZ: QP[4944],
-        topRadius: QP[4937],
-        bottomRadius: QP[4938],
-        cylinderHeight: QP[4939],
-        centerY: QP[4978] + QP[4943],
-    });
-    return supportColliders;
-}
 
-function sharedGrassMaterial() {
-    if (_sharedGrassMaterial) return _sharedGrassMaterial;
-    const lr = localRng(hashString32(`${SEED}:shared-grass`));
-    const tex = makePixelTexture((ctx, w, h) => {
-        ctx.fillStyle = '#3a5c2e'; ctx.fillRect(QP[4980], QP[4981], w, h);
-        for (let i = QP[4982]; i < QP[4983]; i++) {
-            const shade = QP[4984] + Math.floor(lr() * QP[4985]);
-            ctx.fillStyle = `rgb(${QP[4986] + shade * QP[4987]},${QP[4988] + shade},${QP[4989] + shade * QP[4990]})`;
-            ctx.fillRect(Math.floor(lr() * w), Math.floor(lr() * h), QP[4991], QP[4992]);
-        }
-    }, QP[4993], QP[4994]);
-    _sharedGrassMaterial = new THREE.MeshStandardMaterial({ map: tex, roughness: QP[4995] });
-    return _sharedGrassMaterial;
-}
-
-function* addParkSteps(x, z, col = null, row = null) {
-     
-     
-     
-     
-    const hwx = col !== null ? colHalf(col) : BLOCK / QP[4996];
-    const hwz = row !== null ? rowHalf(row) : BLOCK / QP[4997];
-    const grass = new THREE.Mesh(unitPlaneGeo, sharedGrassMaterial());
-    grass.rotation.x = -Math.PI / QP[4998];
-    grass.scale.set(hwx * QP[4999] * QP[5000], hwz * QP[5001] * QP[5002], QP[5003]);
-    grass.position.set(x, QP[5004], z);
-    scene.add(grass);
-    yield { phase: 'park-grass' };
-
-    const clusterCount = QP[5005] + Math.floor(rng() * QP[5006]);
-    for (let i = QP[5007]; i < clusterCount; i++) {
-        const px = x + randRange(-hwx * QP[5008], hwx * QP[5009]);
-        const pz = z + randRange(-hwz * QP[5010], hwz * QP[5011]);
-        addTree(px, pz);
-        propColliders.push({ x: px, z: pz, radius: QP[5012], height: PROP_HEIGHTS.tree });
-        yield { phase: 'park-tree', index: i, total: clusterCount };
-    }
-    const benchAngle = randRange(QP[5013], Math.PI * QP[5014]);
-    addBench(x + Math.cos(benchAngle) * QP[5015], z + Math.sin(benchAngle) * QP[5016], benchAngle + Math.PI / QP[5017]);
-    yield { phase: 'park-bench' };
-    scatterJunk('park', x, z, Math.max(1, Math.floor(QP[5018] * SPAWN_GROUND_CLUTTER_SCALE)), Math.min(hwx, hwz) * QP[5019]);
-    yield { phase: 'park-junk' };
-    // Wrought-iron gates made ordinary parks read as fenced set pieces. Keep the
-    // resumable phase for iterator/checkpoint stability, but intentionally spawn none.
-    yield { phase: 'park-model' };
-    return Math.min(hwx, hwz);
-}
-
-function addPark(x, z, col = null, row = null) {
-    const iterator = addParkSteps(x, z, col, row);
-    let step = iterator.next();
-    while (!step.done) step = iterator.next();
-    return step.value;
-}
 
 function wallDirections(c, r) {
     const dirs = [];
@@ -3100,16 +2911,6 @@ await testYieldNow('minimum-safe ground ready · deferring remaining streets/all
 // Legacy weighted open-cell random-prop authority removed. Common Kowloon
 // enrichment is now the sole ordinary street/facade decoration generator.
 
-const deferredDecorationStats = Object.freeze({
-    totalSectors: 0,
-    generatedSectors: 0,
-    generatedCells: 0,
-    queuedSectors: 0,
-    pendingSectors: 0,
-    lastPumpMs: 0,
-    retired: true,
-});
-console.log('[perf] legacy spawn open-cell decoration streamer retired; common Kowloon enrichment owns ordinary street detail');
 
  
 
@@ -3352,7 +3153,6 @@ const clock = new THREE.Clock();
 
 let elapsedTime = QP[5340];  
 let footstepTimer = QP[5341];
-let trafficSignalUpdateTimer = QP[5342];
 let worldChunkPumpPromise = null;
 let worldChunkNextKickAt = 0;
 let authoredOptimizerNextAt = 0;
@@ -3489,7 +3289,6 @@ function maybeLogWorldDiagnostics(now) {
         attempts: refinement.attempts ?? 0,
         published: refinement.published ?? 0,
         assetCompleted: assets.completed ?? 0,
-        decorationCells: deferredDecorationStats.generatedCells ?? 0,
     };
     const seconds = worldDiagnosticsPrevious
         ? Math.max(0.001, (now - worldDiagnosticsPrevious.at) / 1000)
@@ -3500,8 +3299,7 @@ function maybeLogWorldDiagnostics(now) {
         attempt: diagnosticRate(current.attempts, worldDiagnosticsPrevious.attempts, seconds),
         publish: diagnosticRate(current.published, worldDiagnosticsPrevious.published, seconds),
         asset: diagnosticRate(current.assetCompleted, worldDiagnosticsPrevious.assetCompleted, seconds),
-        decor: diagnosticRate(current.decorationCells, worldDiagnosticsPrevious.decorationCells, seconds),
-    } : { build: '-', refine: '-', attempt: '-', publish: '-', asset: '-', decor: '-' };
+    } : { build: '-', refine: '-', attempt: '-', publish: '-', asset: '-' };
     worldDiagnosticsPrevious = current;
 
     console.log('[world-state] t=' + (now / 1000).toFixed(1) + 's'
@@ -3549,12 +3347,7 @@ function maybeLogWorldDiagnostics(now) {
         + ' jobs=' + authoredBuildingJobs.length
         + ' fabric=' + unifiedSpawnFabricRefinementQueue.length
         + ' plazas=' + authoredSpawnPlazaAdmissions.length
-        + ' complete=' + (_spawnDistrictStructuresComplete ? 1 : 0)
-        + ' | decor sectors=' + deferredDecorationStats.generatedSectors + '/' + deferredDecorationStats.totalSectors
-        + ' cells=' + deferredDecorationStats.generatedCells
-        + ' queued=0'
-        + ' pending=' + deferredDecorationStats.pendingSectors
-        + ' | health stall=' + (health.stallWarnings ?? 0)
+        + ' complete=' + (_spawnDistrictStructuresComplete ? 1 : 0)        + ' | health stall=' + (health.stallWarnings ?? 0)
         + ' starved=' + (health.starvedWarnings ?? 0)
         + ' noGrowthAttempts=' + (health.attemptsWithoutGrowth ?? 0));
     return true;
@@ -3733,24 +3526,6 @@ function animate(now = performance.now()) {
             : f.base * (QP[5346] + QP[5347] * Math.sin(elapsedTime * f.speed + f.phase));
     }
 
-     
-     
-     
-    trafficSignalUpdateTimer += delta;
-    if (trafficSignalUpdateTimer >= QP[5348]) {
-        trafficSignalUpdateTimer %= QP[5349];
-        for (const s of trafficSignals) {
-            const cyclePos = (elapsedTime + s.phase) % QP[5350];
-            const on = cyclePos < QP[5351] ? 'red' : cyclePos < QP[5352] ? 'green' : 'yellow';
-            if (s.state === on) continue;
-            s.state = on;
-            s.redMat.color.set(on === 'red' ? QP[5353] : QP[5354]);
-            s.greenMat.color.set(on === 'green' ? QP[5355] : QP[5356]);
-            s.yellowMat.color.set(on === 'yellow' ? QP[5357] : QP[5358]);
-            if (s.light) s.light.color.set(on === 'red' ? QP[5359] : on === 'green' ? QP[5360] : QP[5361]);
-        }
-    }
-
     const forwardInput = (move.forward ? QP[5362] : QP[5363]) - (move.back ? QP[5364] : QP[5365]) - touchMoveVec.y;
     const rightInput = (move.right ? QP[5366] : QP[5367]) - (move.left ? QP[5368] : QP[5369]) + touchMoveVec.x;
 
@@ -3854,7 +3629,7 @@ function animate(now = performance.now()) {
         const ri = renderer.info;
         const chunkStats = staticWorldOptimizer?.getStats();
         console.log(`[perf] ~${fps.toFixed(QP[5396])} fps | calls=${ri.render.calls} tris=${ri.render.triangles} | geo=${ri.memory.geometries} tex=${ri.memory.textures}`
-            + ` | chunks=${chunkStats?.visibleChunks ?? '-'}/${chunkStats?.chunks ?? '-'} | deco=${deferredDecorationStats.generatedSectors}/${deferredDecorationStats.totalSectors}`
+            + ` | chunks=${chunkStats?.visibleChunks ?? '-'}/${chunkStats?.chunks ?? '-'}`
             + ` | quality=${QUALITY === CONFIG.quality.desktop ? 'desktop' : QUALITY === CONFIG.quality.mobile ? 'mobile' : 'potato'}`);
         fpsFrameCount = QP[5397];
         fpsLastLogMs = nowMs;
@@ -3971,8 +3746,6 @@ function scheduleTraversalValidation() {
 }
 
 await testCompileSceneIfDirty();
-
-refreshAnimatedMaterials();
 
 console.log(`[perf] spawn structural handoff at ${bootElapsed()} since page start -- starting live world stream before static refinement`);
 testStatus('spawn playable · refinement continues in live runtime');
@@ -4105,7 +3878,7 @@ window.__debug = {
             groundSurfaceBatches: groundSurfaceSystem.stats(), horizontalPlaneBatches: flushHorizontalPlaneBatches(),
         },
         decoration: {
-            ...deferredDecorationStats,
+            authority: 'KowloonFabricEngine',
             adornmentQueue: adornmentLoadQueue.stats(),
             backgroundEnrichmentReleased,
             failedCityAssets: failedCityAssetLoads.size,

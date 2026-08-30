@@ -1,8 +1,6 @@
 import assert from 'node:assert/strict';
 import {
-  CHUNK_STATE,
-  WORLD_SPACE_STATE,
-  createWorldChunkStreamer,
+  CHUNK_STATE, createWorldChunkStreamer,
   deterministicChunkSeed,
   worldWeirdnessAt,
 } from './world-chunk-streamer.js';
@@ -38,9 +36,6 @@ position.x = 0;
 
 const spawn = streamer.markChunkReady(0, 0, { authored: true });
 assert.equal(spawn.state, CHUNK_STATE.READY);
-assert.equal(streamer.isWorldPositionAvailable(0, 0), true);
-assert.equal(streamer.classifyWorldPosition(40, 0).state, WORLD_SPACE_STATE.UNKNOWN, 'unbuilt neighboring space must be unknown, not solid');
-assert.equal(streamer.isWorldPositionAvailable(40, 0), false, 'unknown procedural space must hold movement at the generation frontier until published authority exists');
 
 streamer.ensureNeighborhood();
 const nearest = streamer.nearestQueuedChunk();
@@ -59,7 +54,6 @@ await streamer.pump({ maxChunks: 1 });
 assert.equal(built.at(-1), '4,0', 'current player chunk must outrank stale queued work');
 assert.ok(unloaded.length >= 1, 'far resident procedural chunks must unload after travel');
 assert.ok(!unloaded.includes('0,0'), 'authored singular spawn chunk must stay pinned');
-assert.equal(streamer.isWorldPositionAvailable(position.x, position.z), true);
 
  
  

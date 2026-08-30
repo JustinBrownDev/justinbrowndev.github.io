@@ -3955,12 +3955,27 @@ function playerNearAuthoredSpawn() {
     });
 }
 
+function diagnosticErrorText(error) {
+    const name = error?.name ? String(error.name) + ': ' : '';
+    const message = error?.message ?? error;
+    return (name + String(message ?? 'unknown error')).replace(/\s+/g, ' ').slice(0, 600);
+}
+
+function formatAdornmentQueueStats(stats = adornmentLoadQueue.stats()) {
+    return 'assets=' + stats.active + '/' + stats.concurrency + ' active'
+        + ' pending=' + stats.pending
+        + ' done=' + stats.completed
+        + ' failed=' + stats.failed
+        + ' state=' + (stats.paused ? 'paused' : 'running');
+}
+
 function syncAuthoredBackgroundQueueLocality(nearSpawn = playerNearAuthoredSpawn()) {
     if (!authoredAssetLaneOpened || nearSpawn === authoredBackgroundQueueNear) return false;
     authoredBackgroundQueueNear = nearSpawn;
     if (nearSpawn) adornmentLoadQueue.resume();
     else adornmentLoadQueue.pause();
-    console.log('[asset] authored adornment queue ' + (nearSpawn ? 'resumed near player' : 'paused outside player neighborhood'));
+    console.log('[asset-event] ' + (nearSpawn ? 'resume-near-authored' : 'pause-outside-authored')
+        + ' | ' + formatAdornmentQueueStats());
     return true;
 }
 
@@ -3970,7 +3985,7 @@ function maybeOpenAuthoredAssetLane(nearSpawn = playerNearAuthoredSpawn()) {
     authoredBackgroundQueueNear = true;
     adornmentLoadQueue.setConcurrency(QP[1024]);
     adornmentLoadQueue.resume();
-    console.log('[asset] nearby authored asset lane opened at concurrency 1', adornmentLoadQueue.stats());
+    console.log('[asset-event] open-near-authored | ' + formatAdornmentQueueStats());
     return true;
 }
 
@@ -3987,7 +4002,7 @@ function maybeReleaseBackgroundEnrichment() {
     adornmentLoadQueue.setConcurrency(CONFIG.streaming.adornmentConcurrency);
     adornmentLoadQueue.resume();
     authoredBackgroundQueueNear = true;
-    console.log('[asset] local spawn + structural 7x7 warm + authored structure complete · widening authored adornment queue', adornmentLoadQueue.stats());
+    console.log('[asset-event] widen-after-prefetch-and-authored-structure | ' + formatAdornmentQueueStats());
     if (!wikiEnrichmentScheduled) {
         wikiEnrichmentScheduled = true;
         const runWiki = () => fetchRandomWikiArticles(QP[5300]);
@@ -3997,19 +4012,100 @@ function maybeReleaseBackgroundEnrichment() {
     return true;
 }
 
-let worldRichnessNextLogAt = 0;
-function maybeLogWorldRichness(now, stats = worldChunkStreamer?.stats()) {
-    if (now < worldRichnessNextLogAt || !stats?.richness) return false;
-    worldRichnessNextLogAt = now + 1000;
-    const r = stats.richness;
-    console.log('[world-richness] published ' + r.published + '/' + r.total
-        + ' | detail children +' + r.detailChildren
-        + ' | detail instances +' + r.detailRenderInstances
-        + ' | successful detail ' + r.successful + '/' + r.tasks
-        + ' | attempted ' + r.attempted
-        + ' | no-op ' + r.noOp
-        + ' | failed ' + r.failed
-        + ' | first-pass entities ' + r.firstPassEntitiesComplete + '/' + r.firstPassEntityTarget);
+const WORLD_DIAGNOSTIC_INTERVAL_MS = 2000;
+let worldDiagnosticsNextLogAt = 0;
+let worldDiagnosticsPrevious = null;
+
+function diagnosticRate(current, previous, seconds) {
+    if (!(seconds > 0)) return '-';
+    return (Math.max(0, current - previous) / seconds).toFixed(1) + '/s';
+}
+
+function maybeLogWorldDiagnostics(now, stats = worldChunkStreamer?.stats()) {
+    if (now < worldDiagnosticsNextLogAt || !stats?.richness) return false;
+    worldDiagnosticsNextLogAt = now + WORLD_DIAGNOSTIC_INTERVAL_MS;
+
+    const richness = stats.richness;
+    const throughput = stats.throughput ?? {};
+    const refinement = stats.refinement ?? {};
+    const render = stats.localRenderRing ?? {};
+    const firstPass = stats.localRenderRefinement ?? {};
+    const prefetch = stats.localPrefetchRing ?? {};
+    const health = stats.richnessHealth ?? {};
+    const states = stats.states ?? {};
+    const assets = adornmentLoadQueue.stats();
+    const playerChunk = worldChunkStreamer.playerChunkCoords();
+    const current = {
+        at: now,
+        builds: throughput.builds ?? 0,
+        refinementSteps: refinement.steps ?? 0,
+        attempts: refinement.attempts ?? 0,
+        published: refinement.published ?? 0,
+        assetCompleted: assets.completed ?? 0,
+        decorationCells: deferredDecorationStats.generatedCells ?? 0,
+    };
+    const seconds = worldDiagnosticsPrevious
+        ? Math.max(0.001, (now - worldDiagnosticsPrevious.at) / 1000)
+        : 0;
+    const rates = worldDiagnosticsPrevious ? {
+        build: diagnosticRate(current.builds, worldDiagnosticsPrevious.builds, seconds),
+        refine: diagnosticRate(current.refinementSteps, worldDiagnosticsPrevious.refinementSteps, seconds),
+        attempt: diagnosticRate(current.attempts, worldDiagnosticsPrevious.attempts, seconds),
+        publish: diagnosticRate(current.published, worldDiagnosticsPrevious.published, seconds),
+        asset: diagnosticRate(current.assetCompleted, worldDiagnosticsPrevious.assetCompleted, seconds),
+        decor: diagnosticRate(current.decorationCells, worldDiagnosticsPrevious.decorationCells, seconds),
+    } : { build: '-', refine: '-', attempt: '-', publish: '-', asset: '-', decor: '-' };
+    worldDiagnosticsPrevious = current;
+
+    console.log('[world-state] t=' + (now / 1000).toFixed(1) + 's'
+        + ' gear=' + worldStreamingGear
+        + ' player=' + camera.position.x.toFixed(1) + ',' + camera.position.y.toFixed(1) + ',' + camera.position.z.toFixed(1)
+        + ' chunk=' + playerChunk.x + ',' + playerChunk.z
+        + ' | ring pub=' + (render.published ?? render.ready ?? 0) + '/' + (render.total ?? 0)
+        + ' phys=' + (render.physicsAuthoritative ?? 0) + '/' + (render.total ?? 0)
+        + ' struct=' + (render.structuralReady ?? 0) + '/' + (render.total ?? 0)
+        + ' stalledPub=' + (stats.publication?.stalledRequestedVisible ?? 0)
+        + ' prefetch=' + (prefetch.ready ?? 0) + '/' + (prefetch.total ?? 0)
+        + ' | firstPass=' + (richness.firstPassEntitiesComplete ?? 0) + '/' + (richness.firstPassEntityTarget ?? 0)
+        + ' pendingChunks=' + (firstPass.floorPendingChunks ?? 0)
+        + ' | detail pub=' + (richness.successful ?? 0) + '/' + (richness.tasks ?? 0)
+        + ' attempts=' + (richness.attempted ?? 0)
+        + ' noop=' + (richness.noOp ?? 0)
+        + ' fail=' + (richness.failed ?? 0)
+        + ' pendingVisible=' + (richness.pendingPublishedDetailChunks ?? 0)
+        + ' children=' + (richness.detailChildren ?? 0)
+        + ' instances=' + (richness.detailRenderInstances ?? 0)
+        + ' lastKind=' + (refinement.lastKind ?? '-')
+        + ' | rate build=' + rates.build
+        + ' refine=' + rates.refine
+        + ' try=' + rates.attempt
+        + ' pub=' + rates.publish
+        + ' asset=' + rates.asset
+        + ' decor=' + rates.decor
+        + ' | pump=' + (throughput.lastPumpBuilt ?? 0) + 'b+' + (throughput.lastPumpRefined ?? 0) + 'r/' + (throughput.lastPumpMs ?? 0).toFixed(1) + 'ms'
+        + ' buildAvg=' + (throughput.avgBuildMs ?? 0).toFixed(1) + 'ms'
+        + ' buildWorst=' + (throughput.worstBuildMs ?? 0).toFixed(1) + 'ms'
+        + ' detailAvg=' + (refinement.avgStepMs ?? 0).toFixed(2) + 'ms'
+        + ' detailWorst=' + (refinement.worstStepMs ?? 0).toFixed(2) + 'ms'
+        + ' commitVisibleAvg=' + (throughput.avgCommitToVisibleMs ?? 0).toFixed(1) + 'ms'
+        + ' | chunks q=' + (states.queued ?? 0)
+        + ' building=' + (states.building ?? 0)
+        + ' ready=' + (states.ready ?? 0)
+        + ' failed=' + (states.failed ?? 0)
+        + ' | ' + formatAdornmentQueueStats(assets)
+        + ' | authored=' + (playerNearAuthoredSpawn() ? 'near' : 'far')
+        + ' structural=' + authoredStructuralReadySiteIds.size + '/' + buildingSites.length
+        + ' jobs=' + authoredBuildingJobs.length
+        + ' fabric=' + unifiedSpawnFabricRefinementQueue.length
+        + ' plazas=' + specialPlazaJobs.length
+        + ' complete=' + (_spawnDistrictStructuresComplete ? 1 : 0)
+        + ' | decor sectors=' + deferredDecorationStats.generatedSectors + '/' + deferredDecorationStats.totalSectors
+        + ' cells=' + deferredDecorationStats.generatedCells
+        + ' queued=' + decorationQueue.length
+        + ' pending=' + deferredDecorationStats.pendingSectors
+        + ' | health stall=' + (health.stallWarnings ?? 0)
+        + ' starved=' + (health.starvedWarnings ?? 0)
+        + ' noGrowthAttempts=' + (health.attemptsWithoutGrowth ?? 0));
     return true;
 }
 
@@ -4092,19 +4188,10 @@ function pumpWorldChunksAggressively() {
         .then(builtAny => {
             if (!builtAny) return;
             const after = worldChunkStreamer.stats();
-            const t = after.throughput;
-            const assets = adornmentLoadQueue.stats();
-            console.log('[world-perf] gear=' + worldStreamingGear + ' · pump ' + t.lastPumpBuilt + ' chunk(s) + ' + t.lastPumpRefined + ' local detail turn(s) in ' + t.lastPumpMs.toFixed(1) + 'ms'
-                + ' · avg build ' + t.avgBuildMs.toFixed(2) + 'ms · detail worst ' + after.refinement.worstStepMs.toFixed(2) + 'ms'
-                + ' · detail pending ' + after.refinement.pendingChunks + ' · first-pass pending ' + after.localRenderRefinement.floorPendingChunks
-                + ' · detail published ' + after.refinement.published + '/' + after.refinement.attempts + ' attempts · no-op ' + after.refinement.noOp + ' · failed ' + after.refinement.failures
-                + ' · commit→visible ' + t.avgCommitToVisibleMs.toFixed(2) + 'ms · render ' + after.localRenderRing.ready + '/' + after.localRenderRing.total
-                + ' · prefetch ' + after.localPrefetchRing.ready + '/' + after.localPrefetchRing.total
-                + ' · assets ' + assets.active + '/' + assets.concurrency + ' active + ' + assets.pending + ' pending · failed ' + assets.failed);
             updateWorldStreamingGear(after);
             maybeReleaseBackgroundEnrichment();
         })
-        .catch(error => console.error('[world] chunk pump failed', error))
+        .catch(error => console.error('[world-error] chunk-pump | ' + diagnosticErrorText(error)))
         .finally(() => {
             worldChunkPumpPromise = null;
             worldChunkNextKickAt = performance.now() + warmCooldownMs;
@@ -4132,7 +4219,7 @@ function animate(now = performance.now()) {
     staticWorldOptimizer?.updateVisibility();
     worldChunkStreamer?.updateVisibility();
     const liveWorldStats = worldChunkStreamer?.stats();
-    maybeLogWorldRichness(now, liveWorldStats);
+    maybeLogWorldDiagnostics(now, liveWorldStats);
 
     const streamingGear = updateWorldStreamingGear(liveWorldStats);
     pumpWorldChunksAggressively();

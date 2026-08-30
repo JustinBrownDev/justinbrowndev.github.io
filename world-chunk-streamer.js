@@ -400,6 +400,41 @@ export function createWorldChunkStreamer({
         };
     }
 
+    function compactRichnessDiagnostic(diagnostic) {
+        const summary = diagnostic.summary ?? {};
+        const blockers = diagnostic.blockers ?? {};
+        const render = blockers.renderRing ?? {};
+        const prefetch = blockers.prefetchRing ?? {};
+        const player = diagnostic.player ?? {};
+        const lagging = (summary.perChunk ?? [])
+            .filter(chunk => !chunk.renderPublished || !chunk.physicsAuthoritative || (chunk.pendingTasks ?? 0) > 0)
+            .slice(0, 8)
+            .map(chunk => String(chunk.key ?? '?')
+                + ':' + String(chunk.state ?? '?')
+                + ':pub' + (chunk.renderPublished ? 1 : 0)
+                + ':phys' + (chunk.physicsAuthoritative ? 1 : 0)
+                + ':detail' + (chunk.published ?? 0) + '/' + (chunk.taskCount ?? 0)
+                + ':pending' + (chunk.pendingTasks ?? 0))
+            .join(',');
+        return 'player=' + Number(player.x ?? 0).toFixed(1) + ',' + Number(player.z ?? 0).toFixed(1)
+            + ' visible=' + (summary.published ?? 0) + '/' + (summary.total ?? 0)
+            + ' detailPub=' + (summary.successful ?? 0) + '/' + (summary.tasks ?? 0)
+            + ' attempts=' + (summary.attempted ?? 0)
+            + ' noop=' + (summary.noOp ?? 0)
+            + ' failed=' + (summary.failed ?? 0)
+            + ' pendingChunks=' + (summary.pendingPublishedDetailChunks ?? 0)
+            + ' firstPass=' + (summary.firstPassEntitiesComplete ?? 0) + '/' + (summary.firstPassEntityTarget ?? 0)
+            + ' blockers=busy:' + (blockers.busy ? 1 : 0)
+            + ',prefetchGate:' + (blockers.refineAfterPrefetchReady ? 1 : 0)
+            + ',maxRef:' + (blockers.lastPumpMaxRefinements ?? 0)
+            + ',refineFirst:' + (blockers.lastPumpRefineFirst ? 1 : 0)
+            + ',reserveMs:' + Number(blockers.lastPumpReserveRefinementMs ?? 0).toFixed(1)
+            + ',render:' + (render.published ?? render.ready ?? 0) + '/' + (render.total ?? 0)
+            + ',physics:' + (render.physicsAuthoritative ?? 0) + '/' + (render.total ?? 0)
+            + ',prefetch:' + (prefetch.ready ?? 0) + '/' + (prefetch.total ?? 0)
+            + (lagging ? ' lagging=' + lagging : '');
+    }
+
     function emitRichnessDiagnostic(type, summary, extra = {}) {
         const diagnostic = {
             type,
@@ -417,9 +452,9 @@ export function createWorldChunkStreamer({
             ...extra,
         };
         const label = type === 'stalled' ? '[WORLD-RICHNESS-STALLED]' : '[WORLD-REFINEMENT-STARVED]';
-        console.warn?.(`${label} visible procedural world is not gaining rendered detail`, diagnostic);
+        console.warn?.(`${label} ${compactRichnessDiagnostic(diagnostic)}`);
         try { onRichnessDiagnostic?.(diagnostic); }
-        catch (error) { console.warn?.('[world-richness] diagnostic listener failed', error); }
+        catch (error) { console.warn?.('[world-richness] diagnostic listener failed: ' + String(error?.message ?? error)); }
         return diagnostic;
     }
 

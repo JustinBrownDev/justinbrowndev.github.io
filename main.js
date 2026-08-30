@@ -2201,68 +2201,116 @@ function sortBuildingSitesNearestToPlayer(sites) {
     const buildStart = performance.now();
     _testGenerationTotal = buildingSites.length;
     _testGenerationDone = 0;
-    const pendingBuildingSites = buildingSites.slice();
-    let reprioritize = true;
-    await testYieldNow('streaming nearest real buildings', _testGenerationDone, _testGenerationTotal);
-    while (pendingBuildingSites.length) {
-        if (reprioritize) {
-            sortBuildingSitesNearestToPlayer(pendingBuildingSites);
-            reprioritize = false;
+
+    // The authored district is no longer allowed to consume one entire site before
+    // another site gets a turn. Every site owns its deterministic RNG stream and
+    // generator, and the scheduler advances exactly one semantic generator step at
+    // a time. All jobs at the same turn count are ordered nearest-player-first.
+    // This makes authored construction behave like chunk refinement: friends taking
+    // turns, not one giant privileged spawn builder monopolizing the thread.
+    const authoredJobs = buildingSites.map(site => {
+        const iteratorFactory = site.signatureType
+            ? () => buildSignatureSiteSteps(site)
+            : () => addBuildingSiteSteps(site);
+        return {
+            site,
+            stepper: createStableStreamingRngStepper(`building:${site.id}`, iteratorFactory),
+            turns: 0,
+            completed: false,
+            startedAt: 0,
+        };
+    });
+    let schedulerTurns = 0;
+    let structuralSyncs = 0;
+    await testYieldNow('streaming authored sites · fair semantic turns', _testGenerationDone, _testGenerationTotal);
+
+    while (authoredJobs.length) {
+        authoredJobs.sort((a, b) =>
+            a.turns - b.turns
+            || buildingSiteDistanceSqToPlayer(a.site) - buildingSiteDistanceSqToPlayer(b.site)
+            || a.site.id - b.site.id
+        );
+        const job = authoredJobs[0];
+        const site = job.site;
+        if (!job.startedAt) job.startedAt = performance.now();
+
+        const _stepStarted = performance.now();
+        _generationAddedRoots = [];
+        let step;
+        let addedRoots = [];
+        let deferredVisualPhase = false;
+        try {
+            step = job.stepper.step();
+        } finally {
+            addedRoots = _generationAddedRoots;
+            _generationAddedRoots = null;
+            deferredVisualPhase = !!(step && !step.done && shouldDeferBootstrapVisualPhase(site, step.value?.phase));
+            if (deferredVisualPhase) {
+                const hidden = deferBootstrapVisualRoots(addedRoots);
+                if (hidden) runtimeLatency.record('visual.defer-bootstrap', 0, { siteId: site.id, type: site.signatureType || 'ordinary', phase: step.value?.phase, hidden });
+            }
         }
-        const site = pendingBuildingSites.pop();
-        const _siteStarted = performance.now();
-        let yieldedWithinSite = false;
-        {
-            const iteratorFactory = site.signatureType
-                ? () => buildSignatureSiteSteps(site)
-                : () => addBuildingSiteSteps(site);
-            const stepper = createStableStreamingRngStepper(`building:${site.id}`, iteratorFactory);
-            let step;
-            do {
-                const _stepStarted = performance.now();
-                _generationAddedRoots = [];
-                try {
-                    step = stepper.step();
-                } finally {
-                    const addedRoots = _generationAddedRoots;
-                    _generationAddedRoots = null;
-                    if (step && !step.done && shouldDeferBootstrapVisualPhase(site, step.value?.phase)) {
-                        const hidden = deferBootstrapVisualRoots(addedRoots);
-                        if (hidden) runtimeLatency.record('visual.defer-bootstrap', 0, { siteId: site.id, type: site.signatureType || 'ordinary', phase: step.value?.phase, hidden });
-                    }
-                }
-                const _stepMs = performance.now() - _stepStarted;
-                const _stepCategory = site.signatureType ? 'generation.signature-step' : 'generation.building-step';
-                runtimeLatency.record(_stepCategory, _stepMs, { siteId: site.id, type: site.signatureType || 'ordinary', phase: step.value?.phase || 'complete', cells: site.cells.length });
-                if (_stepMs > 8) console.warn(`[latency] ${_stepCategory} ${_stepMs.toFixed(1)}ms · site=${site.id} · type=${site.signatureType || 'ordinary'} · phase=${step.value?.phase || 'complete'} · cells=${site.cells.length}`);
-                if (!step.done && await testPublishAndYieldIfNeeded('streaming nearest real buildings', _testGenerationDone, _testGenerationTotal)) yieldedWithinSite = true;
-            } while (!step.done);
-        }
-        const _siteMs = performance.now() - _siteStarted;
-        runtimeLatency.record(site.signatureType ? 'generation.signature-site-wall' : 'generation.ordinary-site-wall', _siteMs, { siteId: site.id, type: site.signatureType || 'ordinary', cells: site.cells.length });
-        if (_siteMs > 8) console.warn(`[latency] generation.building-site ${_siteMs.toFixed(1)}ms · site=${site.id} · type=${site.signatureType || 'ordinary'} · cells=${site.cells.length}`);
-        _testGenerationDone++;
-        await testCompileSceneIfDirty();
-        refreshAnimatedMaterials();
-        const _flushStarted = performance.now();
-        await staticWorldOptimizer.flushDirtyChunks({
-            phaseLabel: 'batching nearest authored chunks',
-            yieldControl: async () => {
-                const elapsed = performance.now() - _testSliceStartedAt;
-                const inputPending = !!navigator.scheduling?.isInputPending?.({ includeContinuous: true });
-                if (!inputPending && elapsed < TEST_FRAME_BUDGET_MS) return false;
-                await testPublishAndYieldNow('streaming nearest real buildings', _testGenerationDone, _testGenerationTotal);
-                yieldedWithinSite = true;
-                return true;
-            },
+
+        const _stepMs = performance.now() - _stepStarted;
+        const _stepCategory = site.signatureType ? 'generation.signature-step' : 'generation.building-step';
+        runtimeLatency.record(_stepCategory, _stepMs, {
+            siteId: site.id,
+            type: site.signatureType || 'ordinary',
+            phase: step.value?.phase || 'complete',
+            cells: site.cells.length,
+            schedulerTurn: schedulerTurns,
+            siteTurn: job.turns,
         });
-        runtimeLatency.record('optimizer.incremental-site-flush-wall', performance.now() - _flushStarted, { siteId: site.id, type: site.signatureType || 'ordinary' });
-        const _physicsSyncStarted = performance.now();
-        const _physicsSyncStats = playerPhysics.syncDynamicWorld();
-        runtimeLatency.record('physics.sync-dynamic', performance.now() - _physicsSyncStarted, { siteId: site.id, ..._physicsSyncStats });
-        reprioritize = yieldedWithinSite || await testPublishAndYieldIfNeeded('streaming nearest real buildings', _testGenerationDone, _testGenerationTotal);
+        if (_stepMs > 8) console.warn(`[latency] ${_stepCategory} ${_stepMs.toFixed(1)}ms · site=${site.id} · type=${site.signatureType || 'ordinary'} · phase=${step.value?.phase || 'complete'} · cells=${site.cells.length}`);
+
+        job.turns++;
+        schedulerTurns++;
+
+        // Structural geometry becomes collision-authoritative at the same semantic
+        // publication boundary. Cosmetic/deferred phases never force a physics rebuild.
+        if (addedRoots.length && !deferredVisualPhase) {
+            const _physicsSyncStarted = performance.now();
+            const _physicsSyncStats = playerPhysics.syncDynamicWorld();
+            structuralSyncs++;
+            runtimeLatency.record('physics.sync-authored-step', performance.now() - _physicsSyncStarted, {
+                siteId: site.id,
+                phase: step.value?.phase || 'complete',
+                schedulerTurn: schedulerTurns,
+                ..._physicsSyncStats,
+            });
+        }
+
+        if (step.done) {
+            const _siteMs = performance.now() - job.startedAt;
+            runtimeLatency.record(site.signatureType ? 'generation.signature-site-wall' : 'generation.ordinary-site-wall', _siteMs, {
+                siteId: site.id,
+                type: site.signatureType || 'ordinary',
+                cells: site.cells.length,
+                semanticTurns: job.turns,
+            });
+            _testGenerationDone++;
+            authoredJobs.shift();
+
+            await testCompileSceneIfDirty();
+            refreshAnimatedMaterials();
+            const _flushStarted = performance.now();
+            await staticWorldOptimizer.flushDirtyChunks({
+                phaseLabel: 'batching completed authored chunks',
+                yieldControl: async () => {
+                    const elapsed = performance.now() - _testSliceStartedAt;
+                    const inputPending = !!navigator.scheduling?.isInputPending?.({ includeContinuous: true });
+                    if (!inputPending && elapsed < TEST_FRAME_BUDGET_MS) return false;
+                    await testPublishAndYieldNow('streaming authored sites · fair semantic turns', _testGenerationDone, _testGenerationTotal);
+                    return true;
+                },
+            });
+            runtimeLatency.record('optimizer.incremental-site-flush-wall', performance.now() - _flushStarted, { siteId: site.id, type: site.signatureType || 'ordinary' });
+        }
+
+        await testPublishAndYieldIfNeeded('streaming authored sites · fair semantic turns', _testGenerationDone, _testGenerationTotal);
     }
-    console.log(`[perf:test] ${buildingSites.length} authoritative building sites streamed nearest-player-first in ${(performance.now() - buildStart).toFixed(QP[4723])}ms wall-clock (${bootElapsed()} total)`);
+
+    console.log(`[perf:test] ${buildingSites.length} authoritative building sites completed in fair semantic turns in ${(performance.now() - buildStart).toFixed(QP[4723])}ms wall-clock (${bootElapsed()} total); schedulerTurns=${schedulerTurns}; structuralSyncs=${structuralSyncs}`);
     console.log(`[testing] same-site height mismatches: ${buildingConstructionSystem.stats().totalExposedSetbackWalls} exterior setback wall-floors generated where a same-site neighbor stopped short (floor-aware internal-edge fix -- was structurally always 0 before)`);
 }
 
@@ -3714,33 +3762,37 @@ console.log(`[stream-perf] bootstrap handoff after ${_testBootstrapFrame} painte
 animate();
 window.__boot?.ready();
 
-await testYieldNow('optimizing spawn chunk · background refinement');
-const staticOptimizeStart = performance.now();
-await staticWorldOptimizer.finalizeIncremental({
-    yieldControl: (phase, done, total) => testYieldIfNeeded(phase, done, total),
+void (async function continuePostHandoffWorldRefinement() {
+    await testYieldNow('optimizing spawn chunk · background refinement');
+    const staticOptimizeStart = performance.now();
+    await staticWorldOptimizer.finalizeIncremental({
+        yieldControl: (phase, done, total) => testYieldIfNeeded(phase, done, total),
+    });
+    const staticWorldStats = staticWorldOptimizer.getStats();
+    materialRefinementController = createMaterialRefinementController({
+        scene,
+        camera,
+        previewMaterial: bootstrapPreviewMaterial,
+        dynamicMaterials: animatedMaterials,
+    });
+    console.log(`[perf] background static-world refinement ${(performance.now() - staticOptimizeStart).toFixed(QP[5426])}ms wall-clock:`, staticWorldStats);
+    while (!worldChunkStreamer.stats().localRenderRing.complete) {
+        testStatus('warming playable chunk ring', worldChunkStreamer.stats().localRenderRing.ready, worldChunkStreamer.stats().localRenderRing.total);
+        await testNextPaint();
+    }
+    const materialRefinementStart = materialRefinementController.prepare();
+    bootstrapPreviewOverrideActive = false;
+    materialRefinementReprioritizeAt = performance.now();
+    if (materialRefinementStart.complete) {
+        _testRefinementActive = false;
+        restoreFinalRenderQuality();
+    }
+    console.log('[perf] playable 5x5 chunk ring warm · staged authored material refinement started', materialRefinementStart);
+    console.log(`[perf] spawn refinement complete at ${bootElapsed()} since page start; live world remained authoritative throughout`);
+    scheduleTraversalValidation();
+})().catch(error => {
+    console.error('[runtime] post-handoff world refinement failed without taking down the live player runtime', error);
 });
-const staticWorldStats = staticWorldOptimizer.getStats();
-materialRefinementController = createMaterialRefinementController({
-    scene,
-    camera,
-    previewMaterial: bootstrapPreviewMaterial,
-    dynamicMaterials: animatedMaterials,
-});
-console.log(`[perf] background static-world refinement ${(performance.now() - staticOptimizeStart).toFixed(QP[5426])}ms wall-clock:`, staticWorldStats);
-while (!worldChunkStreamer.stats().localRenderRing.complete) {
-    testStatus('warming playable chunk ring', worldChunkStreamer.stats().localRenderRing.ready, worldChunkStreamer.stats().localRenderRing.total);
-    await testNextPaint();
-}
-const materialRefinementStart = materialRefinementController.prepare();
-bootstrapPreviewOverrideActive = false;
-materialRefinementReprioritizeAt = performance.now();
-if (materialRefinementStart.complete) {
-    _testRefinementActive = false;
-    restoreFinalRenderQuality();
-}
-console.log('[perf] playable 5x5 chunk ring warm · staged authored material refinement started', materialRefinementStart);
-console.log(`[perf] spawn refinement complete at ${bootElapsed()} since page start; live world remained authoritative throughout`);
-scheduleTraversalValidation();
 
  
  

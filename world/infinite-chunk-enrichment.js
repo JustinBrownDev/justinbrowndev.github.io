@@ -1,6 +1,7 @@
 import { hashString32 } from '../world-chunk-streamer.js';
 import { pickMassiveNoisePair, pickPoetryTag } from '../noise-data-bootstrap.js';
 import { BASE_GRAFFITI_TAGS } from '../content/graffiti-content.js';
+import { createProceduralTextExciter } from './procedural-text-exciter.js';
 
 function mulberry32(seed) {
     let a = seed >>> 0;
@@ -134,6 +135,8 @@ export function createInfiniteChunkEnrichment({ THREE, worldSeed = 0 } = {}) {
     const ivyMaterials = IVY_COLORS.map(color => new THREE.MeshStandardMaterial({ color, roughness: 1, side: THREE.DoubleSide }));
     const securityMat = new THREE.MeshStandardMaterial({ color: 0x3b3f43, roughness: 0.74, metalness: 0.25 });
     const posterFallbackMat = new THREE.MeshStandardMaterial({ color: 0x97876e, emissive: 0x17110a, emissiveIntensity: 0.22, roughness: 0.8, side: THREE.DoubleSide });
+    const textExciter = createProceduralTextExciter({ worldSeed });
+    console.log('[world-text] deterministic full curated corpus exciter ready', textExciter.stats);
 
     function taskSeed(chunk, entityId, kind, index = 0) {
         return hashString32(`${worldSeed}:chunk-detail:${chunk.key}:${entityId}:${kind}:${index}`);
@@ -151,7 +154,8 @@ export function createInfiniteChunkEnrichment({ THREE, worldSeed = 0 } = {}) {
 
         if (rng() < 0.88) {
             const labelRng = mulberry32(taskSeed(chunk, entity.id, 'sign-label'));
-            const [title, subtitle] = pickMassiveNoisePair(labelRng);
+            const basePair = pickMassiveNoisePair(labelRng);
+            const [title, subtitle] = textExciter.pairFor(chunk, entity.id, 'sign-label', basePair);
             tasks.push({
                 kind: 'sign', entityId: entity.id, side: front,
                 y: clamp(2.45 + rng() * Math.min(2.6, wallHeight * 0.28), 2.25, Math.max(2.4, wallHeight - 0.8)),
@@ -165,9 +169,10 @@ export function createInfiniteChunkEnrichment({ THREE, worldSeed = 0 } = {}) {
 
         if (rng() < 0.76) {
             const graffitiRng = mulberry32(taskSeed(chunk, entity.id, 'graffiti-label'));
-            const text = graffitiRng() < 0.52
+            const baseText = graffitiRng() < 0.52
                 ? pickPoetryTag(graffitiRng)
                 : BASE_GRAFFITI_TAGS[Math.floor(graffitiRng() * BASE_GRAFFITI_TAGS.length) % BASE_GRAFFITI_TAGS.length];
+            const text = textExciter.tagFor(chunk, entity.id, 'graffiti-label', baseText);
             tasks.push({
                 kind: 'graffiti', entityId: entity.id, side,
                 y: 0.95 + rng() * 1.1, along: (rng() - 0.5) * 0.9,

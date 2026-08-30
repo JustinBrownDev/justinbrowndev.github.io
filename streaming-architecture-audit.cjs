@@ -19,8 +19,12 @@ assert((perf.match(/worldChunkRoot/g) || []).length >= 8, 'both legacy optimizer
 assert(/setChunkVisibility/.test(streamer) && /verifyChunkReady/.test(streamer), 'streamer must own visibility and READY verification');
 assert(/verifyChunkReady\) await verifyChunkReady/.test(streamer), 'READY verification must run before READY state publication');
 assert(!/GLTFLoader|fetch\s*\(|new Image\s*\(/.test(chunks), 'structural infinite chunk factory must have no network/decode dependency');
-assert(/createPriorityLoadQueue/.test(adornment) && /paused:\s*true/.test(adornment), 'non-structural asset queue must begin paused');
-assert(/localPrefetchRing\.complete/.test(main) && /adornmentLoadQueue\.resume\(\)/.test(main), 'adornment network must release only after structural prefetch is warm');
+assert(/createPriorityLoadQueue/.test(adornment) && /paused:\s*true/.test(adornment), 'non-structural asset queue must begin paused before runtime handoff');
+assert(/maybeOpenAuthoredAssetLane/.test(main) && /setConcurrency\(QP\[1024\]\)/.test(main), 'near-player authored assets need an early concurrency-1 lane');
+assert(/localPrefetchRing\.complete/.test(main) && /_spawnDistrictStructuresComplete/.test(main) && /setConcurrency\(CONFIG\.streaming\.adornmentConcurrency\)/.test(main), 'full authored asset concurrency must wait for warm local prefetch plus authored structural completion');
+assert(/syncAuthoredBackgroundQueueLocality\(playerNearSpawn\)/.test(main), 'authored asset locality must follow physical spawn proximity, never streaming gear');
+assert(/const refineFirst = structureIncomplete/.test(main), 'visible refinement must run before atomic visible-structure builds can overrun the budget');
+assert(/if \(playerNearSpawn\) updateDecorationStreaming\(delta\)/.test(main), 'nearby decoration streaming must not wait for authored district completion');
 assert(!fs.existsSync(path.join(__dirname, 'test')), '/test runtime path must remain deleted');
 assert(!fs.existsSync(path.join(__dirname, 'synchronous')), '/synchronous runtime path must remain deleted');
 assert(fs.existsSync(path.join(__dirname, 'old', 'index.html')), '/old escape site must remain present');
@@ -28,6 +32,9 @@ assert(fs.existsSync(path.join(__dirname, 'old', 'index.html')), '/old escape si
 console.log('[streaming-architecture-audit] PASS', {
   directCommit: true,
   optimizerExclusions: (perf.match(/worldChunkRoot/g) || []).length,
-  boundedAdornmentQueue: true,
+  earlyAdornmentLane: true,
+  fullAdornmentGate: true,
+  refineBeforeAtomicBuild: true,
+  decorationLocalityLane: true,
   alternateRuntimeRoutes: false,
 });

@@ -32,9 +32,10 @@ export function pointNearRegion({ x = 0, z = 0 } = {}, {
     return dx * dx + dz * dz <= Math.max(0, margin) ** 2;
 }
 
-// Finite authored/spawn work is allowed only when it is itself local to the
-// player, and never while the streamed neighborhood still owes structure,
-// first-pass population, or structural prefetch.
+// Finite authored/spawn work is eligible whenever it is physically local.
+// Streaming gear controls its tiny per-frame budget in main.js; priority must
+// never mean that every lower-priority subsystem is forbidden from progressing.
 export function shouldRunAuthoredLocalWork({ gear, playerNearAuthoredRegion = false } = {}) {
-    return gear === WORLD_STREAMING_GEAR.LOCAL_DEEPEN && !!playerNearAuthoredRegion;
+    void gear; // retained in the API because callers use gear to choose the budget.
+    return !!playerNearAuthoredRegion;
 }

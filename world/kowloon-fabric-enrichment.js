@@ -342,7 +342,10 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0 } = {}) {
         'interior-prop': 4,
     });
 
-    const FIRST_PASS_CLASS_ORDER = Object.freeze(['facade', 'fixture', 'cap']);
+    const FIRST_PASS_KIND_ORDER = Object.freeze([
+        'sign', 'awning', 'pipe', 'graffiti', 'security', 'elevator-hardware',
+        'ivy', 'roof-topper', 'roof-clutter', 'spray-cans', 'flyer', 'marker',
+    ]);
     function firstPassClass(kind) {
         if (kind === 'sign' || kind === 'awning' || kind === 'graffiti' || kind === 'flyer') return 'facade';
         if (kind === 'pipe' || kind === 'ivy' || kind === 'security' || kind === 'elevator-hardware' || kind === 'spray-cans') return 'fixture';
@@ -365,24 +368,18 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0 } = {}) {
 
     function chooseFirstPassBundle(queue) {
         const visibleCandidates = queue.filter(task => firstPassClass(task.kind) !== 'hidden');
-        const target = Math.min(3, visibleCandidates.length);
-        if (!target) return [];
-        const chosen = [];
-        const chosenSet = new Set();
-        for (const className of FIRST_PASS_CLASS_ORDER) {
-            const task = visibleCandidates.find(candidate => !chosenSet.has(candidate) && firstPassClass(candidate.kind) === className);
-            if (!task) continue;
-            chosen.push(task);
-            chosenSet.add(task);
-            if (chosen.length >= target) break;
+        if (!visibleCandidates.length) return [];
+
+        // One obvious birth per visible entity is enough to leave first-pass mode.
+        // Plaza semantic objects beat generic markers; buildings prefer readable
+        // facade/fixture identity. Every other deterministic task remains queued.
+        const plazaFeature = visibleCandidates.find(task => String(task.kind).startsWith('plaza-'));
+        if (plazaFeature) return [plazaFeature];
+        for (const kind of FIRST_PASS_KIND_ORDER) {
+            const task = visibleCandidates.find(candidate => candidate.kind === kind);
+            if (task) return [task];
         }
-        for (const task of visibleCandidates) {
-            if (chosen.length >= target) break;
-            if (chosenSet.has(task)) continue;
-            chosen.push(task);
-            chosenSet.add(task);
-        }
-        return chosen;
+        return [visibleCandidates[0]];
     }
 
     function layerTasksAcrossEntities(tasks) {
@@ -408,10 +405,8 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0 } = {}) {
             });
 
         const layered = [];
-        for (let layer = 0; layer < 3; layer++) {
-            for (const queue of queues) {
-                if (queue.firstPass[layer]) layered.push(queue.firstPass[layer]);
-            }
+        for (const queue of queues) {
+            if (queue.firstPass[0]) layered.push(queue.firstPass[0]);
         }
         for (let layer = 0; ; layer++) {
             let emitted = 0;
@@ -435,10 +430,9 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0 } = {}) {
             if (entity.kind === 'building' || entity.kind === 'district-landmark') tasks.push(...planBuildingTasks(chunk, entity));
             else if (entity.kind === 'plaza') tasks.push(...planPlazaTasks(chunk, entity));
         }
-        // VISIBLE CONVERGENCE: preserve the exact deterministic corpus, but make
-        // first-pass population a conspicuous per-entity bundle rather than a
-        // single sticker-sized task. Each entity gets up to three early features
-        // spanning facade identity, physical fixture, and roof/plaza/cap content.
+        // CONVERGENCE SCHEDULER: preserve the exact deterministic corpus, but
+        // require only one meaningful visible publication per entity before the
+        // neighborhood may leave first-pass mode. Second/third features deepen later.
         const layered = layerTasksAcrossEntities(tasks);
         return {
             phase: layered.tasks.length ? DETAIL_PHASE.STRUCTURAL_READY : DETAIL_PHASE.READY,

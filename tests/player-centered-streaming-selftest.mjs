@@ -23,12 +23,19 @@ assert.equal(pointNearRegion({ x: 50, z: 0 }, { halfX: 25, halfZ: 25, margin: 10
 assert.equal(shouldRunAuthoredLocalWork({ gear: WORLD_STREAMING_GEAR.LOCAL_DEEPEN, playerNearAuthoredRegion: true }), true);
 assert.equal(shouldRunAuthoredLocalWork({ gear: WORLD_STREAMING_GEAR.LOCAL_DEEPEN, playerNearAuthoredRegion: false }), false,
   'spawn work must stop being a default background sink when the player leaves it');
-assert.equal(shouldRunAuthoredLocalWork({ gear: WORLD_STREAMING_GEAR.VISIBLE_FIRST_PASS, playerNearAuthoredRegion: true }), false,
-  'nearby procedural first-pass population outranks authored background work even at spawn');
+for (const streamingGear of [
+  WORLD_STREAMING_GEAR.VISIBLE_STRUCTURE,
+  WORLD_STREAMING_GEAR.VISIBLE_FIRST_PASS,
+  WORLD_STREAMING_GEAR.PREFETCH_STRUCTURE,
+  WORLD_STREAMING_GEAR.LOCAL_DEEPEN,
+]) {
+  assert.equal(shouldRunAuthoredLocalWork({ gear: streamingGear, playerNearAuthoredRegion: true }), true,
+    'streaming gear may shrink the authored budget but must not forbid physically local authored work');
+}
 
-// Exact user-reported seed: preserve the deterministic corpus, but make the
-// semantic first pass visually substantial. 13 buildings + 3 plazas should
-// collectively publish three-ish conspicuous objects each before deep work.
+// Exact user-reported seed: preserve the deterministic corpus, but let one
+// meaningful visible publication per entity release first-pass mode. Second and
+// third features remain queued for opportunistic deepening.
 const worldSeed = 1895616516;
 const chunkSize = 53;
 const scene = new THREE.Scene();
@@ -50,16 +57,16 @@ assert.equal(payload.buildings, 13, 'regression chunk structure changed unexpect
 assert.equal(payload.plazas, 3, 'regression chunk plaza plan changed unexpectedly');
 assert.equal(payload.refinement.tasks.length, 129, 'visible-convergence ordering must not delete deterministic detail work');
 assert.equal(payload.refinement.firstPassEntityTarget, 16, 'all 13 buildings + 3 plazas must participate in first-pass population');
-assert.equal(payload.refinement.firstPassPublicationTarget, 45, 'exact seed should require 45 successful conspicuous first-pass publications');
-assert.equal(payload.refinement.firstPassTaskCount, 45, 'compatibility firstPassTaskCount must now mean publication target, not one turn per entity');
+assert.equal(payload.refinement.firstPassPublicationTarget, 16, 'exact seed should require one meaningful successful publication per visible entity');
+assert.equal(payload.refinement.firstPassTaskCount, 16, 'compatibility firstPassTaskCount must match the one-per-entity publication target');
 const firstPass = payload.refinement.tasks.slice(0, payload.refinement.firstPassPublicationTarget);
-assert.equal(firstPass.length, 45);
+assert.equal(firstPass.length, 16);
 assert.equal(firstPass.some(task => task.kind === 'interior-prop'), false,
   'hidden interior props must not satisfy the visible first pass');
 for (const [entityId, target] of Object.entries(payload.refinement.firstPassTargetByEntity)) {
   const count = firstPass.filter(task => String(task.entityId) === entityId).length;
-  assert.equal(count, target, `first-pass bundle for ${entityId} must be fully scheduled before deep work`);
-  assert.ok(target >= 1 && target <= 3, 'first-pass bundle target must stay bounded at three visible additions per entity');
+  assert.equal(count, 1, `first pass must schedule exactly one meaningful task for ${entityId}`);
+  assert.equal(target, 1, 'first-pass target must be exactly one visible publication per entity');
 }
 
 // False-progress regression: an attempted task that creates no object must count
@@ -77,10 +84,12 @@ assert.equal(noOpPayload.refinement.noOp, 1);
 assert.equal(noOpPayload.refinement.firstPassEntitiesComplete, 0,
   'no-op task must not fake semantic population');
 
-// Kill the all-or-nothing 5x5 barrier. Eight published chunks may enrich while
-// the ninth visible chunk is still structurally unresolved.
+// Reproduce the real failure mode: a queued atomic build overruns the nominal
+// frame budget. Visible refinement must happen BEFORE that build, while a second
+// unresolved chunk proves enrichment does not depend on completing the whole ring.
 const partialPosition = { x: 0, y: 1.65, z: 0 };
 const partialTurns = [];
+const partialEvents = [];
 const partialStreamer = createWorldChunkStreamer({
   chunkSize: 64,
   worldSeed: 77,
@@ -90,9 +99,16 @@ const partialStreamer = createWorldChunkStreamer({
   prefetchRadiusChunks: 1,
   retentionRadiusChunks: 2,
   refineAfterPrefetchReady: false,
-  buildChunk: async chunk => ({ key: chunk.key, pending: 2, visible: false, physicsActivationState: 'active', refinement: { cursor: 0 } }),
+  buildChunk: async chunk => {
+    partialEvents.push(`build:start:${chunk.key}`);
+    const overrunUntil = performance.now() + 12;
+    while (performance.now() < overrunUntil) {}
+    partialEvents.push(`build:end:${chunk.key}`);
+    return { key: chunk.key, pending: 2, visible: false, physicsActivationState: 'active', refinement: { cursor: 0 } };
+  },
   setChunkVisibility: (_chunk, p, visible) => { p.visible = !!visible; p.renderPublished = !!visible; return p.renderPublished; },
   refineChunk: async (chunk, p) => {
+    partialEvents.push(`refine:${chunk.key}`);
     p.pending--;
     p.refinement.cursor++;
     partialTurns.push(chunk.key);
@@ -101,7 +117,7 @@ const partialStreamer = createWorldChunkStreamer({
   hasPendingRefinement: (_chunk, p) => p.pending > 0,
 });
 for (let z = -1; z <= 1; z++) for (let x = -1; x <= 1; x++) {
-  if (x === -1 && z === -1) continue;
+  if ((x === -1 && z === -1) || (x === 1 && z === 1)) continue;
   partialStreamer.markChunkReady(x, z, {
     pending: x === 0 && z === 0 ? 0 : 2,
     visible: true,
@@ -110,12 +126,18 @@ for (let z = -1; z <= 1; z++) for (let x = -1; x <= 1; x++) {
     refinement: { cursor: 0 },
   });
 }
-const missing = partialStreamer.ensureChunk(-1, -1);
-missing.state = CHUNK_STATE.BUILDING; // deliberately unresolved visible structure
-assert.equal(partialStreamer.stats().localRenderRing.complete, false, 'regression setup requires an incomplete 5x5/3x3 render ring');
-await partialStreamer.pump({ maxChunks: 2, maxMillis: 100, maxRefinements: 3, reserveRefinementMs: 4 });
-assert.ok(partialTurns.length > 0, 'published visible chunks must enrich even while another visible chunk is unresolved');
-assert.equal(partialStreamer.stats().localRenderRing.complete, false, 'enrichment must not require pretending the missing chunk is complete');
+const expensiveMissing = partialStreamer.ensureChunk(-1, -1);
+expensiveMissing.state = CHUNK_STATE.QUEUED;
+const heldMissing = partialStreamer.ensureChunk(1, 1);
+heldMissing.state = CHUNK_STATE.BUILDING;
+assert.equal(partialStreamer.stats().localRenderRing.complete, false, 'regression setup requires an incomplete visible ring');
+await partialStreamer.pump({ maxChunks: 1, maxMillis: 4, maxRefinements: 1, refineFirst: true, refinementBudgetMs: 1.5 });
+assert.ok(partialTurns.length > 0, 'published visible chunks must enrich even while visible structure is unresolved');
+const firstRefineAt = partialEvents.findIndex(event => event.startsWith('refine:'));
+const firstBuildAt = partialEvents.findIndex(event => event.startsWith('build:start:'));
+assert.ok(firstRefineAt >= 0 && firstBuildAt >= 0 && firstRefineAt < firstBuildAt,
+  'visible refinement must run before an indivisible build can overrun the nominal frame budget');
+assert.equal(partialStreamer.stats().localRenderRing.complete, false, 'the held missing chunk must keep the visible ring incomplete');
 assert.ok(partialStreamer.stats().refinement.published > 0, 'successful visible publications must be counted explicitly');
 await partialStreamer.dispose();
 

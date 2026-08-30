@@ -3583,7 +3583,7 @@ for (const sector of decorationSectors) {
 
 let initialDecorationCells = QP[5274];
 let initialDecorationSectors = QP[5275];
-const initialDecorationCount = QP[1015];
+const initialDecorationCount = Math.min(QP[1024], decorationSectors.length);
 const initialDecorationOrder = decorationSectors.slice().sort((a, b) => {
     const adx = a.centerX - camera.position.x, adz = a.centerZ - camera.position.z;
     const bdx = b.centerX - camera.position.x, bdz = b.centerZ - camera.position.z;
@@ -3944,6 +3944,7 @@ let worldChunkPumpPromise = null;
 let worldChunkNextKickAt = 0;
 let authoredOptimizerNextAt = 0;
 let backgroundEnrichmentReleased = false;
+let authoredAssetLaneOpened = false;
 let wikiEnrichmentScheduled = false;
 let authoredBackgroundQueueNear = false;
 
@@ -3955,11 +3956,21 @@ function playerNearAuthoredSpawn() {
 }
 
 function syncAuthoredBackgroundQueueLocality(nearSpawn = playerNearAuthoredSpawn()) {
-    if (!backgroundEnrichmentReleased || nearSpawn === authoredBackgroundQueueNear) return false;
+    if (!authoredAssetLaneOpened || nearSpawn === authoredBackgroundQueueNear) return false;
     authoredBackgroundQueueNear = nearSpawn;
     if (nearSpawn) adornmentLoadQueue.resume();
     else adornmentLoadQueue.pause();
     console.log('[asset] authored adornment queue ' + (nearSpawn ? 'resumed near player' : 'paused outside player neighborhood'));
+    return true;
+}
+
+function maybeOpenAuthoredAssetLane(nearSpawn = playerNearAuthoredSpawn()) {
+    if (authoredAssetLaneOpened || !nearSpawn) return false;
+    authoredAssetLaneOpened = true;
+    authoredBackgroundQueueNear = true;
+    adornmentLoadQueue.setConcurrency(QP[1024]);
+    adornmentLoadQueue.resume();
+    console.log('[asset] nearby authored asset lane opened at concurrency 1', adornmentLoadQueue.stats());
     return true;
 }
 
@@ -3972,9 +3983,11 @@ function maybeReleaseBackgroundEnrichment() {
      
     if (!worldStats.localPrefetchRing.complete || !_spawnDistrictStructuresComplete) return false;
     backgroundEnrichmentReleased = true;
+    authoredAssetLaneOpened = true;
+    adornmentLoadQueue.setConcurrency(CONFIG.streaming.adornmentConcurrency);
     adornmentLoadQueue.resume();
     authoredBackgroundQueueNear = true;
-    console.log('[asset] local spawn + structural 7x7 warm · releasing bounded authored adornment queue', adornmentLoadQueue.stats());
+    console.log('[asset] local spawn + structural 7x7 warm + authored structure complete · widening authored adornment queue', adornmentLoadQueue.stats());
     if (!wikiEnrichmentScheduled) {
         wikiEnrichmentScheduled = true;
         const runWiki = () => fetchRandomWikiArticles(QP[5300]);
@@ -4056,24 +4069,25 @@ function pumpWorldChunksAggressively() {
             : gear === WORLD_STREAMING_GEAR.PREFETCH_STRUCTURE
                 ? (desktop ? CONFIG.streaming.prefetchSprintBudgetMsDesktop : CONFIG.streaming.prefetchSprintBudgetMsWeak)
                 : CONFIG.streaming.warmBuildBudgetMs;
-    // VISIBLE CONVERGENCE: missing structure keeps first use of the frame, but
-    // already-published visible chunks always retain a small refinement lane.
-    // Construction and enrichment are no longer mutually exclusive global gears.
+    // CONVERGENCE SCHEDULER: missing structure still owns most of the frame,
+    // but one bounded visible refinement lane runs before an indivisible chunk
+    // build. A 20ms build overrun can no longer starve already-visible detail.
     const maxRefinements = structureIncomplete
         ? (desktop ? 2 : 1)
         : gear === WORLD_STREAMING_GEAR.VISIBLE_FIRST_PASS || gear === WORLD_STREAMING_GEAR.LOCAL_DEEPEN
             ? (desktop ? CONFIG.streaming.chunkRefinementStepsDesktop : CONFIG.streaming.chunkRefinementStepsWeak)
             : 0;
-    const refineFirst = gear === WORLD_STREAMING_GEAR.VISIBLE_FIRST_PASS || gear === WORLD_STREAMING_GEAR.LOCAL_DEEPEN;
+    const refineFirst = structureIncomplete
+        || gear === WORLD_STREAMING_GEAR.VISIBLE_FIRST_PASS
+        || gear === WORLD_STREAMING_GEAR.LOCAL_DEEPEN;
     const refinementBudgetMs = structureIncomplete
         ? (desktop ? Math.min(1.5, CONFIG.streaming.visibleDetailBudgetMsDesktop) : Math.min(1.0, CONFIG.streaming.visibleDetailBudgetMsWeak))
         : gear === WORLD_STREAMING_GEAR.VISIBLE_FIRST_PASS
             ? (desktop ? CONFIG.streaming.visibleDetailBudgetMsDesktop : CONFIG.streaming.visibleDetailBudgetMsWeak)
             : gear === WORLD_STREAMING_GEAR.LOCAL_DEEPEN ? CONFIG.streaming.warmBuildBudgetMs : Infinity;
-    const reserveRefinementMs = structureIncomplete ? refinementBudgetMs : 0;
     const warmCooldownMs = gear === WORLD_STREAMING_GEAR.LOCAL_DEEPEN ? CONFIG.streaming.warmCooldownMs : 0;
     worldChunkPumpPromise = worldChunkStreamer.pump({
-        maxChunks, maxMillis, maxRefinements, refineFirst, refinementBudgetMs, reserveRefinementMs,
+        maxChunks, maxMillis, maxRefinements, refineFirst, refinementBudgetMs,
     })
         .then(builtAny => {
             if (!builtAny) return;
@@ -4122,24 +4136,28 @@ function animate(now = performance.now()) {
 
     const streamingGear = updateWorldStreamingGear(liveWorldStats);
     pumpWorldChunksAggressively();
+    const playerNearSpawn = playerNearAuthoredSpawn();
+    maybeOpenAuthoredAssetLane(playerNearSpawn);
     const spawnLocalWorkAllowed = shouldRunAuthoredLocalWork({
         gear: streamingGear,
-        playerNearAuthoredRegion: playerNearAuthoredSpawn(),
+        playerNearAuthoredRegion: playerNearSpawn,
     });
-    syncAuthoredBackgroundQueueLocality(spawnLocalWorkAllowed);
+    const authoredDeepLane = streamingGear === WORLD_STREAMING_GEAR.LOCAL_DEEPEN;
+    syncAuthoredBackgroundQueueLocality(playerNearSpawn);
 
-    // The finite authored district is no longer a global completion obligation.
-    // It progresses only while it is actually local to the player and only after
-    // the streamed neighborhood owns structure + semantic first pass + prefetch.
+    // The finite authored district is a bounded locality lane, not a global gate.
+    // Streaming gear controls how much time it gets; physical proximity controls
+    // whether it may progress at all.
     if (spawnLocalWorkAllowed) {
         const groundPump = pumpOpenCellSurfaces({ maxChunks: QP[1024], maxMillis: QP[1024] });
         if (groundPump.chunks) runtimeLatency.record('spawn-ground.pump', groundPump.ms, { ...groundPump, ...groundSurfaceSystem.stats() });
 
         if (authoredBuildingJobs.length) {
             const structuralOnly = authoredStructuralReadySiteIds.size < buildingSites.length;
+            const authoredBuildingBudget = authoredDeepLane && QUALITY === CONFIG.quality.desktop ? 2 : 1;
             const authoredPump = pumpAuthoredBuildingJobs({
-                maxSteps: QUALITY === CONFIG.quality.desktop ? 2 : 1,
-                maxMillis: QUALITY === CONFIG.quality.desktop ? 2 : 1,
+                maxSteps: authoredBuildingBudget,
+                maxMillis: authoredBuildingBudget,
                 structuralOnly,
             });
             if (authoredPump.steps) runtimeLatency.record(structuralOnly ? 'authored-local-shell.pump' : 'authored-local-content.pump', authoredPump.ms, authoredPump);
@@ -4163,7 +4181,7 @@ function animate(now = performance.now()) {
     }
 
     maybeMarkSpawnDistrictStructuresComplete();
-    if (spawnLocalWorkAllowed && _spawnDistrictStructuresComplete) updateDecorationStreaming(delta);
+    if (playerNearSpawn) updateDecorationStreaming(delta);
     if (spawnLocalWorkAllowed) pumpAuthoredOptimizer(now);
     maybeReleaseBackgroundEnrichment();
 

@@ -599,28 +599,6 @@ export function createProgressiveStaticWorldOptimizer({
         return controller;
     }
 
-    function optimizeNearestDirtyChunk(phaseLabel = 'optimizing nearest streamed chunk') {
-        if (!enabled) beginIncremental();
-        let nearest = null;
-        let nearestDistance = Infinity;
-        for (const key of dirtyChunks) {
-            const group = chunks.get(key);
-            if (!group) continue;
-            const distance = chunkDistanceSq(group);
-            if (distance < nearestDistance) {
-                nearestDistance = distance;
-                nearest = group;
-            }
-        }
-        if (!nearest) return false;
-        optimizeChunkGroup(nearest);
-        phase = phaseLabel;
-        phaseDone++;
-        phaseTotal = Math.max(phaseTotal, phaseDone + dirtyChunks.size);
-        updateVisibility(true);
-        return true;
-    }
-
     async function flushDirtyChunks({ yieldControl = null, keys = null, phaseLabel = 'optimizing streamed chunks' } = {}) {
         if (!enabled) beginIncremental();
         const allowed = keys ? new Set(keys) : null;
@@ -751,7 +729,6 @@ export function createProgressiveStaticWorldOptimizer({
         optimize,
         beginIncremental,
         flushDirtyChunks,
-        optimizeNearestDirtyChunk,
         finalizeIncremental,
         updateVisibility,
         setDrawDistance(value) {
@@ -767,22 +744,6 @@ export function createProgressiveStaticWorldOptimizer({
                 return;
             }
             placeObject(obj, true);
-        },
-        markDirtyObject(obj) {
-            if (!obj || obj.userData?.worldChunkRoot) return false;
-            // Program-family staging may temporarily mutate a leaf that is already
-            // owned by an authored perf chunk. Dirty exactly that owner; never
-            // capture generic worldChunkRoot content into the authored optimizer.
-            let owner = obj.parent;
-            while (owner && !owner.userData?.__perfChunkGroup) owner = owner.parent;
-            if (owner?.userData?.__perfChunkGroup) {
-                dirtyChunks.add(chunkKey(owner.userData.chunkX, owner.userData.chunkZ));
-                return true;
-            }
-            const b = boundsOf(obj);
-            if (shouldStayGlobal(obj, b)) return false;
-            dirtyChunks.add(chunkKey(Math.floor(b.centerX / chunkSize), Math.floor(b.centerZ / chunkSize)));
-            return true;
         },
         updateDynamicObject(obj) {
             if (!obj) return;
@@ -995,22 +956,6 @@ export function createStaticWorldOptimizer({
         registerLateObject(obj) {
             if (!enabled || !obj || obj.userData?.__perfChunkGroup || obj.userData?.worldChunkRoot) return;
             placeObject(obj, true);
-        },
-        markDirtyObject(obj) {
-            if (!obj || obj.userData?.worldChunkRoot) return false;
-            // A staged shader leaf is normally already owned by a perf chunk.
-            // Mark that owner directly without reparenting or recomputing the
-            // entire scene. Fall back to its bounds only for unusual globals.
-            let owner = obj.parent;
-            while (owner && !owner.userData?.__perfChunkGroup) owner = owner.parent;
-            if (owner?.userData?.__perfChunkGroup) {
-                dirtyChunks.add(chunkKey(owner.userData.chunkX, owner.userData.chunkZ));
-                return true;
-            }
-            const b = boundsOf(obj);
-            if (shouldStayGlobal(obj, b)) return false;
-            dirtyChunks.add(chunkKey(Math.floor(b.centerX / chunkSize), Math.floor(b.centerZ / chunkSize)));
-            return true;
         },
         updateDynamicObject(obj) {
             if (!obj) return;

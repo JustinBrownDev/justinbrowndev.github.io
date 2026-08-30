@@ -459,7 +459,7 @@ export function createSignageSystem(deps) {
      
      
      
-    function* mountContentCardSteps() {
+    function mountContentCards() {
         const jobs = [];
          
          
@@ -480,8 +480,7 @@ export function createSignageSystem(deps) {
 
         const faces = [...candidateFaces].sort(() => rng() - QP[3256]);
         let fi = QP[3257];
-        for (let ji = QP[3257]; ji < jobs.length; ji++) {
-            const job = jobs[ji];
+        for (const job of jobs) {
             const photoKey = PHOTO_BY_TITLE[job.title];
             const kind = photoKey ? 'photo' : job.kind;
             const { width, height } = CONTENT_CARD_RESERVE[kind];
@@ -496,16 +495,7 @@ export function createSignageSystem(deps) {
                 else addTerminalPlaque(p.x, p.y, p.z, facade.rotY, job.title, job.subtitle);
                 placed = true;
             }
-            yield { phase: 'content-card', index: ji, total: jobs.length, placed };
         }
-        return jobs.length;
-    }
-
-    function mountContentCards() {
-        const iterator = mountContentCardSteps();
-        let step = iterator.next();
-        while (!step.done) step = iterator.next();
-        return step.value;
     }
 
      
@@ -528,7 +518,6 @@ export function createSignageSystem(deps) {
         addWallPoster,
         addTerminalPlaque,
         mountContentCards,
-        mountContentCardSteps,
         flickerLights,
     });
 }

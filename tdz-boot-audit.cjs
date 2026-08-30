@@ -1,4 +1,4 @@
-const ts = require('typescript');
+const ts = require('/opt/nvm/versions/node/v22.16.0/lib/node_modules/typescript/lib/typescript.js');
 const fs = require('fs');
 const path = process.argv[2];
 if (!path) throw new Error('usage: node tdz-boot-audit.cjs main.js');

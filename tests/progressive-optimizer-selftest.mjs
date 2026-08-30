@@ -44,25 +44,9 @@ await optimizer.optimize({
     },
 });
 
-const readyStats = optimizer.getStats();
-assert(readyStats.phase === 'ready', 'optimizer did not reach ready state');
-
-let ownedLeaf = null;
-scene.traverse(obj => {
-    if (!ownedLeaf && obj.isMesh && obj.parent?.userData?.__perfChunkGroup) ownedLeaf = obj;
-});
-assert(ownedLeaf, 'optimizer did not leave a chunk-owned mesh available for dirty marking');
-assert(typeof optimizer.markDirtyObject === 'function', 'progressive optimizer must expose markDirtyObject for shader-family staging');
-assert(optimizer.markDirtyObject(ownedLeaf) === true, 'chunk-owned leaf was not marked dirty');
-assert(optimizer.getStats().dirtyChunks > 0, 'dirty chunk count did not reflect markDirtyObject');
-await optimizer.flushDirtyChunks();
-assert(optimizer.getStats().dirtyChunks === 0, 'dirty chunk created by markDirtyObject was not flushable');
-const streamedRoot = new THREE.Group();
-streamedRoot.userData.worldChunkRoot = true;
-assert(optimizer.markDirtyObject(streamedRoot) === false, 'generic streamed roots must never be captured by authored optimizer dirty marking');
-
 const stats = optimizer.getStats();
 assert(calls > 10, 'optimizer did not expose cooperative work boundaries');
+assert(stats.phase === 'ready', 'optimizer did not reach ready state');
 assert(stats.chunks > 0, 'optimizer did not create spatial chunks');
 assert(stats.lateObjects === 1, 'late object queued during optimization was not recovered');
 assert(stats.drawCallsSaved > 0, 'mesh batching did not run');

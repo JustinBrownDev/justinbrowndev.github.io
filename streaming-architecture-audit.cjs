@@ -5,13 +5,13 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
 function read(name) { return fs.readFileSync(path.join(__dirname, name), 'utf8'); }
 
 const main = read('main.js');
-const chunks = read('kowloon-fabric-engine.js');
+const chunks = read('infinite-city-chunks.js');
 const perf = read('city-performance.js');
 const streamer = read('world-chunk-streamer.js');
 const adornment = read('systems/adornment-assets.js');
 
 assert(/directSceneAdd:\s*_origSceneAdd/.test(main), 'main must give infinite chunks an explicit raw scene commit path');
-assert(/worldChunkRoot/.test(chunks) && /renderAuthority\s*=\s*'KowloonFabricEngine'/.test(chunks) && /streamAuthority\s*=\s*'WorldChunkStreamer'/.test(chunks), 'streamed roots need explicit ownership metadata');
+assert(/worldChunkRoot/.test(chunks) && /renderAuthority\s*=\s*'WorldChunkStreamer'/.test(chunks), 'streamed roots need explicit ownership metadata');
 const commitBody = chunks.match(/async function commit\(chunk, payload\) \{[\s\S]*?\n    \}/)?.[0] || '';
 assert(/addStreamRoot\(payload\.root\)/.test(commitBody), 'infinite commit must use direct stream-root add');
 assert(!/scene\.add\(payload\.root\)/.test(commitBody), 'infinite commit must not use intercepted scene.add');

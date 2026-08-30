@@ -5,21 +5,18 @@ import { ART_GALLERY_CATALOG, AS400_CONTENT } from '../content/signature-content
 export function createSignatureBuildingSystem(deps) {
     const {
         CONFIG, QUALITY, scene, pendingGalleryPanels, photoImages, takeDynamicLight,
-        addBench, addBuildingModuleSteps, addPottedPlant, addSign, addSiteDebugOverlay,
+        addBench, addBuildingModule, addBuildingModuleSteps, addPottedPlant, addSign, addSiteDebugOverlay,
         addTerminalPlaque, addWallPoster, buildCourtyardVoid, cellToWorld, colHalf, findFreeFacadeRect,
         jitterGeometry, makePixelTexture, makeWindowGridTexture, mountStandoffPanel, pick,
         pickRandomizedCuratedPair, placeCityAsset, placeSemanticCityAsset, pointOnFacade, randRange, rng,
         rowHalf, sharedBuildingFacadeMaterial, siteIdOf, streetSetbackRoll
     } = deps;
 
-    function* buildFuturePlaceholderSteps(site) {
+    function buildFuturePlaceholder(site) {
         const { cells, signatureInstance } = site;
         const typeCfg = CONFIG.signatureBuildings.futurePlaceholder;
     
-        for (const cell of cells) {
-            buildCourtyardVoid(cell);
-            yield { phase: 'signature-future-courtyard', row: cell.row, col: cell.col };
-        }
+        for (const cell of cells) buildCourtyardVoid(cell);
         addSiteDebugOverlay(cells, [], null);
     
         const e = signatureInstance?.mainEntrance;
@@ -30,11 +27,10 @@ export function createSignatureBuildingSystem(deps) {
                 0xffffff, false, null, { w: 2.9, h: 0.78 }
             );
         }
-        yield { phase: 'signature-future-exterior' };
         console.log(`[signature] RESERVED: future singular area established (${cells.length} cells); no building authored by design`);
     }
     
-    function* buildSignaturePlaceholderSteps(site) {
+    function buildSignaturePlaceholder(site) {
         const { cells, signatureType, signatureInstance, id } = site;
         const typeCfg = CONFIG.signatureBuildings[signatureType];
          
@@ -64,7 +60,7 @@ export function createSignatureBuildingSystem(deps) {
         for (const cell of cells) {
             const isPrimary = cell.row === primary.row && cell.col === primary.col;
             const floorCount = floorCountByCellKey.get(`${cell.row},${cell.col}`);
-            const rect = yield* addBuildingModuleSteps(cell, {
+            const rect = addBuildingModule(cell, {
                 isPrimary, isWarehouse: false, floorCount, floorHeight, height: floorCount * floorHeight,
                 color, material, buildingContext, streetSetbackX, streetSetbackZ, partySetback, voidCell: null,
                 siteFloorCounts: floorCountByCellKey,
@@ -86,7 +82,6 @@ export function createSignatureBuildingSystem(deps) {
          
         addSign(e.doorX, primaryFloorCount * floorHeight - QP[2182], e.doorZ, e.outwardRotY, typeCfg.exteriorName, typeCfg.exteriorSubtitle, QP[2183], false, QP[2184], { w: QP[2185], h: QP[2186] });
     
-        yield { phase: 'signature-placeholder-exterior' };
         console.log(`[signature] ${typeCfg.exteriorName}: placeholder massing built (${cells.length} cells, ${primaryFloorCount} floors) -- authored interior pending, see task list`);
     }
     
@@ -243,6 +238,7 @@ export function createSignatureBuildingSystem(deps) {
                 voidCell, siteFloorCounts: floorCountByCellKey, signatureMode: true, forceDoorSide,
             });
             rectByCellKey.set(`${cell.row},${cell.col}`, rect);
+            yield { phase: 'art-gallery-module', row: cell.row, col: cell.col };
         }
         if (voidCell) buildCourtyardVoid(voidCell);  
     
@@ -276,7 +272,7 @@ export function createSignatureBuildingSystem(deps) {
             }
             placed ? hung++ : skipped++;
             if (!placed) console.warn(`[signature] ART GALLERY: no free wall found for "${piece.title}" -- skipped (never overlapped, never invented a second wall)`);
-            yield { phase: 'signature-art-piece', pieceId: piece.id, placed };
+            yield { phase: 'art-gallery-art', piece: piece.id };
         }
     
          
@@ -302,15 +298,14 @@ export function createSignatureBuildingSystem(deps) {
             scene.add(sculpture);
             addGalleryPlacard(px + QP[2315], pz + QP[2316], randRange(QP[2317], Math.PI * QP[2318]), organicTV.title, organicTV.subtitle);
             console.log(`[signature] ART GALLERY: "${organicTV.title}" on pedestal in ${voidCell ? 'the courtyard' : 'the main gallery'}`);
-            yield { phase: 'signature-art-pedestal' };
         }
+        yield { phase: 'art-gallery-pedestal' };
     
          
          
         {
             const { x: vx, z: vz } = cellToWorld(vestibule.col, vestibule.row);
             addBench(vx + randRange(QP[2319], QP[2320]), vz + randRange(QP[2321], QP[2322]), randRange(QP[2323], Math.PI * QP[2324]));
-            yield { phase: 'signature-art-vestibule' };
         }
          
          
@@ -318,7 +313,6 @@ export function createSignatureBuildingSystem(deps) {
             const { x: mx, z: mz } = cellToWorld(primary.col, primary.row);
             const mr = rectByCellKey.get(`${primary.row},${primary.col}`);
             addBench(mx + randRange(-((mr?.hwx ?? QP[2325]) * QP[2326]), (mr?.hwx ?? QP[2327]) * QP[2328]), mz + randRange(-((mr?.hwz ?? QP[2329]) * QP[2330]), (mr?.hwz ?? QP[2331]) * QP[2332]), randRange(QP[2333], Math.PI * QP[2334]));
-            yield { phase: 'signature-art-main-bench' };
         }
          
          
@@ -332,7 +326,6 @@ export function createSignatureBuildingSystem(deps) {
             addPottedPlant(rx - rhw, rz - rhw * QP[2339]);
             addBench(rx + rhw * QP[2340], rz - rhw * QP[2341], randRange(QP[2342], Math.PI * QP[2343]));
             console.log(`[signature] ART GALLERY: roof terrace at y=${roofY.toFixed(QP[2344])} above the main gallery`);
-            yield { phase: 'signature-art-roof' };
         }
     
          
@@ -359,11 +352,11 @@ export function createSignatureBuildingSystem(deps) {
                 if (spot) {
                     const p = pointOnFacade(vestFacade, spot.u, spot.v);
                     addWallPoster(p.x, p.y, p.z, vestFacade.rotY, piece.title, piece.subtitle);
-                    yield { phase: 'signature-art-poster-case', pieceId: piece.id };
                 }
             }
         }
     
+        yield { phase: 'art-gallery-finish' };
         console.log(`[signature] ART GALLERY: built ${buildCells.length} modules (courtyard=${!!voidCell}), ${hung}/${ART_GALLERY_CATALOG.filter(p => p.kind !== 'pedestal').length} wall pieces hung${skipped ? `, ${skipped} skipped (no free wall)` : ''}, 1 pedestal piece, roof terrace active`);
     }
     
@@ -439,10 +432,14 @@ export function createSignatureBuildingSystem(deps) {
                     placedLineage++;
                     break;
                 }
+                yield { phase: 'as400-orientation-panel', panel: name };
             }
              
             const orientationRect = rectByCellKey.get(`${orientation.row},${orientation.col}`);
-            for (let i = QP[2408]; i < QP[2409]; i++) placeSemanticCityAsset(orientationRect, pick(TERMINAL_MODELS), QP[2410], { roomHeight: floorHeight });
+            for (let i = QP[2408]; i < QP[2409]; i++) {
+                placeSemanticCityAsset(orientationRect, pick(TERMINAL_MODELS), QP[2410], { roomHeight: floorHeight });
+                yield { phase: 'as400-orientation-terminal', index: i };
+            }
             const [objTitle, objDesc] = AS400_CONTENT.concepts[QP[2411]];  
             addGalleryPlacard(ox + QP[2412], oz - QP[2413], randRange(QP[2414], Math.PI * QP[2415]), objTitle, objDesc);
             console.log(`[signature] AS/400 ARCHIVE: orientation lobby -- ${placedLineage}/${AS400_CONTENT.lineage.length} lineage panels hung`);
@@ -453,7 +450,10 @@ export function createSignatureBuildingSystem(deps) {
             const mr = rectByCellKey.get(`${machineRoom.row},${machineRoom.col}`);
             const jr = Math.min(mr?.hwx ?? QP[2416], mr?.hwz ?? QP[2417]) * QP[2418];
             const machineModels = [...RACK_MODELS, 'as400_archive/line_printer_01', 'as400_archive/line_printer_02', 'as400_archive/tape_drive_01', 'as400_archive/tape_drive_02', 'as400_archive/disk_unit_01', 'as400_archive/operator_console_01'];
-            for (const modelId of machineModels) placeSemanticCityAsset(mr, modelId, QP[2419], { roomHeight: floorHeight });
+            for (const modelId of machineModels) {
+                placeSemanticCityAsset(mr, modelId, QP[2419], { roomHeight: floorHeight });
+                yield { phase: 'as400-machine-prop', modelId };
+            }
             addGalleryPlacard(mx, mz + jr * QP[2420], randRange(QP[2421], Math.PI * QP[2422]), 'MACHINE ROOM', 'real hardware, real heat -- keep clear of the racks');
             console.log(`[signature] AS/400 ARCHIVE: machine room -- ${machineModels.length} real hardware props placed`);
             yield { phase: 'as400-machine-room' };
@@ -482,9 +482,13 @@ export function createSignatureBuildingSystem(deps) {
                     }
                 }
                 if (placed) { libraryHung++; ci++; }
+                yield { phase: 'as400-library-panel', panel: term };
             }
             const libraryRect = rectByCellKey.get(`${primary.row},${primary.col}`);
-            for (let i = QP[2433]; i < QP[2434]; i++) placeSemanticCityAsset(libraryRect, pick(['as400_archive/binder_shelf_01', 'as400_archive/binder_shelf_02', 'as400_archive/binder_shelf_03']), floorHeight, { roomHeight: floorHeight });
+            for (let i = QP[2433]; i < QP[2434]; i++) {
+                placeSemanticCityAsset(libraryRect, pick(['as400_archive/binder_shelf_01', 'as400_archive/binder_shelf_02', 'as400_archive/binder_shelf_03']), floorHeight, { roomHeight: floorHeight });
+                yield { phase: 'as400-library-shelf', index: i };
+            }
         }
         console.log(`[signature] AS/400 ARCHIVE: reference library -- ${libraryHung}/${AS400_CONTENT.concepts.length} concept panels hung`);
         yield { phase: 'as400-library' };
@@ -511,11 +515,13 @@ export function createSignatureBuildingSystem(deps) {
                     }
                 }
                 if (placed) { commandsHung++; ci++; }
+                yield { phase: 'as400-terminal-panel', panel: cmd };
             }
             const labRect = rectByCellKey.get(`${primary.row},${primary.col}`);
             for (let i = QP[2445]; i < QP[2446]; i++) {
                 const modelId = rng() < QP[2447] ? pick(TERMINAL_MODELS) : pick(WORKSTATION_MODELS);
                 placeSemanticCityAsset(labRect, modelId, floorHeight * QP[2448], { roomHeight: floorHeight });
+                yield { phase: 'as400-terminal-prop', index: i };
             }
         }
         console.log(`[signature] AS/400 ARCHIVE: terminal lab -- ${commandsHung}/${AS400_CONTENT.commands.length} command pages hung, real terminal/workstation props on floor`);
@@ -606,6 +612,7 @@ export function createSignatureBuildingSystem(deps) {
                 voidCell: null, siteFloorCounts: floorCountByCellKey, signatureMode: true, forceDoorSide,
             });
             rectByCellKey.set(`${cell.row},${cell.col}`, rect);
+            yield { phase: 'justin-index-module', row: cell.row, col: cell.col };
         }
     
         const facadesFor = (cell) => cell && rectByCellKey.get(`${cell.row},${cell.col}`)?.streetFacades || [];
@@ -645,6 +652,7 @@ export function createSignatureBuildingSystem(deps) {
                     const p = pointOnFacade(facade, spot.u, spot.v, QP[2535]);
                     addWallPoster(p.x, p.y, p.z, facade.rotY + Math.PI, t, s);
                     hung++;
+                    yield { phase: 'justin-index-lobby-panel' };
                 }
             }
             console.log(`[signature] JUSTIN BROWN INDEX: records lobby -- reception + ${hung} system-noise panels`);
@@ -670,7 +678,7 @@ export function createSignatureBuildingSystem(deps) {
                     addGalleryPlacard(placed.x + placed.tx * QP[2546], placed.z + placed.tz * QP[2547], placed.rotY, t, s);
                     stackLabels++;
                 }
-                yield { phase: 'signature-index-stack-fixture', row: cell.row, col: cell.col, index: i };
+                yield { phase: 'justin-index-stack-fixture', row: cell.row, col: cell.col };
             }
         }
         console.log(`[signature] JUSTIN BROWN INDEX: deep stacks -- ${stackFixtures} cabinets/shelves across ${allStackCells.length} rooms, ${stackLabels} real decoy records labeled`);
@@ -691,14 +699,14 @@ export function createSignatureBuildingSystem(deps) {
                     const p = pointOnFacade(facade, spot.u, spot.v, QP[2556]);
                     addWallPoster(p.x, p.y, p.z, facade.rotY + Math.PI, t, s);
                     upperHung++;
-                    yield { phase: 'signature-index-upper-panel', floor: fl };
+                    yield { phase: 'justin-index-upper-panel', floor: fl };
                 }
             }
              
              
             const primaryRect = rectByCellKey.get(`${primary.row},${primary.col}`);
             placeSemanticCityAsset(primaryRect, pick(LOCKER_MODELS), fl * floorHeight, { roomHeight: floorHeight });
-            yield { phase: 'signature-index-floor', floor: fl };
+            yield { phase: 'justin-index-upper-floor', floor: fl };
         }
         console.log(`[signature] JUSTIN BROWN INDEX: ${floorCount - QP[2557]} upper floors -- ${upperHung} real decoy/noise panels hung, deeper into the stacks per floor`);
     
@@ -715,6 +723,7 @@ export function createSignatureBuildingSystem(deps) {
             }
         }
     
+        yield { phase: 'justin-index-finish' };
         console.log(`[signature] JUSTIN BROWN INDEX: built ${cells.length} modules, ${floorCount} floors -- lobby+search hall+deep stacks all populated, ${allStackCells.length + QP[2575]} internally-connected rooms give real multiple routes`);
     }
     
@@ -758,6 +767,7 @@ export function createSignatureBuildingSystem(deps) {
                 voidCell: null, siteFloorCounts: floorCountByCellKey, signatureMode: true, forceDoorSide,
             });
             rectByCellKey.set(`${cell.row},${cell.col}`, rect);
+            yield { phase: 'systems-workshop-module', row: cell.row, col: cell.col };
         }
     
         const facadesFor = (cell) => cell && rectByCellKey.get(`${cell.row},${cell.col}`)?.streetFacades || [];
@@ -766,7 +776,7 @@ export function createSignatureBuildingSystem(deps) {
             if (!r) return;
             for (let i = QP[2601]; i < count; i++) {
                 placeSemanticCityAsset(r, pick(modelIds), yLevel, { roomHeight: floorHeight });
-                yield { phase: 'signature-workshop-fixture', row: cell.row, col: cell.col, index: i };
+                yield { phase: 'systems-workshop-fixture', row: cell.row, col: cell.col };
             }
         }
     
@@ -808,7 +818,7 @@ export function createSignatureBuildingSystem(deps) {
                 if (placed) break;
             }
             if (placed) codeHung++;
-            yield { phase: 'signature-workshop-code-project', title, placed };
+            yield { phase: 'systems-workshop-code-project' };
         }
     
          
@@ -846,6 +856,7 @@ export function createSignatureBuildingSystem(deps) {
             }
         }
     
+        yield { phase: 'systems-workshop-finish' };
         console.log(`[signature] SYSTEMS WORKSHOP: built ${cells.length} modules, ${floorCount} floors -- main workshop+front shop+computer lab+electronics bench+rear yard populated, ${codeHung}/${CONFIG.siteContent.codeProjects.length} real code projects on display`);
     }
     
@@ -896,6 +907,7 @@ export function createSignatureBuildingSystem(deps) {
                 voidCell: null, siteFloorCounts: floorCountByCellKey, signatureMode: true, forceDoorSide,
             });
             rectByCellKey.set(`${cell.row},${cell.col}`, rect);
+            yield { phase: 'lore-shrine-module', row: cell.row, col: cell.col };
         }
         const facadesFor = (cell) => cell && rectByCellKey.get(`${cell.row},${cell.col}`)?.streetFacades || [];
     
@@ -923,7 +935,6 @@ export function createSignatureBuildingSystem(deps) {
                 btn.rotation.x = Math.PI / QP[2743];
                 btn.position.set(x + QP[2744], plinthH + QP[2745] - i * QP[2746], z + QP[2747]);
                 scene.add(btn);
-                yield { phase: 'signature-lore-button', index: i };
             }
             addGalleryPlacard(x - QP[2748], z - QP[2749], randRange(QP[2750], Math.PI * QP[2751]), 'THE FOUR BUTTON CHAMBER', `${buttonLabels.join(' · ')} -- nothing more, nothing less`);
             if (takeDynamicLight(QP[2752])) {
@@ -933,6 +944,7 @@ export function createSignatureBuildingSystem(deps) {
             }
             console.log('[signature] LORE SHRINE: Four Button Chamber built -- ' + buttonLabels.join('/'));
         }
+        yield { phase: 'lore-shrine-four-button' };
     
          
          
@@ -952,7 +964,7 @@ export function createSignatureBuildingSystem(deps) {
                 mesh.position.set(x + dx, QP[2780], z + dz);
                 scene.add(mesh);
                 addGalleryPlacard(x + dx + QP[2781], z + dz, randRange(QP[2782], Math.PI * QP[2783]), stages[i][QP[2784]], stages[i][QP[2785]]);
-                yield { phase: 'signature-lore-cycle-stage', index: i };
+                yield { phase: 'lore-shrine-refrigeration-stage', index: i };
             }
             let diagramHung = QP[2786];
             for (const facade of facadesFor(refrigerationSanctum)) {
@@ -964,8 +976,8 @@ export function createSignatureBuildingSystem(deps) {
                 break;
             }
             console.log(`[signature] LORE SHRINE: Refrigeration Sanctum built -- 4 stages + ${diagramHung} cycle diagram`);
-            yield { phase: 'signature-lore-cycle-diagram' };
         }
+        yield { phase: 'lore-shrine-refrigeration' };
     
          
         {
@@ -986,7 +998,7 @@ export function createSignatureBuildingSystem(deps) {
             for (let i = QP[2817]; i < tools.length; i++) {
                 const [dx, dz] = spread[i];
                 addAbstractDisplay(x + dx, z + dz, tools[i][QP[2818]], tools[i][QP[2819]], toolGeos[i], QP[2820], QP[2821]);
-                yield { phase: 'signature-lore-tool', index: i };
+                yield { phase: 'lore-shrine-hand-tool', index: i };
             }
             console.log('[signature] LORE SHRINE: Hall of Hand Tools built -- 4 exhibits');
         }
@@ -1004,8 +1016,8 @@ export function createSignatureBuildingSystem(deps) {
                 scene.add(light);
             }
             console.log('[signature] LORE SHRINE: Vise-Grip Altar built');
-            yield { phase: 'signature-lore-altar' };
         }
+        yield { phase: 'lore-shrine-altar' };
     
          
          
@@ -1021,6 +1033,7 @@ export function createSignatureBuildingSystem(deps) {
             }
         }
     
+        yield { phase: 'lore-shrine-finish' };
         console.log(`[signature] LORE SHRINE: built ${cells.length} modules, ${floorCount} floors -- Four Button Chamber + Refrigeration Sanctum + Hall of Hand Tools + Vise-Grip Altar all present`);
     }
 
@@ -1044,26 +1057,40 @@ export function createSignatureBuildingSystem(deps) {
         }
     };
 
+    function drainSignatureSteps(iterator) {
+        let step = iterator.next();
+        while (!step.done) step = iterator.next();
+        return step.value;
+    }
+
+    function* buildSynchronousSignatureSteps(site, builder, phase) {
+        builder(site);
+        yield { phase };
+    }
+
     const SIGNATURE_STEP_BUILDERS = Object.freeze({
         artGallery: buildArtGallerySteps,
         as400Archive: buildAS400ArchiveSteps,
         justinIndex: buildJustinIndexSteps,
         systemsWorkshop: buildSystemsWorkshopSteps,
         loreShrine: buildLoreShrineSteps,
-        futurePlaceholder: buildFuturePlaceholderSteps,
     });
 
     function* buildSignatureSiteSteps(site) {
-        const builder = SIGNATURE_STEP_BUILDERS[site.signatureType] ?? buildSignaturePlaceholderSteps;
-        yield* builder(site);
-        yield { phase: `signature-${site.signatureType || 'placeholder'}-complete` };
+        const stepBuilder = SIGNATURE_STEP_BUILDERS[site.signatureType];
+        if (stepBuilder) {
+            yield* stepBuilder(site);
+            return;
+        }
+        if (site.signatureType === 'futurePlaceholder') {
+            yield* buildSynchronousSignatureSteps(site, buildFuturePlaceholder, 'signature-futurePlaceholder');
+            return;
+        }
+        yield* buildSynchronousSignatureSteps(site, buildSignaturePlaceholder, `signature-${site.signatureType || 'placeholder'}`);
     }
 
     function buildSignatureSite(site) {
-        const iterator = buildSignatureSiteSteps(site);
-        let step = iterator.next();
-        while (!step.done) step = iterator.next();
-        return step.value;
+        return drainSignatureSteps(buildSignatureSiteSteps(site));
     }
 
     return Object.freeze({ buildSignatureSite, buildSignatureSiteSteps, buildGalleryArtPanel });

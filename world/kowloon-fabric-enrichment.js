@@ -9,6 +9,7 @@ import { solveSemanticLayout } from './semantic-layout.js';
 import { compileSemanticContextMultiplier } from './semantic-context-multiplier.js';
 import { createExteriorPropFieldSystem } from './exterior-prop-field.js';
 import { requiresSemanticExteriorPlacement, semanticExteriorProvenance, semanticPlacementPoint } from './semantic-exterior-authority.js';
+import { semanticAssetAlignment, semanticAssetFitScale } from './semantic-asset-frame.js';
 
 function mulberry32(seed) {
     let a = seed >>> 0;
@@ -353,10 +354,52 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
         if (typeof window === 'undefined' || !holder || !def) return;
         loadSemanticTemplate(def).then(template => {
             if (!template || payload?.disposed || !holder.parent) return;
-            holder.clear();
             const clone = template.clone(true);
             normalizeDecorationTemplate(clone);
+            clone.updateMatrixWorld?.(true);
+            const rawBounds = new THREE.Box3().setFromObject(clone);
+            if (rawBounds.isEmpty()) return;
+            const rawSize = rawBounds.getSize(new THREE.Vector3());
+            const fitScale = semanticAssetFitScale(def, rawBounds);
+            if (fitScale < 1) {
+                clone.scale.multiplyScalar(fitScale);
+                clone.updateMatrixWorld?.(true);
+            }
+            const fittedBounds = new THREE.Box3().setFromObject(clone);
+            const alignment = semanticAssetAlignment(def, fittedBounds);
+            clone.position.x += alignment.x;
+            clone.position.y += alignment.y;
+            clone.position.z += alignment.z;
+            clone.updateMatrixWorld?.(true);
+            holder.clear();
             holder.add(clone);
+            holder.updateMatrixWorld?.(true);
+            const worldBounds = new THREE.Box3().setFromObject(holder);
+            const boundsMinY = Number(def.boundsMin?.[1]) || 0;
+            const expectedSupportY = holder.position.y + boundsMinY;
+            const frame = holder.userData.semanticAssetFrame = {
+                schema: 'jweb.semantic-asset-frame.v1',
+                scale: fitScale,
+                oversizeFitApplied: fitScale < 0.999999,
+                alignment: { ...alignment },
+                catalogDimensionsXYZ: [...(def.dimensionsXYZ ?? [])],
+                catalogBoundsMin: [...(def.boundsMin ?? [])],
+                rawSize: [rawSize.x, rawSize.y, rawSize.z],
+                worldBounds: {
+                    min: [worldBounds.min.x, worldBounds.min.y, worldBounds.min.z],
+                    max: [worldBounds.max.x, worldBounds.max.y, worldBounds.max.z],
+                },
+                expectedSupportY,
+                supportErrorY: worldBounds.min.y - expectedSupportY,
+                accepted: null,
+            };
+            if (!objectClearsStructuralReservations(payload, holder)) {
+                frame.accepted = false;
+                frame.rejectedReason = 'structural-reservation';
+                holder.remove(clone);
+                return;
+            }
+            frame.accepted = true;
             clone.traverse?.(freezeObject);
             freezeObject(clone);
             holder.updateMatrixWorld?.(true);

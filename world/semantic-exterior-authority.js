@@ -48,6 +48,7 @@ export function requiresSemanticExteriorPlacement(task) {
 function candidatePool(task, opportunities, role) {
     const entityPool = opportunities.filter(item => item?.role === role
         && item?.decorationMayIntrude !== false
+        && item?.spectacleReserved !== true
         && (!task.entityId || item.entityId === task.entityId || item.hostId === task.entityId));
     if (!entityPool.length) return [];
     const sidePool = task.side ? entityPool.filter(item => item.side === task.side) : [];

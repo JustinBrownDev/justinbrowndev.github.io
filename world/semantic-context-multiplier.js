@@ -1,4 +1,5 @@
 import { cityAssetPlacementMetadata } from '../vendor/city-pack/placement-metadata.js';
+import { EXTERIOR_OPPORTUNITY_PRIORITY, exteriorAssetVisualImpact } from './exterior-spectacle-priority.js';
 
 export const SEMANTIC_CONTEXT_MULTIPLIER_SCHEMA = 'jweb.semantic-context-multiplier.v1';
 
@@ -15,21 +16,6 @@ const ROLE_BY_OPPORTUNITY = Object.freeze({
     'portal-lintel-zone': 'wall',
     'facade-service-band': 'wall',
     'roof-utility-zone': 'roof',
-});
-
-const OPPORTUNITY_PRIORITY = Object.freeze({
-    'wall-mounted-prop-zone': 0,
-    'facade-sign-zone': 1,
-    'facade-poster-zone': 2,
-    'roof-utility-zone': 3,
-    'portal-lintel-zone': 0,
-    'portal-flank-wall-zone': 0,
-    'facade-service-band': 0,
-    'portal-flank-ground-zone': 1,
-    'ground-edge-zone': 4,
-    'connector-service-zone': 5,
-    'ground-open-zone': 6,
-    'beside-door-zone': 4,
 });
 
 const PROGRAM_ALIASES = Object.freeze({
@@ -199,7 +185,8 @@ function chooseAsset(pool, context, opportunity, seed, usedAssetIds = null) {
         const scale = fitScale(def, budget);
         if (scale < MIN_CONTEXT_PROP_SCALE) continue;
         const novelty = usedAssetIds?.has(def.id) ? -5 : 0;
-        const candidate = { def, scale, score: contextualAssetScore(def, context, role) + novelty, ordinal: i };
+        const visualImpact = exteriorAssetVisualImpact(def, scale, budget, role);
+        const candidate = { def, scale, visualImpact, score: contextualAssetScore(def, context, role) + visualImpact + novelty, ordinal: i };
         if (!best || candidate.score > best.score || (candidate.score === best.score && candidate.ordinal < best.ordinal)) best = candidate;
     }
     return best;
@@ -234,8 +221,8 @@ function entityPhysicalBudget(semanticContext, entityId) {
         wallArea += width * height;
     }
     const available = opportunityRoleCounts(semanticContext, entityId);
-    const wallNatural = surfaces.length ? clamp(Math.round(wallArea / 8.5 + facadeMeters / 16), 6, 30) : clamp(available.wall, 0, 12);
-    const roofNatural = clamp(Math.ceil(available.roof * 0.75), 0, 4);
+    const wallNatural = surfaces.length ? clamp(Math.round(wallArea / 10.5 + facadeMeters / 20), 5, 20) : clamp(available.wall, 0, 10);
+    const roofNatural = clamp(Math.ceil(available.roof * 0.90), 0, 5);
     const groundNatural = clamp(Math.ceil(available.ground * 0.50), 0, 3);
     const budget = {
         wall: Math.min(available.wall, wallNatural),
@@ -252,14 +239,14 @@ function rankedOpportunities(chunk, semanticContext, occupied) {
     const grouped = new Map();
     for (const opportunity of semanticContext?.opportunities ?? []) {
         const role = ROLE_BY_OPPORTUNITY[opportunity?.role];
-        if (!role || opportunity?.decorationMayIntrude === false || occupied.has(opportunity.id)) continue;
+        if (!role || opportunity?.decorationMayIntrude === false || opportunity?.spectacleReserved === true || occupied.has(opportunity.id)) continue;
         if (!Number.isFinite(opportunity?.transform?.x) || !Number.isFinite(opportunity?.transform?.y) || !Number.isFinite(opportunity?.transform?.z)) continue;
         const entityId = opportunity.entityId ?? opportunity.hostId ?? '__world__';
         const entry = {
             opportunity,
             entityId,
             role,
-            priority: OPPORTUNITY_PRIORITY[opportunity.role] ?? 9,
+            priority: EXTERIOR_OPPORTUNITY_PRIORITY[opportunity.role] ?? 9,
             rank: hash32(`${chunk?.key ?? 'world'}:semantic-context-multiplier:${opportunity.id}`),
         };
         const list = grouped.get(entityId) ?? [];
@@ -272,7 +259,7 @@ function rankedOpportunities(chunk, semanticContext, occupied) {
 
     // Round-robin across entities so the visible shell gets broader before any
     // single authored site or procedural building gets to deepen. This removes
-    // payload-count amplification at spawn while keeping wall hardware dominant.
+    // payload-count amplification while spectacle/identity opportunities win before micro hardware.
     const ranked = [];
     for (let layer = 0; ; layer++) {
         let emitted = 0;
@@ -317,7 +304,7 @@ export function compileSemanticContextMultiplier({ chunk, payload, assets, exist
         const seed = hash32(`${chunk.key}:${opportunity.id}:${context?.program ?? 'mixed'}:${usage[role] ?? 0}`);
         const chosen = chooseAsset(pool, context, opportunity, seed, usedAssetIds);
         if (!chosen) continue;
-        const { def, scale } = chosen;
+        const { def, scale, visualImpact } = chosen;
         const budget = fitBudget(opportunity, role);
         const placement = opportunity.transform;
         const instanceId = `${chunk.key}:context-prop:${hash32(`${opportunity.id}:${def.id}`)}`;
@@ -333,6 +320,9 @@ export function compileSemanticContextMultiplier({ chunk, payload, assets, exist
             semanticHostId: opportunity.surfaceId ?? opportunity.hostId ?? entityId,
             spatialTopologyHostId: opportunity.spatialTopologyHostId ?? null,
             semanticContextRole: role,
+            semanticOpportunityRole: opportunity.role,
+            semanticVisualImpact: visualImpact,
+            semanticNativeScaleRetention: scale,
             semanticLayer: opportunity.layer ?? context?.layer ?? null,
             semanticShellPriority: opportunity.shellPriority ?? (role === 'wall' ? 'deepen' : 'ambient'),
             semanticPlacement: {

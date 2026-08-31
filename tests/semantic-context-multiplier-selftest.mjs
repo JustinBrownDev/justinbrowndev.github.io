@@ -10,6 +10,7 @@ const assets = [
     def('wall-camera', 'wall', 'security_camera', [0.32, 0.24, 0.22]),
     def('wall-poster', 'wall', 'notice_board', [0.7, 0.9, 0.08]),
     def('wall-clock', 'wall', 'indoor_clock', [0.45, 0.45, 0.08]),
+    def('wall-megascreen', 'wall', 'exterior_sign_panel', [3.8, 2.4, 0.20]),
     def('door-crate', 'ground', 'crate', [0.48, 0.55, 0.42]),
     def('door-chair', 'ground', 'chair', [0.48, 0.92, 0.50]),
     def('roof-vent', 'ground', 'roof_vent_fan', [0.85, 0.72, 0.85]),
@@ -65,6 +66,7 @@ const densePayload = {
         spaces: [],
         surfaces: [{ id: 'dense:north', entityId: 'dense', half: 4, yMin: 0, yMax: 12.5 }],
         opportunities: [
+            { id: 'dense-sign', role: 'facade-sign-zone', entityId: 'dense', hostId: 'dense', surfaceId: 'dense:north', contextId: 'ctx-dense', transform: { x: 0, y: 4.5, z: -4, rotY: 0 }, clearanceBudget: { width: 5.2, height: 3.2 }, layer: 'mid', shellPriority: 'first-pass' },
             ...denseWallOpportunities,
             { id: 'dense-roof', role: 'roof-utility-zone', entityId: 'dense', hostId: 'dense', contextId: 'ctx-dense', transform: { x: 0, y: 12.5, z: 0, rotY: 0 }, clearanceBudget: { width: 2, depth: 2 } },
             { id: 'dense-ground', role: 'beside-door-zone', entityId: 'dense', hostId: 'dense', contextId: 'ctx-dense', transform: { x: 2, y: 0, z: -4.2, rotY: 0 }, clearanceBudget: { width: 0.7, depth: 0.7 } },
@@ -73,9 +75,10 @@ const densePayload = {
 };
 const dense = compileSemanticContextMultiplier({ chunk: { key: '4,1', seed: 77 }, payload: densePayload, assets, existingTasks: [] });
 assert.ok(dense.stats.entityBudgets.dense.wall > 8, 'physical wall area should permit substantially more than the old eight-prop entity cap');
-assert.ok(dense.stats.roles.wall >= 10, `wall-mounted semantic assets should dominate dense facade enrichment, got ${dense.stats.roles.wall}`);
-assert.ok(dense.stats.roles.wall > dense.stats.roles.ground + dense.stats.roles.roof, 'facade occupation must dominate ground/roof contextual props');
-assert.equal(dense.tasks[0].semanticContextRole, 'wall', 'first contextual publication should be wall-mounted shell richness');
+assert.ok(dense.stats.roles.wall >= 8, `dense facades should still receive substantial contextual enrichment, got ${dense.stats.roles.wall}`);
+assert.equal(dense.tasks[0].semanticOpportunityRole, 'facade-sign-zone', 'identity/sign opportunity must beat generic wall hardware');
+assert.equal(dense.tasks[0].assetId, 'wall-megascreen', 'large fitting exterior assets must beat tiny hardware on a large sign host');
+assert.ok(dense.tasks[0].semanticVisualImpact > dense.tasks.find(task => task.semanticOpportunityRole === 'wall-mounted-prop-zone')?.semanticVisualImpact, 'selected identity asset should carry more visual impact than generic wall hardware');
 assert.ok(dense.tasks.some(task => task.semanticLayer === 'mid'), 'selected wall assets must reach mid facade bands');
 
 console.log('[semantic-context-multiplier-selftest] PASS', { representative: a.stats, dense: dense.stats });

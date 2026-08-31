@@ -10,6 +10,7 @@ import { compileSemanticContextMultiplier } from './semantic-context-multiplier.
 import { createExteriorPropFieldSystem } from './exterior-prop-field.js';
 import { requiresSemanticExteriorPlacement, semanticExteriorProvenance, semanticPlacementPoint } from './semantic-exterior-authority.js';
 import { semanticAssetAlignment, semanticAssetFitScale } from './semantic-asset-frame.js';
+import { EXTERIOR_FIRST_PASS_KIND_ORDER, EXTERIOR_TASK_KIND_PRIORITY, compareExteriorPriorityKeys, exteriorTaskPriorityKey, exteriorTaskVisualImpact } from './exterior-spectacle-priority.js';
 
 function mulberry32(seed) {
     let a = seed >>> 0;
@@ -905,18 +906,6 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
         return tasks;
     }
 
-    const DETAIL_KIND_PRIORITY = Object.freeze({
-        sign: 0, awning: 0, graffiti: 0, flyer: 0,
-        pipe: 1, ivy: 1, security: 1, 'elevator-hardware': 1, 'street-fixture': 1,
-        'overhead-cable': 2, 'roof-clutter': 2, 'roof-topper': 2,
-        'spray-cans': 3, 'semantic-identity': 3,
-        'semantic-functional': 4, 'interior-prop': 4, 'semantic-life': 5,
-    });
-
-    const FIRST_PASS_KIND_ORDER = Object.freeze([
-        'sign', 'awning', 'pipe', 'street-fixture', 'graffiti', 'security', 'elevator-hardware',
-        'ivy', 'roof-topper', 'roof-clutter', 'spray-cans', 'flyer',
-    ]);
     function firstPassClass(kind) {
         if (kind === 'sign' || kind === 'awning' || kind === 'graffiti' || kind === 'flyer') return 'facade';
         if (kind === 'pipe' || kind === 'ivy' || kind === 'security' || kind === 'elevator-hardware' || kind === 'spray-cans' || kind === 'street-fixture') return 'fixture';
@@ -927,12 +916,13 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
 
     function detailPriority(kind) {
         if (String(kind).startsWith('plaza-')) return 2;
-        return DETAIL_KIND_PRIORITY[kind] ?? 3;
+        return EXTERIOR_TASK_KIND_PRIORITY[kind] ?? 3;
     }
 
     function sortedEntityTasks(queue) {
         return queue.sort((a, b) =>
             detailPriority(a.kind) - detailPriority(b.kind)
+            || exteriorTaskVisualImpact(b) - exteriorTaskVisualImpact(a)
             || a.kind.localeCompare(b.kind)
             || (a.seed >>> 0) - (b.seed >>> 0));
     }
@@ -946,7 +936,7 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
         // facade/fixture identity. Every other deterministic task remains queued.
         const plazaFeature = visibleCandidates.find(task => String(task.kind).startsWith('plaza-'));
         if (plazaFeature) return [plazaFeature];
-        for (const kind of FIRST_PASS_KIND_ORDER) {
+        for (const kind of EXTERIOR_FIRST_PASS_KIND_ORDER) {
             const task = visibleCandidates.find(candidate => candidate.kind === kind);
             if (task) return [task];
         }
@@ -1569,7 +1559,48 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
         return !!state && state.phase !== DETAIL_PHASE.DISPOSED && state.cursor < state.tasks.length;
     }
 
-    function pump(chunk, payload, { maxSteps = 1, maxMillis = 2 } = {}) {
+    function taskRuntimePosition(payload, task) {
+        if ([task?.semanticPlacement?.x, task?.semanticPlacement?.z].every(Number.isFinite)) return task.semanticPlacement;
+        const entity = getEntity(payload, task?.entityId);
+        if ([entity?.x, entity?.z].every(Number.isFinite)) return entity;
+        if ([task?.x, task?.z].every(Number.isFinite)) return task;
+        return null;
+    }
+
+    function nextTaskIndex(state, payload, playerPosition) {
+        if (!state || state.cursor >= state.tasks.length) return state?.cursor ?? 0;
+        let bestIndex = state.cursor;
+        let bestKey = null;
+        for (let index = state.cursor; index < state.tasks.length; index++) {
+            const task = state.tasks[index];
+            const key = exteriorTaskPriorityKey(task, {
+                playerPosition,
+                taskPosition: taskRuntimePosition(payload, task),
+                firstPassIncomplete: !state.firstPassComplete,
+            });
+            if (!bestKey || compareExteriorPriorityKeys(key, bestKey) < 0) {
+                bestIndex = index;
+                bestKey = key;
+            }
+        }
+        return bestIndex;
+    }
+
+    function settleFirstPassMiss(state, task) {
+        if (!task?.firstPassBundle) return;
+        const entityId = String(task.entityId ?? '');
+        const target = Number(state.firstPassTargetByEntity?.[entityId]) || 0;
+        if (!(target > 0)) return;
+        const published = Number(state.firstPassPublishedByEntity?.[entityId]) || 0;
+        const nextTarget = Math.max(published, target - 1);
+        state.firstPassTargetByEntity[entityId] = nextTarget;
+        state.firstPassPublicationTarget = Math.max(0, Number(state.firstPassPublicationTarget) - 1);
+        state.firstPassTaskCount = state.firstPassPublicationTarget;
+        if (published < target && published >= nextTarget) state.firstPassEntitiesComplete++;
+        state.firstPassComplete = state.firstPassEntitiesComplete >= state.firstPassEntityTarget;
+    }
+
+    function pump(chunk, payload, { maxSteps = 1, maxMillis = 2, playerPosition = null } = {}) {
         const state = payload?.refinement;
         if (!state || state.phase === DETAIL_PHASE.DISPOSED) return { progressed: false, steps: 0, complete: true, pending: 0, elapsedMs: 0 };
         if (!hasPending(payload)) {
@@ -1588,6 +1619,8 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
         const stepCap = Math.max(1, Math.floor(maxSteps));
         const timeCap = Number.isFinite(maxMillis) ? Math.max(0.1, maxMillis) : Infinity;
         while (state.cursor < state.tasks.length && steps < stepCap) {
+            const chosenIndex = nextTaskIndex(state, payload, playerPosition);
+            if (chosenIndex !== state.cursor) [state.tasks[state.cursor], state.tasks[chosenIndex]] = [state.tasks[chosenIndex], state.tasks[state.cursor]];
             const task = state.tasks[state.cursor++];
             const stepStart = performance.now();
             attempted++;
@@ -1598,24 +1631,28 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
                     published++;
                     state.published++;
                     state.completed = state.published;
-                    const entityId = String(task.entityId ?? '');
-                    const target = Number(state.firstPassTargetByEntity?.[entityId]) || 0;
-                    const before = Number(state.firstPassPublishedByEntity?.[entityId]) || 0;
-                    const after = before + 1;
-                    state.firstPassPublishedByEntity[entityId] = after;
-                    if (before < target) {
-                        state.firstPassSuccessfulPublications++;
-                        if (after >= target) state.firstPassEntitiesComplete++;
+                    if (task.firstPassBundle) {
+                        const entityId = String(task.entityId ?? '');
+                        const target = Number(state.firstPassTargetByEntity?.[entityId]) || 0;
+                        const before = Number(state.firstPassPublishedByEntity?.[entityId]) || 0;
+                        const after = before + 1;
+                        state.firstPassPublishedByEntity[entityId] = after;
+                        if (before < target) {
+                            state.firstPassSuccessfulPublications++;
+                            if (after >= target) state.firstPassEntitiesComplete++;
+                        }
+                        state.firstPassComplete = state.firstPassEntitiesComplete >= state.firstPassEntityTarget;
                     }
-                    state.firstPassComplete = state.firstPassEntitiesComplete >= state.firstPassEntityTarget;
                 } else {
                     noOp++;
                     state.noOp++;
+                    settleFirstPassMiss(state, task);
                 }
             } catch (error) {
                 failed++;
                 state.failed++;
                 state.failures = state.failed;
+                settleFirstPassMiss(state, task);
                 console.warn?.(`[world] chunk ${chunk.key} detail ${task.kind} failed`, error);
             }
             const stepMs = performance.now() - stepStart;
@@ -1680,38 +1717,66 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
             assets: SEMANTIC_INTERIOR_ASSETS,
             existingTasks: state.tasks,
         });
-        // FACADE-SHELL FIRST PASS: preserve the existing visible identity birth
-        // for every entity, then require a small, broad wall-mounted sample before
-        // the neighborhood may leave first-pass mode. This makes nearby chunks ask
-        // for facade richness early without letting any one site monopolize depth.
-        const authoredFirstPassEntities = state.firstPassEntityTarget;
-        const earlyWallByEntity = new Map();
+        // COVERAGE FLOOR: exactly one meaningful visible birth per entity. A real
+        // spectacle replaces (rather than supplements) the ordinary first-pass
+        // token. Otherwise keep the authored birth; only genuinely uncovered
+        // entities borrow one contextual wall/roof anchor.
+        const exteriorPropFieldTasks = exteriorPropField.planTasks(chunk, payload);
+        const spectacleFieldTasks = exteriorPropFieldTasks.filter(task => task.exteriorVisualTier === 'spectacle');
+        const earlyFieldTasks = exteriorPropFieldTasks.filter(task => task.exteriorVisualTier === 'spectacle' || task.exteriorVisualTier === 'identity');
+        const deferredFieldTasks = exteriorPropFieldTasks.filter(task => task.exteriorVisualTier !== 'spectacle' && task.exteriorVisualTier !== 'identity');
+        const spectacleEntities = new Set(spectacleFieldTasks.map(task => String(task.entityId ?? '')).filter(Boolean));
+        for (const task of state.tasks) {
+            if (task.firstPassBundle && spectacleEntities.has(String(task.entityId ?? ''))) {
+                task.firstPassBundle = false;
+                task.firstPassClass = 'deferred-by-spectacle';
+            }
+        }
+        for (const task of spectacleFieldTasks) {
+            task.firstPassBundle = true;
+            task.firstPassClass = 'spectacle';
+        }
+
+        const coveredEntities = new Set(state.tasks.filter(task => task.firstPassBundle).map(task => String(task.entityId ?? '')).filter(Boolean));
+        for (const task of spectacleFieldTasks) coveredEntities.add(String(task.entityId ?? ''));
         const shellContextTasks = [];
         const deferredContextTasks = [];
         for (const task of semanticContextMultiplier.tasks) {
             const entityId = String(task.entityId ?? '');
-            const earlyCount = earlyWallByEntity.get(entityId) ?? 0;
-            if (task.semanticContextRole === 'wall' && earlyCount < 2) {
+            const eligibleAnchor = task.semanticContextRole === 'wall' || task.semanticContextRole === 'roof';
+            if (eligibleAnchor && entityId && !coveredEntities.has(entityId)) {
+                task.firstPassBundle = true;
+                task.firstPassClass = 'semantic-anchor';
                 shellContextTasks.push(task);
-                earlyWallByEntity.set(entityId, earlyCount + 1);
+                coveredEntities.add(entityId);
             } else {
                 deferredContextTasks.push(task);
             }
         }
-        const shellInsertAt = Math.min(state.tasks.length, authoredFirstPassEntities);
         state.tasks = [
-            ...state.tasks.slice(0, shellInsertAt),
+            ...state.tasks,
             ...shellContextTasks,
-            ...state.tasks.slice(shellInsertAt),
+            ...earlyFieldTasks,
             ...deferredContextTasks,
+            ...deferredFieldTasks,
         ];
-        for (const [entityId, count] of earlyWallByEntity) {
-            if (!(count > 0)) continue;
-            const beforeTarget = Number(state.firstPassTargetByEntity?.[entityId]) || 0;
-            if (beforeTarget === 0) state.firstPassEntityTarget++;
-            state.firstPassTargetByEntity[entityId] = beforeTarget + count;
-            state.firstPassPublicationTarget += count;
+
+        // Rebuild first-pass accounting from the actual retained queue. Semantic
+        // authority may have filtered an authored task, so stale pre-integration
+        // targets are not allowed to keep a chunk permanently "first-pass pending".
+        state.firstPassTargetByEntity = {};
+        state.firstPassPublishedByEntity = {};
+        state.firstPassPublicationTarget = 0;
+        for (const task of state.tasks) {
+            if (!task.firstPassBundle) continue;
+            const entityId = String(task.entityId ?? '');
+            if (!entityId) continue;
+            state.firstPassTargetByEntity[entityId] = (state.firstPassTargetByEntity[entityId] ?? 0) + 1;
+            state.firstPassPublicationTarget++;
         }
+        state.firstPassEntityTarget = Object.keys(state.firstPassTargetByEntity).length;
+        state.firstPassEntitiesComplete = 0;
+        state.firstPassSuccessfulPublications = 0;
         state.firstPassTaskCount = state.firstPassPublicationTarget;
         state.firstPassComplete = state.firstPassEntityTarget === 0;
         state.semanticContextMultiplier = {
@@ -1720,15 +1785,7 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
             deferredContextTasks: deferredContextTasks.length,
         };
         state.topologyPrecommit = solveBlockingTopology(chunk, payload, state.tasks);
-        const exteriorPropFieldTask = exteriorPropField.planTask(chunk, payload);
-        if (exteriorPropFieldTask) {
-            // Cheap primitive debris is seasoning. It must never preempt the
-            // facade shell or become the visual first impression of a new chunk.
-            state.tasks.push(exteriorPropFieldTask);
-            state.exteriorPropField = exteriorPropFieldTask.fieldPlan.stats;
-        } else {
-            state.exteriorPropField = { generated: 0 };
-        }
+        state.exteriorPropField = exteriorPropFieldTasks[0]?.fieldPlan?.aggregateStats ?? { generated: 0 };
         payload.refinement = state;
         return state;
     }

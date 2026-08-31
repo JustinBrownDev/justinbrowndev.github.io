@@ -25,7 +25,7 @@ assert.equal(result.tasks.length, result.stats.entityBudgets['building:a'].wall)
 assert.equal(result.stats.roles.wall, result.tasks.length);
 assert.equal(result.stats.minScale, 0.16);
 assert.equal(result.stats.catalogSearchDepth, 512);
-assert.ok(result.tasks.some(task => task.semanticLayer === 'mid'), 'deep wall enrichment must climb above the street band');
+assert.ok(result.tasks.length < opportunities.length, 'contextual wall enrichment must remain budgeted instead of exhausting every hardware slot');
 
 const semanticSource = fs.readFileSync(new URL('../world/semantic-context.js', import.meta.url), 'utf8');
 const exteriorSource = fs.readFileSync(new URL('../world/exterior-prop-field.js', import.meta.url), 'utf8');
@@ -33,15 +33,18 @@ assert.match(semanticSource, /hardware-grid/);
 assert.match(semanticSource, /shellPriority: row < 2 \? 'first-pass' : 'deepen'/);
 assert.match(exteriorSource, /semanticOpportunityId/);
 assert.match(exteriorSource, /semanticAuthority: true/);
+assert.match(exteriorSource, /facade-spectacle-span/);
+assert.match(exteriorSource, /function planTasks/);
 
 const enrichmentPath = new URL('../world/kowloon-fabric-enrichment.js', import.meta.url);
 if (fs.existsSync(enrichmentPath)) {
     const enrichmentSource = fs.readFileSync(enrichmentPath, 'utf8');
-    assert.match(enrichmentSource, /shellContextTasks/);
-    assert.match(enrichmentSource, /earlyWallByEntity/);
-    assert.match(enrichmentSource, /shellInsertAt/);
-    assert.match(enrichmentSource, /state\.firstPassTargetByEntity\[entityId\] = beforeTarget \+ count/,'wall shell must be requested before visible first-pass may complete');
-    assert.match(enrichmentSource, /state\.tasks\.push\(exteriorPropFieldTask\)/, 'primitive micro-clutter should deepen after facade shell work');
-    assert.doesNotMatch(enrichmentSource, /state\.tasks\.unshift\(exteriorPropFieldTask\)/, 'micro-clutter must no longer preempt facade shell richness');
+    assert.match(enrichmentSource, /exterior-spectacle-priority/);
+    assert.match(enrichmentSource, /spectacleFieldTasks/);
+    assert.match(enrichmentSource, /coveredEntities/);
+    assert.match(enrichmentSource, /task\.firstPassBundle/);
+    assert.match(enrichmentSource, /exteriorPropField\.planTasks/,'primitive exterior work must be split by entity and visual tier');
+    assert.doesNotMatch(enrichmentSource, /earlyWallByEntity/, 'retired two-wall-gadget first pass must stay gone');
+    assert.doesNotMatch(enrichmentSource, /state\.tasks\.push\(exteriorPropFieldTask\)/, 'one chunk-wide primitive batch must stay retired');
 }
-console.log('PASS facade saturation density policy', result.stats);
+console.log('PASS facade coverage density policy', result.stats);

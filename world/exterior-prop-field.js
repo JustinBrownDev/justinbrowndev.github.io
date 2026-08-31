@@ -2,6 +2,8 @@
 // semantic opportunities; it is not allowed to discover facade/roof/portal
 // geometry independently.
 
+import { EXTERIOR_OPPORTUNITY_PRIORITY, EXTERIOR_VISUAL_TIER, exteriorOpportunityVisualTier, exteriorPlacementVisualImpact } from './exterior-spectacle-priority.js';
+
 const SHAPES = Object.freeze(['box', 'cylinder', 'cone', 'sphere']);
 const COLORS = Object.freeze([0x4b5150, 0x62635e, 0x756956, 0x42585d, 0x6b5b61, 0x514c45]);
 
@@ -61,7 +63,7 @@ function isEligible(opportunity) {
         'wall-mounted-prop-zone', 'facade-service-band', 'facade-sign-zone',
         'portal-flank-wall-zone', 'portal-lintel-zone', 'ground-edge-zone',
         'portal-flank-ground-zone', 'connector-service-zone', 'ground-open-zone',
-        'roof-utility-zone',
+        'roof-utility-zone', 'facade-spectacle-span', 'corner-media-band', 'roof-spectacle-envelope',
     ].includes(opportunity.role);
 }
 
@@ -111,7 +113,112 @@ function pushPrimitive(placements, opportunity, spec, domain, index) {
         sx: Math.max(0.04, spec.sx), sy: Math.max(0.04, spec.sy), sz: Math.max(0.04, spec.sz),
         rotY: finite(spec.rotY), color: spec.color ?? COLORS[hash32(`${opportunity.id}:${index}`) % COLORS.length],
         assemblyId: spec.assemblyId ?? null,
+        assemblyKind: spec.assemblyKind ?? null,
+        visualTier: spec.visualTier ?? exteriorOpportunityVisualTier(opportunity.role),
+        visualImpact: 0,
+        spectacleSurfaceIds: [...(spec.spectacleSurfaceIds ?? [])],
     });
+    const pushed = placements[placements.length - 1];
+    pushed.visualImpact = exteriorPlacementVisualImpact(pushed);
+}
+
+
+function segmentPoint(segment, outward = 0.16) {
+    const f = segment.surfaceFrame ?? {};
+    const t = segment.transform ?? {};
+    return {
+        x: finite(t.x) + finite(f.normalX) * outward,
+        y: finite(t.y) - Math.max(0, finite(segment.height)) * 0.5,
+        z: finite(t.z) + finite(f.normalZ) * outward,
+        rotY: finite(t.rotY),
+    };
+}
+
+function emitFacadeSpectacle(opportunity, placements) {
+    const segments = opportunity.segments?.length ? opportunity.segments : [{
+        surfaceId: opportunity.surfaceId,
+        side: opportunity.side,
+        surfaceFrame: opportunity.surfaceFrame,
+        transform: opportunity.transform,
+        width: finite(opportunity.clearanceBudget?.width, opportunity.availableWidth),
+        height: finite(opportunity.clearanceBudget?.height, 3),
+    }];
+    if (!segments.length) return false;
+    const assemblyId = opportunity.id + ':megascreen';
+    const assemblyKind = opportunity.role === 'corner-media-band' ? 'corner-megascreen' : 'facade-megascreen';
+    const surfaceIds = segments.map(segment => segment.surfaceId).filter(Boolean);
+    let emitted = 0;
+    for (let index = 0; index < segments.length; index++) {
+        const segment = segments[index];
+        const width = clamp(finite(segment.width, 3.2) * 0.93, 3.0, 12.5);
+        const height = clamp(Math.min(finite(segment.height, 3.0) * 0.82, width * 0.62), 1.55, 6.8);
+        const p = segmentPoint(segment, 0.17);
+        const pseudo = { ...opportunity, surfaceId: segment.surfaceId ?? opportunity.surfaceId, side: segment.side ?? opportunity.side };
+        pushPrimitive(placements, pseudo, {
+            ...p, shape: 'box', sx: width, sy: height, sz: 0.16,
+            assemblyId, assemblyKind, visualTier: 'spectacle', spectacleSurfaceIds: surfaceIds,
+            color: [0x6ecbd1, 0xe06caa, 0xf0c65e, 0x78d779][hash32(opportunity.id + ':screen:' + index) % 4],
+        }, 'facade-spectacle', index * 4);
+        for (const [supportIndex, du] of [-width * 0.43, width * 0.43].entries()) {
+            const f = segment.surfaceFrame ?? {};
+            pushPrimitive(placements, pseudo, {
+                x: p.x + finite(f.tangentX) * du,
+                y: p.y - height * 0.42,
+                z: p.z + finite(f.tangentZ) * du,
+                rotY: p.rotY,
+                shape: 'cylinder', sx: 0.13, sy: height * 0.92, sz: 0.13,
+                assemblyId, assemblyKind, visualTier: 'spectacle', spectacleSurfaceIds: surfaceIds,
+                color: 0x343b3d,
+            }, 'facade-spectacle', index * 4 + supportIndex + 1);
+        }
+        emitted++;
+    }
+    return emitted > 0;
+}
+
+function emitRoofSpectacle(opportunity, placements) {
+    const bounds = opportunity.bounds;
+    if (!bounds) return false;
+    const rng = rngFor('roof-spectacle:' + opportunity.id);
+    const widthX = Math.max(0, finite(bounds.halfX) * 2);
+    const widthZ = Math.max(0, finite(bounds.halfZ) * 2);
+    if (widthX < 3.2 || widthZ < 2.2) return false;
+    const alongX = widthX >= widthZ;
+    const usable = alongX ? widthX : widthZ;
+    const panelW = clamp(usable * 0.86, 3.8, 12.5);
+    const panelH = clamp(panelW * (0.30 + rng() * 0.12), 1.7, 4.8);
+    const assemblyId = opportunity.id + ':roof-billboard';
+    const assemblyKind = rng() < 0.72 ? 'roof-megascreen' : 'roof-industrial-crown';
+    const rotY = alongX ? 0 : Math.PI * 0.5;
+    const baseY = finite(bounds.y) + 0.16;
+    if (assemblyKind === 'roof-megascreen') {
+        pushPrimitive(placements, opportunity, {
+            x: bounds.x, y: baseY + 1.15, z: bounds.z, rotY,
+            shape: 'box', sx: panelW, sy: panelH, sz: 0.20,
+            assemblyId, assemblyKind, visualTier: 'spectacle', color: 0x70cfd1,
+        }, 'roof-spectacle', 0);
+        for (const [index, offset] of [-panelW * 0.38, panelW * 0.38].entries()) {
+            const x = bounds.x + (alongX ? offset : 0);
+            const z = bounds.z + (alongX ? 0 : offset);
+            pushPrimitive(placements, opportunity, {
+                x, y: baseY, z, rotY, shape: 'cylinder', sx: 0.16, sy: 1.25, sz: 0.16,
+                assemblyId, assemblyKind, visualTier: 'spectacle', color: 0x353b3c,
+            }, 'roof-spectacle', index + 1);
+        }
+    } else {
+        const bankDepth = clamp(Math.min(widthX, widthZ) * 0.68, 1.8, 4.8);
+        pushPrimitive(placements, opportunity, {
+            x: bounds.x, y: baseY, z: bounds.z, rotY,
+            shape: 'box', sx: panelW * 0.82, sy: clamp(panelH * 0.62, 1.2, 3.0), sz: bankDepth,
+            assemblyId, assemblyKind, visualTier: 'spectacle', color: 0x626c6b,
+        }, 'roof-spectacle', 0);
+        pushPrimitive(placements, opportunity, {
+            x: bounds.x, y: baseY + panelH * 0.68, z: bounds.z, rotY,
+            shape: 'cylinder', sx: 0.34, sy: clamp(panelH * 0.9, 1.8, 4.2), sz: 0.34,
+            assemblyId, assemblyKind, visualTier: 'spectacle', color: 0x3f4748,
+        }, 'roof-spectacle', 1);
+    }
+    return true;
 }
 
 function emitFacade(opportunity, placements) {
@@ -209,13 +316,28 @@ export function planExteriorPropField({ chunk, payload } = {}) {
     if (!chunk || !payload) throw new Error('planExteriorPropField requires chunk and payload');
     const opportunities = (payload.semanticContext?.opportunities ?? [])
         .filter(isEligible)
-        .sort((a, b) => String(a.id).localeCompare(String(b.id)));
+        .sort((a, b) => (EXTERIOR_OPPORTUNITY_PRIORITY[a.role] ?? 99) - (EXTERIOR_OPPORTUNITY_PRIORITY[b.role] ?? 99)
+            || String(a.id).localeCompare(String(b.id)));
     const placements = [];
     const claimed = new Set();
+    const spectacleSurfaceIds = new Set();
+    const spectacleRoofEntities = new Set();
     for (const opportunity of opportunities) {
-        if (claimed.has(opportunity.id)) continue;
+        if (claimed.has(opportunity.id) || opportunity.spectacleReserved === true) continue;
         claimed.add(opportunity.id);
-        if (opportunity.role === 'roof-utility-zone') emitRoof(opportunity, placements);
+        if (opportunity.role === 'facade-spectacle-span' || opportunity.role === 'corner-media-band') {
+            if (emitFacadeSpectacle(opportunity, placements)) {
+                for (const segment of opportunity.segments ?? []) if (segment.surfaceId) spectacleSurfaceIds.add(segment.surfaceId);
+                if (opportunity.surfaceId) spectacleSurfaceIds.add(opportunity.surfaceId);
+            }
+        } else if (opportunity.role === 'roof-spectacle-envelope') {
+            if (emitRoofSpectacle(opportunity, placements)) spectacleRoofEntities.add(opportunity.entityId);
+        } else if (spectacleSurfaceIds.has(opportunity.surfaceId)
+            && ['facade-sign-zone', 'facade-service-band', 'wall-mounted-prop-zone'].includes(opportunity.role)) {
+            continue;
+        } else if (opportunity.role === 'roof-utility-zone' && spectacleRoofEntities.has(opportunity.entityId)) {
+            continue;
+        } else if (opportunity.role === 'roof-utility-zone') emitRoof(opportunity, placements);
         else if (opportunity.role === 'ground-open-zone') emitOpenGround(opportunity, placements);
         else if (['ground-edge-zone', 'portal-flank-ground-zone', 'connector-service-zone'].includes(opportunity.role)) emitGround(opportunity, placements);
         else emitFacade(opportunity, placements);
@@ -225,8 +347,9 @@ export function planExteriorPropField({ chunk, payload } = {}) {
     const safePlacements = reservations.length
         ? placements.filter(item => !reservations.some(reservation => placementIntersectsReservation(item, reservation)))
         : placements;
-    const facade = safePlacements.filter(item => item.domain === 'facade-infrastructure' || item.domain === 'facade-macro' || item.domain === 'portal-hardware');
+    const facade = safePlacements.filter(item => item.domain === 'facade-infrastructure' || item.domain === 'facade-macro' || item.domain === 'portal-hardware' || item.domain === 'facade-spectacle');
     const macro = safePlacements.filter(item => item.domain === 'facade-macro');
+    const spectacle = safePlacements.filter(item => item.visualTier === 'spectacle');
     const ground = safePlacements.filter(item => item.domain === 'ground-edge-micro' || item.domain === 'connector-service' || item.domain === 'ground-open');
     const roof = safePlacements.filter(item => item.domain === 'roof-mechanical-detail');
     const facadeMeters = (payload.semanticContext?.surfaces ?? []).reduce((sum, surface) => sum + Math.max(0, finite(surface.half) * 2), 0);
@@ -236,6 +359,10 @@ export function planExteriorPropField({ chunk, payload } = {}) {
         generated: safePlacements.length,
         opportunitiesConsumed: claimed.size,
         facadeInfrastructure: facade.length,
+        spectacleAssemblies: new Set(spectacle.map(item => item.assemblyId).filter(Boolean)).size,
+        spectaclePrimitives: spectacle.length,
+        cornerMegascreens: new Set(spectacle.filter(item => item.assemblyKind === 'corner-megascreen').map(item => item.assemblyId)).size,
+        roofSpectacles: new Set(spectacle.filter(item => item.domain === 'roof-spectacle').map(item => item.assemblyId)).size,
         facadeMacroAssemblies: new Set(macro.map(item => item.assemblyId).filter(Boolean)).size,
         macroAssemblies: new Set(placements.map(item => item.assemblyId).filter(Boolean)).size,
         macroPrimitives: macro.length + roof.length,
@@ -268,16 +395,53 @@ export function createExteriorPropFieldSystem({ THREE, worldSeed = 0 } = {}) {
     const scale = new THREE.Vector3();
     const color = new THREE.Color();
 
+    function makeTask(chunk, plan, placements, tier, entityId, ordinal) {
+        const visualImpact = placements.reduce((max, item) => Math.max(max, item.visualImpact || 0), 0);
+        return {
+            kind: 'exterior-prop-field', entityId: entityId || 'exterior-field:' + chunk.key,
+            seed: hash32(worldSeed + ':' + chunk.key + ':semantic-exterior-prop-field:' + tier + ':' + entityId + ':' + ordinal),
+            exteriorVisualTier: tier,
+            exteriorVisualImpact: visualImpact,
+            fieldPlan: {
+                schema: plan.schema,
+                placements,
+                aggregateStats: plan.stats,
+                stats: {
+                    ...plan.stats,
+                    generated: placements.length,
+                    drawBuckets: new Set(placements.map(item => item.shape)).size,
+                    visualTier: tier,
+                    entityId: entityId ?? null,
+                },
+            },
+            topologySolved: true, topologyAccepted: true, topologyDescriptors: [],
+            contextualCosmetic: true, exteriorPropField: true, semanticExteriorAuthority: true,
+        };
+    }
+
+    function planTasks(chunk, payload) {
+        const plan = planExteriorPropField({ chunk, payload });
+        if (!plan.placements.length) return [];
+        const groups = new Map();
+        for (const placement of plan.placements) {
+            const tier = placement.visualTier ?? exteriorOpportunityVisualTier(placement.role);
+            const entityId = placement.entityId ?? 'exterior-field:' + chunk.key;
+            const key = tier + ':' + entityId;
+            const group = groups.get(key) ?? { tier, entityId, placements: [] };
+            group.placements.push(placement);
+            groups.set(key, group);
+        }
+        return [...groups.values()]
+            .map((group, index) => makeTask(chunk, plan, group.placements, group.tier, group.entityId, index))
+            .sort((a, b) => (EXTERIOR_VISUAL_TIER[a.exteriorVisualTier] ?? 9) - (EXTERIOR_VISUAL_TIER[b.exteriorVisualTier] ?? 9)
+                || b.exteriorVisualImpact - a.exteriorVisualImpact
+                || String(a.entityId).localeCompare(String(b.entityId)));
+    }
+
     function planTask(chunk, payload) {
         const plan = planExteriorPropField({ chunk, payload });
         if (!plan.placements.length) return null;
-        return {
-            kind: 'exterior-prop-field', entityId: `exterior-field:${chunk.key}`,
-            seed: hash32(`${worldSeed}:${chunk.key}:semantic-exterior-prop-field`),
-            fieldPlan: plan, topologySolved: true, topologyAccepted: true,
-            topologyDescriptors: [], contextualCosmetic: true, exteriorPropField: true,
-            semanticExteriorAuthority: true,
-        };
+        return makeTask(chunk, plan, plan.placements, 'medium', 'exterior-field:' + chunk.key, 0);
     }
 
     function realize(payload, task) {
@@ -328,5 +492,5 @@ export function createExteriorPropFieldSystem({ THREE, worldSeed = 0 } = {}) {
         geometries.clear(); materials.clear();
     }
 
-    return Object.freeze({ planTask, realize, disposeShared });
+    return Object.freeze({ planTask, planTasks, realize, disposeShared });
 }

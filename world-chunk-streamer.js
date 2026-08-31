@@ -781,7 +781,11 @@ export function createWorldChunkStreamer({
         if (!chunkNeedsRefinement(chunk) || disposed) return { progressed: false, steps: 0, complete: true };
         const started = performance.now();
         try {
-            const result = await refineChunk(chunk, chunk.payload, { maxSteps: 1, maxMillis });
+            const p = getPlayerPosition();
+            const result = await refineChunk(chunk, chunk.payload, {
+                maxSteps: 1, maxMillis,
+                playerPosition: { x: Number(p?.x) || 0, y: Number(p?.y) || 0, z: Number(p?.z) || 0 },
+            });
             const elapsed = performance.now() - started;
             totalRefinementMs += elapsed;
             refinementPumpCount++;

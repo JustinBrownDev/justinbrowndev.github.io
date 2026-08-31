@@ -368,6 +368,165 @@ function facadeOpportunities(surfaces, apertures, contextByEntity) {
     return opportunities;
 }
 
+
+function spectacleSegment(surface, lo, hi) {
+    const tangent = surfaceTangent(surface);
+    const width = Math.max(0, hi - lo);
+    const u = (lo + hi) * 0.5;
+    const bottom = Math.max(surface.yMin + 2.0, Math.min(surface.yMin + 2.8, surface.yMax - 1.8));
+    const top = Math.max(bottom + 1.4, surface.yMax - 0.38);
+    const height = Math.max(1.4, top - bottom);
+    return {
+        surfaceId: surface.id,
+        side: surface.side,
+        uMin: lo,
+        uMax: hi,
+        width,
+        height,
+        surfaceFrame: {
+            tangentX: tangent.x, tangentZ: tangent.z,
+            normalX: surface.normalX, normalZ: surface.normalZ,
+        },
+        transform: pointForSurface(surface, u, bottom + height * 0.5, 0.065),
+    };
+}
+
+function segmentEndpoint(segment, which) {
+    const f = segment.surfaceFrame;
+    const du = (which === 'lo' ? segment.uMin : segment.uMax) - (segment.uMin + segment.uMax) * 0.5;
+    return {
+        x: segment.transform.x + f.tangentX * du,
+        z: segment.transform.z + f.tangentZ * du,
+    };
+}
+
+function adjacentSides(a, b) {
+    const ai = SIDES.indexOf(a), bi = SIDES.indexOf(b);
+    if (ai < 0 || bi < 0) return false;
+    return ((ai + 1) % 4 === bi) || ((bi + 1) % 4 === ai);
+}
+
+function cornerDistance(a, b) {
+    let best = Infinity;
+    for (const ae of ['lo', 'hi']) for (const be of ['lo', 'hi']) {
+        const ap = segmentEndpoint(a, ae), bp = segmentEndpoint(b, be);
+        best = Math.min(best, Math.hypot(ap.x - bp.x, ap.z - bp.z));
+    }
+    return best;
+}
+
+function spectacleOpportunities(chunk, payload, surfaces, apertures, contextByEntity) {
+    const candidatesByEntity = new Map();
+    const pushCandidate = (entityId, candidate) => {
+        const list = candidatesByEntity.get(entityId) ?? [];
+        list.push(candidate);
+        candidatesByEntity.set(entityId, list);
+    };
+
+    for (const surface of surfaces) {
+        const wallHeight = Math.max(0, finite(surface.yMax) - finite(surface.yMin));
+        if (wallHeight < 3.4) continue;
+        for (const [lo, hi] of freeIntervals(surface, apertures, 0.34)) {
+            const width = hi - lo;
+            if (width < 3.2) continue;
+            const segment = spectacleSegment(surface, lo, hi);
+            const impact = segment.width * segment.height;
+            pushCandidate(surface.entityId, {
+                id: surface.id + ':spectacle:' + Math.round((lo + surface.half) * 100) + ':' + Math.round((hi + surface.half) * 100),
+                role: 'facade-spectacle-span',
+                hostId: surface.entityId,
+                entityId: surface.entityId,
+                surfaceId: surface.id,
+                side: surface.side,
+                contextId: contextByEntity.get(surface.entityId)?.id ?? null,
+                spatialTopologyHostId: surface.id,
+                transform: { ...segment.transform },
+                segments: [segment],
+                clearanceBudget: { width: segment.width, height: segment.height, depth: 0.42 },
+                spectacleImpact: impact,
+                layer: verticalLayer(segment.transform.y),
+                shellPriority: 'spectacle',
+                decorationMayIntrude: true,
+            });
+        }
+    }
+
+    // Add a multi-surface candidate only when two facade interval endpoints
+    // actually meet at a corner. This avoids "wraparound" screens teleporting
+    // between unrelated module faces on large compound buildings.
+    for (const [entityId, candidates] of candidatesByEntity) {
+        const facade = candidates.filter(item => item.role === 'facade-spectacle-span');
+        for (let i = 0; i < facade.length; i++) {
+            for (let j = i + 1; j < facade.length; j++) {
+                const a = facade[i].segments[0], b = facade[j].segments[0];
+                if (!adjacentSides(a.side, b.side) || cornerDistance(a, b) > 1.35) continue;
+                const sharedHeight = Math.min(a.height, b.height);
+                if (sharedHeight < 1.6) continue;
+                pushCandidate(entityId, {
+                    id: entityId + ':corner-media:' + a.surfaceId + ':' + b.surfaceId,
+                    role: 'corner-media-band', hostId: entityId, entityId,
+                    contextId: contextByEntity.get(entityId)?.id ?? null,
+                    spatialTopologyHostId: entityId,
+                    transform: {
+                        x: (a.transform.x + b.transform.x) * 0.5,
+                        y: Math.min(a.transform.y, b.transform.y),
+                        z: (a.transform.z + b.transform.z) * 0.5,
+                        rotY: 0,
+                    },
+                    segments: [a, b],
+                    clearanceBudget: { width: a.width + b.width, height: sharedHeight, depth: 0.42 },
+                    spectacleImpact: (a.width + b.width) * sharedHeight * 1.25,
+                    layer: verticalLayer(Math.min(a.transform.y, b.transform.y)),
+                    shellPriority: 'spectacle', decorationMayIntrude: true,
+                });
+            }
+        }
+    }
+
+    // Building-level top-roof envelope. Only modules at the highest roof plane
+    // participate, so a giant billboard/crown cannot float above lower wings.
+    for (const entity of payload?.entities ?? []) {
+        if (entity.kind !== 'building' && entity.kind !== 'district-landmark') continue;
+        const floorH = finite(entity.floorH, 3.15);
+        const modules = entity.footprintModules ?? [];
+        if (!modules.length) continue;
+        const topY = Math.max(...modules.map(module => Math.max(0, finite(module.floors, 1)) * floorH));
+        const top = modules.filter(module => Math.abs(Math.max(0, finite(module.floors, 1)) * floorH - topY) < 0.05);
+        if (!top.length) continue;
+        const minX = Math.min(...top.map(module => finite(module.cx) - finite(module.halfX))) + 0.32;
+        const maxX = Math.max(...top.map(module => finite(module.cx) + finite(module.halfX))) - 0.32;
+        const minZ = Math.min(...top.map(module => finite(module.cz) - finite(module.halfZ))) + 0.32;
+        const maxZ = Math.max(...top.map(module => finite(module.cz) + finite(module.halfZ))) - 0.32;
+        const width = maxX - minX, depth = maxZ - minZ;
+        if (width < 3.4 || depth < 2.4) continue;
+        pushCandidate(entity.id, {
+            id: entity.id + ':roof:spectacle-envelope', role: 'roof-spectacle-envelope',
+            hostId: entity.id, entityId: entity.id, contextId: contextByEntity.get(entity.id)?.id ?? null,
+            spatialTopologyHostId: entity.id,
+            transform: { x: (minX + maxX) * 0.5, y: topY, z: (minZ + maxZ) * 0.5, rotY: 0 },
+            bounds: { x: (minX + maxX) * 0.5, y: topY, z: (minZ + maxZ) * 0.5, halfX: width * 0.5, halfZ: depth * 0.5 },
+            clearanceBudget: { width, depth, height: Math.min(6.5, Math.max(3, width * 0.55)) },
+            spectacleImpact: width * depth * 0.85,
+            layer: verticalLayer(topY), shellPriority: 'spectacle', decorationMayIntrude: true,
+        });
+    }
+
+    const chosen = [];
+    for (const [entityId, candidates] of candidatesByEntity) {
+        candidates.sort((a, b) => b.spectacleImpact - a.spectacleImpact
+            || (a.role === 'corner-media-band' ? -1 : b.role === 'corner-media-band' ? 1 : 0)
+            || String(a.id).localeCompare(String(b.id)));
+        const best = candidates[0];
+        if (!best) continue;
+        const entity = entityById(payload, entityId);
+        const sizeBoost = clamp((best.spectacleImpact - 10) / 55, 0, 0.32);
+        const chance = entity?.kind === 'district-landmark' ? 0.92 : 0.34 + sizeBoost;
+        const roll = (hash32(chunk.key + ':' + entityId + ':exterior-spectacle') % 10000) / 10000;
+        if (roll <= chance) chosen.push(best);
+    }
+    return chosen;
+}
+
 function groundOpportunities(payload, contextByEntity) {
     const result = [];
     for (const entity of payload?.entities ?? []) {
@@ -539,10 +698,25 @@ export function compileSemanticContext({ chunk, payload, tasks = [], debugWeight
     const apertures = spatialTopology.apertures;
     for (const surface of surfaces) surface.apertureIds = apertures.filter(item => item.surfaceId === surface.id).map(item => item.id);
 
+    const facade = facadeOpportunities(surfaces, apertures, contextByEntity);
+    const roof = roofOpportunities(payload, contextByEntity);
+    const spectacle = spectacleOpportunities(chunk, payload, surfaces, apertures, contextByEntity);
+    const spectacleSurfaceIds = new Set(spectacle.flatMap(item => item.segments?.map(segment => segment.surfaceId) ?? []).filter(Boolean));
+    const spectacleRoofEntities = new Set(spectacle.filter(item => item.role === 'roof-spectacle-envelope').map(item => item.entityId));
+    for (const opportunity of facade) {
+        if (spectacleSurfaceIds.has(opportunity.surfaceId)
+            && ['facade-sign-zone', 'facade-poster-zone', 'facade-service-band', 'wall-mounted-prop-zone'].includes(opportunity.role)) {
+            opportunity.spectacleReserved = true;
+        }
+    }
+    for (const opportunity of roof) {
+        if (spectacleRoofEntities.has(opportunity.entityId)) opportunity.spectacleReserved = true;
+    }
     const opportunities = [
-        ...facadeOpportunities(surfaces, apertures, contextByEntity),
+        ...spectacle,
+        ...facade,
         ...groundOpportunities(payload, contextByEntity),
-        ...roofOpportunities(payload, contextByEntity),
+        ...roof,
         ...connectorOpportunities(payload, surfaces, contextByEntity),
         ...spanOpportunities(payload, tasks, contextByEntity),
     ];

@@ -1,4 +1,6 @@
+import { ensureSemanticConnectorAuthority } from './semantic-connectors.js';
 import { createSemanticPlacementRecord, resolveSemanticPlacement } from './semantic-placement.js';
+import { compileSpacePlans, spacePlanAcceptsBox } from './space-plan.js';
 
 function semanticTask(task) {
     return String(task?.kind ?? '').startsWith('semantic-');
@@ -19,25 +21,13 @@ export function semanticSpaceId(chunkKey, siteKey, moduleKey, floor) {
     return `${chunkKey}:${roomKey(siteKey, moduleKey, floor)}`;
 }
 
-function structuralIntersects(reservation, box) {
-    if (box.yMin >= reservation.yMax || box.yMax <= reservation.yMin) return false;
-    const minX = reservation.minX ?? reservation.x - reservation.halfX;
-    const maxX = reservation.maxX ?? reservation.x + reservation.halfX;
-    const minZ = reservation.minZ ?? reservation.z - reservation.halfZ;
-    const maxZ = reservation.maxZ ?? reservation.z + reservation.halfZ;
-    return box.x + box.halfX > minX && box.x - box.halfX < maxX && box.z + box.halfZ > minZ && box.z - box.halfZ < maxZ;
-}
-
 function reservationOverlaps(a, b) {
     if (a.yMin >= b.yMax || a.yMax <= b.yMin) return false;
     return a.minX < b.maxX && a.maxX > b.minX && a.minZ < b.maxZ && a.maxZ > b.minZ;
 }
 
-function reserveSemanticEnvelope(payload, reservation, ownerId) {
-    const structural = payload?.physics?.circulationReservations ?? [];
-    if (structural.some(item => structuralIntersects(item, reservation))) return false;
-    const detail = payload.detailReservations ?? (payload.detailReservations = []);
-    const next = {
+function normalizedReservation(reservation, ownerId) {
+    return {
         id: `${ownerId}:envelope`,
         kind: 'semantic-envelope',
         ownerId,
@@ -52,6 +42,12 @@ function reserveSemanticEnvelope(payload, reservation, ownerId) {
         yMin: reservation.yMin,
         yMax: reservation.yMax,
     };
+}
+
+function reserveSemanticEnvelope(payload, reservation, ownerId, spacePlan) {
+    const next = normalizedReservation(reservation, ownerId);
+    if (spacePlan && !spacePlanAcceptsBox(spacePlan, next, { allowCirculation: false, requireSameRegion: true })) return false;
+    const detail = payload.detailReservations ?? (payload.detailReservations = []);
     for (const other of detail) {
         const normalized = Number.isFinite(other.minX) ? other : {
             ...other,
@@ -105,6 +101,34 @@ function findModule(entity, key) {
     return entity?.footprintModules?.find(module => module.key === key) ?? null;
 }
 
+function publishSpace(payload, spaceById, plan, task) {
+    if (spaceById.has(plan.id)) return spaceById.get(plan.id);
+    const space = {
+        id: plan.id,
+        kind: 'destination-space',
+        spacePlanId: plan.id,
+        spacePlanSchema: plan.schema,
+        chunkKey: plan.chunkKey,
+        entityId: plan.entityId,
+        moduleKey: plan.moduleKey,
+        floor: plan.floor,
+        floorH: plan.floorH,
+        yBase: plan.yBase,
+        program: task.program,
+        bounds: { ...plan.bounds },
+        regionCount: plan.regions.length,
+        usableCellCount: plan.usableCells.length,
+        connectorIds: [...(plan.connectorIds ?? [])],
+    };
+    const spaces = payload.semanticSpaces ?? (payload.semanticSpaces = []);
+    spaces.push(space);
+    spaceById.set(space.id, space);
+    const entity = findEntity(payload, plan.entityId);
+    const entitySpaces = entity?.semanticSpaceIds ?? (entity ? (entity.semanticSpaceIds = []) : null);
+    if (entitySpaces && !entitySpaces.includes(space.id)) entitySpaces.push(space.id);
+    return space;
+}
+
 export function solveSemanticLayout({ chunk, payload, tasks, assetById } = {}) {
     if (!chunk || !payload || !Array.isArray(tasks) || !assetById) {
         throw new Error('solveSemanticLayout requires chunk, payload, tasks, and assetById');
@@ -112,7 +136,27 @@ export function solveSemanticLayout({ chunk, payload, tasks, assetById } = {}) {
     const placements = payload.semanticPlacements ?? (payload.semanticPlacements = []);
     const spaces = payload.semanticSpaces ?? (payload.semanticSpaces = []);
     const spaceById = new Map(spaces.map(space => [space.id, space]));
-    const pending = tasks.filter(semanticTask).sort((a, b) => phaseRank(a) - phaseRank(b) || (a.seed >>> 0) - (b.seed >>> 0));
+
+    const semanticTasks = tasks.filter(semanticTask);
+    const activeSpaceIds = new Set();
+    for (const task of semanticTasks) {
+        const entity = findEntity(payload, task.entityId);
+        const module = findModule(entity, task.moduleKey);
+        if (!entity || !module) continue;
+        const floor = Math.max(0, Math.min((module.floors || 1) - 1, task.floor || 0));
+        const siteKey = entity.semanticSiteKey ?? entity.siteId ?? entity.id;
+        activeSpaceIds.add(task.spaceId || semanticSpaceId(chunk.key, siteKey, module.key, floor));
+    }
+    const spacePlans = compileSpacePlans({ chunk, payload, activeSpaceIds });
+    const planById = new Map(spacePlans.map(plan => [plan.id, plan]));
+    const connectorAuthority = ensureSemanticConnectorAuthority(payload.physics, payload.semanticTopologySpaces ?? spacePlans);
+    for (const plan of spacePlans) {
+        plan.connectorIds = (payload.physics?.semanticConnectors ?? [])
+            .filter(connector => connector.spaceIds?.includes(plan.id) || connector.fromSpaceId === plan.id || connector.toSpaceId === plan.id)
+            .map(connector => connector.id);
+    }
+
+    const pending = [...semanticTasks].sort((a, b) => phaseRank(a) - phaseRank(b) || (a.seed >>> 0) - (b.seed >>> 0));
     let solved = 0;
     let passes = 0;
 
@@ -132,28 +176,18 @@ export function solveSemanticLayout({ chunk, payload, tasks, assetById } = {}) {
             const floor = Math.max(0, Math.min((module.floors || 1) - 1, task.floor || 0));
             const siteKey = entity.semanticSiteKey ?? entity.siteId ?? entity.id;
             const spaceId = task.spaceId || semanticSpaceId(chunk.key, siteKey, module.key, floor);
-            const instanceId = task.instanceId || `${spaceId}:semantic:${task.seed >>> 0}`;
-            if (!spaceById.has(spaceId)) {
-                const space = {
-                    id: spaceId,
-                    kind: 'destination-space',
-                    chunkKey: chunk.key,
-                    entityId: task.entityId,
-                    moduleKey: module.key,
-                    floor,
-                    floorH,
-                    yBase: floor * floorH,
-                    program: task.program,
-                };
-                spaces.push(space);
-                spaceById.set(spaceId, space);
-                const entitySpaces = entity.semanticSpaceIds ?? (entity.semanticSpaceIds = []);
-                if (!entitySpaces.includes(spaceId)) entitySpaces.push(spaceId);
+            const spacePlan = planById.get(spaceId);
+            if (!spacePlan || !spacePlan.usableCells.length) {
+                i++;
+                continue;
             }
+            publishSpace(payload, spaceById, spacePlan, task);
+            const instanceId = task.instanceId || `${spaceId}:semantic:${task.seed >>> 0}`;
             const placement = resolveSemanticPlacement({
                 def,
                 graph: def.semanticGraph ?? null,
                 module,
+                spacePlan,
                 yBase: floor * floorH,
                 floorH,
                 seed: task.seed,
@@ -161,7 +195,8 @@ export function solveSemanticLayout({ chunk, payload, tasks, assetById } = {}) {
                 entityId: task.entityId,
                 moduleKey: module.key,
                 floor,
-                tryReserve: reservation => reserveSemanticEnvelope(payload, reservation, instanceId),
+                spaceId,
+                tryReserve: reservation => reserveSemanticEnvelope(payload, reservation, instanceId, spacePlan),
             });
             if (!placement) {
                 i++;
@@ -201,12 +236,15 @@ export function solveSemanticLayout({ chunk, payload, tasks, assetById } = {}) {
     }
 
     return {
-        schema: 'jweb.semantic-layout.v1',
-        planned: tasks.filter(semanticTask).length,
+        schema: 'jweb.semantic-layout.v2',
+        planned: semanticTasks.length,
         solved,
         unresolved: pending.length,
         passes,
         spaces: spaces.length,
+        spacePlans: spacePlans.length,
+        topologySpaces: payload.semanticTopologySpaces?.length ?? spacePlans.length,
         placements: placements.length,
+        connectorAuthority,
     };
 }

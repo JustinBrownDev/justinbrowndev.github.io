@@ -12,7 +12,9 @@ import {
 import {
     connectorOpeningWidth,
     createBridgeConnector,
+    createLandingConnector,
     createPortalConnector,
+    createRampConnector,
     createStairConnector,
     registerSemanticConnector,
     semanticPortalForRect,
@@ -384,15 +386,15 @@ export function createKowloonFabricEngine({
                 y,
                 'scaffold',
             );
-            physics.circulationReservations.push(createBoxCirculationReservation({
+            registerSemanticConnector(physics, createLandingConnector({
                 id: `scaffold:${seed}:landing:${level}`,
-                kind: 'scaffold-landing',
                 x, z,
                 halfX: (horizontalFace ? landingWidth : landingDepth) * 0.5,
                 halfZ: (horizontalFace ? landingDepth : landingWidth) * 0.5,
-                yMin: y + 0.01,
-                yMax: y + 1.96,
+                y,
                 source: 'exterior-scaffold',
+                visualRole: 'fire-escape-landing',
+                reservationKind: 'scaffold-landing',
                 metadata: { level, side },
             }));
             landings++;
@@ -413,11 +415,20 @@ export function createKowloonFabricEngine({
                 supportKind: 'scaffold',
             };
             physics.ramps.push(scaffoldRamp);
-            physics.circulationReservations.push(createRampCirculationReservation({
+            registerSemanticConnector(physics, createRampConnector({
                 id: `scaffold:${seed}:ramp:${level}`,
-                kind: 'scaffold-ramp',
-                ...scaffoldRamp,
+                kind: 'fire-escape',
+                axis: scaffoldRamp.axis,
+                from: scaffoldRamp.from,
+                to: scaffoldRamp.to,
+                fixedCoord: scaffoldRamp.fixedCoord,
+                halfWidth: scaffoldRamp.halfWidth,
+                y0: scaffoldRamp.y0,
+                y1: scaffoldRamp.y1,
                 source: 'exterior-scaffold',
+                visualRole: 'fire-escape-flight',
+                reservationKind: 'scaffold-ramp',
+                metadata: { level, side },
             }));
             const steps = 12;
             for (let i = 0; i < steps; i++) {
@@ -1012,12 +1023,22 @@ export function createKowloonFabricEngine({
                 const to = axis === 'x' ? rect.cx + side * run * 0.45 : rect.cz + side * run * 0.45;
                 const fixedCoord = axis === 'x' ? mz : mx;
                 const mezzanineRamp = { axis, from, to, fixedCoord, halfWidth: rampWidth * 0.5, y0: 0, y1: y, supportKind: 'mezzanine-stair' };
-                const mezzanineReservation = createRampCirculationReservation({
+                const mezzanineConnector = createRampConnector({
                     id: `${chunk.key}:${siteSignature}:${module.key}:mezzanine:${mezzanines}`,
                     kind: 'mezzanine-ramp',
-                    ...mezzanineRamp,
+                    axis: mezzanineRamp.axis,
+                    from: mezzanineRamp.from,
+                    to: mezzanineRamp.to,
+                    fixedCoord: mezzanineRamp.fixedCoord,
+                    halfWidth: mezzanineRamp.halfWidth,
+                    y0: mezzanineRamp.y0,
+                    y1: mezzanineRamp.y1,
                     source: 'mezzanine-stair',
+                    visualRole: 'mezzanine-access',
+                    reservationKind: 'mezzanine-ramp',
+                    metadata: { moduleKey: module.key, index: mezzanines },
                 });
+                const mezzanineReservation = mezzanineConnector.primaryReservation;
                 const moduleReservations = circulationByModule.get(module.key);
                 const blocksExistingCirculation = anyReservationIntersectsBox(moduleReservations, {
                     x: mx, z: mz, sx, sz, yMin: y - 0.12, yMax: y + 0.12,
@@ -1026,7 +1047,7 @@ export function createKowloonFabricEngine({
                     transforms.slabs.push({ x: mx, y: y - 0.06, z: mz, sx, sy: 0.12, sz });
                     addRectPlatform(physics.platforms, mx, mz, sx, sz, y, 'mezzanine');
                     physics.ramps.push(mezzanineRamp);
-                    physics.circulationReservations.push(mezzanineReservation);
+                    registerSemanticConnector(physics, mezzanineConnector);
                     moduleReservations.push(mezzanineReservation);
                     const stepCount = 7;
                     for (let i = 0; i < stepCount; i++) {
@@ -1135,6 +1156,7 @@ export function createKowloonFabricEngine({
             floors: Math.max(...floorCounts),
             archetype,
             semanticSiteKey: siteSignature,
+            semanticChunkKey: chunk.key,
             doorSide: doorFace?.dir.side ?? scaffoldSide ?? 'north',
             entranceFaces: entranceFaces.map(face => ({ moduleKey: face.module.key, side: face.dir.side, dirKey: face.dir.key })),
             compoundCells: site.cells.map(cell => ({ col: cell.col, row: cell.row })),
@@ -1195,6 +1217,11 @@ export function createKowloonFabricEngine({
         return { tiers, topY };
     }
 
+    function semanticSpaceIdForEntity(entity, moduleKey, floor) {
+        if (!entity?.semanticChunkKey || !entity?.semanticSiteKey || !moduleKey) return null;
+        return `${entity.semanticChunkKey}:${entity.semanticSiteKey}:${moduleKey}:floor:${floor}`;
+    }
+
     function emitSkybridge({ bridge, aEntity, bEntity, physics, transforms }) {
         const aModule = aEntity?.footprintModules?.find(module => module.key === bridge.aModuleKey);
         const bModule = bEntity?.footprintModules?.find(module => module.key === bridge.bModuleKey);
@@ -1216,6 +1243,8 @@ export function createKowloonFabricEngine({
                 id: `${bridge.id}:connector`,
                 axis: 'x', from: x0, to: x1, fixedCoord: z, halfWidth: width * 0.5, y,
                 source: 'skybridge', visualRole: bridge.variant || 'skybridge',
+                fromSpaceId: semanticSpaceIdForEntity(aEntity, bridge.aModuleKey, bridge.floor),
+                toSpaceId: semanticSpaceIdForEntity(bEntity, bridge.bModuleKey, bridge.floor),
                 metadata: { bridgeId: bridge.id, variant: bridge.variant || 'skybridge', floor: bridge.floor },
             }));
             transforms.slabs.push({ x, y: y - 0.06, z, sx: span, sy: 0.12, sz: width });
@@ -1244,6 +1273,8 @@ export function createKowloonFabricEngine({
                 id: `${bridge.id}:connector`,
                 axis: 'z', from: z0, to: z1, fixedCoord: x, halfWidth: width * 0.5, y,
                 source: 'skybridge', visualRole: bridge.variant || 'skybridge',
+                fromSpaceId: semanticSpaceIdForEntity(aEntity, bridge.aModuleKey, bridge.floor),
+                toSpaceId: semanticSpaceIdForEntity(bEntity, bridge.bModuleKey, bridge.floor),
                 metadata: { bridgeId: bridge.id, variant: bridge.variant || 'skybridge', floor: bridge.floor },
             }));
             transforms.slabs.push({ x, y: y - 0.06, z, sx: width, sy: 0.12, sz: span });

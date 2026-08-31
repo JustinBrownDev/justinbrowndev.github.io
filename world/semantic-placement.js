@@ -1,3 +1,5 @@
+import { spacePlanAcceptsBox, spacePlanCandidateCells, spacePlanWallSegments } from './space-plan.js';
+
 const TAU = Math.PI * 2;
 const QUARTER = Math.PI * 0.5;
 
@@ -50,8 +52,9 @@ function mulberry32(seed) {
 }
 
 function sameSemanticRoom(placement, context) {
-    return placement
-        && placement.entityId === context.entityId
+    if (!placement) return false;
+    if (context.spaceId && placement.spaceId) return placement.spaceId === context.spaceId;
+    return placement.entityId === context.entityId
         && placement.moduleKey === context.moduleKey
         && placement.floor === context.floor;
 }
@@ -74,6 +77,22 @@ function supportsWorkSurface(placement) {
 
 function rowCompatible(placement) {
     return placement && hasGraphValue(placement.graph, 'relationships', 'row-alignable');
+}
+
+function candidateBodyBox(def, candidate) {
+    const [width, height, depth] = dimsOf(def);
+    const min = minOf(def, [width, height, depth]);
+    const front = frontVector(candidate.rotY);
+    const right = rightVector(candidate.rotY);
+    const halfX = Math.abs(right.x) * width * 0.5 + Math.abs(front.x) * depth * 0.5;
+    const halfZ = Math.abs(right.z) * width * 0.5 + Math.abs(front.z) * depth * 0.5;
+    const yMin = candidate.y + min[1];
+    return {
+        x: candidate.x, z: candidate.z, halfX, halfZ,
+        minX: candidate.x - halfX, maxX: candidate.x + halfX,
+        minZ: candidate.z - halfZ, maxZ: candidate.z + halfZ,
+        yMin, yMax: yMin + height,
+    };
 }
 
 function candidateEnvelope(def, graph, candidate) {
@@ -107,25 +126,27 @@ function candidateEnvelope(def, graph, candidate) {
 
 function candidateFitsModule(def, candidate, module) {
     if (!module) return true;
-    const [width, , depth] = dimsOf(def);
-    const front = frontVector(candidate.rotY);
-    const right = rightVector(candidate.rotY);
-    const halfX = Math.abs(right.x) * width * 0.5 + Math.abs(front.x) * depth * 0.5;
-    const halfZ = Math.abs(right.z) * width * 0.5 + Math.abs(front.z) * depth * 0.5;
-    return candidate.x - halfX >= module.cx - module.halfX + 0.03
-        && candidate.x + halfX <= module.cx + module.halfX - 0.03
-        && candidate.z - halfZ >= module.cz - module.halfZ + 0.03
-        && candidate.z + halfZ <= module.cz + module.halfZ - 0.03;
+    const body = candidateBodyBox(def, candidate);
+    return body.minX >= module.cx - module.halfX + 0.03
+        && body.maxX <= module.cx + module.halfX - 0.03
+        && body.minZ >= module.cz - module.halfZ + 0.03
+        && body.maxZ <= module.cz + module.halfZ - 0.03;
 }
 
-function tryCandidate(def, graph, candidate, tryReserve, module) {
+function candidateFitsSpacePlan(def, candidate, spacePlan) {
+    if (!spacePlan) return true;
+    return spacePlanAcceptsBox(spacePlan, candidateBodyBox(def, candidate), { allowCirculation: false, requireSameRegion: true });
+}
+
+function tryCandidate(def, graph, candidate, tryReserve, module, spacePlan) {
     if (!candidateFitsModule(def, candidate, module)) return null;
+    if (!candidateFitsSpacePlan(def, candidate, spacePlan)) return null;
     const reservation = candidateEnvelope(def, graph, candidate);
     if (typeof tryReserve === 'function' && !tryReserve(reservation)) return null;
     return { ...candidate, reservation };
 }
 
-function wallCandidates(def, module, yBase, floorH, seed) {
+function moduleWallCandidates(def, module, yBase, floorH, seed) {
     const [width, height, depth] = dimsOf(def);
     const min = minOf(def, [width, height, depth]);
     const rng = mulberry32(seed ^ 0x4d9f3b21);
@@ -135,8 +156,7 @@ function wallCandidates(def, module, yBase, floorH, seed) {
     for (let i = 0; i < sides.length; i++) {
         const side = sides[(start + i) % sides.length];
         const horizontal = side === 'north' || side === 'south';
-        const halfAlong = horizontal ? width * 0.5 : width * 0.5;
-        const avail = (horizontal ? module.halfX : module.halfZ) - halfAlong - 0.18;
+        const avail = (horizontal ? module.halfX : module.halfZ) - width * 0.5 - 0.18;
         if (avail <= 0.04) continue;
         const along = (rng() - 0.5) * 2 * avail;
         let x = module.cx;
@@ -154,17 +174,70 @@ function wallCandidates(def, module, yBase, floorH, seed) {
     return result;
 }
 
-function genericCandidates(def, module, yBase, seed) {
-    const [width, , depth] = dimsOf(def);
+function fabricWallCandidates(def, spacePlan, yBase, floorH, seed) {
+    if (!spacePlan) return [];
+    const [width, height, depth] = dimsOf(def);
+    const min = minOf(def, [width, height, depth]);
+    const rng = mulberry32(seed ^ 0x5a31f2c7);
+    const walls = spacePlanWallSegments(spacePlan, width + 0.25);
+    if (!walls.length) return [];
+    const start = (seed >>> 0) % walls.length;
+    const result = [];
+    for (let i = 0; i < walls.length; i++) {
+        const wall = walls[(start + i) % walls.length];
+        const dx = wall.x2 - wall.x1;
+        const dz = wall.z2 - wall.z1;
+        const horizontal = Math.abs(dx) >= Math.abs(dz);
+        const length = Math.hypot(dx, dz);
+        const alongAvail = Math.max(0, length - width - 0.20);
+        const t = length <= 1e-6 ? 0.5 : 0.5 + (rng() - 0.5) * (alongAvail / length);
+        const wx = wall.x1 + dx * t;
+        const wz = wall.z1 + dz * t;
+        const bottom = def.mount === 'wall'
+            ? yBase + Math.min(Math.max(0, floorH - height - 0.24), Math.max(1.10, floorH * 0.42))
+            : yBase;
+        const offset = depth * 0.5 + 0.075;
+        const signs = ((seed + i) & 1) ? [1, -1] : [-1, 1];
+        for (const sign of signs) {
+            if (horizontal) {
+                result.push({ x: wx, y: bottom - min[1], z: wz + sign * offset, rotY: sign > 0 ? 0 : Math.PI, mode: 'fabric-wall' });
+            } else {
+                result.push({ x: wx + sign * offset, y: bottom - min[1], z: wz, rotY: sign > 0 ? QUARTER : -QUARTER, mode: 'fabric-wall' });
+            }
+        }
+    }
+    return result;
+}
+
+function genericCandidates(def, module, yBase, seed, spacePlan) {
     const min = minOf(def);
+    const rng = mulberry32(seed ^ 0x8ca5b713);
+    const result = [];
+    if (spacePlan) {
+        for (const cell of spacePlanCandidateCells(spacePlan, seed)) {
+            const firstRot = Math.floor(rng() * 4);
+            for (let r = 0; r < 4 && result.length < 32; r++) {
+                result.push({
+                    x: cell.x,
+                    y: yBase - min[1],
+                    z: cell.z,
+                    rotY: ((firstRot + r) % 4) * QUARTER,
+                    mode: 'space-plan-region',
+                    regionId: cell.regionId,
+                });
+            }
+            if (result.length >= 32) break;
+        }
+        return result;
+    }
+
+    const [width, , depth] = dimsOf(def);
     const clearance = def?.clearance ?? {};
     const marginX = width * 0.5 + Math.max(0.10, Number(clearance.sides) || 0);
     const marginZ = depth * 0.5 + Math.max(0.10, Number(clearance.front) || 0, Number(clearance.rear) || 0);
     const availX = module.halfX - marginX;
     const availZ = module.halfZ - marginZ;
     if (availX <= 0.04 || availZ <= 0.04) return [];
-    const rng = mulberry32(seed ^ 0x8ca5b713);
-    const result = [];
     for (let attempt = 0; attempt < 9; attempt++) {
         result.push({
             x: module.cx + (rng() - 0.5) * 2 * availX,
@@ -181,6 +254,7 @@ export function resolveSemanticPlacement({
     def,
     graph = def?.semanticGraph ?? null,
     module,
+    spacePlan = null,
     yBase = 0,
     floorH = 3.15,
     seed = 0,
@@ -188,18 +262,17 @@ export function resolveSemanticPlacement({
     entityId = null,
     moduleKey = module?.key ?? null,
     floor = 0,
+    spaceId = spacePlan?.id ?? null,
     tryReserve = null,
 } = {}) {
     if (!def || !module) return null;
-    const context = { entityId, moduleKey, floor };
+    const context = { entityId, moduleKey, floor, spaceId };
     const roomPlacements = placements.filter(item => sameSemanticRoom(item, context));
     const requirements = graphList(graph, 'requirements');
     const relationships = graphList(graph, 'relationships');
     const [width, , depth] = dimsOf(def);
     const min = minOf(def);
 
-    // Hard dependency: objects that require a work/support surface do not silently
-    // become floor props. They attach to an already established provider.
     if (requirements.includes('support-surface') || relationships.includes('sits-on-work-surface')) {
         const providers = roomPlacements.filter(supportsWorkSurface).reverse();
         for (const provider of providers) {
@@ -213,13 +286,12 @@ export function resolveSemanticPlacement({
                 mode: 'support-surface',
                 relationTo: provider.instanceId ?? provider.assetId,
             };
-            const placed = tryCandidate(def, graph, candidate, tryReserve, module);
+            const placed = tryCandidate(def, graph, candidate, tryReserve, module, spacePlan);
             if (placed) return placed;
         }
         return null;
     }
 
-    // Chairs and similar actors face a previously established work/social surface.
     if (relationships.includes('faces-work-or-social-surface')) {
         const targets = roomPlacements.filter(supportsWorkSurface).reverse();
         for (const target of targets) {
@@ -234,12 +306,11 @@ export function resolveSemanticPlacement({
                 mode: 'faces-surface',
                 relationTo: target.instanceId ?? target.assetId,
             };
-            const placed = tryCandidate(def, graph, candidate, tryReserve, module);
+            const placed = tryCandidate(def, graph, candidate, tryReserve, module, spacePlan);
             if (placed) return placed;
         }
     }
 
-    // Row-capable assets reuse the orientation and side axis of an established row.
     if (relationships.includes('row-alignable')) {
         const anchors = roomPlacements.filter(rowCompatible).reverse();
         for (const anchor of anchors) {
@@ -259,7 +330,7 @@ export function resolveSemanticPlacement({
                     mode: 'row-aligned',
                     relationTo: anchor.instanceId ?? anchor.assetId,
                 };
-                const placed = tryCandidate(def, graph, candidate, tryReserve, module);
+                const placed = tryCandidate(def, graph, candidate, tryReserve, module, spacePlan);
                 if (placed) return placed;
             }
         }
@@ -271,15 +342,18 @@ export function resolveSemanticPlacement({
         || relationships.includes('wall-anchored')
         || relationships.includes('utility-zone-compatible');
     if (wallBiased) {
-        for (const candidate of wallCandidates(def, module, yBase, floorH, seed)) {
-            const placed = tryCandidate(def, graph, candidate, tryReserve, module);
+        const candidates = spacePlan
+            ? fabricWallCandidates(def, spacePlan, yBase, floorH, seed)
+            : moduleWallCandidates(def, module, yBase, floorH, seed);
+        for (const candidate of candidates) {
+            const placed = tryCandidate(def, graph, candidate, tryReserve, module, spacePlan);
             if (placed) return placed;
         }
         if (graph?.support?.required && supportMode === 'wall') return null;
     }
 
-    for (const candidate of genericCandidates(def, module, yBase, seed)) {
-        const placed = tryCandidate(def, graph, candidate, tryReserve, module);
+    for (const candidate of genericCandidates(def, module, yBase, seed, spacePlan)) {
+        const placed = tryCandidate(def, graph, candidate, tryReserve, module, spacePlan);
         if (placed) return placed;
     }
     return null;

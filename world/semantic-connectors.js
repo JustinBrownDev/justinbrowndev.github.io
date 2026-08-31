@@ -3,6 +3,7 @@ import {
     createRampCirculationReservation,
     createStairShaftReservation,
 } from './circulation-reservations.js';
+import { spacePlanTouchesPoint, spacePlanTouchesReservation } from './space-plan.js';
 
 export const SEMANTIC_CONNECTOR_SCHEMA = 'jweb.semantic-connector.v1';
 
@@ -168,6 +169,7 @@ export function createStairConnector({
 export function createRampConnector({
     id,
     kind = 'ramp',
+    reservationKind = null,
     axis,
     from,
     to,
@@ -179,15 +181,18 @@ export function createRampConnector({
     headroom = 1.95,
     source = null,
     visualRole = 'ramp',
+    fromSpaceId = null,
+    toSpaceId = null,
     metadata = null,
 } = {}) {
     const reservation = createRampCirculationReservation({
-        id: `${id}:sweep`, kind: `${kind}-sweep`, axis, from, to, fixedCoord, halfWidth,
+        id: `${id}:sweep`, kind: reservationKind || `${kind}-sweep`, axis, from, to, fixedCoord, halfWidth,
         y0, y1, capsuleRadius, headroom, source,
     });
     return {
         schema: SEMANTIC_CONNECTOR_SCHEMA,
         id, kind, source, visualRole,
+        fromSpaceId, toSpaceId,
         endpoints: [
             axis === 'x' ? { id: `${id}:a`, x: from, y: y0, z: fixedCoord } : { id: `${id}:a`, x: fixedCoord, y: y0, z: from },
             axis === 'x' ? { id: `${id}:b`, x: to, y: y1, z: fixedCoord } : { id: `${id}:b`, x: fixedCoord, y: y1, z: to },
@@ -209,16 +214,20 @@ export function createLandingConnector({
     headroom = 1.96,
     source = null,
     visualRole = 'landing',
+    reservationKind = 'landing-sweep',
+    fromSpaceId = null,
+    toSpaceId = null,
     metadata = null,
 } = {}) {
     const reservation = createBoxCirculationReservation({
-        id: `${id}:sweep`, kind: 'landing-sweep', x, z, halfX, halfZ,
+        id: `${id}:sweep`, kind: reservationKind, x, z, halfX, halfZ,
         yMin: y + 0.01, yMax: y + headroom, source,
         metadata: { connectorId: id, ...(metadata || {}) },
     });
     return {
         schema: SEMANTIC_CONNECTOR_SCHEMA,
         id, kind: 'landing', source, visualRole,
+        fromSpaceId, toSpaceId,
         endpoints: [{ id: `${id}:surface`, x, y, z }],
         sweep: { type: 'landing', x, z, halfX, halfZ, y0: y, y1: y + headroom },
         reservations: [reservation],
@@ -237,12 +246,14 @@ export function createBridgeConnector({
     y,
     source = 'skybridge',
     visualRole = 'bridge',
+    fromSpaceId = null,
+    toSpaceId = null,
     metadata = null,
 } = {}) {
     return createRampConnector({
         id, kind: 'bridge', axis, from, to, fixedCoord, halfWidth,
         y0: y, y1: y, capsuleRadius: 0.18, headroom: 1.95,
-        source, visualRole, metadata,
+        source, visualRole, fromSpaceId, toSpaceId, metadata,
     });
 }
 
@@ -255,6 +266,8 @@ export function createFireEscapeConnector({
     baseY,
     topY,
     source = 'exterior-scaffold',
+    fromSpaceId = null,
+    toSpaceId = null,
     metadata = null,
 } = {}) {
     const reservation = createBoxCirculationReservation({
@@ -265,6 +278,7 @@ export function createFireEscapeConnector({
     return {
         schema: SEMANTIC_CONNECTOR_SCHEMA,
         id, kind: 'fire-escape', source, visualRole: 'fire-escape',
+        fromSpaceId, toSpaceId,
         endpoints: [{ id: `${id}:bottom`, x, y: baseY, z }, { id: `${id}:top`, x, y: topY, z }],
         sweep: { type: 'fire-escape', x, z, halfX, halfZ, y0: baseY, y1: topY },
         reservations: [reservation],
@@ -289,4 +303,114 @@ export function registerSemanticConnector(physics, connector, { publishReservati
 export function connectorOpeningWidth(connector, fallback = 0) {
     const width = Number(connector?.aperture?.width);
     return Number.isFinite(width) && width > 0 ? width : fallback;
+}
+
+function endpointDistanceToPlan(point, plan) {
+    const cx = (plan.bounds.minX + plan.bounds.maxX) * 0.5;
+    const cz = (plan.bounds.minZ + plan.bounds.maxZ) * 0.5;
+    const dy = Math.abs((Number(point.y) || 0) - plan.yBase);
+    return Math.hypot(point.x - cx, point.z - cz) + dy * 0.2;
+}
+
+function bestPlanForEndpoint(point, spacePlans) {
+    const candidates = spacePlans.filter(plan => spacePlanTouchesPoint(plan, point, 0.85));
+    candidates.sort((a, b) => endpointDistanceToPlan(point, a) - endpointDistanceToPlan(point, b) || a.id.localeCompare(b.id));
+    return candidates[0] ?? null;
+}
+
+function connectorSpaceIds(connector, spacePlans) {
+    const ids = [];
+    const add = id => { if (id && !ids.includes(id)) ids.push(id); };
+    for (const endpoint of connector.endpoints ?? []) add(bestPlanForEndpoint(endpoint, spacePlans)?.id);
+    for (const reservation of connector.reservations ?? []) {
+        for (const plan of spacePlans) if (spacePlanTouchesReservation(plan, reservation)) add(plan.id);
+    }
+    return ids;
+}
+
+function inferredConnectorKind(reservation) {
+    const kind = String(reservation?.kind ?? '').toLowerCase();
+    const source = String(reservation?.source ?? '').toLowerCase();
+    if (source.includes('scaffold') || kind.includes('scaffold') || kind.includes('fire-escape')) return 'fire-escape';
+    if (kind.includes('landing')) return 'landing';
+    if (kind.includes('bridge')) return 'bridge';
+    if (kind.includes('stair')) return 'stair';
+    if (kind.includes('ramp') || source.includes('mezzanine')) return 'ramp';
+    return 'circulation';
+}
+
+function endpointsForReservation(reservation, connectorId) {
+    if ((reservation.axis === 'x' || reservation.axis === 'z')
+        && Number.isFinite(reservation.from) && Number.isFinite(reservation.to)
+        && Number.isFinite(reservation.fixedCoord)) {
+        return [
+            reservation.axis === 'x'
+                ? { id: `${connectorId}:a`, x: reservation.from, y: Number(reservation.y0) || reservation.yMin, z: reservation.fixedCoord }
+                : { id: `${connectorId}:a`, x: reservation.fixedCoord, y: Number(reservation.y0) || reservation.yMin, z: reservation.from },
+            reservation.axis === 'x'
+                ? { id: `${connectorId}:b`, x: reservation.to, y: Number(reservation.y1) || reservation.yMin, z: reservation.fixedCoord }
+                : { id: `${connectorId}:b`, x: reservation.fixedCoord, y: Number(reservation.y1) || reservation.yMin, z: reservation.to },
+        ];
+    }
+    return [
+        { id: `${connectorId}:a`, x: reservation.x, y: reservation.yMin, z: reservation.z },
+        { id: `${connectorId}:b`, x: reservation.x, y: reservation.yMax, z: reservation.z },
+    ];
+}
+
+function wrapOrphanReservation(reservation) {
+    const id = `${reservation.id}:connector`;
+    const kind = inferredConnectorKind(reservation);
+    return {
+        schema: SEMANTIC_CONNECTOR_SCHEMA,
+        id,
+        kind,
+        source: reservation.source ?? 'fabric-reservation',
+        visualRole: kind,
+        fromSpaceId: null,
+        toSpaceId: null,
+        endpoints: endpointsForReservation(reservation, id),
+        sweep: { type: kind, derivedFromReservationId: reservation.id },
+        reservations: [reservation],
+        primaryReservation: reservation,
+        metadata: { derivedFromReservation: true, originalKind: reservation.kind ?? null },
+    };
+}
+
+export function ensureSemanticConnectorAuthority(physics, spacePlans = []) {
+    if (!physics) throw new Error('connector authority requires physics payload');
+    const connectors = connectorList(physics);
+    const reservations = reservationList(physics);
+    const ownedReservationIds = new Set();
+    for (const connector of connectors) {
+        for (const reservation of connector.reservations ?? []) ownedReservationIds.add(reservation.id);
+    }
+    let synthesized = 0;
+    for (const reservation of reservations) {
+        if (ownedReservationIds.has(reservation.id)) continue;
+        const connector = wrapOrphanReservation(reservation);
+        connectors.push(connector);
+        ownedReservationIds.add(reservation.id);
+        synthesized++;
+    }
+
+    let resolvedEdges = 0;
+    for (const connector of connectors) {
+        const spaceIds = connectorSpaceIds(connector, spacePlans);
+        connector.spaceIds = spaceIds;
+        if (!connector.fromSpaceId && spaceIds[0]) connector.fromSpaceId = spaceIds[0];
+        if (!connector.toSpaceId && spaceIds[1]) connector.toSpaceId = spaceIds[1];
+        for (const reservation of connector.reservations ?? []) {
+            reservation.connectorId = connector.id;
+        }
+        if (connector.fromSpaceId && connector.toSpaceId) resolvedEdges++;
+    }
+
+    return {
+        connectors: connectors.length,
+        reservations: reservations.length,
+        synthesized,
+        resolvedEdges,
+        orphanReservations: reservations.filter(reservation => !reservation.connectorId).length,
+    };
 }

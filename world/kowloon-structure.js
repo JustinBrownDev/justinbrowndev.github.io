@@ -202,12 +202,11 @@ export function classifyKowloonEdge({
 export function chooseKowloonCompoundTargetSize(rng, weirdness = 0) {
     if (typeof rng !== 'function') throw new Error('chooseKowloonCompoundTargetSize requires rng');
     const intensity = kowloonIntensity(weirdness);
-    // Authored spawn keeps its historical CONFIG weights by injecting its own
-    // chooseTargetSize callback. Infinite chunks use this Kowloon-biased curve:
-    // small compounds remain common, but higher weirdness increasingly accretes
-    // 4-7-cell masses rather than reverting to one-cell boxes.
+    // Dense fabric is the baseline now. Prefer multi-cell compounds so vertical
+    // setbacks, intermediate roofs, overhang rooms, scaffolds, and bridges have
+    // enough neighboring mass to form an occupied section instead of isolated boxes.
     const base = [
-        [1, 22], [2, 25], [3, 20], [4, 15], [5, 9], [6, 6], [7, 3],
+        [1, 8], [2, 15], [3, 22], [4, 24], [5, 15], [6, 10], [7, 6],
     ];
     const adjusted = base.map(([size, weight]) => {
         const bonus = size >= 4 ? intensity.siteTargetBonus * (size - 2) * 2.5 : 0;
@@ -225,14 +224,17 @@ export function chooseKowloonCompoundTargetSize(rng, weirdness = 0) {
 export function kowloonIntensity(weirdness = 0) {
     const w = Math.max(0, Math.min(1, Number(weirdness) || 0));
     return Object.freeze({
-        siteTargetBonus: w < 0.3 ? 0 : w < 0.7 ? 1 : 2,
-        courtyardChance: 0.22 + w * 0.42,
-        verticalVariance: 1 + Math.floor(w * 4),
-        setbackChance: 0.34 + w * 0.48,
-        scaffoldChance: 0.42 + w * 0.38,
-        serviceGutsChance: 0.48 + w * 0.40,
-        bridgeChance: 0.10 + w * 0.34,
-        cageChance: 0.22 + w * 0.50,
-        overhangChance: 0.18 + w * 0.46,
+        // Occupy the volume from both directions: taller spines and stronger
+        // setbacks create many usable intermediate roofs, while overhang rooms,
+        // cages, scaffolds, and bridges descend back into the open volume.
+        siteTargetBonus: w < 0.3 ? 1 : w < 0.7 ? 2 : 3,
+        courtyardChance: 0.14 + w * 0.24,
+        verticalVariance: 3 + Math.floor(w * 5),
+        setbackChance: 0.50 + w * 0.38,
+        scaffoldChance: 0.68 + w * 0.27,
+        serviceGutsChance: 0.72 + w * 0.24,
+        bridgeChance: 0.28 + w * 0.50,
+        cageChance: 0.46 + w * 0.42,
+        overhangChance: 0.42 + w * 0.46,
     });
 }

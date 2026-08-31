@@ -39,7 +39,10 @@ function payloadFor(ids, withReservation = false) {
   return {
     ownerId: `fixture:${ids.join('+')}`,
     entities: entities.filter(e => wanted.has(e.id)),
-    physics: { props: [] },
+    physics: { props: [
+      ...(wanted.has('building:a') ? [{ x: -1.4, z: 0.7, radius: 0.82, yMin: 9.45, height: 10.55, supportKind: 'rooftop-mechanical' }] : []),
+      ...(wanted.has('building:b') ? [{ x: 10.3, z: 0.6, radius: 0.68, yMin: 6.3, height: 7.25, supportKind: 'rooftop-mechanical' }] : []),
+    ] },
     detailReservations: [],
     semanticContext: {
       entities: contexts.filter(c => wanted.has(c.entityId)),
@@ -56,7 +59,11 @@ const second = planExteriorPropField({ chunk, payload: payloadFor(['building:a',
 assert.deepEqual(second, first, 'micro-clutter planning must remain deterministic');
 assert.equal(first.stats.physicalDensityNormalized, true);
 assert.ok(first.stats.generated > 0, 'micro-clutter should still exist');
-assert.ok(first.stats.generated < 30, `micro-clutter must be seasoning, not an avalanche: ${first.stats.generated}`);
+assert.ok(first.stats.microClutter < 30, `micro-clutter must be seasoning, not an avalanche: ${first.stats.microClutter}`);
+assert.ok(first.stats.macroAssemblies >= 2, `large facade assemblies plus structural-roof detailing should now be present: ${first.stats.macroAssemblies}`);
+assert.ok(first.stats.macroPrimitives > first.stats.microClutter, 'macro infrastructure should carry more visual mass than loose micro clutter');
+assert.ok(first.stats.roofMechanicalAssemblies >= 1, 'existing collidable rooftop mechanical hosts should receive recognizable mechanical detailing');
+assert.ok(first.placements.filter(p => p.domain === 'roof-mechanical-detail').every(p => p.hostSupportKind === 'rooftop-mechanical'), 'large roof detailing must derive from structural rooftop-mechanical hosts');
 assert.ok(first.stats.groundPerFacadeMeter <= 0.35, `ground clutter is too dense per facade meter: ${first.stats.groundPerFacadeMeter}`);
 assert.ok(first.stats.drawBuckets <= 4, 'cheap micro-clutter must stay in the four shared draw buckets');
 assert.ok(first.placements.filter(p => p.domain === 'ground-edge-micro').every(p => p.y <= 0.35), 'the junk field must not pretend to be wall mounting');
@@ -70,5 +77,7 @@ const splitA = planExteriorPropField({ chunk, payload: payloadFor(['building:a']
 const splitB = planExteriorPropField({ chunk, payload: payloadFor(['building:b']) });
 assert.equal(splitA.stats.groundEdge + splitB.stats.groundEdge, combined.stats.groundEdge, 'ground density must be additive by facade meters, not payload count');
 assert.equal(splitA.stats.roofEdge + splitB.stats.roofEdge, combined.stats.roofEdge, 'roof micro-clutter must be additive by roof perimeter, not payload count');
+assert.equal(splitA.stats.macroAssemblies + splitB.stats.macroAssemblies, combined.stats.macroAssemblies, 'macro assembly density must be owned by physical surfaces/opportunities, not payload count');
+assert.equal(splitA.stats.macroPrimitives + splitB.stats.macroPrimitives, combined.stats.macroPrimitives, 'macro primitive count must remain additive across ownership splits');
 
 console.log('PASS exterior prop micro-field', first.stats);

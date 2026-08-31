@@ -224,6 +224,9 @@ const FACADE_INFRA_COLORS = Object.freeze({
     vent: [0x4e5553, 0x747a75, 0x3f4544],
     cable: [0x252827, 0x3a3531, 0x171918],
     light: [0xb5aa86, 0x8a846d, 0xd0c6a2],
+    duct: [0x70756f, 0x85877f, 0x5f6763],
+    structure: [0x444948, 0x555957, 0x343838],
+    billboard: [0x2d272f, 0x20373a, 0x493b24, 0x332421],
 });
 
 function facadeBox(surface, u, y, width, height, depth, color, category, extraOutward = 0) {
@@ -253,6 +256,125 @@ function pushFacadePrimitive(placements, stats, reservations, candidate) {
     if (!facadeCandidateFits(reservations, candidate)) { stats.rejected++; return false; }
     placements.push(candidate); stats.facadeInfrastructure++; stats.facadeCategories[candidate.category]=(stats.facadeCategories[candidate.category]??0)+1; return true;
 }
+
+function pushFacadeAssembly(placements, stats, reservations, parts, { id, kind, uMin, uMax }) {
+    if (!parts.length || !parts.every(candidate => facadeCandidateFits(reservations, candidate, 0.10))) {
+        stats.rejected += parts.length;
+        return false;
+    }
+    for (const candidate of parts) {
+        candidate.domain = 'facade-macro';
+        candidate.assemblyId = id;
+        candidate.assemblyKind = kind;
+        candidate.assemblyUMin = uMin;
+        candidate.assemblyUMax = uMax;
+        placements.push(candidate);
+        stats.facadeInfrastructure++;
+        stats.facadeMacroPrimitives++;
+        stats.facadeCategories[candidate.category] = (stats.facadeCategories[candidate.category] ?? 0) + 1;
+    }
+    stats.facadeMacroAssemblies++;
+    stats.facadeMacroKinds[kind] = (stats.facadeMacroKinds[kind] ?? 0) + 1;
+    return true;
+}
+
+function facadeAssemblyParts(surface, rng, kind, u, span, yMin, yMax) {
+    const facadeHeight = Math.max(2.4, yMax - yMin);
+    const parts = [];
+    const box = (du, y, w, h, d, category, extraOutward = 0, colorFamily = category) => parts.push(
+        facadeBox(surface, u + du, y, w, h, d, pick(rng, FACADE_INFRA_COLORS[colorFamily] ?? FACADE_INFRA_COLORS.structure), category, extraOutward)
+    );
+    const pipe = (du, y, h, radius = 0.10) => parts.push(
+        facadePipe(surface, u + du, y, h, radius, pick(rng, FACADE_INFRA_COLORS.pipe))
+    );
+
+    if (kind === 'pipe-rack') {
+        const h = clamp(facadeHeight * range(rng, 0.54, 0.76), 3.2, Math.max(3.2, facadeHeight - 0.5));
+        const baseY = clamp(yMin + range(rng, 0.25, 0.75), yMin + 0.10, yMax - h - 0.10);
+        const spread = span * 0.26;
+        pipe(-spread, baseY, h, range(rng, 0.085, 0.135));
+        pipe(0, baseY + range(rng, 0.18, 0.55), h - range(rng, 0.20, 0.55), range(rng, 0.07, 0.11));
+        pipe(spread, baseY + range(rng, 0.05, 0.38), h - range(rng, 0.10, 0.45), range(rng, 0.085, 0.135));
+        box(0, baseY + h * 0.72, span * 0.72, 0.16, 0.18, 'pipe', 0.01, 'pipe');
+        box(0, baseY + h * 0.28, span * 0.66, 0.13, 0.15, 'pipe', 0.01, 'pipe');
+        box(spread * 0.46, baseY + h * 0.42, 0.48, 0.58, 0.20, 'electrical');
+        return parts;
+    }
+
+    if (kind === 'duct-stack') {
+        const h = clamp(facadeHeight * range(rng, 0.46, 0.68), 3.0, Math.max(3.0, facadeHeight - 0.8));
+        const baseY = clamp(yMin + range(rng, 0.65, 1.25), yMin + 0.18, yMax - h - 0.16);
+        const trunkU = -span * 0.20;
+        box(trunkU, baseY, clamp(span * 0.24, 0.58, 0.88), h, 0.48, 'duct');
+        box(span * 0.08, baseY + h * 0.68, span * 0.50, 0.46, 0.48, 'duct');
+        box(span * 0.17, baseY + h * 0.68 + 0.07, span * 0.28, 0.30, 0.055, 'vent', 0.29, 'vent');
+        box(span * 0.02, baseY + h * 0.30, span * 0.38, 0.34, 0.42, 'duct');
+        box(span * 0.10, baseY + h * 0.30 + 0.05, span * 0.22, 0.22, 0.05, 'vent', 0.25, 'vent');
+        box(trunkU, baseY + h - 0.08, clamp(span * 0.36, 0.82, 1.18), 0.18, 0.62, 'duct');
+        return parts;
+    }
+
+    if (kind === 'billboard-rack') {
+        const panelW = clamp(span * 0.86, 1.8, 4.2);
+        const panelH = clamp(facadeHeight * range(rng, 0.18, 0.28), 1.25, 2.55);
+        const panelY = clamp(yMin + facadeHeight * range(rng, 0.48, 0.70), yMin + 2.0, yMax - panelH - 0.28);
+        const frameW = panelW + 0.18;
+        box(0, panelY, panelW, panelH, 0.13, 'billboard', 0.26, 'billboard');
+        box(0, panelY - 0.10, frameW, 0.08, 0.10, 'structure', 0.31, 'structure');
+        box(0, panelY + panelH + 0.02, frameW, 0.08, 0.10, 'structure', 0.31, 'structure');
+        box(-panelW * 0.5 - 0.05, panelY - 0.08, 0.08, panelH + 0.18, 0.10, 'structure', 0.31, 'structure');
+        box(panelW * 0.5 + 0.05, panelY - 0.08, 0.08, panelH + 0.18, 0.10, 'structure', 0.31, 'structure');
+        box(-panelW * 0.28, panelY - 0.72, 0.09, 0.68, 0.18, 'structure', 0.20, 'structure');
+        box(panelW * 0.28, panelY - 0.72, 0.09, 0.68, 0.18, 'structure', 0.20, 'structure');
+        return parts;
+    }
+
+    const unitCount = span >= 3.1 ? 3 : 2;
+    const usableW = span * 0.82;
+    const unitW = clamp(usableW / unitCount * 0.78, 0.62, 1.05);
+    const baseY = clamp(yMin + facadeHeight * range(rng, 0.26, 0.46), yMin + 1.0, yMax - 2.1);
+    for (let i = 0; i < unitCount; i++) {
+        const du = unitCount === 1 ? 0 : -usableW * 0.36 + i * (usableW * 0.72 / (unitCount - 1));
+        const h = range(rng, 0.62, 0.94);
+        box(du, baseY + range(rng, -0.10, 0.12), unitW, h, 0.42, 'hvac');
+        box(du, baseY + h * 0.18, unitW * 0.58, h * 0.52, 0.05, 'vent', 0.24, 'vent');
+    }
+    box(0, baseY + 1.18, usableW * 0.90, 0.28, 0.34, 'duct');
+    box(-usableW * 0.38, baseY + 0.05, 0.10, 1.46, 0.12, 'cable', 0.02, 'cable');
+    return parts;
+}
+
+function addFacadeMacroAssemblies({ chunk, payload, placements, stats, reservations, contextByEntity }) {
+    const semantic = payload?.semanticContext;
+    const apertures = semantic?.apertures ?? [];
+    const kinds = ['pipe-rack', 'duct-stack', 'billboard-rack', 'mechanical-bank'];
+    for (const surface of semantic?.surfaces ?? []) {
+        const yMin = finite(surface.yMin), yMax = finite(surface.yMax, yMin + 2.8);
+        const facadeHeight = Math.max(0, yMax - yMin);
+        if (facadeHeight < 5.1 || finite(surface.half) < 1.15) continue;
+        const intervals = freeIntervals(surface, apertures, 0.62)
+            .filter(([lo, hi]) => hi - lo >= 2.05)
+            .sort((a, b) => (b[1] - b[0]) - (a[1] - a[0]));
+        if (!intervals.length) continue;
+        const rng = mulberry32(hash32(`${chunk.seed ?? chunk.key}:${chunk.key}:facade-macro:${surface.id}`));
+        const context = String(contextByEntity.get(surface.entityId)?.program ?? contextByEntity.get(surface.entityId)?.physicalUseFamily ?? 'mixed');
+        const chance = /industrial|service|mechanical|workshop/i.test(context) ? 0.96 : surface.exposure === 'street' ? 0.86 : 0.92;
+        if (rng() > chance) continue;
+        const [lo, hi] = intervals[0];
+        const intervalWidth = hi - lo;
+        const span = clamp(intervalWidth * range(rng, 0.72, 0.92), 2.0, 4.5);
+        const margin = Math.max(0.12, (intervalWidth - span) * 0.5);
+        const u = clamp((lo + hi) * 0.5 + range(rng, -intervalWidth * 0.10, intervalWidth * 0.10), lo + span * 0.5 + margin * 0.25, hi - span * 0.5 - margin * 0.25);
+        let kindIndex = hash32(`${chunk.key}:${surface.id}:macro-kind`) % kinds.length;
+        if (/industrial|service|mechanical|workshop/i.test(context) && kinds[kindIndex] === 'billboard-rack') kindIndex = 1;
+        const kind = kinds[kindIndex];
+        const uMin = u - span * 0.5, uMax = u + span * 0.5;
+        const id = `${surface.id}:macro:${kind}`;
+        const parts = facadeAssemblyParts(surface, rng, kind, u, span, yMin, yMax);
+        pushFacadeAssembly(placements, stats, reservations, parts, { id, kind, uMin, uMax });
+    }
+}
+
 function addFacadeInfrastructure({ chunk, payload, placements, stats, reservations, contextByEntity }) {
     const semantic=payload?.semanticContext; const apertures=semantic?.apertures??[];
     for (const surface of semantic?.surfaces??[]) {
@@ -266,6 +388,9 @@ function addFacadeInfrastructure({ chunk, payload, placements, stats, reservatio
             for(let i=0;i<n;i++){
                 const cellLo=lo+i*cellWidth, cellHi=cellLo+cellWidth;
                 const u=clamp((cellLo+cellHi)*0.5+range(rng,-cellWidth*0.18,cellWidth*0.18),cellLo+0.18,cellHi-0.18);
+                const macroOccupied = placements.some(item => item.domain === 'facade-macro' && item.surfaceId === surface.id
+                    && u >= finite(item.assemblyUMin, Infinity) - 0.12 && u <= finite(item.assemblyUMax, -Infinity) + 0.12);
+                if (macroOccupied) continue;
                 const band=i%Math.max(1,Math.min(4,Math.ceil(facadeHeight/2.7)));
                 const y=clamp(yMin+1+band*2.35+range(rng,-0.24,0.34),yMin+0.45,yMax-0.75); const r=rng();
                 if(r<0.26 || (/industrial|service|mechanical/i.test(context)&&r<0.38)){
@@ -327,6 +452,65 @@ function roofEdgePoint(bounds, rng, edge, along, inward) {
     if (edge === 1) return { x: bounds.x + bounds.halfX - inward, z: bounds.z + along * bounds.halfZ, rotY: -Math.PI * 0.5 };
     if (edge === 2) return { x: bounds.x - along * bounds.halfX, z: bounds.z + bounds.halfZ - inward, rotY: Math.PI };
     return { x: bounds.x - bounds.halfX + inward, z: bounds.z - along * bounds.halfZ, rotY: Math.PI * 0.5 };
+}
+
+function pushRoofMechanicalDetail(placements, stats, parts, id) {
+    for (const candidate of parts) {
+        candidate.domain = 'roof-mechanical-detail';
+        candidate.assemblyId = id;
+        candidate.assemblyKind = 'rooftop-mechanical-detail';
+        placements.push(candidate);
+        stats.roofMechanicalPrimitives++;
+    }
+    stats.roofMechanicalAssemblies++;
+}
+
+function addRoofMechanicalDetails({ chunk, payload, placements, stats }) {
+    const hosts = (payload?.physics?.props ?? []).filter(prop => prop?.supportKind === 'rooftop-mechanical'
+        && Number.isFinite(prop.x) && Number.isFinite(prop.z) && Number.isFinite(prop.yMin)
+        && Number.isFinite(prop.height) && finite(prop.radius) >= 0.38);
+    for (let hostIndex = 0; hostIndex < hosts.length; hostIndex++) {
+        const host = hosts[hostIndex];
+        const radius = clamp(finite(host.radius), 0.38, 2.4);
+        const topY = Math.max(finite(host.yMin), finite(host.height));
+        const hostHeight = Math.max(0.35, topY - finite(host.yMin));
+        const rng = mulberry32(hash32(`${chunk.seed ?? chunk.key}:${chunk.key}:roof-mechanical-detail:${hostIndex}:${host.x}:${host.z}`));
+        const parts = [];
+        const detailColor = () => pick(rng, FACADE_INFRA_COLORS.hvac);
+        const ventColor = () => pick(rng, FACADE_INFRA_COLORS.vent);
+        const structureColor = () => pick(rng, FACADE_INFRA_COLORS.structure);
+        const frontZ = host.z - radius * 0.76;
+        const louverW = clamp(radius * 1.15, 0.42, 1.8);
+        const louverH = clamp(hostHeight * 0.30, 0.22, 0.58);
+        parts.push({
+            shape: 'box', color: ventColor(), x: host.x, y: finite(host.yMin) + hostHeight * 0.36,
+            z: frontZ, sx: louverW, sy: louverH, sz: 0.07, rotY: 0, category: 'vent', hostSupportKind: host.supportKind,
+        });
+        const fanCount = radius >= 0.78 ? 2 : 1;
+        for (let i = 0; i < fanCount; i++) {
+            const dx = fanCount === 1 ? 0 : (i ? 1 : -1) * radius * 0.30;
+            const d = clamp(radius * range(rng, 0.34, 0.46), 0.24, 0.58);
+            parts.push({
+                shape: 'cylinder', color: ventColor(), x: host.x + dx, y: topY,
+                z: host.z, sx: d, sy: range(rng, 0.12, 0.22), sz: d, rotY: 0, category: 'fan', hostSupportKind: host.supportKind,
+            });
+        }
+        if (radius >= 0.58) {
+            const stackD = clamp(radius * 0.24, 0.16, 0.34);
+            parts.push({
+                shape: 'cylinder', color: structureColor(), x: host.x + radius * 0.30, y: topY,
+                z: host.z + radius * 0.28, sx: stackD, sy: range(rng, 0.58, 1.10), sz: stackD, rotY: 0, category: 'stack', hostSupportKind: host.supportKind,
+            });
+        }
+        if (radius >= 0.74) {
+            parts.push({
+                shape: 'box', color: detailColor(), x: host.x - radius * 0.28, y: topY + 0.03,
+                z: host.z + radius * 0.24, sx: clamp(radius * 0.48, 0.34, 0.76), sy: range(rng, 0.26, 0.46),
+                sz: clamp(radius * 0.42, 0.30, 0.68), rotY: 0, category: 'duct', hostSupportKind: host.supportKind,
+            });
+        }
+        pushRoofMechanicalDetail(placements, stats, parts, `rooftop-mechanical:${hostIndex}:${host.x}:${host.z}`);
+    }
 }
 
 function addRoofField({ chunk, payload, placements, stats, reservations }) {
@@ -423,14 +607,16 @@ export function planExteriorPropField({ chunk, payload } = {}) {
         return { schema: EXTERIOR_PROP_FIELD_SCHEMA, placements: [], stats: { generated: 0, reason: 'no-exterior-topology' } };
     }
     const placements = [];
-    const stats = { generated: 0, groundEdge: 0, wallBand: 0, facadeInfrastructure: 0, facadeCategories: {}, courtyardEdge: 0, roofEdge: 0, rejected: 0, drawBuckets: 0 };
+    const stats = { generated: 0, groundEdge: 0, wallBand: 0, facadeInfrastructure: 0, facadeCategories: {}, facadeMacroAssemblies: 0, facadeMacroPrimitives: 0, facadeMacroKinds: {}, courtyardEdge: 0, roofEdge: 0, roofMechanicalAssemblies: 0, roofMechanicalPrimitives: 0, rejected: 0, drawBuckets: 0 };
     const reservations = reservationList(payload);
     const modules = footprintModules(payload);
     const contextByEntity = new Map((semantic?.entities ?? []).map(context => [context.entityId, context]));
 
+    addFacadeMacroAssemblies({ chunk, payload, placements, stats, reservations, contextByEntity });
     addFacadeInfrastructure({ chunk, payload, placements, stats, reservations, contextByEntity });
     addWallField({ chunk, payload, placements, stats, reservations, modules, contextByEntity });
     addPlazaField({ chunk, payload, placements, stats, reservations, modules });
+    addRoofMechanicalDetails({ chunk, payload, placements, stats });
     addRoofField({ chunk, payload, placements, stats, reservations });
 
     const usedShapes = new Set(placements.map(item => item.shape));
@@ -445,6 +631,9 @@ export function planExteriorPropField({ chunk, payload } = {}) {
     stats.facadeCategoryCount = Object.keys(stats.facadeCategories).length;
     stats.visibleFacadePerFacadeMeter = facadeMeters > 0 ? stats.facadeInfrastructure / facadeMeters : 0;
     stats.microClutter = stats.groundEdge + stats.courtyardEdge + stats.roofEdge;
+    stats.macroAssemblies = stats.facadeMacroAssemblies + stats.roofMechanicalAssemblies;
+    stats.macroPrimitives = stats.facadeMacroPrimitives + stats.roofMechanicalPrimitives;
+    stats.macroKindCount = Object.keys(stats.facadeMacroKinds).length + (stats.roofMechanicalAssemblies > 0 ? 1 : 0);
     stats.drawBuckets = usedShapes.size;
     stats.reservations = reservations.length;
     stats.surfaces = semantic?.surfaces?.length ?? 0;

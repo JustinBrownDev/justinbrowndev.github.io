@@ -1,4 +1,5 @@
 import { ensureSemanticConnectorAuthority } from './semantic-connectors.js';
+import { compileSemanticContext } from './semantic-context.js';
 import { createSemanticPlacementRecord, resolveSemanticPlacement } from './semantic-placement.js';
 import { compileSpacePlans, spacePlanAcceptsBox } from './space-plan.js';
 import { chooseCompatibleProgram, programCompatibleWithPhysicalUse, programsForPhysicalUse } from './physical-use.js';
@@ -353,6 +354,8 @@ export function solveSemanticLayout({ chunk, payload, tasks, assetById } = {}) {
         if (!progress) break;
     }
 
+    const semanticContext = compileSemanticContext({ chunk, payload, tasks });
+
     return {
         schema: 'jweb.semantic-layout.v2',
         planned: semanticTasks.length,
@@ -369,5 +372,6 @@ export function solveSemanticLayout({ chunk, payload, tasks, assetById } = {}) {
             rejectedTasks: destinationCompatibility.rejectedTasks,
         },
         connectorAuthority,
+        semanticContext: semanticContext.stats,
     };
 }

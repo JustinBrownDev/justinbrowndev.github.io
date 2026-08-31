@@ -1,4 +1,4 @@
-import { CUT_AUTHORED_SPAWN_DECORATION } from './config/performance-isolation.js';
+import { CUT_AUTHORED_SPAWN_DECORATION, GENERATION_LANES, GENERATION_PROFILE_NAME, WORLD_BUILD_BUDGET_MS } from './config/performance-isolation.js';
 import * as THREE from 'three';
 import { PointerLockControls } from './vendor/three/addons/controls/PointerLockControls.js';
 import { EffectComposer } from './vendor/three/addons/postprocessing/EffectComposer.js';
@@ -44,6 +44,7 @@ import { realizeSpawnLocation } from './world/spawn-location-realizer.js';
 import { WORLD_STREAMING_GEAR, choosePlayerCenteredStreamingGear, createPrefetchPressureGate, pointNearRegion, shouldRunAuthoredLocalWork } from './world/player-centered-streaming.js';
 import { createDynamicLightPool } from './systems/dynamic-light-pool.js';
 import { createRuntimeLatencyTelemetry } from './systems/runtime-latency.js';
+import { createCooperativeBuildYield } from './systems/cooperative-build-yield.js';
 import { createMaterialRefinementController } from './systems/material-refinement.js';
 import { createMusicPlayer } from './systems/music-player.js';
 
@@ -2051,6 +2052,24 @@ playerPhysics = createPlayerPhysics({
 });
 console.log(`[stream-perf] full player physics active during authored construction at ${bootElapsed()}`);
 
+const cooperativeFabricBuildYield = createCooperativeBuildYield({
+    budgetMs: WORLD_BUILD_BUDGET_MS,
+    warnUnitMs: Math.max(12, WORLD_BUILD_BUDGET_MS * 2),
+    label: 'fabric-build',
+});
+const cooperativeStreamerYield = createCooperativeBuildYield({
+    budgetMs: WORLD_BUILD_BUDGET_MS,
+    warnUnitMs: Math.max(12, WORLD_BUILD_BUDGET_MS * 2),
+    label: 'streamer',
+});
+if (typeof window !== 'undefined') {
+    window.__worldBuildSchedulers = Object.freeze({
+        fabric: cooperativeFabricBuildYield,
+        streamer: cooperativeStreamerYield,
+    });
+}
+console.log(`[generation-profile] runtime=${GENERATION_PROFILE_NAME} broad=${GENERATION_LANES.broadStrokesOnly ? 'ON' : 'OFF'} budget=${WORLD_BUILD_BUDGET_MS.toFixed(1)}ms`);
+
 // ONE CITY-FABRIC ENGINE.  Ordinary authored spawn sites and streamed chunks
 // now use the same Kowloon compound renderer + physics publisher. Singular
 // landmarks are content recipes over this engine; the historical authored
@@ -2058,7 +2077,7 @@ console.log(`[stream-perf] full player physics active during authored constructi
 cityFabricEngine = createKowloonFabricEngine({
     THREE, scene, playerPhysics, directSceneAdd: _origSceneAdd, chunkSize: STREAM_CHUNK_SIZE, worldSeed: SEED, spawnChunkKey: '0,0',
     landmarkSpacingChunks: CONFIG.streaming.landmarkSpacingChunks,
-    yieldControl: null,
+    yieldControl: cooperativeFabricBuildYield,
 });
 const spawnSingularManifest = createSpawnSingularManifest(SEED, signatureInstances);
 const authoredOriginChunkPayload = cityFabricEngine.buildAuthoredOriginChunk({ singulars: spawnSingularManifest });
@@ -2084,7 +2103,7 @@ worldChunkStreamer = createWorldChunkStreamer({
         ? CONFIG.streaming.visibleDetailFloorDesktop
         : CONFIG.streaming.visibleDetailFloorWeak,
     unloadChunk: (chunk, payload) => cityFabricEngine.unload(chunk, payload),
-    yieldControl: null,
+    yieldControl: cooperativeStreamerYield,
     onChunkState: (chunk, state) => {
         if (state === 'ready' || state === 'unloaded') {
             console.log(`[world] chunk ${chunk.key} ${state} · weirdness=${chunk.weirdness.sampled.toFixed(3)}`);
@@ -2223,6 +2242,20 @@ function signatureFabricProfile(site) {
     };
 }
 
+function* maybeSignatureContentSteps(site) {
+    if (!GENERATION_LANES.signatureContent) {
+        yield {
+            phase: 'signature-content-skipped-broad-strokes',
+            siteId: site.id,
+            type: site.signatureType,
+            generationProfile: GENERATION_PROFILE_NAME,
+        };
+        return;
+    }
+    yield* maybeSignatureContentSteps(site);
+}
+
+
 function* buildUnifiedSignatureSiteSteps(site) {
     // RESERVED is intentionally an empty singular parcel. It has no alternate
     // building engine because it has no building at all; its recipe owns only
@@ -2254,12 +2287,7 @@ function* buildUnifiedSignatureSiteSteps(site) {
         modules: payload.entity.moduleCount, floors: payload.entity.floors, renderAuthority: payload.root.userData.renderAuthority,
     };
 
-    activeUnifiedSignatureSite = site;
-    try {
-        yield* signatureContentSiteSteps(site);
-    } finally {
-        activeUnifiedSignatureSite = null;
-    }
+    yield* maybeSignatureContentSteps(site);
 }
 
 buildSignatureSiteSteps = buildUnifiedSignatureSiteSteps;

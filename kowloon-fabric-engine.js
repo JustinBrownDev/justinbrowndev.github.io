@@ -1,3 +1,4 @@
+import { GENERATION_LANES, GENERATION_PROFILE_NAME } from './config/performance-isolation.js';
 import { hashString32 } from './world-chunk-streamer.js';
 import { WORLD_FORMAT_VERSION, worldChunkOwnerId, worldEntityId } from './world-contract.js';
 import { createKowloonFabricEnrichment } from './world/kowloon-fabric-enrichment.js';
@@ -757,7 +758,183 @@ export function createKowloonFabricEngine({
         }
     }
 
-    function buildKowloonCompound({
+    // SKELETON PROFILE: the broad-strokes builder deliberately stops before the
+    // expensive Building Plan / interior / scaffold / balcony / clutter pipeline.
+    // It publishes deterministic massing, exterior shell collision, roofs, facade
+    // opportunities and bridge/door apertures.  Richer layers can be reintroduced
+    // later without making them prerequisites for a visible traversable city.
+    function buildBroadStrokesCompound({
+        chunk, site, topology, siteSignature, siteSeed, structureProfile,
+        physics, transforms, materialIndex, modulePlans, moduleByKey, primaryModule,
+        floorH, archetype, physicalUse, physicalTruth, servicePhysicalTruth,
+        floorConnectivityRepair, courtyard, courtyardSuppressedForConnectivity,
+        bridgeOpeningKeys,
+    }) {
+        const wallList = transforms.wallGroups[materialIndex];
+        const facades = [];
+        let internalOpenFaces = 0;
+        let exposedSetbackFaces = 0;
+        let partyFaces = 0;
+
+        const streetFaces = [];
+        for (const module of modulePlans) {
+            for (const dir of KOWLOON_DIRS) {
+                const exposure = module.edgeKinds[dir.key];
+                if (exposure === 'street' || exposure === 'courtyard') {
+                    streetFaces.push({ module, dir, courtyard: exposure === 'courtyard' });
+                }
+            }
+        }
+        const requestedEntrances = Array.isArray(structureProfile?.entrances) ? structureProfile.entrances : [];
+        const forcedEntranceFaces = [];
+        for (const entrance of requestedEntrances) {
+            const moduleKey = kowloonCellKey(entrance.col, entrance.row);
+            const face = streetFaces.find(candidate => candidate.module.key === moduleKey
+                && candidate.dir.dc === entrance.dc && candidate.dir.dr === entrance.dr && !candidate.courtyard);
+            if (face && !forcedEntranceFaces.includes(face)) forcedEntranceFaces.push(face);
+        }
+        const primaryStreet = streetFaces.filter(face => face.module === primaryModule && !face.courtyard);
+        const doorPool = primaryStreet.length ? primaryStreet : streetFaces.filter(face => !face.courtyard);
+        const doorFace = forcedEntranceFaces[0]
+            ?? (doorPool.length ? doorPool[siteSeed % doorPool.length] : null);
+        const entranceFaces = forcedEntranceFaces.length ? forcedEntranceFaces : (doorFace ? [doorFace] : []);
+
+        for (const module of modulePlans) {
+            transforms.slabs.push({
+                x: module.rect.cx, y: 0.055, z: module.rect.cz,
+                sx: module.rect.halfX * 2 + 0.12, sy: 0.11, sz: module.rect.halfZ * 2 + 0.12,
+            });
+
+            for (let floor = 0; floor < module.floors; floor++) {
+                const y0 = floor * floorH;
+                const y1 = y0 + floorH;
+                for (const dir of KOWLOON_DIRS) {
+                    const kind = module.edgeKinds[dir.key];
+                    let shouldWall = kind !== 'internal';
+                    if (kind === 'party') partyFaces++;
+                    if (kind === 'internal') {
+                        const neighbor = moduleByKey.get(kowloonCellKey(module.cell.col + dir.dc, module.cell.row + dir.dr));
+                        if (neighbor && floor < neighbor.floors) {
+                            internalOpenFaces++;
+                            shouldWall = false;
+                        } else {
+                            exposedSetbackFaces++;
+                            shouldWall = true;
+                        }
+                    }
+                    if (!shouldWall) continue;
+
+                    const openingKey = `${module.key}:${dir.key}:${floor}`;
+                    let opening = 0;
+                    if (bridgeOpeningKeys.has(openingKey)) {
+                        opening = servicePhysicalTruth?.door?.clearWidth?.realizedSI ?? 1.35;
+                    } else if (floor === 0 && entranceFaces.some(face => face.module === module && face.dir.key === dir.key)) {
+                        opening = physicalTruth?.door?.clearWidth?.realizedSI ?? 1.35;
+                    }
+                    addCompoundSideWall({ physics, wallList, rect: module.rect, floorH, floor, side: dir.side, opening });
+                    if (kind === 'street' || kind === 'courtyard') {
+                        facades.push({
+                            moduleKey: module.key, side: dir.side, exposure: kind,
+                            x: module.rect.cx, z: module.rect.cz,
+                            halfX: module.rect.halfX, halfZ: module.rect.halfZ,
+                            yMin: y0, yMax: y1,
+                        });
+                    }
+                }
+            }
+
+            const roofY = module.floors * floorH;
+            const roofRect = computeKowloonSlabRect(module, moduleByKey, module.floors, { roof: true });
+            addRectPlatform(physics.platforms, roofRect.cx, roofRect.cz, roofRect.width, roofRect.depth, roofY, 'roof');
+            transforms.slabs.push({
+                x: roofRect.cx, y: roofY - 0.06, z: roofRect.cz,
+                sx: roofRect.width, sy: 0.12, sz: roofRect.depth,
+            });
+            for (const dir of KOWLOON_DIRS) {
+                let exposed = module.edgeKinds[dir.key] !== 'internal';
+                if (!exposed) {
+                    const neighbor = moduleByKey.get(kowloonCellKey(module.cell.col + dir.dc, module.cell.row + dir.dr));
+                    exposed = !neighbor || neighbor.floors < module.floors;
+                }
+                if (exposed) addCompoundRoofParapetSide({ physics, wallList, rect: module.rect, roofY, side: dir.side });
+            }
+        }
+
+        const bounds = modulePlans.reduce((acc, module) => ({
+            minX: Math.min(acc.minX, module.rect.cx - module.rect.halfX),
+            maxX: Math.max(acc.maxX, module.rect.cx + module.rect.halfX),
+            minZ: Math.min(acc.minZ, module.rect.cz - module.rect.halfZ),
+            maxZ: Math.max(acc.maxZ, module.rect.cz + module.rect.halfZ),
+        }), { minX: Infinity, maxX: -Infinity, minZ: Infinity, maxZ: -Infinity });
+        const anchor = doorFace?.module || primaryModule;
+        const floorCounts = modulePlans.map(module => module.floors);
+        const roofTopper = archetype === 'vertical-stack' && (hashString32(`${siteSeed}:broad-roof-topper`) % 4 === 0)
+            ? 'spire'
+            : 'none';
+
+        return {
+            x: anchor.rect.cx, z: anchor.rect.cz,
+            halfX: anchor.rect.halfX, halfZ: anchor.rect.halfZ,
+            floorH,
+            floors: Math.max(...floorCounts),
+            archetype,
+            physicalUse,
+            physicalTruth,
+            servicePhysicalTruth,
+            physicalTruthDecision: {
+                schema: 'jweb.physical-truth-decision.v1',
+                floorHeightSource: Number.isFinite(structureProfile?.floorHeight) ? 'explicit-structure-profile' : 'resolved-physical-truth',
+                topologyPhase: 'precommit-broad-strokes',
+            },
+            semanticSiteKey: siteSignature,
+            semanticChunkKey: chunk.key,
+            doorSide: doorFace?.dir.side ?? 'north',
+            entranceFaces: entranceFaces.map(face => ({ moduleKey: face.module.key, side: face.dir.side, dirKey: face.dir.key })),
+            compoundCells: site.cells.map(cell => ({ col: cell.col, row: cell.row })),
+            primaryCell: { col: topology.primary.col, row: topology.primary.row },
+            courtyardCell: courtyard ? { col: courtyard.col, row: courtyard.row } : null,
+            courtyardSuppressedForConnectivity,
+            moduleCount: modulePlans.length,
+            footprintModules: modulePlans.map(module => ({ ...module.rect, floors: module.floors, key: module.key })),
+            modularSetbacks: Math.max(0, new Set(floorCounts).size - 1) + Math.max(0, modulePlans.length - 1),
+            floorConnectivityRepair,
+            heightVariance: Math.max(...floorCounts) - Math.min(...floorCounts),
+            partitionSegments: 0,
+            buildingPlan: null,
+            buildingPlanAuthority: 'deferred-by-generation-profile',
+            buildingPlanFingerprint: null,
+            buildingPlanInspection: null,
+            internalOpenFaces,
+            exposedSetbackFaces,
+            partyFaces,
+            balconySide: null,
+            scaffoldSide: null,
+            scaffoldLandings: 0,
+            serviceCages: 0,
+            cantileverRooms: 0,
+            mezzanines: 0,
+            interiorClutter: 0,
+            serviceCores: 0,
+            rooftopMechanical: 0,
+            roofCrowns: roofTopper === 'none' ? 0 : 1,
+            roofTopper,
+            circulationReservationCount: 0,
+            singularRecipe: structureProfile?.singularRecipe ?? null,
+            exteriorIdentity: structureProfile?.exteriorIdentity ? { ...structureProfile.exteriorIdentity } : null,
+            exteriorMacroPreference: structureProfile?.exteriorMacroPreference ? { ...structureProfile.exteriorMacroPreference } : null,
+            exteriorCompositionOwned: structureProfile?.exteriorCompositionOwned === true,
+            suppressInteriorEnrichment: true,
+            bridgePortalCount: bridgeOpeningKeys.size,
+            facades,
+            compoundBounds: bounds,
+            kowloonIntensity: chunk.weirdness.sampled,
+            generationProfile: GENERATION_PROFILE_NAME,
+            broadStrokesOnly: true,
+        };
+    }
+
+
+    function* buildKowloonCompoundSteps({
         chunk, site, siteIdOf, roadPlan, openSiteIds, bridgePortalsBySite, physics, transforms,
         cx0, cz0, half, cellSize, materialIndex, geometryAdapter = null,
         streetCellOverride = null, courtyardCellOverride = undefined, structureProfile = null, districtBuildingContext = null,
@@ -926,6 +1103,17 @@ export function createKowloonFabricEngine({
         // support chain needed to preserve requested/bridge-served upper floors.
         const floorConnectivityRepair = normalizeModuleFloorConnectivity(modulePlans, primaryModule, bridgePortals);
         const moduleByKey = new Map(modulePlans.map(module => [module.key, module]));
+
+        if (GENERATION_LANES.broadStrokesOnly) {
+            return buildBroadStrokesCompound({
+                chunk, site, topology, siteSignature, siteSeed, structureProfile,
+                physics, transforms, materialIndex, modulePlans, moduleByKey, primaryModule,
+                floorH, archetype, physicalUse, physicalTruth, servicePhysicalTruth,
+                floorConnectivityRepair, courtyard, courtyardSuppressedForConnectivity,
+                bridgeOpeningKeys,
+            });
+        }
+        yield { phase: 'compound-massing-plan', current: 0, total: modulePlans.length };
 
         const streetFaces = [];
         for (const module of modulePlans) {
@@ -1127,6 +1315,7 @@ export function createKowloonFabricEngine({
                 }
             }
         }
+        yield { phase: 'compound-exterior-feature-plan', current: 0, total: modulePlans.length };
 
         let partitionSegments = 0;
         let exposedSetbackFaces = 0;
@@ -1263,6 +1452,7 @@ export function createKowloonFabricEngine({
             circulationByModule.set(module.key, buildingPlanReservationsForModule(buildingPlan, module, buildingPlanDoorConnectors));
         }
 
+        yield { phase: 'compound-semantic-plan', current: 0, total: modulePlans.length };
         for (const module of modulePlans) {
             const wallList = transforms.wallGroups[materialIndex];
             const sampledStairCx = module.rect.cx + (rng() - 0.5) * module.rect.halfX * 0.18;
@@ -1449,6 +1639,7 @@ export function createKowloonFabricEngine({
                 }
                 if (exposed) addCompoundRoofParapetSide({ physics, wallList, rect: module.rect, roofY, side: dir.side });
             }
+            yield { phase: 'compound-module-shell', moduleKey: module.key, current: modulePlans.indexOf(module) + 1, total: modulePlans.length };
         }
 
         partitionSegments += realizeBuildingPlanWallRuns({
@@ -1488,6 +1679,8 @@ export function createKowloonFabricEngine({
                 transforms.doors.push({ x: rect.cx + (side === 'west' ? -rect.halfX - 0.018 : rect.halfX + 0.018), y: height * 0.5, z: rect.cz, sx: 0.05, sy: height, sz: width });
             }
         }
+
+        yield { phase: 'compound-facade-layer', current: modulePlans.length, total: modulePlans.length };
 
         // Preserve the legacy shared RNG stream position so unrelated balcony and
         // feature choices do not drift merely because scaffold feasibility moved pre-wall.
@@ -1571,6 +1764,8 @@ export function createKowloonFabricEngine({
             }
             cantileverRooms++;
         }
+
+        yield { phase: 'compound-medium-exterior', current: modulePlans.length, total: modulePlans.length };
 
         // Capabilities carried forward from the old authored ordinary builder,
         // now implemented once for BOTH spawn fabric and infinity.  These are
@@ -1670,6 +1865,7 @@ export function createKowloonFabricEngine({
                     interiorClutter++;
                 }
             }
+            yield { phase: 'compound-shared-features', moduleKey: module.key, current: modulePlans.indexOf(module) + 1, total: modulePlans.length };
         }
 
         // Shared vertical service core / rooftop mechanical accretion / crown.
@@ -1796,6 +1992,30 @@ export function createKowloonFabricEngine({
             compoundBounds: bounds,
             kowloonIntensity: weird,
         };
+    }
+
+    function runCompoundStepperToCompletion(stepper) {
+        let step = stepper.next();
+        while (!step.done) step = stepper.next();
+        return step.value;
+    }
+
+    function buildKowloonCompound(args) {
+        return runCompoundStepperToCompletion(buildKowloonCompoundSteps(args));
+    }
+
+    async function buildKowloonCompoundCooperative(args) {
+        yieldControl?.resetSlice?.();
+        const stepper = buildKowloonCompoundSteps(args);
+        let step = stepper.next();
+        while (!step.done) {
+            const checkpoint = step.value ?? {};
+            if (yieldControl) {
+                await yieldControl(`${checkpoint.phase ?? 'compound-step'} ${args.chunk?.key ?? 'unknown'}`, checkpoint.current ?? 0, checkpoint.total ?? 0);
+            }
+            step = stepper.next();
+        }
+        return step.value;
     }
 
     function addClimbablePlazaPile({ physics, transforms, rng, cx, cz, cellSize, weird }) {
@@ -1978,7 +2198,7 @@ export function createKowloonFabricEngine({
         return best;
     }
 
-    function buildDistrictLandmark({ chunk, spec, cell, physics, transforms, cellCx, cellCz, cellSize, districtBuildingContext = null }) {
+    async function buildDistrictLandmark({ chunk, spec, cell, physics, transforms, cellCx, cellCz, cellSize, districtBuildingContext = null }) {
         // A district landmark is a Kowloon compound with a landmark profile, not a
         // second tower builder.  The recurring identity only controls recipe data
         // (height/footprint/entrance/crown); wall, floor, stair, facade and collision
@@ -1995,7 +2215,7 @@ export function createKowloonFabricEngine({
         const landmarkSite = { id: landmarkSiteId, cells: [{ col: cell.c, row: cell.r }] };
         const landmarkSiteIdOf = Array.from({ length: microCells }, () => new Array(microCells).fill(-1));
         landmarkSiteIdOf[cell.r][cell.c] = landmarkSiteId;
-        const structural = buildKowloonCompound({
+        const structural = await buildKowloonCompoundCooperative({
             chunk,
             site: landmarkSite,
             siteIdOf: landmarkSiteIdOf,
@@ -2410,7 +2630,7 @@ export function createKowloonFabricEngine({
         if (districtLandmarkCell) {
             const cellCx = cx0 - half + (districtLandmarkCell.c + 0.5) * cellSize;
             const cellCz = cz0 - half + (districtLandmarkCell.r + 0.5) * cellSize;
-            const landmark = buildDistrictLandmark({
+            const landmark = await buildDistrictLandmark({
                 chunk,
                 spec: districtLandmarkSpec,
                 cell: districtLandmarkCell,
@@ -2463,6 +2683,7 @@ export function createKowloonFabricEngine({
             sitePlans.sort((a, b) => b.site.cells.length - a.site.cells.length || a.signature.localeCompare(b.signature));
             sitePlans[0].isPlaza = false;
         }
+        if (yieldControl) await yieldControl(`planned Kowloon topology ${chunk.key}`, 0, sitePlans.length);
         const districtCompositionCandidates = sitePlans.filter(plan => !plan.isPlaza).map(plan => {
             const cols = plan.site.cells.map(cell => cell.col);
             const rows = plan.site.cells.map(cell => cell.row);
@@ -2557,7 +2778,7 @@ export function createKowloonFabricEngine({
                     maxX = Math.max(maxX, cellCx + cellSize * 0.5);
                     minZ = Math.min(minZ, cellCz - cellSize * 0.5);
                     maxZ = Math.max(maxZ, cellCz + cellSize * 0.5);
-                    const localClutter = 1 + Math.floor(plazaRng() * (2 + weird * 4));
+                    const localClutter = GENERATION_LANES.plazaClutter ? 1 + Math.floor(plazaRng() * (2 + weird * 4)) : 0;
                     clutter += localClutter;
                     for (let i = 0; i < localClutter; i++) {
                         const px = cellCx + (plazaRng() - 0.5) * cellSize * 0.58;
@@ -2567,7 +2788,7 @@ export function createKowloonFabricEngine({
                         transforms.props.push({ x: px, y: h * 0.5, z: pz, sx: w, sy: h, sz: 0.45 + plazaRng() * 0.8 });
                         physics.props.push({ x: px, z: pz, radius: Math.max(0.3, w * 0.5), height: h });
                     }
-                    if (plazaRng() < 0.42 + weird * 0.36) {
+                    if (GENERATION_LANES.plazaClutter && plazaRng() < 0.42 + weird * 0.36) {
                         const pile = addClimbablePlazaPile({ physics, transforms, rng: plazaRng, cx: cellCx, cz: cellCz, cellSize, weird });
                         climbTiers = Math.max(climbTiers, pile.tiers);
                         climbHeight = Math.max(climbHeight, pile.topY);
@@ -2590,7 +2811,7 @@ export function createKowloonFabricEngine({
             } else {
                 const materialIndex = hashString32(`${chunk.seed}:compound-facade:${signature}`) % wallMats.length;
                 const districtBuildingContext = districtContextForEntity(districtComposition, siteEntityId);
-                const structural = buildKowloonCompound({
+                const structural = await buildKowloonCompoundCooperative({
                     chunk, site, siteIdOf, roadPlan, openSiteIds, bridgePortalsBySite,
                     physics, transforms, cx0, cz0, half, cellSize, materialIndex, districtBuildingContext,
                 });

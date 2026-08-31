@@ -1,4 +1,4 @@
-import { CUT_COMMON_KOWLOON_ENRICHMENT } from '../config/performance-isolation.js';
+import { CUT_COMMON_KOWLOON_ENRICHMENT, GENERATION_LANES } from '../config/performance-isolation.js';
 import { hashString32 } from '../world-chunk-streamer.js';
 import { pickMassiveNoisePair, pickPoetryTag } from '../noise-data-bootstrap.js';
 import { BASE_GRAFFITI_TAGS } from '../content/graffiti-content.js';
@@ -224,7 +224,7 @@ function freezeObject(object) {
 }
 
 
-const DIAGNOSTIC_SIGNAGE_RE = /(?:^|[-_ ])(?:sign|signage|billboard|megascreen|screen|marquee|poster|flyer|graffiti|plaque|terminal)(?:$|[-_ ])/i;
+const DIAGNOSTIC_SIGNAGE_RE = /(?:^|[-_ ])(?:sign|signage|billboard|megascreen|screen|marquee)(?:$|[-_ ])/i;
 const DIAGNOSTIC_SMALL_PROP_RE = /(?:pipe|duct|hvac|vent|fixture|clutter|ivy|security|spray|awning|interior|semantic-prop|street-fixture|furniture|crate|trash|plant|bench|bollard|overhead-cable|elevator-hardware)/i;
 const DIAGNOSTIC_ARCHITECTURE_RE = /(?:^|[-_ ])(?:roof-topper)(?:$|[-_ ])/i;
 function keepTaskUnderCommonDiagnosticCut(task) {
@@ -233,9 +233,10 @@ function keepTaskUnderCommonDiagnosticCut(task) {
         task?.kind, task?.semanticFamily, task?.exteriorSemanticFamily,
         task?.request?.kind, task?.request?.semanticFamily, task?.assetId,
     ].filter(Boolean).join(' ');
-    if (DIAGNOSTIC_SIGNAGE_RE.test(label) || DIAGNOSTIC_ARCHITECTURE_RE.test(label)) return true;
+    if (DIAGNOSTIC_SIGNAGE_RE.test(label)) return GENERATION_LANES.macroSignage;
+    if (DIAGNOSTIC_ARCHITECTURE_RE.test(label)) return GENERATION_LANES.spectacle;
     const tier = String(task?.exteriorVisualTier ?? task?.priorityTier ?? '').toLowerCase();
-    if ((tier === 'spectacle' || tier === 'macro' || tier === 'identity') && !DIAGNOSTIC_SMALL_PROP_RE.test(label)) return true;
+    if ((tier === 'spectacle' || tier === 'macro' || tier === 'identity') && !DIAGNOSTIC_SMALL_PROP_RE.test(label)) return GENERATION_LANES.spectacle;
     return false;
 }
 

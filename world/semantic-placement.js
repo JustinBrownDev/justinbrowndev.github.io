@@ -214,19 +214,28 @@ function genericCandidates(def, module, yBase, seed, spacePlan) {
     const rng = mulberry32(seed ^ 0x8ca5b713);
     const result = [];
     if (spacePlan) {
-        for (const cell of spacePlanCandidateCells(spacePlan, seed)) {
-            const firstRot = Math.floor(rng() * 4);
-            for (let r = 0; r < 4 && result.length < 32; r++) {
-                result.push({
-                    x: cell.x,
-                    y: yBase - min[1],
-                    z: cell.z,
-                    rotY: ((firstRot + r) % 4) * QUARTER,
-                    mode: 'space-plan-region',
-                    regionId: cell.regionId,
-                });
+        const seen = new Set();
+        const passes = [0, 0x9e3779b9, 0x7f4a7c15, 0x51ed270b];
+        for (const salt of passes) {
+            for (const cell of spacePlanCandidateCells(spacePlan, (seed ^ salt) >>> 0)) {
+                const firstRot = Math.floor(rng() * 4);
+                for (let r = 0; r < 4 && result.length < 128; r++) {
+                    const rot = ((firstRot + r) % 4) * QUARTER;
+                    const key = cell.col + ':' + cell.row + ':' + rot;
+                    if (seen.has(key)) continue;
+                    seen.add(key);
+                    result.push({
+                        x: cell.x,
+                        y: yBase - min[1],
+                        z: cell.z,
+                        rotY: rot,
+                        mode: 'space-plan-region',
+                        regionId: cell.regionId,
+                    });
+                }
+                if (result.length >= 128) break;
             }
-            if (result.length >= 32) break;
+            if (result.length >= 128) break;
         }
         return result;
     }
@@ -238,7 +247,7 @@ function genericCandidates(def, module, yBase, seed, spacePlan) {
     const availX = module.halfX - marginX;
     const availZ = module.halfZ - marginZ;
     if (availX <= 0.04 || availZ <= 0.04) return [];
-    for (let attempt = 0; attempt < 9; attempt++) {
+    for (let attempt = 0; attempt < 36; attempt++) {
         result.push({
             x: module.cx + (rng() - 0.5) * 2 * availX,
             y: yBase - min[1],
@@ -321,17 +330,19 @@ export function resolveSemanticPlacement({
                 + Math.max(0.04, Number(def?.clearance?.sides) || 0)
                 + 0.04;
             const firstSign = ((seed ^ placements.length) & 1) ? 1 : -1;
-            for (const sign of [firstSign, -firstSign]) {
-                const candidate = {
-                    x: anchor.x + right.x * spacing * sign,
-                    y: yBase - min[1],
-                    z: anchor.z + right.z * spacing * sign,
-                    rotY: anchor.rotY,
-                    mode: 'row-aligned',
-                    relationTo: anchor.instanceId ?? anchor.assetId,
-                };
-                const placed = tryCandidate(def, graph, candidate, tryReserve, module, spacePlan);
-                if (placed) return placed;
+            for (const multiple of [1, 2, 3]) {
+                for (const sign of [firstSign, -firstSign]) {
+                    const candidate = {
+                        x: anchor.x + right.x * spacing * multiple * sign,
+                        y: yBase - min[1],
+                        z: anchor.z + right.z * spacing * multiple * sign,
+                        rotY: anchor.rotY,
+                        mode: 'row-aligned',
+                        relationTo: anchor.instanceId ?? anchor.assetId,
+                    };
+                    const placed = tryCandidate(def, graph, candidate, tryReserve, module, spacePlan);
+                    if (placed) return placed;
+                }
             }
         }
     }

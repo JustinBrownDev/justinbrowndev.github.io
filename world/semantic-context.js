@@ -1,3 +1,5 @@
+import { compileSpatialTopologyGraph } from './spatial-topology.js';
+
 export const SEMANTIC_CONTEXT_SCHEMA = 'jweb.semantic-context.v1';
 
 const SIDES = Object.freeze(['north', 'east', 'south', 'west']);
@@ -214,6 +216,7 @@ function facadeOpportunities(surfaces, apertures, contextByEntity) {
                 u, along: surface.half > 0 ? clamp(u / surface.half, -0.92, 0.92) : 0,
                 availableWidth: width,
                 contextId: context?.id ?? null,
+                spatialTopologyHostId: surface.id,
             };
             const signY = clamp(surface.yMin + 2.3 + index * 0.7, surface.yMin + 1.9, Math.max(surface.yMin + 2, surface.yMax - 0.55));
             opportunities.push({
@@ -244,6 +247,7 @@ function facadeOpportunities(surfaces, apertures, contextByEntity) {
                     facadeIndex: surface.facadeIndex, side: surface.side, exposure: surface.exposure,
                     u, along: surface.half > 0 ? clamp(u / surface.half, -0.92, 0.92) : 0,
                     contextId: context?.id ?? null, apertureId: aperture.id,
+                    spatialTopologyHostId: surface.id,
                     transform: pointForSurface(surface, u, surface.yMin, 0.16),
                     clearanceBudget: { width: 0.55, depth: 0.65 },
                 });
@@ -284,6 +288,7 @@ function connectorOpportunities(payload, surfaces, contextByEntity) {
             result.push({
                 id: `${connector.id}:approach:${index}`, role: 'connector-adjacent-zone', connectorId: connector.id,
                 hostId: entityId, entityId, surfaceId: surface?.id ?? null, contextId: contextByEntity.get(entityId)?.id ?? null,
+                spatialTopologyHostId: connector.id,
                 transform: { x: finite(endpoint?.x), y: finite(endpoint?.y), z: finite(endpoint?.z), rotY: finite(endpoint?.rotY) },
                 reservationIds: connector.reservations?.map(item => item.id) ?? [],
                 layer: verticalLayer(finite(endpoint?.y)),
@@ -354,8 +359,9 @@ export function compileSemanticContext({ chunk, payload, tasks = [], debugWeight
         entity.semanticContextId = context.id;
     }
 
-    const surfaces = compileSurfaces(payload);
-    const apertures = compileApertures(payload, surfaces);
+    const spatialTopology = compileSpatialTopologyGraph({ chunk, payload });
+    const surfaces = spatialTopology.surfaces;
+    const apertures = spatialTopology.apertures;
     for (const surface of surfaces) surface.apertureIds = apertures.filter(item => item.surfaceId === surface.id).map(item => item.id);
 
     const opportunities = [
@@ -395,6 +401,7 @@ export function compileSemanticContext({ chunk, payload, tasks = [], debugWeight
         task.semanticContextId = context?.id ?? null;
         task.semanticOpportunityId = opportunity?.id ?? null;
         task.semanticHostId = opportunity?.surfaceId ?? opportunity?.hostId ?? task.entityId ?? null;
+        task.spatialTopologyHostId = opportunity?.spatialTopologyHostId ?? task.spaceId ?? task.semanticHostId ?? null;
         if (!opportunity) continue;
         integrated++;
         if (Number.isInteger(opportunity.facadeIndex)) task.facadeIndex = opportunity.facadeIndex;
@@ -419,6 +426,7 @@ export function compileSemanticContext({ chunk, payload, tasks = [], debugWeight
         instances.push({
             id: placement.instanceId, assetId: placement.assetId, entityId: placement.entityId, spaceId: placement.spaceId,
             hostId: placement.semanticHostId, contextId: placement.semanticContextId,
+            spatialTopologyId: placement.spatialTopologyId ?? placement.instanceId,
             deterministicSeedBasis: placement.instanceId,
             transform: { x: placement.x, y: placement.y, z: placement.z, rotY: placement.rotY },
             role: placement.mode ?? 'semantic-placement', relationTo: placement.relationTo ?? null,
@@ -426,14 +434,14 @@ export function compileSemanticContext({ chunk, payload, tasks = [], debugWeight
         });
     }
 
-    const reservations = (payload.physics?.circulationReservations ?? []).map(item => ({
+    const reservations = spatialTopology.reservations.map(item => ({
         id: item.id ?? null, kind: item.kind ?? 'circulation', connectorId: item.connectorId ?? item.metadata?.connectorId ?? null,
         source: item.source ?? null, yMin: finite(item.yMin), yMax: finite(item.yMax),
     }));
-    const connectors = (payload.physics?.semanticConnectors ?? []).map(connector => ({
+    const connectors = spatialTopology.connectors.map(connector => ({
         id: connector.id, kind: connector.kind, fromSpaceId: connector.fromSpaceId ?? null, toSpaceId: connector.toSpaceId ?? null,
-        apertureIds: apertures.filter(item => item.connectorId === connector.id).map(item => item.id),
-        reservationIds: connector.reservations?.map(item => item.id) ?? [],
+        apertureIds: [...(connector.apertureIds ?? [])],
+        reservationIds: [...(connector.reservationIds ?? [])],
         realized: true,
     }));
 
@@ -451,7 +459,8 @@ export function compileSemanticContext({ chunk, payload, tasks = [], debugWeight
         destinations,
         opportunities,
         instances,
-        stats: { integratedTasks: integrated, debugSigns, surfaces: surfaces.length, apertures: apertures.length, opportunities: opportunities.length, destinations: destinations.length, instances: instances.length },
+        spatialTopology,
+        stats: { integratedTasks: integrated, debugSigns, surfaces: surfaces.length, apertures: apertures.length, opportunities: opportunities.length, destinations: destinations.length, instances: instances.length, topologyEdges: spatialTopology.edges.length, topologyOrphans: spatialTopology.stats.orphanReservations + spatialTopology.stats.orphanApertures + spatialTopology.stats.unboundEntranceFaces },
     };
     payload.semanticContext = semanticContext;
     return semanticContext;

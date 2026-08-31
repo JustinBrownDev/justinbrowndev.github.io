@@ -251,7 +251,8 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
     const semanticFailed = new Set();
     const semanticLoadQueue = [];
     let semanticActiveLoads = 0;
-    const SEMANTIC_LOAD_CONCURRENCY = 2;
+    const SEMANTIC_LOAD_CONCURRENCY = 6;
+    const SEMANTIC_LOAD_MAX_ATTEMPTS = 4;
     const semanticProgramFamilies = Object.freeze({
         'workshop-warehouse': ['auto_shop', 'hardware_store', 'print_shop', 'photo_lab', 'electronics_repair', 'laboratory', 'projection_booth', 'radio_station', 'boiler_room', 'factory_control', 'fire_station'],
         'vertical-stack': ['office', '1980s_office', 'server_room', 'mainframe_room', 'archive', 'library', 'bank', 'post_office', 'clinic', 'pharmacy', 'school_classroom', 'police_booking', 'courtroom', 'dentist'],
@@ -316,10 +317,17 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
                 job.resolve(template);
                 pumpSemanticLoadQueue();
             }, undefined, error => {
+                semanticActiveLoads--;
+                const nextAttempt = (job.attempt ?? 0) + 1;
+                if (nextAttempt < SEMANTIC_LOAD_MAX_ATTEMPTS) {
+                    console.warn?.('[asset] semantic decoration "' + job.def.id + '" load retry ' + nextAttempt + '/' + (SEMANTIC_LOAD_MAX_ATTEMPTS - 1), error?.message ?? error);
+                    semanticLoadQueue.unshift({ ...job, attempt: nextAttempt });
+                    pumpSemanticLoadQueue();
+                    return;
+                }
                 semanticTemplatePromises.delete(job.def.id);
                 semanticFailed.add(job.def.id);
-                semanticActiveLoads--;
-                console.warn?.(`[asset] semantic decoration "${job.def.id}" failed once; proxy retained`, error?.message ?? error);
+                console.warn?.('[asset] semantic decoration "' + job.def.id + '" exhausted ' + SEMANTIC_LOAD_MAX_ATTEMPTS + ' attempts; proxy retained', error?.message ?? error);
                 job.resolve(null);
                 pumpSemanticLoadQueue();
             });
@@ -331,7 +339,7 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
         if (semanticTemplates.has(def.id)) return Promise.resolve(semanticTemplates.get(def.id));
         if (semanticTemplatePromises.has(def.id)) return semanticTemplatePromises.get(def.id);
         const promise = new Promise(resolve => {
-            semanticLoadQueue.push({ def, resolve });
+            semanticLoadQueue.push({ def, resolve, attempt: 0 });
             pumpSemanticLoadQueue();
         });
         semanticTemplatePromises.set(def.id, promise);
@@ -759,9 +767,9 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
                 y: 1.15, along: (rng() - 0.5) * 0.55, seed: taskSeed(chunk, entity.id, 'elevator-hardware'),
             });
         }
-        if (rng() < 0.82) tasks.push({
+        tasks.push({
             kind: 'roof-clutter', entityId: entity.id, seed: taskSeed(chunk, entity.id, 'roof-clutter'),
-            count: 3 + Math.floor(rng() * (3 + Math.max(0, entity.kowloonIntensity || 0) * 4)),
+            count: 8 + Math.floor(rng() * (8 + Math.max(0, entity.kowloonIntensity || 0) * 10)),
         });
         if (tasks.some(task => task.kind === 'graffiti') && rng() < 0.46) tasks.push({
             kind: 'spray-cans', entityId: entity.id, side, facadeIndex: sideFacadeIndex,
@@ -771,7 +779,7 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
         // pipes, and awnings. Use an independent RNG so adding this family does not
         // perturb the established authored/procedural task sequence.
         const fixtureRng = mulberry32(taskSeed(chunk, entity.id, 'street-fixture-plan'));
-        const fixtureCount = (fixtureRng() < 0.82 ? 1 : 0) + (fixtureRng() < 0.44 ? 1 : 0);
+        const fixtureCount = 2 + (fixtureRng() < 0.94 ? 1 : 0) + (fixtureRng() < 0.78 ? 1 : 0) + (fixtureRng() < 0.52 ? 1 : 0) + (fixtureRng() < 0.28 ? 1 : 0);
         const variants = ['trash-can', 'crate', 'utility-box', 'planter', 'lantern', 'vending-machine', 'bollard', 'manhole', 'weeds', 'street-lamp', 'news-box', 'bench'];
         for (let i = 0; i < fixtureCount; i++) {
             const fixtureSide = i ? side : front;
@@ -786,10 +794,10 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
         if (!entity.suppressInteriorEnrichment && entity.footprintModules?.length) {
             const semanticSlots = [];
             for (const module of entity.footprintModules) {
-                const maxFloor = Math.max(1, Math.min(3, module.floors || 1));
+                const maxFloor = Math.max(1, Math.min(6, module.floors || 1));
                 for (let floor = 0; floor < maxFloor; floor++) semanticSlots.push({ module, floor });
             }
-            const activeSlotCount = Math.max(1, Math.min(4, semanticSlots.length));
+            const activeSlotCount = Math.max(1, Math.min(12, semanticSlots.length));
             const slotStart = taskSeed(chunk, entity.id, 'semantic-space-rotation') % semanticSlots.length;
             const activeSlots = Array.from({ length: activeSlotCount }, (_, i) => semanticSlots[(slotStart + i) % semanticSlots.length]);
             for (let slotOrdinal = 0; slotOrdinal < activeSlots.length; slotOrdinal++) {
@@ -1628,6 +1636,9 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
         state.semanticTasksPlanned = state.semanticLayout.planned;
         state.semanticTasksSolved = state.semanticLayout.solved;
         state.semanticTasksUnresolved = state.semanticLayout.unresolved;
+        state.semanticDensityTasksPlanned = state.semanticLayout.densityPlanned ?? state.semanticLayout.planned;
+        state.semanticDensityTasksSolved = state.semanticLayout.densitySolved ?? state.semanticLayout.solved;
+        state.semanticDensityTasksUnresolved = state.semanticLayout.densityUnresolved ?? state.semanticLayout.unresolved;
         state.tasks = state.tasks.filter(task => !String(task.kind).startsWith('semantic-') || !!task.semanticPlacement);
         const semanticContextMultiplier = compileSemanticContextMultiplier({
             chunk,

@@ -15,6 +15,15 @@ function phaseRank(task) {
     return 3;
 }
 
+const SEMANTIC_DENSITY_MULTIPLIER = Object.freeze({ identity: 2, functional: 3, life: 4 });
+function densityCopies(task) { return SEMANTIC_DENSITY_MULTIPLIER[semanticPhase(task)] ?? 1; }
+function densitySeed(seed, ordinal) {
+    let x = ((seed >>> 0) ^ Math.imul(ordinal + 1, 0x9e3779b1)) >>> 0;
+    x ^= x >>> 16; x = Math.imul(x, 0x85ebca6b) >>> 0;
+    x ^= x >>> 13; x = Math.imul(x, 0xc2b2ae35) >>> 0;
+    return (x ^ (x >>> 16)) >>> 0;
+}
+
 function roomKey(siteKey, moduleKey, floor) {
     return `${siteKey}:${moduleKey}:floor:${floor}`;
 }
@@ -246,7 +255,10 @@ export function solveSemanticLayout({ chunk, payload, tasks, assetById } = {}) {
     const spaceById = new Map(spaces.map(space => [space.id, space]));
 
     const destinationCompatibility = compileDestinationCompatibility({ chunk, payload, tasks, assetById });
-    const semanticTasks = destinationCompatibility.tasks;
+    const baseSemanticTasks = destinationCompatibility.tasks;
+    const semanticTasks = baseSemanticTasks;
+    const densityReplicas = [];
+    const densityPlanned = baseSemanticTasks.reduce((sum, task) => sum + densityCopies(task), 0);
     const activeSpaceIds = new Set();
     for (const task of semanticTasks) {
         const entity = findEntity(payload, task.entityId);
@@ -265,8 +277,9 @@ export function solveSemanticLayout({ chunk, payload, tasks, assetById } = {}) {
             .map(connector => connector.id);
     }
 
-    const pending = [...semanticTasks].sort((a, b) => phaseRank(a) - phaseRank(b) || (a.seed >>> 0) - (b.seed >>> 0));
+    const pending = [...semanticTasks].sort((a, b) => phaseRank(a) - phaseRank(b) || Number(!!a.densityReplica) - Number(!!b.densityReplica) || (a.seed >>> 0) - (b.seed >>> 0));
     let solved = 0;
+    let densitySolved = 0;
     let passes = 0;
 
     for (let pass = 0; pass < Math.max(2, pending.length + 1) && pending.length; pass++) {
@@ -348,7 +361,27 @@ export function solveSemanticLayout({ chunk, payload, tasks, assetById } = {}) {
             task.topologySolved = true;
             for (const descriptor of task.topologyDescriptors) payload.physics?.props?.push?.(descriptor.item);
             pending.splice(i, 1);
-            solved++;
+            if (task.densityReplica) {
+                densitySolved++;
+            } else {
+                solved++;
+                const copies = densityCopies(task);
+                for (let ordinal = 1; ordinal < copies; ordinal++) {
+                    const replica = {
+                        ...task,
+                        seed: densitySeed(task.seed, ordinal),
+                        densityReplica: ordinal,
+                        densityParentSeed: task.seed >>> 0,
+                        instanceId: null,
+                        semanticPlacement: null,
+                        topologyDescriptors: null,
+                        topologySolved: false,
+                    };
+                    densityReplicas.push(replica);
+                    tasks.push(replica);
+                    pending.push(replica);
+                }
+            }
             progress++;
         }
         if (!progress) break;
@@ -358,9 +391,13 @@ export function solveSemanticLayout({ chunk, payload, tasks, assetById } = {}) {
 
     return {
         schema: 'jweb.semantic-layout.v2',
-        planned: semanticTasks.length,
+        planned: baseSemanticTasks.length,
         solved,
-        unresolved: pending.length,
+        unresolved: pending.filter(task => !task.densityReplica).length,
+        densityPlanned,
+        densitySolved: solved + densitySolved,
+        densityUnresolved: Math.max(0, densityPlanned - solved - densitySolved),
+        densityReplicas: densityReplicas.length,
         passes,
         spaces: spaces.length,
         spacePlans: spacePlans.length,

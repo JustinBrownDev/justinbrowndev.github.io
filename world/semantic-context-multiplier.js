@@ -19,6 +19,9 @@ const PROGRAM_ALIASES = Object.freeze({
 
 const GROUND_CONTEXT_RE = /(bench|chair|stool|crate|box|cabinet|locker|cart|bin|trash|planter|vending|machine|rack|cone|barrel|bucket|case|tool|pump|trolley|bicycle|fan|lamp|light|table|stand|canister|tank|compressor|generator|washer|dryer|refrigerator|freezer|newspaper|phone|atm|kiosk|spool)/i;
 const ROOF_CONTEXT_RE = /(vent|fan|duct|hvac|antenna|tank|pump|generator|transformer|compressor|satellite|air.?condition|condenser|exhaust|boiler|electrical|utility|radio|mast|dish|cooling|blower)/i;
+const MAX_CONTEXT_PROPS_PER_ENTITY = 8;
+const MIN_CONTEXT_PROP_SCALE = 0.16;
+const CATALOG_SEARCH_DEPTH = 160;
 
 const catalogCache = new WeakMap();
 
@@ -50,8 +53,6 @@ function isSemanticRuntimeProp(def) {
 
 function contextualRole(def) {
     if (!isSemanticRuntimeProp(def)) return null;
-    // Context opportunities are late visual enrichment. Anything asking for a
-    // collider remains on the semantic-layout/precommit path instead.
     if ((def.collision ?? 'none') !== 'none') return null;
     const text = assetText(def);
     const [width, height, depth] = dimensions(def);
@@ -109,21 +110,21 @@ function programScore(def, context) {
 function fitBudget(opportunity, role) {
     const raw = opportunity?.clearanceBudget ?? {};
     if (role === 'wall') return {
-        width: Math.max(0.28, finite(raw.width, 1.0) * 0.88),
-        height: Math.max(0.28, finite(raw.height, 1.1) * 0.88),
-        depth: 0.42,
+        width: Math.max(0.28, finite(raw.width, 1.0) * 0.94),
+        height: Math.max(0.28, finite(raw.height, 1.1) * 0.94),
+        depth: 0.48,
         anchor: 'center',
     };
     if (role === 'roof') return {
-        width: Math.max(0.45, finite(raw.width, 1.4) * 0.82),
-        height: 2.4,
-        depth: Math.max(0.45, finite(raw.depth, 1.4) * 0.82),
+        width: Math.max(0.45, finite(raw.width, 1.4) * 0.90),
+        height: 2.8,
+        depth: Math.max(0.45, finite(raw.depth, 1.4) * 0.90),
         anchor: 'floor',
     };
     return {
-        width: Math.max(0.36, finite(raw.width, 0.62) * 0.90),
-        height: 1.85,
-        depth: Math.max(0.36, finite(raw.depth, 0.70) * 0.90),
+        width: Math.max(0.36, finite(raw.width, 0.62) * 0.96),
+        height: 2.05,
+        depth: Math.max(0.36, finite(raw.depth, 0.70) * 0.96),
         anchor: 'floor',
     };
 }
@@ -138,10 +139,10 @@ function chooseAsset(pool, context, opportunity, seed) {
     const budget = fitBudget(opportunity, ROLE_BY_OPPORTUNITY[opportunity.role]);
     const start = seed % pool.length;
     let fallback = null;
-    for (let i = 0; i < Math.min(pool.length, 48); i++) {
+    for (let i = 0; i < Math.min(pool.length, CATALOG_SEARCH_DEPTH); i++) {
         const def = pool[(start + i * 17) % pool.length];
         const scale = fitScale(def, budget);
-        if (scale < 0.24) continue;
+        if (scale < MIN_CONTEXT_PROP_SCALE) continue;
         const candidate = { def, scale, score: programScore(def, context) };
         if (candidate.score) return candidate;
         if (!fallback) fallback = candidate;
@@ -178,7 +179,7 @@ export function compileSemanticContextMultiplier({ chunk, payload, assets, exist
     const occupied = new Set(existingTasks.map(task => task?.semanticOpportunityId).filter(Boolean));
     const opportunities = rankedOpportunities(chunk, semanticContext, occupied);
     const buildingCount = (payload.entities ?? []).filter(entity => entity?.kind === 'building').length;
-    const limit = Math.max(0, Math.floor(maxTasks ?? clamp(4 + Math.ceil(buildingCount * 0.75), 6, 14)));
+    const limit = Math.max(0, Math.floor(maxTasks ?? clamp(24 + Math.ceil(buildingCount * 5.5), 36, 128)));
     const perEntity = new Map();
     const tasks = [];
     const usedAssetIds = new Set();
@@ -191,7 +192,7 @@ export function compileSemanticContextMultiplier({ chunk, payload, assets, exist
         if (!pool?.length) continue;
         const entityId = opportunity.entityId ?? opportunity.hostId ?? null;
         const entityUses = perEntity.get(entityId) ?? 0;
-        if (entityUses >= 2) continue;
+        if (entityUses >= MAX_CONTEXT_PROPS_PER_ENTITY) continue;
         const context = contexts.get(opportunity.contextId) ?? null;
         const seed = hash32(`${chunk.key}:${opportunity.id}:${context?.program ?? 'mixed'}:${tasks.length}`);
         const chosen = chooseAsset(pool, context, opportunity, seed);
@@ -210,6 +211,7 @@ export function compileSemanticContextMultiplier({ chunk, payload, assets, exist
             semanticContextId: opportunity.contextId ?? context?.id ?? null,
             semanticOpportunityId: opportunity.id,
             semanticHostId: opportunity.surfaceId ?? opportunity.hostId ?? entityId,
+            spatialTopologyHostId: opportunity.spatialTopologyHostId ?? null,
             semanticContextRole: role,
             semanticLayer: opportunity.layer ?? context?.layer ?? null,
             semanticPlacement: {
@@ -221,7 +223,7 @@ export function compileSemanticContextMultiplier({ chunk, payload, assets, exist
                 relationTo: opportunity.surfaceId ?? opportunity.hostId ?? null,
                 instanceId,
             },
-            semanticFit: { ...budget, scale, minScale: 0.24, maxScale: 1 },
+            semanticFit: { ...budget, scale, minScale: MIN_CONTEXT_PROP_SCALE, maxScale: 1 },
             contextualCosmetic: true,
         });
         perEntity.set(entityId, entityUses + 1);
@@ -240,6 +242,9 @@ export function compileSemanticContextMultiplier({ chunk, payload, assets, exist
             uniqueAssets: usedAssetIds.size,
             roles: roleCounts,
             maxTasks: limit,
+            maxPerEntity: MAX_CONTEXT_PROPS_PER_ENTITY,
+            minScale: MIN_CONTEXT_PROP_SCALE,
+            catalogSearchDepth: CATALOG_SEARCH_DEPTH,
         },
     };
 }

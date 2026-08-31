@@ -1,3 +1,5 @@
+import { cityAssetPlacementMetadata } from '../vendor/city-pack/placement-metadata.js';
+
 export const SEMANTIC_CONTEXT_MULTIPLIER_SCHEMA = 'jweb.semantic-context-multiplier.v1';
 
 const ROLE_BY_OPPORTUNITY = Object.freeze({
@@ -5,6 +7,13 @@ const ROLE_BY_OPPORTUNITY = Object.freeze({
     'facade-poster-zone': 'wall',
     'wall-mounted-prop-zone': 'wall',
     'beside-door-zone': 'ground',
+    'portal-flank-ground-zone': 'ground',
+    'ground-edge-zone': 'ground',
+    'connector-service-zone': 'ground',
+    'ground-open-zone': 'ground',
+    'portal-flank-wall-zone': 'wall',
+    'portal-lintel-zone': 'wall',
+    'facade-service-band': 'wall',
     'roof-utility-zone': 'roof',
 });
 
@@ -13,6 +22,13 @@ const OPPORTUNITY_PRIORITY = Object.freeze({
     'facade-sign-zone': 1,
     'facade-poster-zone': 2,
     'roof-utility-zone': 3,
+    'portal-lintel-zone': 0,
+    'portal-flank-wall-zone': 0,
+    'facade-service-band': 0,
+    'portal-flank-ground-zone': 1,
+    'ground-edge-zone': 4,
+    'connector-service-zone': 5,
+    'ground-open-zone': 6,
     'beside-door-zone': 4,
 });
 
@@ -30,7 +46,7 @@ const ROOF_CONTEXT_RE = /(vent|fan|duct|hvac|antenna|tank|pump|generator|transfo
 const WALL_OUTDOOR_RE = /(camera|cctv|security|light|lamp|sconce|fan|vent|duct|hvac|air.?condition|condenser|meter|panel|electrical|utility|junction|alarm|speaker|antenna|dish|cable|conduit|pipe|hose|fire|sign|notice|intercom|transformer|service)/i;
 const WALL_INDOOR_RE = /(painting|portrait|picture|mirror|clock|whiteboard|blackboard|chalkboard|bookshelf|bedroom|bathroom|kitchen|classroom)/i;
 const MIN_CONTEXT_PROP_SCALE = 0.16;
-const CATALOG_SEARCH_DEPTH = 192;
+const CATALOG_SEARCH_DEPTH = 512;
 const MAX_CONTEXT_TASKS = 320;
 
 const catalogCache = new WeakMap();
@@ -65,11 +81,17 @@ function contextualRole(def) {
     if (!isSemanticRuntimeProp(def)) return null;
     if ((def.collision ?? 'none') !== 'none') return null;
     const text = assetText(def);
-    const [width, height, depth] = dimensions(def);
-    if (def.mount === 'wall') return 'wall';
-    if (def.mount !== 'ground') return null;
-    if (ROOF_CONTEXT_RE.test(text) && width <= 4.5 && depth <= 4.5 && height <= 5.0) return 'roof';
-    if (GROUND_CONTEXT_RE.test(text) && width <= 2.4 && depth <= 2.4 && height <= 3.0) return 'ground';
+    const placement = cityAssetPlacementMetadata(def);
+    const mount = def?.placement?.mount ?? placement.mount ?? def.mount ?? 'ground';
+    const affinities = new Set([...(placement.placementAffinity ?? []), ...(def?.placement?.placementAffinity ?? [])]);
+
+    if (mount === 'wall' || affinities.has('wall-adjacent')) return 'wall';
+    if (mount === 'roof' || affinities.has('roof') || ROOF_CONTEXT_RE.test(text)) return 'roof';
+    if (mount === 'surface' || def?.placement?.requiresSupportSurface) return null;
+    // Ground is intentionally broad. Placement metadata + opportunity fit, not an
+    // asset-name whitelist, decides whether the corpus can participate.
+    if (mount === 'ground') return 'ground';
+    if (WALL_OUTDOOR_RE.test(text)) return 'wall';
     return null;
 }
 
@@ -78,28 +100,35 @@ function buildCatalog(assets) {
     const byRole = { wall: [], ground: [], roof: [] };
     let semanticProps = 0;
     let rejectedCollider = 0;
+    let roleEligibleBeforeCollision = 0;
     for (const def of assets ?? []) {
         if (!isSemanticRuntimeProp(def)) continue;
         semanticProps++;
-        if ((def.collision ?? 'none') !== 'none') {
+        const collision = def.collision ?? 'none';
+        if (collision !== 'none') {
+            const clone = { ...def, collision: 'none' };
+            if (contextualRole(clone)) roleEligibleBeforeCollision++;
             rejectedCollider++;
             continue;
         }
         const role = contextualRole(def);
-        if (role) byRole[role].push(def);
+        if (role) { byRole[role].push(def); roleEligibleBeforeCollision++; }
     }
     for (const pool of Object.values(byRole)) pool.sort((a, b) => String(a.id).localeCompare(String(b.id)));
+    const contextualEligible = byRole.wall.length + byRole.ground.length + byRole.roof.length;
     const catalog = {
         byRole,
         stats: {
             manifestAssets: Array.isArray(assets) ? assets.length : 0,
-            semanticProps,
-            contextualEligible: byRole.wall.length + byRole.ground.length + byRole.roof.length,
+            semanticProps, contextualEligible,
+            roleEligibleBeforeCollision,
+            coverageRatio: semanticProps ? contextualEligible / semanticProps : 0,
             wall: byRole.wall.length,
             wallOutdoorBiased: byRole.wall.filter(def => WALL_OUTDOOR_RE.test(assetText(def))).length,
             ground: byRole.ground.length,
             roof: byRole.roof.length,
             precommitOnlyBecauseCollider: rejectedCollider,
+            colliderPromotionIsDataOnlyAfterPrecommit: true,
         },
     };
     catalogCache.set(assets, catalog);
@@ -159,7 +188,7 @@ function contextualAssetScore(def, context, role) {
     return score;
 }
 
-function chooseAsset(pool, context, opportunity, seed) {
+function chooseAsset(pool, context, opportunity, seed, usedAssetIds = null) {
     if (!pool?.length) return null;
     const role = ROLE_BY_OPPORTUNITY[opportunity.role];
     const budget = fitBudget(opportunity, role);
@@ -169,7 +198,8 @@ function chooseAsset(pool, context, opportunity, seed) {
         const def = pool[(start + i * 17) % pool.length];
         const scale = fitScale(def, budget);
         if (scale < MIN_CONTEXT_PROP_SCALE) continue;
-        const candidate = { def, scale, score: contextualAssetScore(def, context, role), ordinal: i };
+        const novelty = usedAssetIds?.has(def.id) ? -5 : 0;
+        const candidate = { def, scale, score: contextualAssetScore(def, context, role) + novelty, ordinal: i };
         if (!best || candidate.score > best.score || (candidate.score === best.score && candidate.ordinal < best.ordinal)) best = candidate;
     }
     return best;
@@ -285,7 +315,7 @@ export function compileSemanticContextMultiplier({ chunk, payload, assets, exist
         if ((usage[role] ?? 0) >= (entityBudget[role] ?? 0)) continue;
         const context = contexts.get(opportunity.contextId) ?? null;
         const seed = hash32(`${chunk.key}:${opportunity.id}:${context?.program ?? 'mixed'}:${usage[role] ?? 0}`);
-        const chosen = chooseAsset(pool, context, opportunity, seed);
+        const chosen = chooseAsset(pool, context, opportunity, seed, usedAssetIds);
         if (!chosen) continue;
         const { def, scale } = chosen;
         const budget = fitBudget(opportunity, role);

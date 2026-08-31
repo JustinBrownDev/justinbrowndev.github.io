@@ -8,6 +8,7 @@ import { anyReservationIntersectsBox } from './circulation-reservations.js';
 import { solveSemanticLayout } from './semantic-layout.js';
 import { compileSemanticContextMultiplier } from './semantic-context-multiplier.js';
 import { createExteriorPropFieldSystem } from './exterior-prop-field.js';
+import { requiresSemanticExteriorPlacement, semanticExteriorProvenance, semanticPlacementPoint } from './semantic-exterior-authority.js';
 
 function mulberry32(seed) {
     let a = seed >>> 0;
@@ -509,9 +510,7 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
     }
 
     function solveStreetFixtureTopology(chunk, payload, task) {
-        const entity = getEntity(payload, task.entityId);
-        if (!entity) return false;
-        const point = facadePoint(entity, task.side, task.along, 0, task.facadeIndex);
+        const point = semanticPlacementPoint(task);
         const localZ = -0.34;
         const center = { x: point.x + Math.sin(point.ry) * localZ, z: point.z + Math.cos(point.ry) * localZ };
         const collider = streetFixtureCollider(task);
@@ -529,8 +528,9 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
 
     function solveRoofClutterTopology(chunk, payload, task) {
         const entity = getEntity(payload, task.entityId);
-        if (!entity) return false;
-        const roof = primaryRoofSpec(entity);
+        const bounds = task.semanticOpportunityBounds;
+        if (!entity || !bounds) return false;
+        const roof = { x: bounds.x, z: bounds.z, halfX: bounds.halfX, halfZ: bounds.halfZ, y: bounds.y };
         const rng = mulberry32(task.seed);
         const specs = [];
         const descriptors = [];
@@ -560,8 +560,9 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
 
     function solveRoofTopperTopology(chunk, payload, task) {
         const entity = getEntity(payload, task.entityId);
-        if (!entity) return false;
-        const roof = primaryRoofSpec(entity);
+        const bounds = task.semanticOpportunityBounds;
+        if (!entity || !bounds) return false;
+        const roof = { x: bounds.x, z: bounds.z, halfX: bounds.halfX, halfZ: bounds.halfZ, y: bounds.y };
         let spec, item;
         if (task.topper === 'dome') {
             const radius = Math.max(0.55, Math.min(1.75, Math.min(roof.halfX, roof.halfZ) * 0.48));
@@ -1020,9 +1021,7 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
     }
 
     function createPanel(payload, task, graffiti = false) {
-        const entity = getEntity(payload, task.entityId);
-        if (!entity) return null;
-        const point = facadePoint(entity, task.side, task.along, task.y, task.facadeIndex);
+        const point = semanticPlacementPoint(task);
         const texture = graffiti
             ? graffitiTexture(THREE, task.text, task.seed)
             : canvasTextTexture(THREE, task.title, task.subtitle, task.seed);
@@ -1098,9 +1097,7 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
     }
 
     function createPipe(payload, task) {
-        const entity = getEntity(payload, task.entityId);
-        if (!entity) return null;
-        const point = facadePoint(entity, task.side, task.along, task.y, task.facadeIndex);
+        const point = semanticPlacementPoint(task);
         const mat = pipeMaterials[task.seed % pipeMaterials.length];
         const mesh = new THREE.Mesh(pipeGeo, mat);
         mesh.name = `chunk-pipe:${task.entityId}`;
@@ -1111,9 +1108,7 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
     }
 
     function createAwning(payload, task) {
-        const entity = getEntity(payload, task.entityId);
-        if (!entity) return null;
-        const point = facadePoint(entity, task.side, task.along, task.y, task.facadeIndex);
+        const point = semanticPlacementPoint(task);
         const mesh = new THREE.Mesh(unitBox, awningMaterials[task.seed % awningMaterials.length]);
         mesh.name = `chunk-awning:${task.entityId}`;
         const horizontal = task.side === 'north' || task.side === 'south';
@@ -1130,10 +1125,8 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
     }
 
     function createIvy(payload, task) {
-        const entity = getEntity(payload, task.entityId);
-        if (!entity) return null;
         const rng = mulberry32(task.seed);
-        const point = facadePoint(entity, task.side, task.along, task.y, task.facadeIndex);
+        const point = semanticPlacementPoint(task);
         const mesh = new THREE.InstancedMesh(leafGeo, ivyMaterials[task.seed % ivyMaterials.length], task.count);
         mesh.name = `chunk-ivy:${task.entityId}`;
         const m = new THREE.Matrix4();
@@ -1159,9 +1152,7 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
     }
 
     function createFlyer(payload, task) {
-        const entity = getEntity(payload, task.entityId);
-        if (!entity) return null;
-        const point = facadePoint(entity, task.side, task.along, task.y, task.facadeIndex);
+        const point = semanticPlacementPoint(task);
         const tangentX = Math.abs(Math.sin(point.ry)) < 0.5;
         const halfX = tangentX ? task.width * 0.5 : 0.03;
         const halfZ = tangentX ? 0.03 : task.width * 0.5;
@@ -1213,9 +1204,7 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
     }
 
     function createElevatorHardware(payload, task) {
-        const entity = getEntity(payload, task.entityId);
-        if (!entity) return null;
-        const point = facadePoint(entity, task.side, task.along, task.y, task.facadeIndex);
+        const point = semanticPlacementPoint(task);
         const group = new THREE.Group();
         group.name = `chunk-elevator-hardware:${task.entityId}`;
         group.position.set(point.x, 0, point.z);
@@ -1236,9 +1225,7 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
     }
 
     function createSprayCans(payload, task) {
-        const entity = getEntity(payload, task.entityId);
-        if (!entity) return null;
-        const point = facadePoint(entity, task.side, 0.35, 0.12, task.facadeIndex);
+        const point = semanticPlacementPoint(task);
         const rng = mulberry32(task.seed);
         const group = new THREE.Group();
         group.name = `chunk-spray-cans:${task.entityId}`;
@@ -1255,9 +1242,7 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
     }
 
         function createStreetFixture(payload, task) {
-        const entity = getEntity(payload, task.entityId);
-        if (!entity) return null;
-        const point = task.topologyPlacement?.point ?? facadePoint(entity, task.side, task.along, 0, task.facadeIndex);
+        const point = semanticPlacementPoint(task);
         const rng = mulberry32(task.seed);
         const group = new THREE.Group();
         group.name = `chunk-street-fixture:${task.variant}:${task.entityId}`;
@@ -1347,16 +1332,12 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
     }
 
     function createOverheadCable(payload, task) {
-        const a = getEntity(payload, task.entityId);
-        const b = getEntity(payload, task.otherEntityId);
-        if (!a || !b) return null;
+        const span = task.semanticSpan;
+        if (!span?.start || !span?.end) return null;
         const group = new THREE.Group(); group.name = `chunk-overhead-cable:${task.entityId}:${task.otherEntityId}`;
         const rng = mulberry32(task.seed);
-        const dx = b.x - a.x, dz = b.z - a.z;
-        const axisX = Math.abs(dx) >= Math.abs(dz);
-        const sx = axisX ? Math.sign(dx || 1) : 0, sz = axisX ? 0 : Math.sign(dz || 1);
-        const start = new THREE.Vector3(a.x + sx * (a.halfX || 2), Math.min((a.floors||2)*(a.floorH||3.15), 8.5) * (0.42 + rng()*0.20), a.z + sz * (a.halfZ || 2));
-        const end = new THREE.Vector3(b.x - sx * (b.halfX || 2), Math.min((b.floors||2)*(b.floorH||3.15), 8.5) * (0.42 + rng()*0.20), b.z - sz * (b.halfZ || 2));
+        const start = new THREE.Vector3(span.start.x, span.start.y, span.start.z);
+        const end = new THREE.Vector3(span.end.x, span.end.y, span.end.z);
         const segments = 5; const up = new THREE.Vector3(0,1,0);
         let prev = start.clone();
         for (let i = 1; i <= segments; i++) {
@@ -1368,9 +1349,7 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
     }
 
     function createSecurity(payload, task) {
-        const entity = getEntity(payload, task.entityId);
-        if (!entity) return null;
-        const point = facadePoint(entity, task.side, task.along, task.y, task.facadeIndex);
+        const point = semanticPlacementPoint(task);
         const group = new THREE.Group();
         group.name = `chunk-security:${task.entityId}`;
         group.position.set(point.x, point.y, point.z);
@@ -1444,7 +1423,8 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
         const rng = mulberry32(task.seed);
         const group = new THREE.Group();
         group.name = `chunk-${task.kind}:${task.entityId}`;
-        group.position.set(task.x, 0, task.z);
+        const semanticAnchor = semanticPlacementPoint(task);
+        group.position.set(semanticAnchor.x, semanticAnchor.y, semanticAnchor.z);
         const addBox = (material, x, y, z, sx, sy, sz, ry = 0) => {
             const mesh = new THREE.Mesh(unitBox, material);
             mesh.position.set(x, y, z); mesh.scale.set(sx, sy, sz); mesh.rotation.y = ry;
@@ -1502,6 +1482,9 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
 
         function applyTask(chunk, payload, task) {
         if (!payload?.detailRoot || payload.disposed) return false;
+        if (requiresSemanticExteriorPlacement(task) && !task.semanticPlacement) {
+            throw new Error(`[semantic-exterior] realization reached coordinate-orphaned ${task.kind}`);
+        }
         if ((task.kind === 'street-fixture' || task.kind === 'roof-clutter' || task.kind === 'roof-topper' || String(task.kind).startsWith('plaza-')) && !task.topologySolved) {
             throw new Error(`[topology-precommit] realization reached unsolved blocker ${task.kind}`);
         }
@@ -1528,6 +1511,8 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
         if (!object) return false;
         if (!task.topologySolved && !objectClearsStructuralReservations(payload, object)) return false;
         if (task.topologyDescriptors?.length) object.userData.topologyDescriptorIds = task.topologyDescriptors.map(descriptor => descriptor.id);
+        const exteriorProvenance = semanticExteriorProvenance(task);
+        if (exteriorProvenance) object.userData.semanticExteriorProvenance = exteriorProvenance;
         payload.detailRoot.add(object);
         object.traverse?.(freezeObject);
         freezeObject(object);
@@ -1642,7 +1627,10 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
         state.semanticDensityTasksPlanned = state.semanticLayout.densityPlanned ?? state.semanticLayout.planned;
         state.semanticDensityTasksSolved = state.semanticLayout.densitySolved ?? state.semanticLayout.solved;
         state.semanticDensityTasksUnresolved = state.semanticLayout.densityUnresolved ?? state.semanticLayout.unresolved;
-        state.tasks = state.tasks.filter(task => !String(task.kind).startsWith('semantic-') || !!task.semanticPlacement);
+        state.semanticExteriorUnresolved = state.tasks.filter(task => requiresSemanticExteriorPlacement(task) && !task.semanticPlacement).length;
+        state.tasks = state.tasks.filter(task =>
+            (!String(task.kind).startsWith('semantic-') || !!task.semanticPlacement)
+            && (!requiresSemanticExteriorPlacement(task) || !!task.semanticPlacement));
         const semanticContextMultiplier = compileSemanticContextMultiplier({
             chunk,
             payload,

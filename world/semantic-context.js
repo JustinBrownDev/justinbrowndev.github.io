@@ -1,4 +1,5 @@
 import { compileSpatialTopologyGraph } from './spatial-topology.js';
+import { bindSemanticExteriorPlacement, chooseSemanticExteriorOpportunity } from './semantic-exterior-authority.js';
 
 export const SEMANTIC_CONTEXT_SCHEMA = 'jweb.semantic-context.v1';
 
@@ -258,6 +259,11 @@ function facadeOpportunities(surfaces, apertures, contextByEntity) {
     for (const surface of surfaces) {
         const context = contextByEntity.get(surface.entityId);
         const intervals = freeIntervals(surface, apertures);
+        const tangent = surfaceTangent(surface);
+        const surfaceFrame = {
+            tangentX: tangent.x, tangentZ: tangent.z,
+            normalX: surface.normalX, normalZ: surface.normalZ,
+        };
         intervals.forEach(([lo, hi], index) => {
             const u = (lo + hi) * 0.5;
             const width = hi - lo;
@@ -268,46 +274,142 @@ function facadeOpportunities(surfaces, apertures, contextByEntity) {
                 availableWidth: width,
                 contextId: context?.id ?? null,
                 spatialTopologyHostId: surface.id,
+                surfaceFrame,
+                decorationMayIntrude: true,
             };
             const signY = clamp(surface.yMin + 2.3 + index * 0.7, surface.yMin + 1.9, Math.max(surface.yMin + 2, surface.yMax - 0.55));
             opportunities.push({
                 id: `${surface.id}:sign:${index}`, role: 'facade-sign-zone', ...base,
                 transform: pointForSurface(surface, u, signY, 0.035),
+                region: { uMin: lo, uMax: hi, vMin: Math.max(surface.yMin + 1.8, signY - 1.2), vMax: surface.yMax },
                 clearanceBudget: { width, height: Math.max(0.5, surface.yMax - signY) },
                 layer: verticalLayer(signY), shellPriority: 'first-pass',
             });
             opportunities.push({
                 id: `${surface.id}:poster:${index}`, role: 'facade-poster-zone', ...base,
                 transform: pointForSurface(surface, u, clamp(surface.yMin + 1.45, surface.yMin + 1, surface.yMax - 0.4), 0.025),
+                region: { uMin: lo, uMax: hi, vMin: surface.yMin + 0.35, vMax: Math.min(surface.yMax, surface.yMin + 2.5) },
                 clearanceBudget: { width, height: 1.2 },
+                layer: 'street', shellPriority: 'deepen',
+            });
+            opportunities.push({
+                id: `${surface.id}:service-band:${index}`, role: 'facade-service-band', ...base,
+                transform: pointForSurface(surface, u, clamp(surface.yMin + 2.4, surface.yMin + 1.8, surface.yMax - 0.55), 0.045),
+                region: { uMin: lo, uMax: hi, vMin: surface.yMin + 0.35, vMax: Math.max(surface.yMin + 0.5, surface.yMax - 0.35) },
+                clearanceBudget: { width, height: Math.max(0.6, surface.yMax - surface.yMin - 0.7) },
+                layer: verticalLayer(surface.yMin + 2.4), shellPriority: 'first-pass',
+            });
+            opportunities.push({
+                id: `${surface.id}:ground-edge:${index}`, role: 'ground-edge-zone', ...base,
+                transform: pointForSurface(surface, u, surface.yMin, 0.42),
+                region: { uMin: lo, uMax: hi, vMin: surface.yMin, vMax: surface.yMin + 2.1 },
+                clearanceBudget: { width, depth: 0.85, height: 2.1 },
                 layer: 'street', shellPriority: 'deepen',
             });
             for (const slot of facadeHardwareSlots(surface, lo, hi, index)) {
                 slot.contextId = context?.id ?? null;
+                slot.surfaceFrame = surfaceFrame;
+                slot.decorationMayIntrude = true;
                 opportunities.push(slot);
             }
         });
 
         for (const aperture of apertures.filter(item => item.surfaceId === surface.id && item.traversable)) {
-            const left = aperture.uMin - 0.55;
-            const right = aperture.uMax + 0.55;
+            const reservationIds = [...(aperture.clearance ?? [])];
+            const connectorHost = aperture.connectorId ?? surface.id;
+            const left = aperture.uMin - 0.58;
+            const right = aperture.uMax + 0.58;
             for (const [ordinal, u] of [left, right].entries()) {
                 if (u <= -surface.half + 0.25 || u >= surface.half - 0.25) continue;
-                opportunities.push({
-                    id: `${aperture.id}:beside:${ordinal}`, role: 'beside-door-zone', surfaceId: surface.id,
-                    hostId: surface.entityId, entityId: surface.entityId, moduleKey: surface.moduleKey,
+                const common = {
+                    surfaceId: surface.id, hostId: surface.entityId, entityId: surface.entityId, moduleKey: surface.moduleKey,
                     facadeIndex: surface.facadeIndex, side: surface.side, exposure: surface.exposure,
                     u, along: surface.half > 0 ? clamp(u / surface.half, -0.92, 0.92) : 0,
-                    contextId: context?.id ?? null, apertureId: aperture.id,
-                    spatialTopologyHostId: surface.id,
-                    transform: pointForSurface(surface, u, surface.yMin, 0.16),
-                    clearanceBudget: { width: 0.55, depth: 0.65 },
-                    layer: 'street', shellPriority: 'deepen',
+                    contextId: context?.id ?? null, apertureId: aperture.id, connectorId: aperture.connectorId ?? null,
+                    reservationIds, spatialTopologyHostId: connectorHost, surfaceFrame, decorationMayIntrude: true,
+                };
+                opportunities.push({
+                    id: `${aperture.id}:ground-flank:${ordinal}`, role: 'portal-flank-ground-zone', ...common,
+                    transform: pointForSurface(surface, u, surface.yMin, 0.38),
+                    clearanceBudget: { width: 0.72, depth: 0.82, height: 2.05 },
+                    layer: 'street', shellPriority: 'first-pass', navigationalPriority: 'portal-adjacent',
+                });
+                opportunities.push({
+                    id: `${aperture.id}:beside:${ordinal}`, role: 'beside-door-zone', ...common,
+                    transform: pointForSurface(surface, u, surface.yMin, 0.38),
+                    clearanceBudget: { width: 0.72, depth: 0.82, height: 2.05 },
+                    layer: 'street', shellPriority: 'deepen', navigationalPriority: 'portal-adjacent',
+                });
+                const flankY = clamp(aperture.vMin + Math.min(1.35, Math.max(0.75, (aperture.vMax - aperture.vMin) * 0.58)), surface.yMin + 0.7, surface.yMax - 0.35);
+                opportunities.push({
+                    id: `${aperture.id}:wall-flank:${ordinal}`, role: 'portal-flank-wall-zone', ...common,
+                    transform: pointForSurface(surface, u, flankY, 0.04),
+                    clearanceBudget: { width: 0.62, height: 1.25, depth: 0.42 },
+                    layer: verticalLayer(flankY), shellPriority: 'first-pass', navigationalPriority: 'portal-adjacent',
+                });
+            }
+            const lintelY = aperture.vMax + 0.34;
+            if (lintelY < surface.yMax - 0.24) {
+                const u = (aperture.uMin + aperture.uMax) * 0.5;
+                opportunities.push({
+                    id: `${aperture.id}:lintel`, role: 'portal-lintel-zone',
+                    surfaceId: surface.id, hostId: surface.entityId, entityId: surface.entityId, moduleKey: surface.moduleKey,
+                    facadeIndex: surface.facadeIndex, side: surface.side, exposure: surface.exposure,
+                    u, along: surface.half > 0 ? clamp(u / surface.half, -0.92, 0.92) : 0,
+                    contextId: context?.id ?? null, apertureId: aperture.id, connectorId: aperture.connectorId ?? null,
+                    reservationIds, spatialTopologyHostId: connectorHost, surfaceFrame, decorationMayIntrude: true,
+                    transform: pointForSurface(surface, u, lintelY, 0.045),
+                    clearanceBudget: { width: Math.max(0.8, aperture.uMax - aperture.uMin + 0.4), height: Math.max(0.45, surface.yMax - lintelY), depth: 0.5 },
+                    layer: verticalLayer(lintelY), shellPriority: 'first-pass', navigationalPriority: 'portal-adjacent',
                 });
             }
         }
     }
     return opportunities;
+}
+
+function groundOpportunities(payload, contextByEntity) {
+    const result = [];
+    for (const entity of payload?.entities ?? []) {
+        if (entity.kind !== 'plaza') continue;
+        const halfX = Math.max(0.65, finite(entity.halfX, 2) - 0.45);
+        const halfZ = Math.max(0.65, finite(entity.halfZ, 2) - 0.45);
+        result.push({
+            id: `${entity.id}:ground:open`, role: 'ground-open-zone', hostId: entity.id, entityId: entity.id,
+            contextId: contextByEntity.get(entity.id)?.id ?? null, spatialTopologyHostId: entity.id,
+            transform: { x: finite(entity.x), y: 0, z: finite(entity.z), rotY: 0 },
+            bounds: { x: finite(entity.x), z: finite(entity.z), halfX, halfZ, y: 0 },
+            clearanceBudget: { width: halfX * 2, depth: halfZ * 2, height: 3.0 },
+            layer: 'street', shellPriority: 'first-pass', decorationMayIntrude: true,
+        });
+    }
+    return result;
+}
+
+function spanOpportunities(payload, tasks, contextByEntity) {
+    const result = [];
+    for (const task of tasks) {
+        if (task.kind !== 'overhead-cable') continue;
+        const a = entityById(payload, task.entityId);
+        const b = entityById(payload, task.otherEntityId);
+        if (!a || !b) continue;
+        const dx = finite(b.x) - finite(a.x), dz = finite(b.z) - finite(a.z);
+        const axisX = Math.abs(dx) >= Math.abs(dz);
+        const sx = axisX ? Math.sign(dx || 1) : 0;
+        const sz = axisX ? 0 : Math.sign(dz || 1);
+        const ay = Math.min(finite(a.floors, 2) * finite(a.floorH, 3.15), 8.5) * 0.52;
+        const by = Math.min(finite(b.floors, 2) * finite(b.floorH, 3.15), 8.5) * 0.52;
+        const start = { x: finite(a.x) + sx * finite(a.halfX, 2), y: ay, z: finite(a.z) + sz * finite(a.halfZ, 2) };
+        const end = { x: finite(b.x) - sx * finite(b.halfX, 2), y: by, z: finite(b.z) - sz * finite(b.halfZ, 2) };
+        result.push({
+            id: `${task.entityId}:service-span:${task.otherEntityId}:${task.seed >>> 0}`, role: 'inter-entity-service-span',
+            hostId: task.entityId, entityId: task.entityId, otherEntityId: task.otherEntityId,
+            contextId: contextByEntity.get(task.entityId)?.id ?? null, spatialTopologyHostId: task.entityId,
+            transform: { x: (start.x + end.x) * 0.5, y: (start.y + end.y) * 0.5, z: (start.z + end.z) * 0.5, rotY: Math.atan2(end.x - start.x, end.z - start.z) },
+            span: { start, end }, decorationMayIntrude: true, layer: verticalLayer((start.y + end.y) * 0.5), shellPriority: 'deepen',
+        });
+    }
+    return result;
 }
 
 function roofOpportunities(payload, contextByEntity) {
@@ -335,6 +437,7 @@ function roofOpportunities(payload, contextByEntity) {
 function connectorOpportunities(payload, surfaces, contextByEntity) {
     const result = [];
     for (const connector of payload?.physics?.semanticConnectors ?? []) {
+        const reservationIds = connector.reservations?.map(item => item.id) ?? [];
         (connector.endpoints ?? []).forEach((endpoint, index) => {
             const surface = endpoint?.side ? bestSurfaceForEndpoint(surfaces, endpoint, connector.metadata?.entityId ?? null) : null;
             const entityId = surface?.entityId ?? connector.metadata?.entityId ?? null;
@@ -343,35 +446,54 @@ function connectorOpportunities(payload, surfaces, contextByEntity) {
                 hostId: entityId, entityId, surfaceId: surface?.id ?? null, contextId: contextByEntity.get(entityId)?.id ?? null,
                 spatialTopologyHostId: connector.id,
                 transform: { x: finite(endpoint?.x), y: finite(endpoint?.y), z: finite(endpoint?.z), rotY: finite(endpoint?.rotY) },
-                reservationIds: connector.reservations?.map(item => item.id) ?? [],
+                reservationIds,
                 layer: verticalLayer(finite(endpoint?.y)),
-                navigationalPriority: connector.kind === 'stair' || connector.kind === 'bridge' ? 'high' : 'secondary',
+                navigationalPriority: connector.kind === 'stair' || connector.kind === 'bridge' || connector.kind === 'fire-escape' ? 'high' : 'secondary',
                 decorationMayIntrude: false,
             });
         });
+
+        const sweep = connector.sweep ?? {};
+        const entityId = connector.metadata?.entityId ?? null;
+        const contextId = contextByEntity.get(entityId)?.id ?? null;
+        if ((connector.kind === 'stair' || connector.kind === 'bridge' || connector.kind === 'fire-escape' || connector.kind === 'landing') && sweep.axis && Number.isFinite(sweep.from) && Number.isFinite(sweep.to)) {
+            const mid = (sweep.from + sweep.to) * 0.5;
+            const offset = Math.max(0.72, finite(sweep.halfWidth, 0.45) + finite(connector.solverEnvelope?.capsuleRadius, 0.28) + 0.42);
+            for (const sign of [-1, 1]) {
+                const x = sweep.axis === 'x' ? mid : finite(sweep.fixedCoord) + sign * offset;
+                const z = sweep.axis === 'x' ? finite(sweep.fixedCoord) + sign * offset : mid;
+                result.push({
+                    id: `${connector.id}:service-edge:${sign < 0 ? 0 : 1}`, role: 'connector-service-zone', connectorId: connector.id,
+                    hostId: entityId, entityId, contextId, spatialTopologyHostId: connector.id,
+                    transform: { x, y: finite(sweep.y0), z, rotY: sweep.axis === 'x' ? Math.PI * 0.5 : 0 },
+                    reservationIds, clearanceBudget: { width: 0.72, depth: 0.72, height: 2.0 },
+                    layer: verticalLayer(finite(sweep.y0)), navigationalPriority: 'high', decorationMayIntrude: true,
+                });
+            }
+        } else if ((connector.kind === 'fire-escape' || connector.kind === 'landing') && Number.isFinite(sweep.x) && Number.isFinite(sweep.z)) {
+            const hx = Math.max(0.4, finite(sweep.halfX, 0.5));
+            const hz = Math.max(0.4, finite(sweep.halfZ, 0.5));
+            const y = finite(sweep.y0);
+            const edges = [
+                { x: sweep.x - hx - 0.42, z: sweep.z, rotY: Math.PI * 0.5 },
+                { x: sweep.x + hx + 0.42, z: sweep.z, rotY: -Math.PI * 0.5 },
+                { x: sweep.x, z: sweep.z - hz - 0.42, rotY: 0 },
+                { x: sweep.x, z: sweep.z + hz + 0.42, rotY: Math.PI },
+            ];
+            edges.forEach((point, index) => result.push({
+                id: `${connector.id}:service-edge:${index}`, role: 'connector-service-zone', connectorId: connector.id,
+                hostId: entityId, entityId, contextId, spatialTopologyHostId: connector.id,
+                transform: { ...point, y }, reservationIds,
+                clearanceBudget: { width: 0.7, depth: 0.7, height: 2.0 },
+                layer: verticalLayer(y), navigationalPriority: 'high', decorationMayIntrude: true,
+            }));
+        }
     }
     return result;
 }
 
-function roleForTask(task) {
-    if (task.kind === 'sign' || task.kind === 'awning') return 'facade-sign-zone';
-    if (task.kind === 'flyer' || task.kind === 'graffiti') return 'facade-poster-zone';
-    if (task.kind === 'security' || task.kind === 'pipe') return 'wall-mounted-prop-zone';
-    if (task.kind === 'street-fixture') return 'beside-door-zone';
-    if (task.kind === 'roof-clutter' || task.kind === 'roof-topper') return 'roof-utility-zone';
-    if (String(task.kind ?? '').startsWith('semantic-')) return 'interior-floor-zone';
-    return null;
-}
-
-function chooseOpportunity(task, opportunities) {
-    const role = roleForTask(task);
-    if (!role || role === 'interior-floor-zone') return null;
-    const entityPool = opportunities.filter(item => item.role === role && (!task.entityId || item.entityId === task.entityId));
-    if (!entityPool.length) return null;
-    const sidePool = task.side ? entityPool.filter(item => item.side === task.side) : [];
-    const pool = sidePool.length ? sidePool : entityPool;
-    pool.sort((a, b) => a.id.localeCompare(b.id));
-    return pool[(finite(task.seed) >>> 0) % pool.length];
+function chooseOpportunity(task, opportunities, claimedOpportunityIds = null) {
+    return chooseSemanticExteriorOpportunity(task, opportunities, claimedOpportunityIds);
 }
 
 function compactContext({ chunk, entity, program = null, floor = 0, y = 0, district }) {
@@ -419,8 +541,10 @@ export function compileSemanticContext({ chunk, payload, tasks = [], debugWeight
 
     const opportunities = [
         ...facadeOpportunities(surfaces, apertures, contextByEntity),
+        ...groundOpportunities(payload, contextByEntity),
         ...roofOpportunities(payload, contextByEntity),
         ...connectorOpportunities(payload, surfaces, contextByEntity),
+        ...spanOpportunities(payload, tasks, contextByEntity),
     ];
 
     const destinations = (payload.semanticSpaces ?? []).map(space => ({
@@ -443,12 +567,13 @@ export function compileSemanticContext({ chunk, payload, tasks = [], debugWeight
     }
 
     let integrated = 0;
+    const claimedExteriorOpportunities = new Set();
     let debugSigns = 0;
     const debugEnabled = (hash32(`${chunk.key}:semantic-debug`) % 10000) < Math.floor(clamp(debugWeight, 0, 1) * 10000);
     let debugClaimed = false;
     for (const task of tasks) {
         const entity = entityById(payload, task.entityId);
-        const opportunity = chooseOpportunity(task, opportunities);
+        const opportunity = chooseOpportunity(task, opportunities, claimedExteriorOpportunities);
         const context = task.spaceId ? contextBySpace.get(task.spaceId) : contextByEntity.get(task.entityId);
         task.semanticContext = context ?? null;
         task.semanticContextId = context?.id ?? null;
@@ -457,10 +582,14 @@ export function compileSemanticContext({ chunk, payload, tasks = [], debugWeight
         task.spatialTopologyHostId = opportunity?.spatialTopologyHostId ?? task.spaceId ?? task.semanticHostId ?? null;
         if (!opportunity) continue;
         integrated++;
+        bindSemanticExteriorPlacement(task, opportunity);
+        claimedExteriorOpportunities.add(opportunity.id);
+        // Compatibility mirrors only. Realization consumes semanticPlacement.
         if (Number.isInteger(opportunity.facadeIndex)) task.facadeIndex = opportunity.facadeIndex;
         if (opportunity.side) task.side = opportunity.side;
         if (Number.isFinite(opportunity.along)) task.along = opportunity.along;
-        if (Number.isFinite(opportunity.transform?.y) && task.kind !== 'street-fixture') task.y = opportunity.transform.y;
+        if (Number.isFinite(opportunity.transform?.y)) task.y = opportunity.transform.y;
+        if (String(task.kind ?? '').startsWith('plaza-')) { task.x = opportunity.transform.x; task.z = opportunity.transform.z; }
         if (task.kind === 'sign' && debugEnabled && !debugClaimed) {
             const [title, subtitle] = debugLabel(context ?? contextByEntity.get(task.entityId), opportunity);
             task.title = title;

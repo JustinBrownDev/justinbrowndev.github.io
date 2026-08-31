@@ -269,8 +269,9 @@ export function createBuildingConstructionSystem(deps) {
          
          
          
-        const fireEscapeSide = (!signatureMode && floorCount >= QP[1880]) ? plannedFireEscapeSide : null;
-        rect.fireEscapeSide = fireEscapeSide;
+        const fireEscapeSide = null;
+        rect.fireEscapeSide = null;
+        rect.legacyFireEscapeSuppressed = !!plannedFireEscapeSide;
         if (fireEscapeSide) {
             for (let fl = QP[1881]; fl < floorCount; fl++) {
                 baseGaps.push(fireEscapeSide.dx !== QP[1882]
@@ -582,9 +583,7 @@ export function createBuildingConstructionSystem(deps) {
              
              
              
-            if (isFireEscapeFace) {
-                buildFireEscape(facade, floorHeight, floorCount, `${row},${col}`);
-            } else if (rng() < QP[2018] && !isWarehouse) {
+            if (rng() < QP[2018] && !isWarehouse) {
                  
                  
                  

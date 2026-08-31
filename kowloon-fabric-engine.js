@@ -354,12 +354,19 @@ export function createKowloonFabricEngine({
     function addExteriorScaffold({ physics, transforms, fp, floors, floorH, side, seed, physicalTruth }) {
         if (floors < 2) return 0;
         const rng = mulberry32(seed);
+        const visualFamilies = [
+            { id: 'switchback-mesh', span: 1.00, depth: 1.00, run: 0.80 },
+            { id: 'tight-service', span: 0.86, depth: 0.90, run: 0.70 },
+            { id: 'heavy-landing', span: 1.08, depth: 1.12, run: 0.76 },
+            { id: 'long-industrial', span: 1.16, depth: 0.96, run: 0.92 },
+        ];
+        const visualFamily = visualFamilies[hashString32(`${seed}:semantic-scaffold-family`) % visualFamilies.length];
         const horizontalFace = side === 'north' || side === 'south';
-        const tangentSpan = Math.max(3.2, Math.min(6.4, (horizontalFace ? fp.halfX : fp.halfZ) * 1.7));
+        const tangentSpan = Math.max(3.2, Math.min(6.8, (horizontalFace ? fp.halfX : fp.halfZ) * 1.7 * visualFamily.span));
         const nominalFlight = deriveStairFlight({ rise: floorH, truth: physicalTruth, stableKey: `scaffold:${seed}:nominal` });
         const landingDepth = Math.max(0.82, physicalTruth?.stair?.landingDepthSI || 0, (physicalTruth?.stair?.widthSI || 0) + 0.12);
         const landingWidth = Math.min(tangentSpan, Math.max(2.4, nominalFlight.requiredRun / 0.80 + 0.18));
-        const depth = landingDepth + 0.18;
+        const depth = (landingDepth + 0.18) * visualFamily.depth;
         const outward = side === 'north' || side === 'west' ? -1 : 1;
         const face = horizontalFace ? fp.cz : fp.cx;
         const halfFace = horizontalFace ? fp.halfZ : fp.halfX;
@@ -406,13 +413,13 @@ export function createKowloonFabricEngine({
                 visualRole: 'fire-escape-landing',
                 reservationKind: 'scaffold-landing',
                 physicalTruth,
-                metadata: { level, side, physicalUse: physicalTruth?.physicalUse ?? null },
+                metadata: { level, side, visualFamily: visualFamily.id, physicalUse: physicalTruth?.physicalUse ?? null },
             }));
             landings++;
             if (level >= floors) continue;
 
             const direction = ((level + (seed & 1)) & 1) ? -1 : 1;
-            const availableRun = Math.min(nominalFlight.requiredRun, Math.max(0.8, landingWidth * 0.80));
+            const availableRun = Math.min(nominalFlight.requiredRun, Math.max(0.8, landingWidth * visualFamily.run));
             const localFrom = direction < 0 ? availableRun * 0.5 : -availableRun * 0.5;
             const localTo = -localFrom;
             const axis = horizontalFace ? 'x' : 'z';
@@ -451,7 +458,7 @@ export function createKowloonFabricEngine({
                 reservationKind: 'scaffold-ramp',
                 physicalTruth,
                 stairFlight: flight,
-                metadata: { level, side, fitClassification: flight.fitClassification, physicalUse: physicalTruth?.physicalUse ?? null },
+                metadata: { level, side, visualFamily: visualFamily.id, fitClassification: flight.fitClassification, physicalUse: physicalTruth?.physicalUse ?? null },
             }));
             const steps = flight.stepCount;
             const stepThickness = Math.min(0.14, Math.max(0.075, flight.riserHeight * 0.62));

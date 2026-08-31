@@ -24,15 +24,15 @@ assert.ok(result.tasks.length > 8, `physical facade budget should exceed the ret
 assert.equal(result.tasks.length, result.stats.entityBudgets['building:a'].wall);
 assert.equal(result.stats.roles.wall, result.tasks.length);
 assert.equal(result.stats.minScale, 0.16);
-assert.equal(result.stats.catalogSearchDepth, 192);
+assert.equal(result.stats.catalogSearchDepth, 512);
 assert.ok(result.tasks.some(task => task.semanticLayer === 'mid'), 'deep wall enrichment must climb above the street band');
 
 const semanticSource = fs.readFileSync(new URL('../world/semantic-context.js', import.meta.url), 'utf8');
 const exteriorSource = fs.readFileSync(new URL('../world/exterior-prop-field.js', import.meta.url), 'utf8');
 assert.match(semanticSource, /hardware-grid/);
 assert.match(semanticSource, /shellPriority: row < 2 \? 'first-pass' : 'deepen'/);
-assert.match(exteriorSource, /ground-edge-micro/);
-assert.match(exteriorSource, /physicalDensityNormalized = true/);
+assert.match(exteriorSource, /semanticOpportunityId/);
+assert.match(exteriorSource, /semanticAuthority: true/);
 
 const enrichmentPath = new URL('../world/kowloon-fabric-enrichment.js', import.meta.url);
 if (fs.existsSync(enrichmentPath)) {

@@ -388,12 +388,59 @@ export function createExteriorPropFieldSystem({ THREE, worldSeed = 0 } = {}) {
         ['sphere', new THREE.SphereGeometry(0.5, 8, 5)],
     ]);
     const materials = new Map(SHAPES.map(shape => [shape, new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.88, metalness: 0.06 })]));
+    const mediaPlaneGeometry = new THREE.PlaneGeometry(1, 1);
     const matrix = new THREE.Matrix4();
     const position = new THREE.Vector3();
     const quaternion = new THREE.Quaternion();
     const euler = new THREE.Euler();
     const scale = new THREE.Vector3();
     const color = new THREE.Color();
+
+    function createMediaTexture(media) {
+        if (typeof document === 'undefined' || !media) return null;
+        const canvas = document.createElement('canvas');
+        canvas.width = 1024;
+        canvas.height = 512;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return null;
+        const seed = Number(media.seed) >>> 0;
+        const backgrounds = ['#07131b', '#210b1b', '#17120a', '#071b16', '#150c24'];
+        const inks = ['#82f7ff', '#ff79cf', '#ffe36c', '#8dff9a', '#d4b2ff'];
+        ctx.fillStyle = backgrounds[seed % backgrounds.length];
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.strokeStyle = inks[(seed >>> 3) % inks.length];
+        ctx.lineWidth = 18;
+        ctx.strokeRect(18, 18, canvas.width - 36, canvas.height - 36);
+        ctx.fillStyle = ctx.strokeStyle;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        const clean = value => String(value ?? '').replace(/\s+/g, ' ').trim();
+        const fit = (text, maxWidth, startPx, minPx) => {
+            const value = clean(text);
+            let px = startPx;
+            while (px > minPx) {
+                ctx.font = '800 ' + px + 'px monospace';
+                if (ctx.measureText(value).width <= maxWidth) return { value, px };
+                px -= 4;
+            }
+            let clipped = value;
+            ctx.font = '800 ' + minPx + 'px monospace';
+            while (clipped.length > 5 && ctx.measureText(clipped + '...').width > maxWidth) clipped = clipped.slice(0, -1);
+            return { value: clipped + (clipped === value ? '' : '...'), px: minPx };
+        };
+        const title = fit(media.title, 900, 112, 48);
+        ctx.font = '800 ' + title.px + 'px monospace';
+        ctx.fillText(title.value, 512, 205);
+        const subtitle = fit(media.subtitle, 900, 46, 24);
+        ctx.globalAlpha = 0.90;
+        ctx.font = '700 ' + subtitle.px + 'px monospace';
+        ctx.fillText(subtitle.value, 512, 345);
+        ctx.globalAlpha = 1;
+        const texture = new THREE.CanvasTexture(canvas);
+        texture.colorSpace = THREE.SRGBColorSpace;
+        texture.needsUpdate = true;
+        return texture;
+    }
 
     function makeTask(chunk, plan, placements, tier, entityId, ordinal) {
         const visualImpact = placements.reduce((max, item) => Math.max(max, item.visualImpact || 0), 0);
@@ -483,12 +530,36 @@ export function createExteriorPropFieldSystem({ THREE, worldSeed = 0 } = {}) {
             mesh.userData.semanticExteriorAuthority = true;
             group.add(mesh);
         }
+
+        const mediaPlacements = placements.filter(item => item?.media && item.shape === 'box' && /megascreen/i.test(String(item.assemblyKind ?? '')));
+        group.userData.mediaSurfaceCount = mediaPlacements.length;
+        for (const item of mediaPlacements) {
+            const texture = createMediaTexture(item.media);
+            if (!texture) continue;
+            const material = new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide, toneMapped: false });
+            const panel = new THREE.Mesh(mediaPlaneGeometry, material);
+            panel.name = group.name + ':media:' + String(item.assemblyId ?? item.semanticOpportunityId ?? 'screen');
+            const outwardX = -Math.sin(item.rotY);
+            const outwardZ = -Math.cos(item.rotY);
+            const offset = Math.max(0.015, item.sz * 0.5 + 0.012);
+            panel.position.set(item.x + outwardX * offset, item.y + item.sy * 0.5, item.z + outwardZ * offset);
+            panel.rotation.y = item.rotY + Math.PI;
+            panel.scale.set(item.sx * 0.94, item.sy * 0.90, 1);
+            panel.userData.chunkCosmetic = true;
+            panel.userData.detailKind = 'megascreen-media';
+            panel.userData.semanticExteriorAuthority = true;
+            panel.userData.media = item.media;
+            group.add(panel);
+            payload?.detailResources?.textures?.add?.(texture);
+            payload?.detailResources?.materials?.add?.(material);
+        }
         return group;
     }
 
     function disposeShared() {
         for (const geometry of geometries.values()) geometry.dispose?.();
         for (const material of materials.values()) material.dispose?.();
+        mediaPlaneGeometry.dispose?.();
         geometries.clear(); materials.clear();
     }
 

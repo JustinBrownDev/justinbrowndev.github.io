@@ -511,20 +511,16 @@ function spectacleOpportunities(chunk, payload, surfaces, apertures, contextByEn
         });
     }
 
-    const chosen = [];
-    for (const [entityId, candidates] of candidatesByEntity) {
-        candidates.sort((a, b) => b.spectacleImpact - a.spectacleImpact
+    const candidates = [];
+    for (const [entityId, entityCandidates] of candidatesByEntity) {
+        entityCandidates.sort((a, b) => b.spectacleImpact - a.spectacleImpact
             || (a.role === 'corner-media-band' ? -1 : b.role === 'corner-media-band' ? 1 : 0)
             || String(a.id).localeCompare(String(b.id)));
-        const best = candidates[0];
+        const best = entityCandidates[0];
         if (!best) continue;
-        const entity = entityById(payload, entityId);
-        const sizeBoost = clamp((best.spectacleImpact - 10) / 55, 0, 0.32);
-        const chance = entity?.kind === 'district-landmark' ? 0.92 : 0.34 + sizeBoost;
-        const roll = (hash32(chunk.key + ':' + entityId + ':exterior-spectacle') % 10000) / 10000;
-        if (roll <= chance) chosen.push(best);
+        candidates.push({ ...best, spectacleCandidate: true });
     }
-    return chosen;
+    return candidates;
 }
 
 function groundOpportunities(payload, contextByEntity) {
@@ -701,17 +697,9 @@ export function compileSemanticContext({ chunk, payload, tasks = [], debugWeight
     const facade = facadeOpportunities(surfaces, apertures, contextByEntity);
     const roof = roofOpportunities(payload, contextByEntity);
     const spectacle = spectacleOpportunities(chunk, payload, surfaces, apertures, contextByEntity);
-    const spectacleSurfaceIds = new Set(spectacle.flatMap(item => item.segments?.map(segment => segment.surfaceId) ?? []).filter(Boolean));
-    const spectacleRoofEntities = new Set(spectacle.filter(item => item.role === 'roof-spectacle-envelope').map(item => item.entityId));
-    for (const opportunity of facade) {
-        if (spectacleSurfaceIds.has(opportunity.surfaceId)
-            && ['facade-sign-zone', 'facade-poster-zone', 'facade-service-band', 'wall-mounted-prop-zone'].includes(opportunity.role)) {
-            opportunity.spectacleReserved = true;
-        }
-    }
-    for (const opportunity of roof) {
-        if (spectacleRoofEntities.has(opportunity.entityId)) opportunity.spectacleReserved = true;
-    }
+    // Candidate discovery is deliberately non-destructive. The building-level
+    // composition authority decides which spectacle host actually claims a surface;
+    // ordinary sign/service/hardware opportunities remain available until then.
     const opportunities = [
         ...spectacle,
         ...facade,

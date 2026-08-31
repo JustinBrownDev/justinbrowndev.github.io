@@ -11,6 +11,7 @@ import { createExteriorPropFieldSystem } from './exterior-prop-field.js';
 import { requiresSemanticExteriorPlacement, semanticExteriorProvenance, semanticPlacementPoint } from './semantic-exterior-authority.js';
 import { semanticAssetAlignment, semanticAssetFitScale } from './semantic-asset-frame.js';
 import { EXTERIOR_FIRST_PASS_KIND_ORDER, EXTERIOR_TASK_KIND_PRIORITY, compareExteriorPriorityKeys, exteriorTaskPriorityKey, exteriorTaskVisualImpact } from './exterior-spectacle-priority.js';
+import { attachSpectacleMedia, compileExteriorCompositionAuthority } from './exterior-composition-authority.js';
 
 function mulberry32(seed) {
     let a = seed >>> 0;
@@ -1717,53 +1718,28 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
             assets: SEMANTIC_INTERIOR_ASSETS,
             existingTasks: state.tasks,
         });
-        // COVERAGE FLOOR: exactly one meaningful visible birth per entity. A real
-        // spectacle replaces (rather than supplements) the ordinary first-pass
-        // token. Otherwise keep the authored birth; only genuinely uncovered
-        // entities borrow one contextual wall/roof anchor.
+        // SINGLE EXTERIOR AUTHORITY: authored facade details, contextual GLB
+        // candidates, and primitive spectacle/macro candidates are not runtime
+        // populations until one building-level composition plan admits them.
         const exteriorPropFieldTasks = exteriorPropField.planTasks(chunk, payload);
-        const spectacleFieldTasks = exteriorPropFieldTasks.filter(task => task.exteriorVisualTier === 'spectacle');
-        const earlyFieldTasks = exteriorPropFieldTasks.filter(task => task.exteriorVisualTier === 'spectacle' || task.exteriorVisualTier === 'identity');
-        const deferredFieldTasks = exteriorPropFieldTasks.filter(task => task.exteriorVisualTier !== 'spectacle' && task.exteriorVisualTier !== 'identity');
-        const spectacleEntities = new Set(spectacleFieldTasks.map(task => String(task.entityId ?? '')).filter(Boolean));
-        for (const task of state.tasks) {
-            if (task.firstPassBundle && spectacleEntities.has(String(task.entityId ?? ''))) {
-                task.firstPassBundle = false;
-                task.firstPassClass = 'deferred-by-spectacle';
-            }
-        }
-        for (const task of spectacleFieldTasks) {
-            task.firstPassBundle = true;
-            task.firstPassClass = 'spectacle';
-        }
+        const exteriorComposition = compileExteriorCompositionAuthority({
+            chunk,
+            payload,
+            authoredTasks: state.tasks,
+            contextualTasks: semanticContextMultiplier.tasks,
+            fieldTasks: exteriorPropFieldTasks,
+        });
+        const mediaStats = attachSpectacleMedia({
+            chunk,
+            tasks: exteriorComposition.acceptedExteriorTasks,
+            pairFor: ({ task, rng }) => textExciter.pairFor(chunk, task.entityId, 'megascreen', pickMassiveNoisePair(rng)),
+        });
+        state.tasks = exteriorComposition.tasks;
+        state.exteriorComposition = { ...exteriorComposition.stats, media: mediaStats };
 
-        const coveredEntities = new Set(state.tasks.filter(task => task.firstPassBundle).map(task => String(task.entityId ?? '')).filter(Boolean));
-        for (const task of spectacleFieldTasks) coveredEntities.add(String(task.entityId ?? ''));
-        const shellContextTasks = [];
-        const deferredContextTasks = [];
-        for (const task of semanticContextMultiplier.tasks) {
-            const entityId = String(task.entityId ?? '');
-            const eligibleAnchor = task.semanticContextRole === 'wall' || task.semanticContextRole === 'roof';
-            if (eligibleAnchor && entityId && !coveredEntities.has(entityId)) {
-                task.firstPassBundle = true;
-                task.firstPassClass = 'semantic-anchor';
-                shellContextTasks.push(task);
-                coveredEntities.add(entityId);
-            } else {
-                deferredContextTasks.push(task);
-            }
-        }
-        state.tasks = [
-            ...state.tasks,
-            ...shellContextTasks,
-            ...earlyFieldTasks,
-            ...deferredContextTasks,
-            ...deferredFieldTasks,
-        ];
-
-        // Rebuild first-pass accounting from the actual retained queue. Semantic
-        // authority may have filtered an authored task, so stale pre-integration
-        // targets are not allowed to keep a chunk permanently "first-pass pending".
+        // Rebuild first-pass accounting from the one admitted queue. The authority
+        // guarantees exactly one building exterior anchor while leaving plaza and
+        // non-building first-pass work intact.
         state.firstPassTargetByEntity = {};
         state.firstPassPublishedByEntity = {};
         state.firstPassPublicationTarget = 0;
@@ -1781,11 +1757,17 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
         state.firstPassComplete = state.firstPassEntityTarget === 0;
         state.semanticContextMultiplier = {
             ...semanticContextMultiplier.stats,
-            shellFirstTasks: shellContextTasks.length,
-            deferredContextTasks: deferredContextTasks.length,
+            candidateOnly: true,
+            acceptedByComposition: exteriorComposition.stats.contextAccepted,
+            rejectedByComposition: Math.max(0, semanticContextMultiplier.tasks.length - exteriorComposition.stats.contextAccepted),
         };
         state.topologyPrecommit = solveBlockingTopology(chunk, payload, state.tasks);
-        state.exteriorPropField = exteriorPropFieldTasks[0]?.fieldPlan?.aggregateStats ?? { generated: 0 };
+        state.exteriorPropField = {
+            ...(exteriorPropFieldTasks[0]?.fieldPlan?.aggregateStats ?? { generated: 0 }),
+            candidateTasks: exteriorPropFieldTasks.length,
+            acceptedTasks: exteriorComposition.stats.fieldAccepted,
+            mediaSurfaces: mediaStats.surfaces,
+        };
         payload.refinement = state;
         return state;
     }

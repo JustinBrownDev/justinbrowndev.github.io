@@ -39,6 +39,7 @@ import { createFacadeLayoutSystem } from './world/facade-layout.js';
 import { createAuthoredContentHelpers } from './world/authored-content-helpers.js';
 import { createSpawnMazePlan, createSpawnBuildingSitePlan } from './world/spawn-district-plan.js';
 import { provePlayableSpawn } from './world/spawn-proof.js';
+import { realizeSpawnLocation } from './world/spawn-location-realizer.js';
 import { WORLD_STREAMING_GEAR, choosePlayerCenteredStreamingGear, pointNearRegion, shouldRunAuthoredLocalWork } from './world/player-centered-streaming.js';
 import { createDynamicLightPool } from './systems/dynamic-light-pool.js';
 import { createRuntimeLatencyTelemetry } from './systems/runtime-latency.js';
@@ -2961,7 +2962,11 @@ const requestedSpawnPose = {
     z: camera.position.z,
     feetY: camera.position.y - CONFIG.camera.eyeHeight,
 };
-const spawnProof = provePlayableSpawn({ playerPhysics, origin: requestedSpawnPose });
+const spawnProof = provePlayableSpawn({
+    playerPhysics,
+    origin: requestedSpawnPose,
+    fabricPayloads: unifiedSpawnFabricPayloads,
+});
 if (!spawnProof.ok) {
     throw new Error(`[spawn-proof] refused unplayable spawn: ${spawnProof.reason}; candidates=${spawnProof.searchedCandidates}; probes=${spawnProof.probes}; best=${spawnProof.bestDistance?.toFixed?.(2) ?? 'n/a'}m`);
 }
@@ -2969,6 +2974,24 @@ camera.position.set(spawnProof.pose.x, spawnProof.pose.feetY + CONFIG.camera.eye
 playerPhysics.syncFromPosition({ forceAirborne: false, resetVelocity: false, allowLastSafeFallback: false });
 if (!playerPhysics.poseIsValid(camera.position.x, camera.position.z, playerPhysics.getState().feetY)) {
     throw new Error('[spawn-proof] proven pose became invalid during authoritative startup sync');
+}
+const spawnRealization = spawnProof.location?.spatialPlan?.ready
+    ? realizeSpawnLocation({
+        THREE,
+        scene,
+        boundLocation: spawnProof.location,
+        fabricPayloads: unifiedSpawnFabricPayloads,
+        propColliders,
+    })
+    : null;
+if (spawnProof.routeKind === 'authored-elevated-enclave' && !spawnRealization) {
+    console.warn('[spawn-location] authoritative enclave bound, but representative memory-silhouette realization was unavailable; structural spawn remains authoritative');
+}
+if (spawnRealization?.colliderCount) {
+    playerPhysics.syncDynamicWorld();
+    if (!playerPhysics.poseIsValid(camera.position.x, camera.position.z, playerPhysics.getState().feetY)) {
+        throw new Error('[spawn-location] representative realization violated the proven arrival capsule');
+    }
 }
 console.log(`[spawn-proof] PASS · candidate=${spawnProof.candidateIndex} ring=${spawnProof.candidateRing} · route=${spawnProof.routeKind} · escape=${spawnProof.escapeDistance.toFixed(2)}m · probes=${spawnProof.probes}`);
 await testYieldNow('minimum-safe authored district collision-ready + spawn escape proven · releasing construction safety gate');

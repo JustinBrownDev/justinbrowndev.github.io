@@ -1,3 +1,5 @@
+import { compileSpawnSpatialPlan } from './spawn-spatial-plan.js';
+
 const LOCATION_URL = new URL('../jweb-authored-location-data-pack/locations/spawn-rooftop-reality-leak.json', import.meta.url);
 const ASSET_URL = new URL('../jweb-authored-location-data-pack/assets/spawnpoint-asset-families.json', import.meta.url);
 
@@ -107,10 +109,12 @@ export function compileSpawnLocationRuntime({ location, assets } = {}) {
         navigationDistanceM: 2.2,
         minNavigableHeadings: 3,
         verticalRouteDeltaM: 0.7,
+        fabricSurfaceToleranceM: 0.18,
+        requireFabricConnector: true,
         ...clonePlain(location.binding?.selection ?? {}),
     };
     return Object.freeze({
-        schema: 'jweb.spawn-location-runtime.v1',
+        schema: 'jweb.spawn-location-runtime.v2',
         location: clonePlain(location),
         assets: clonePlain(assets),
         familyById,
@@ -172,9 +176,19 @@ export function createSpawnComposition(runtime, stableKey) {
 export function bindSpawnLocationRuntime(runtime, proof) {
     if (!runtime || !proof?.pose) return null;
     const pose = proof.pose;
-    const stableKey = `${pose.x.toFixed(3)},${pose.feetY.toFixed(3)},${pose.z.toFixed(3)}`;
+    const hostSpace = clonePlain(proof.fabricSpace ?? proof.locationSelection?.hostSpace ?? null);
+    const routeFan = clonePlain(proof.routeFan ?? []);
+    const stableKey = `${hostSpace?.spaceId ?? 'local'}:${pose.x.toFixed(3)},${pose.feetY.toFixed(3)},${pose.z.toFixed(3)}`;
+    const composition = createSpawnComposition(runtime, stableKey);
+    const spatialPlan = hostSpace ? compileSpawnSpatialPlan({
+        locationId: runtime.location.id,
+        pose,
+        hostSpace,
+        routeFan,
+        composition,
+    }) : null;
     return Object.freeze({
-        schema: 'jweb.bound-spawn-location.v1',
+        schema: 'jweb.bound-spawn-location.v2',
         locationId: runtime.location.id,
         identity: runtime.location.identity,
         role: runtime.location.role,
@@ -183,7 +197,10 @@ export function bindSpawnLocationRuntime(runtime, proof) {
         spatialFingerprint: clonePlain(runtime.location.spatialFingerprint),
         pose: { ...pose },
         selection: clonePlain(proof.locationSelection ?? null),
-        composition: createSpawnComposition(runtime, stableKey),
+        hostSpace,
+        routeFan,
+        composition,
+        spatialPlan,
         zones: clonePlain(runtime.location.zones ?? []),
         hardInvariants: clonePlain(runtime.location.hardInvariants ?? []),
         semanticRequirements: clonePlain(runtime.location.semanticRequirements ?? []),

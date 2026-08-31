@@ -92,12 +92,13 @@
       "sockets": {
         "screen": "front media plane",
         "power": "rear or side",
-        "support": "bottom footprint"
+        "support": "bottom footprint when surface-mounted"
       },
       "rules": [
         "Exactly one primary screen focus.",
         "Screen must be legible from at least two seating candidates.",
-        "No luxury/home-theater hardware."
+        "No luxury/home-theater hardware.",
+        "Variant placement metadata is authoritative: wall-mount panels do not consume a support surface."
       ],
       "variants": [
         {
@@ -120,8 +121,14 @@
             "aged-woodgrain-laminate",
             "brown-plastic"
           ],
-          "weight": 1.0,
-          "notes": "Heavy, slightly too deep for its table."
+          "weight": 1,
+          "notes": "Heavy, slightly too deep for its table.",
+          "placement": {
+            "mount": "surface",
+            "canSupportProps": false,
+            "requiresSupportSurface": true,
+            "supportSocket": "topSurface"
+          }
         },
         {
           "id": "tv.crt.security-gray",
@@ -143,7 +150,13 @@
             "gray-plastic",
             "painted-steel"
           ],
-          "weight": 1.0
+          "weight": 1,
+          "placement": {
+            "mount": "surface",
+            "canSupportProps": false,
+            "requiresSupportSurface": true,
+            "supportSocket": "topSurface"
+          }
         },
         {
           "id": "tv.crt.shop-counter",
@@ -164,7 +177,13 @@
             "yellowed-plastic",
             "black-plastic"
           ],
-          "weight": 1.0
+          "weight": 1,
+          "placement": {
+            "mount": "surface",
+            "canSupportProps": false,
+            "requiresSupportSurface": true,
+            "supportSocket": "topSurface"
+          }
         },
         {
           "id": "tv.crt.black-cube",
@@ -185,7 +204,13 @@
             "black-plastic",
             "painted-steel"
           ],
-          "weight": 1.0
+          "weight": 1,
+          "placement": {
+            "mount": "surface",
+            "canSupportProps": false,
+            "requiresSupportSurface": true,
+            "supportSocket": "topSurface"
+          }
         },
         {
           "id": "tv.crt.portable-handle",
@@ -207,7 +232,13 @@
             "cream-plastic",
             "rubber"
           ],
-          "weight": 1.0
+          "weight": 1,
+          "placement": {
+            "mount": "surface",
+            "canSupportProps": false,
+            "requiresSupportSurface": true,
+            "supportSocket": "topSurface"
+          }
         },
         {
           "id": "tv.flat.cheap-lcd",
@@ -228,7 +259,13 @@
             "black-plastic",
             "painted-steel"
           ],
-          "weight": 1.0
+          "weight": 1,
+          "placement": {
+            "mount": "surface",
+            "canSupportProps": false,
+            "requiresSupportSurface": true,
+            "supportSocket": "topSurface"
+          }
         },
         {
           "id": "tv.flat.office-monitor",
@@ -248,7 +285,13 @@
             "dark-glass",
             "charcoal-plastic"
           ],
-          "weight": 1.0
+          "weight": 1,
+          "placement": {
+            "mount": "surface",
+            "canSupportProps": false,
+            "requiresSupportSurface": true,
+            "supportSocket": "topSurface"
+          }
         },
         {
           "id": "tv.flat.wall-salvage",
@@ -268,7 +311,13 @@
             "dark-glass",
             "black-metal"
           ],
-          "weight": 1.0
+          "weight": 1,
+          "placement": {
+            "mount": "wall",
+            "canSupportProps": false,
+            "wallOffsetM": 0.03,
+            "centerHeightAboveSurfaceM": 1.35
+          }
         },
         {
           "id": "tv.field.video-monitor",
@@ -289,22 +338,30 @@
             "blue-gray-metal",
             "rubber"
           ],
-          "weight": 1.0
+          "weight": 1,
+          "placement": {
+            "mount": "surface",
+            "canSupportProps": false,
+            "requiresSupportSurface": true,
+            "supportSocket": "topSurface"
+          }
         }
       ]
     },
     {
       "id": "spawn.support.tv",
-      "label": "TV support surfaces",
+      "label": "TV support / refuge shared surfaces",
       "semanticRoles": [
         "support-surface-provider",
-        "media-support"
+        "media-support",
+        "shared-surface"
       ],
       "sockets": {
         "topSurface": "support plane for TV and small clutter"
       },
       "rules": [
-        "Support must be believable for selected TV mass.",
+        "When the selected TV consumes a surface, the support must be believable for its mass.",
+        "When the selected TV is wall-mounted, this object remains as the refuge shared surface.",
         "At least one edge remains usable for a bottle/cup or remote-sized object."
       ],
       "variants": [
@@ -326,7 +383,17 @@
             "painted-steel",
             "vinyl-top"
           ],
-          "weight": 1.0
+          "weight": 1,
+          "placement": {
+            "mount": "ground",
+            "canSupportProps": true,
+            "supportSurfaces": [
+              {
+                "id": "topSurface",
+                "role": "media-support"
+              }
+            ]
+          }
         },
         {
           "id": "support.shop-table",
@@ -345,7 +412,17 @@
             "painted-steel",
             "plywood"
           ],
-          "weight": 1.0
+          "weight": 1,
+          "placement": {
+            "mount": "ground",
+            "canSupportProps": true,
+            "supportSurfaces": [
+              {
+                "id": "topSurface",
+                "role": "media-support"
+              }
+            ]
+          }
         },
         {
           "id": "support.plywood-crates",
@@ -365,7 +442,17 @@
             "plywood",
             "plastic"
           ],
-          "weight": 1.0
+          "weight": 1,
+          "placement": {
+            "mount": "ground",
+            "canSupportProps": true,
+            "supportSurfaces": [
+              {
+                "id": "topSurface",
+                "role": "media-support"
+              }
+            ]
+          }
         },
         {
           "id": "support.cinderblock-plank",
@@ -385,7 +472,17 @@
             "weathered-wood",
             "concrete"
           ],
-          "weight": 1.0
+          "weight": 1,
+          "placement": {
+            "mount": "ground",
+            "canSupportProps": true,
+            "supportSurfaces": [
+              {
+                "id": "topSurface",
+                "role": "media-support"
+              }
+            ]
+          }
         },
         {
           "id": "support.filing-cabinet",
@@ -404,7 +501,17 @@
           "materials": [
             "painted-steel"
           ],
-          "weight": 1.0
+          "weight": 1,
+          "placement": {
+            "mount": "ground",
+            "canSupportProps": true,
+            "supportSurfaces": [
+              {
+                "id": "topSurface",
+                "role": "media-support"
+              }
+            ]
+          }
         },
         {
           "id": "support.cable-spool",
@@ -424,7 +531,17 @@
             "weathered-wood",
             "rusted-steel"
           ],
-          "weight": 1.0
+          "weight": 1,
+          "placement": {
+            "mount": "ground",
+            "canSupportProps": true,
+            "supportSurfaces": [
+              {
+                "id": "topSurface",
+                "role": "media-support"
+              }
+            ]
+          }
         },
         {
           "id": "support.school-desk",
@@ -443,7 +560,17 @@
             "laminate",
             "painted-steel"
           ],
-          "weight": 1.0
+          "weight": 1,
+          "placement": {
+            "mount": "ground",
+            "canSupportProps": true,
+            "supportSurfaces": [
+              {
+                "id": "topSurface",
+                "role": "media-support"
+              }
+            ]
+          }
         },
         {
           "id": "support.workbench-offcut",
@@ -463,7 +590,17 @@
             "dark-wood",
             "steel"
           ],
-          "weight": 1.0
+          "weight": 1,
+          "placement": {
+            "mount": "ground",
+            "canSupportProps": true,
+            "supportSurfaces": [
+              {
+                "id": "topSurface",
+                "role": "media-support"
+              }
+            ]
+          }
         },
         {
           "id": "support.cooler-stack",
@@ -483,7 +620,17 @@
             "plastic",
             "plywood"
           ],
-          "weight": 1.0
+          "weight": 1,
+          "placement": {
+            "mount": "ground",
+            "canSupportProps": true,
+            "supportSurfaces": [
+              {
+                "id": "topSurface",
+                "role": "media-support"
+              }
+            ]
+          }
         },
         {
           "id": "support.sawhorse-plank",
@@ -502,7 +649,17 @@
             "weathered-wood",
             "painted-steel"
           ],
-          "weight": 1.0
+          "weight": 1,
+          "placement": {
+            "mount": "ground",
+            "canSupportProps": true,
+            "supportSurfaces": [
+              {
+                "id": "topSurface",
+                "role": "media-support"
+              }
+            ]
+          }
         }
       ]
     },
@@ -537,7 +694,11 @@
           "materials": [
             "off-white-plastic"
           ],
-          "weight": 1.0
+          "weight": 1,
+          "placement": {
+            "mount": "ground",
+            "canSupportProps": false
+          }
         },
         {
           "id": "seat.monobloc-green",
@@ -556,7 +717,11 @@
           "materials": [
             "faded-green-plastic"
           ],
-          "weight": 1.0
+          "weight": 1,
+          "placement": {
+            "mount": "ground",
+            "canSupportProps": false
+          }
         },
         {
           "id": "seat.folding-metal",
@@ -575,7 +740,11 @@
             "painted-steel",
             "vinyl"
           ],
-          "weight": 1.0
+          "weight": 1,
+          "placement": {
+            "mount": "ground",
+            "canSupportProps": false
+          }
         },
         {
           "id": "seat.lawn-webbed",
@@ -595,7 +764,11 @@
             "aluminum",
             "woven-webbing"
           ],
-          "weight": 1.0
+          "weight": 1,
+          "placement": {
+            "mount": "ground",
+            "canSupportProps": false
+          }
         },
         {
           "id": "seat.kitchen-wood",
@@ -613,7 +786,11 @@
           "materials": [
             "varnished-wood"
           ],
-          "weight": 1.0
+          "weight": 1,
+          "placement": {
+            "mount": "ground",
+            "canSupportProps": false
+          }
         },
         {
           "id": "seat.office-task",
@@ -634,7 +811,11 @@
             "fabric",
             "steel"
           ],
-          "weight": 1.0
+          "weight": 1,
+          "placement": {
+            "mount": "ground",
+            "canSupportProps": false
+          }
         },
         {
           "id": "seat.shop-stool",
@@ -653,7 +834,11 @@
             "vinyl",
             "painted-steel"
           ],
-          "weight": 1.0
+          "weight": 1,
+          "placement": {
+            "mount": "ground",
+            "canSupportProps": false
+          }
         },
         {
           "id": "seat.diner-stool",
@@ -673,7 +858,11 @@
             "vinyl",
             "chrome"
           ],
-          "weight": 1.0
+          "weight": 1,
+          "placement": {
+            "mount": "ground",
+            "canSupportProps": false
+          }
         },
         {
           "id": "seat.milk-crate",
@@ -692,7 +881,11 @@
           "materials": [
             "colored-plastic"
           ],
-          "weight": 1.0
+          "weight": 1,
+          "placement": {
+            "mount": "ground",
+            "canSupportProps": false
+          }
         },
         {
           "id": "seat.upturned-bucket",
@@ -711,7 +904,11 @@
           "materials": [
             "white-plastic"
           ],
-          "weight": 1.0
+          "weight": 1,
+          "placement": {
+            "mount": "ground",
+            "canSupportProps": false
+          }
         },
         {
           "id": "seat.car-seat",
@@ -731,7 +928,11 @@
             "fabric",
             "steel"
           ],
-          "weight": 1.0
+          "weight": 1,
+          "placement": {
+            "mount": "ground",
+            "canSupportProps": false
+          }
         },
         {
           "id": "seat.pallet-bench",
@@ -750,7 +951,11 @@
           "materials": [
             "weathered-wood"
           ],
-          "weight": 1.0
+          "weight": 1,
+          "placement": {
+            "mount": "ground",
+            "canSupportProps": false
+          }
         },
         {
           "id": "seat.wood-bench",
@@ -769,7 +974,11 @@
             "dark-wood",
             "steel"
           ],
-          "weight": 1.0
+          "weight": 1,
+          "placement": {
+            "mount": "ground",
+            "canSupportProps": false
+          }
         },
         {
           "id": "seat.floor-cushion",
@@ -788,7 +997,11 @@
           "materials": [
             "faded-fabric"
           ],
-          "weight": 1.0
+          "weight": 1,
+          "placement": {
+            "mount": "ground",
+            "canSupportProps": false
+          }
         }
       ]
     },
@@ -819,7 +1032,7 @@
           "materials": [
             "quilted-fabric"
           ],
-          "weight": 1.0
+          "weight": 1
         },
         {
           "id": "soft.wool-blanket",
@@ -827,7 +1040,7 @@
           "dimensionsM": [
             1.4,
             0.04,
-            1.0
+            1
           ],
           "constructionRecipe": "soft-good",
           "tags": [
@@ -838,7 +1051,7 @@
           "materials": [
             "wool"
           ],
-          "weight": 1.0
+          "weight": 1
         },
         {
           "id": "soft.rug-runner",
@@ -857,7 +1070,7 @@
           "materials": [
             "woven-fabric"
           ],
-          "weight": 1.0
+          "weight": 1
         },
         {
           "id": "soft.rubber-mat",
@@ -876,7 +1089,7 @@
           "materials": [
             "rubber"
           ],
-          "weight": 1.0
+          "weight": 1
         },
         {
           "id": "soft.seat-cushion",
@@ -895,7 +1108,7 @@
             "fabric",
             "foam"
           ],
-          "weight": 1.0
+          "weight": 1
         },
         {
           "id": "soft.pillow",
@@ -913,7 +1126,7 @@
           "materials": [
             "fabric"
           ],
-          "weight": 1.0
+          "weight": 1
         },
         {
           "id": "soft.tarp-folded",
@@ -932,7 +1145,7 @@
           "materials": [
             "plastic-fabric"
           ],
-          "weight": 1.0
+          "weight": 1
         },
         {
           "id": "soft.tarp-draped",
@@ -951,7 +1164,7 @@
           "materials": [
             "plastic-fabric"
           ],
-          "weight": 1.0
+          "weight": 1
         },
         {
           "id": "soft.hoodie",
@@ -969,7 +1182,7 @@
           "materials": [
             "cotton"
           ],
-          "weight": 1.0
+          "weight": 1
         },
         {
           "id": "soft.shop-towel",
@@ -988,7 +1201,7 @@
           "materials": [
             "cotton"
           ],
-          "weight": 1.0
+          "weight": 1
         }
       ]
     },
@@ -1023,7 +1236,12 @@
             "green-glass",
             "paper-label"
           ],
-          "weight": 1.0
+          "weight": 1,
+          "placement": {
+            "mount": "surface",
+            "canSupportProps": false,
+            "requiresSupportSurface": true
+          }
         },
         {
           "id": "drink.wine.amber",
@@ -1043,7 +1261,12 @@
             "amber-glass",
             "paper-label"
           ],
-          "weight": 1.0
+          "weight": 1,
+          "placement": {
+            "mount": "surface",
+            "canSupportProps": false,
+            "requiresSupportSurface": true
+          }
         },
         {
           "id": "drink.wine.clear",
@@ -1063,7 +1286,12 @@
             "clear-glass",
             "paper-label"
           ],
-          "weight": 1.0
+          "weight": 1,
+          "placement": {
+            "mount": "surface",
+            "canSupportProps": false,
+            "requiresSupportSurface": true
+          }
         },
         {
           "id": "drink.beer.longneck",
@@ -1082,7 +1310,12 @@
             "brown-glass",
             "paper-label"
           ],
-          "weight": 1.0
+          "weight": 1,
+          "placement": {
+            "mount": "surface",
+            "canSupportProps": false,
+            "requiresSupportSurface": true
+          }
         },
         {
           "id": "drink.soda-bottle",
@@ -1100,7 +1333,12 @@
           "materials": [
             "green-glass"
           ],
-          "weight": 1.0
+          "weight": 1,
+          "placement": {
+            "mount": "surface",
+            "canSupportProps": false,
+            "requiresSupportSurface": true
+          }
         },
         {
           "id": "drink.can-silver",
@@ -1118,7 +1356,12 @@
           "materials": [
             "aluminum"
           ],
-          "weight": 1.0
+          "weight": 1,
+          "placement": {
+            "mount": "surface",
+            "canSupportProps": false,
+            "requiresSupportSurface": true
+          }
         },
         {
           "id": "drink.can-color",
@@ -1137,7 +1380,12 @@
           "materials": [
             "painted-aluminum"
           ],
-          "weight": 1.0
+          "weight": 1,
+          "placement": {
+            "mount": "surface",
+            "canSupportProps": false,
+            "requiresSupportSurface": true
+          }
         },
         {
           "id": "drink.coffee-mug",
@@ -1156,7 +1404,12 @@
           "materials": [
             "ceramic"
           ],
-          "weight": 1.0
+          "weight": 1,
+          "placement": {
+            "mount": "surface",
+            "canSupportProps": false,
+            "requiresSupportSurface": true
+          }
         },
         {
           "id": "drink.paper-cup",
@@ -1175,7 +1428,12 @@
             "paper",
             "plastic"
           ],
-          "weight": 1.0
+          "weight": 1,
+          "placement": {
+            "mount": "surface",
+            "canSupportProps": false,
+            "requiresSupportSurface": true
+          }
         },
         {
           "id": "drink.tumbler",
@@ -1193,7 +1451,12 @@
           "materials": [
             "clear-glass"
           ],
-          "weight": 1.0
+          "weight": 1,
+          "placement": {
+            "mount": "surface",
+            "canSupportProps": false,
+            "requiresSupportSurface": true
+          }
         },
         {
           "id": "clutter.ashtray-metal",
@@ -1211,7 +1474,12 @@
           "materials": [
             "stainless-steel"
           ],
-          "weight": 1.0
+          "weight": 1,
+          "placement": {
+            "mount": "surface",
+            "canSupportProps": false,
+            "requiresSupportSurface": true
+          }
         },
         {
           "id": "clutter.ashtray-glass",
@@ -1229,7 +1497,12 @@
           "materials": [
             "smoked-glass"
           ],
-          "weight": 1.0
+          "weight": 1,
+          "placement": {
+            "mount": "surface",
+            "canSupportProps": false,
+            "requiresSupportSurface": true
+          }
         },
         {
           "id": "clutter.cigarette-pack",
@@ -1247,7 +1520,12 @@
           "materials": [
             "printed-cardboard"
           ],
-          "weight": 1.0
+          "weight": 1,
+          "placement": {
+            "mount": "surface",
+            "canSupportProps": false,
+            "requiresSupportSurface": true
+          }
         },
         {
           "id": "clutter.lighter",
@@ -1266,7 +1544,12 @@
             "plastic",
             "metal"
           ],
-          "weight": 1.0
+          "weight": 1,
+          "placement": {
+            "mount": "surface",
+            "canSupportProps": false,
+            "requiresSupportSurface": true
+          }
         },
         {
           "id": "clutter.takeout-box",
@@ -1284,7 +1567,12 @@
           "materials": [
             "cardboard"
           ],
-          "weight": 1.0
+          "weight": 1,
+          "placement": {
+            "mount": "surface",
+            "canSupportProps": false,
+            "requiresSupportSurface": true
+          }
         },
         {
           "id": "clutter.snack-bag",
@@ -1302,7 +1590,12 @@
           "materials": [
             "foil-plastic"
           ],
-          "weight": 1.0
+          "weight": 1,
+          "placement": {
+            "mount": "surface",
+            "canSupportProps": false,
+            "requiresSupportSurface": true
+          }
         },
         {
           "id": "clutter.plate",
@@ -1320,7 +1613,12 @@
           "materials": [
             "ceramic"
           ],
-          "weight": 1.0
+          "weight": 1,
+          "placement": {
+            "mount": "surface",
+            "canSupportProps": false,
+            "requiresSupportSurface": true
+          }
         },
         {
           "id": "clutter.thermos",
@@ -1339,7 +1637,12 @@
           "materials": [
             "painted-steel"
           ],
-          "weight": 1.0
+          "weight": 1,
+          "placement": {
+            "mount": "surface",
+            "canSupportProps": false,
+            "requiresSupportSurface": true
+          }
         },
         {
           "id": "clutter.bottle-opener",
@@ -1358,7 +1661,12 @@
           "materials": [
             "steel"
           ],
-          "weight": 1.0
+          "weight": 1,
+          "placement": {
+            "mount": "surface",
+            "canSupportProps": false,
+            "requiresSupportSurface": true
+          }
         }
       ]
     },
@@ -1388,7 +1696,7 @@
           "materials": [
             "paper"
           ],
-          "weight": 1.0
+          "weight": 1
         },
         {
           "id": "personal.newspaper",
@@ -1406,7 +1714,7 @@
           "materials": [
             "paper"
           ],
-          "weight": 1.0
+          "weight": 1
         },
         {
           "id": "personal.notebook",
@@ -1425,7 +1733,7 @@
             "paper",
             "wire"
           ],
-          "weight": 1.0
+          "weight": 1
         },
         {
           "id": "personal.pen-cup",
@@ -1444,7 +1752,7 @@
             "plastic",
             "metal"
           ],
-          "weight": 1.0
+          "weight": 1
         },
         {
           "id": "personal.binoculars",
@@ -1464,7 +1772,7 @@
             "plastic",
             "glass"
           ],
-          "weight": 1.0
+          "weight": 1
         },
         {
           "id": "personal.cards",
@@ -1482,7 +1790,7 @@
           "materials": [
             "paper"
           ],
-          "weight": 1.0
+          "weight": 1
         },
         {
           "id": "personal.chess-tin",
@@ -1500,7 +1808,7 @@
           "materials": [
             "printed-metal"
           ],
-          "weight": 1.0
+          "weight": 1
         },
         {
           "id": "personal.toolbox-small",
@@ -1518,7 +1826,7 @@
           "materials": [
             "painted-steel"
           ],
-          "weight": 1.0
+          "weight": 1
         },
         {
           "id": "personal.screwdriver-set",
@@ -1537,7 +1845,7 @@
             "steel",
             "plastic"
           ],
-          "weight": 1.0
+          "weight": 1
         },
         {
           "id": "personal.tape-roll",
@@ -1555,7 +1863,7 @@
           "materials": [
             "black-vinyl"
           ],
-          "weight": 1.0
+          "weight": 1
         },
         {
           "id": "personal.remote",
@@ -1573,7 +1881,7 @@
           "materials": [
             "black-plastic"
           ],
-          "weight": 1.0
+          "weight": 1
         },
         {
           "id": "personal.keys",
@@ -1591,7 +1899,7 @@
           "materials": [
             "steel"
           ],
-          "weight": 1.0
+          "weight": 1
         },
         {
           "id": "personal.flashlight",
@@ -1611,7 +1919,7 @@
             "aluminum",
             "rubber"
           ],
-          "weight": 1.0
+          "weight": 1
         },
         {
           "id": "personal.radio",
@@ -1630,7 +1938,7 @@
             "plastic",
             "metal"
           ],
-          "weight": 1.0
+          "weight": 1
         }
       ]
     },
@@ -1665,7 +1973,7 @@
             "painted-aluminum",
             "steel"
           ],
-          "weight": 1.0
+          "weight": 1
         },
         {
           "id": "light.trouble-cage",
@@ -1685,7 +1993,7 @@
             "steel",
             "glass"
           ],
-          "weight": 1.0
+          "weight": 1
         },
         {
           "id": "light.desk-anglepoise",
@@ -1704,7 +2012,7 @@
           "materials": [
             "painted-steel"
           ],
-          "weight": 1.0
+          "weight": 1
         },
         {
           "id": "light.bare-cage",
@@ -1724,7 +2032,7 @@
             "steel",
             "glass"
           ],
-          "weight": 1.0
+          "weight": 1
         },
         {
           "id": "light.string-short",
@@ -1744,7 +2052,7 @@
             "black-wire",
             "glass"
           ],
-          "weight": 1.0
+          "weight": 1
         },
         {
           "id": "light.shop-fluorescent",
@@ -1764,7 +2072,7 @@
             "painted-steel",
             "diffuser"
           ],
-          "weight": 1.0
+          "weight": 1
         },
         {
           "id": "light.sodium-portable",
@@ -1784,7 +2092,7 @@
             "yellow-painted-steel",
             "glass"
           ],
-          "weight": 1.0
+          "weight": 1
         },
         {
           "id": "light.red-pilot-box",
@@ -1804,7 +2112,7 @@
             "painted-steel",
             "red-glass"
           ],
-          "weight": 1.0
+          "weight": 1
         },
         {
           "id": "light.green-panel",
@@ -1824,7 +2132,7 @@
             "painted-steel",
             "green-glass"
           ],
-          "weight": 1.0
+          "weight": 1
         },
         {
           "id": "light.neon-repair-stick",
@@ -1844,7 +2152,7 @@
             "glass",
             "metal"
           ],
-          "weight": 1.0
+          "weight": 1
         }
       ]
     },
@@ -1865,7 +2173,7 @@
           "id": "power.extension-orange",
           "label": "Orange extension cord",
           "dimensionsM": [
-            1.0,
+            1,
             0.03,
             0.03
           ],
@@ -1878,13 +2186,13 @@
           "materials": [
             "rubber"
           ],
-          "weight": 1.0
+          "weight": 1
         },
         {
           "id": "power.extension-black",
           "label": "Black extension cord",
           "dimensionsM": [
-            1.0,
+            1,
             0.03,
             0.03
           ],
@@ -1897,7 +2205,7 @@
           "materials": [
             "rubber"
           ],
-          "weight": 1.0
+          "weight": 1
         },
         {
           "id": "power.power-strip",
@@ -1917,7 +2225,7 @@
             "yellowed-plastic",
             "copper"
           ],
-          "weight": 1.0
+          "weight": 1
         },
         {
           "id": "power.cable-coil",
@@ -1935,13 +2243,13 @@
           "materials": [
             "black-rubber"
           ],
-          "weight": 1.0
+          "weight": 1
         },
         {
           "id": "power.coax-run",
           "label": "Coax run",
           "dimensionsM": [
-            1.0,
+            1,
             0.018,
             0.018
           ],
@@ -1953,7 +2261,7 @@
           "materials": [
             "black-rubber"
           ],
-          "weight": 1.0
+          "weight": 1
         },
         {
           "id": "power.adapter-brick",
@@ -1971,7 +2279,7 @@
           "materials": [
             "black-plastic"
           ],
-          "weight": 1.0
+          "weight": 1
         },
         {
           "id": "power.weather-box",
@@ -1990,7 +2298,7 @@
           "materials": [
             "gray-plastic"
           ],
-          "weight": 1.0
+          "weight": 1
         },
         {
           "id": "power.junction-box",
@@ -2009,7 +2317,7 @@
           "materials": [
             "galvanized-steel"
           ],
-          "weight": 1.0
+          "weight": 1
         }
       ]
     },
@@ -2042,7 +2350,7 @@
           "materials": [
             "galvanized-steel"
           ],
-          "weight": 1.0
+          "weight": 1
         },
         {
           "id": "roof.vent-box",
@@ -2060,7 +2368,7 @@
           "materials": [
             "galvanized-steel"
           ],
-          "weight": 1.0
+          "weight": 1
         },
         {
           "id": "roof.fan-cowl",
@@ -2078,7 +2386,7 @@
           "materials": [
             "painted-steel"
           ],
-          "weight": 1.0
+          "weight": 1
         },
         {
           "id": "roof.hvac-small",
@@ -2097,7 +2405,7 @@
             "painted-steel",
             "aluminum"
           ],
-          "weight": 1.0
+          "weight": 1
         },
         {
           "id": "roof.hvac-large",
@@ -2117,7 +2425,7 @@
             "painted-steel",
             "aluminum"
           ],
-          "weight": 1.0
+          "weight": 1
         },
         {
           "id": "roof.pipe-risers",
@@ -2136,7 +2444,7 @@
             "painted-steel",
             "copper"
           ],
-          "weight": 1.0
+          "weight": 1
         },
         {
           "id": "roof.conduit-rack",
@@ -2154,7 +2462,7 @@
           "materials": [
             "galvanized-steel"
           ],
-          "weight": 1.0
+          "weight": 1
         },
         {
           "id": "roof.cable-tray",
@@ -2172,7 +2480,7 @@
           "materials": [
             "galvanized-steel"
           ],
-          "weight": 1.0
+          "weight": 1
         },
         {
           "id": "roof.breaker-cabinet",
@@ -2190,7 +2498,7 @@
           "materials": [
             "painted-steel"
           ],
-          "weight": 1.0
+          "weight": 1
         },
         {
           "id": "roof.satellite-dish",
@@ -2208,7 +2516,7 @@
           "materials": [
             "painted-steel"
           ],
-          "weight": 1.0
+          "weight": 1
         },
         {
           "id": "roof.antenna-mast",
@@ -2227,7 +2535,7 @@
           "materials": [
             "galvanized-steel"
           ],
-          "weight": 1.0
+          "weight": 1
         },
         {
           "id": "roof.water-tank-small",
@@ -2246,7 +2554,7 @@
           "materials": [
             "dark-painted-steel"
           ],
-          "weight": 1.0
+          "weight": 1
         },
         {
           "id": "roof.drain",
@@ -2264,7 +2572,7 @@
           "materials": [
             "cast-iron"
           ],
-          "weight": 1.0
+          "weight": 1
         },
         {
           "id": "roof.tar-patch",
@@ -2283,7 +2591,7 @@
           "materials": [
             "bitumen"
           ],
-          "weight": 1.0
+          "weight": 1
         },
         {
           "id": "roof.pigeon-spikes",
@@ -2302,7 +2610,7 @@
           "materials": [
             "steel"
           ],
-          "weight": 1.0
+          "weight": 1
         }
       ]
     },
@@ -2342,14 +2650,14 @@
             "ceramic",
             "warm-emissive"
           ],
-          "weight": 1.0
+          "weight": 1
         },
         {
           "id": "tube.twin-triode",
           "label": "Twin-envelope triode monument",
           "dimensionsM": [
             1.9,
-            3.0,
+            3,
             1.2
           ],
           "constructionRecipe": "vacuum-tube-monument",
@@ -2364,7 +2672,7 @@
             "bakelite",
             "warm-emissive"
           ],
-          "weight": 1.0
+          "weight": 1
         },
         {
           "id": "tube.rectifier",
@@ -2386,7 +2694,7 @@
             "ceramic",
             "warm-emissive"
           ],
-          "weight": 1.0
+          "weight": 1
         },
         {
           "id": "tube.thyratron",
@@ -2408,7 +2716,7 @@
             "ceramic",
             "dim-emissive"
           ],
-          "weight": 1.0
+          "weight": 1
         },
         {
           "id": "tube.radio-bottle",
@@ -2430,7 +2738,7 @@
             "black-bakelite",
             "warm-emissive"
           ],
-          "weight": 1.0
+          "weight": 1
         },
         {
           "id": "tube.metal-base",
@@ -2452,7 +2760,7 @@
             "white-ceramic",
             "warm-emissive"
           ],
-          "weight": 1.0
+          "weight": 1
         },
         {
           "id": "tube.caged-broadcast",
@@ -2460,7 +2768,7 @@
           "dimensionsM": [
             2.2,
             3.8,
-            2.0
+            2
           ],
           "constructionRecipe": "vacuum-tube-monument",
           "tags": [
@@ -2475,7 +2783,7 @@
             "ceramic",
             "warm-emissive"
           ],
-          "weight": 1.0
+          "weight": 1
         }
       ]
     },
@@ -2507,7 +2815,7 @@
             "black-plastic",
             "steel"
           ],
-          "weight": 1.0
+          "weight": 1
         },
         {
           "id": "electronics.scanner",
@@ -2525,7 +2833,7 @@
           "materials": [
             "gray-plastic"
           ],
-          "weight": 1.0
+          "weight": 1
         },
         {
           "id": "electronics.multimeter",
@@ -2545,7 +2853,7 @@
             "cream-plastic",
             "glass"
           ],
-          "weight": 1.0
+          "weight": 1
         },
         {
           "id": "electronics.solder-iron",
@@ -2564,7 +2872,7 @@
             "steel",
             "black-plastic"
           ],
-          "weight": 1.0
+          "weight": 1
         },
         {
           "id": "electronics.parts-tin",
@@ -2582,7 +2890,7 @@
           "materials": [
             "printed-metal"
           ],
-          "weight": 1.0
+          "weight": 1
         },
         {
           "id": "electronics.crt-test-pattern-card",
@@ -2601,7 +2909,7 @@
           "materials": [
             "paper"
           ],
-          "weight": 1.0
+          "weight": 1
         },
         {
           "id": "electronics.antenna-loop",
@@ -2620,7 +2928,7 @@
             "copper",
             "plastic"
           ],
-          "weight": 1.0
+          "weight": 1
         },
         {
           "id": "electronics.timer-box",
@@ -2640,7 +2948,7 @@
             "painted-steel",
             "indicator-glass"
           ],
-          "weight": 1.0
+          "weight": 1
         }
       ]
     },
@@ -2674,7 +2982,7 @@
             "terracotta",
             "green-leaf"
           ],
-          "weight": 1.0
+          "weight": 1
         },
         {
           "id": "plant.pothos-bucket",
@@ -2694,7 +3002,7 @@
             "plastic",
             "green-leaf"
           ],
-          "weight": 1.0
+          "weight": 1
         },
         {
           "id": "plant.herb-tin",
@@ -2714,7 +3022,7 @@
             "metal",
             "green-leaf"
           ],
-          "weight": 1.0
+          "weight": 1
         },
         {
           "id": "plant.dead-planter",
@@ -2734,7 +3042,7 @@
             "plastic",
             "brown-leaf"
           ],
-          "weight": 1.0
+          "weight": 1
         },
         {
           "id": "plant.volunteer-weed",
@@ -2753,7 +3061,7 @@
           "materials": [
             "green-leaf"
           ],
-          "weight": 1.0
+          "weight": 1
         }
       ]
     }
@@ -2775,6 +3083,17 @@
       "pristine showroom objects",
       "generic sci-fi holograms",
       "random cyberpunk greeble with no use"
+    ]
+  },
+  "placementContract": {
+    "schema": "jweb.asset-placement-contract.v1",
+    "defaultCanSupportProps": false,
+    "independentAxes": [
+      "mount",
+      "placementAffinity",
+      "climbable",
+      "canSupportProps",
+      "supportSurfaces"
     ]
   }
 }

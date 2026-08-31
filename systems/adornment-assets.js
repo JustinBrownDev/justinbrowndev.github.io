@@ -1,6 +1,7 @@
 import * as THREE from '../vendor/three/three.module.js';
 import { GLTFLoader } from '../vendor/three/addons/loaders/GLTFLoader.js';
 import { CLAUDE_CITY_ASSETS } from '../vendor/city-pack/asset-catalog.js';
+import { cityAssetPlacementMetadata } from '../vendor/city-pack/placement-metadata.js';
 import { QP } from '../runtime/main-quantitative-literals.js';
 import { createPriorityLoadQueue } from '../priority-load-queue.js';
 import { CELL_SIDE_DEFS, outwardRotationY } from './cardinal.js';
@@ -398,8 +399,8 @@ export function createAdornmentSystem({ CONFIG, camera, scene, pick, randRange, 
         };
     }
     function semanticRecordSupport(rect, yLevel, pose, def) {
-        const kind = def?.kind || '';
-        if (!/(workbench|server_bench|desk|table|bench)/i.test(kind)) return;
+        const placement = cityAssetPlacementMetadata(def);
+        if (!placement.canSupportProps || !placement.supportSurfaces.length) return;
         const state = semanticFloorState(rect, yLevel);
         const { dims } = semanticAssetBounds(def);
          
@@ -407,6 +408,9 @@ export function createAdornmentSystem({ CONFIG, camera, scene, pick, randRange, 
         state.supports.push({
             x: pose.x, z: pose.z, rotY: pose.rotY,
             y: yLevel + Math.min(QP[469], Math.max(QP[470], dims[QP[471]] * QP[472])),
+            supportAssetId: def.id,
+            supportSurface: placement.supportSurfaces[0].id,
+            supportRole: placement.supportSurfaces[0].role,
         });
     }
     function ensureSemanticSupport(rect, yLevel) {

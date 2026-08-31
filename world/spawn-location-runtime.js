@@ -151,6 +151,7 @@ export function createSpawnComposition(runtime, stableKey) {
                 dimensionsM: [...variant.dimensionsM],
                 constructionRecipe: variant.constructionRecipe,
                 tags: [...(variant.tags ?? [])],
+                placement: clonePlain(variant.placement ?? null),
             });
         }
         selected.push({

@@ -160,7 +160,7 @@
       "families": [
         "spawn.support.tv"
       ],
-      "relationship": "supports primary-tv"
+      "relationship": "supports primary-tv when that variant requires a surface; otherwise acts as the refuge shared surface"
     },
     {
       "slot": "seating",
@@ -358,7 +358,7 @@
     ],
     "matchingFurniturePenalty": 0.75,
     "symmetryPenalty": 0.85,
-    "luxuryPenalty": 1.0
+    "luxuryPenalty": 1
   },
   "progressiveRealization": [
     {

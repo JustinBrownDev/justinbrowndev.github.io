@@ -141,10 +141,44 @@ function makePlacement({ locationId, slot, pick, index, x, y, z, rotY = 0, relat
         label: pick?.label ?? slot,
         constructionRecipe: pick?.constructionRecipe ?? null,
         dimensionsM,
+        placement: pick?.placement ?? null,
+        mount: pick?.placement?.mount ?? null,
         relationTo,
         transform: { x, y, z, rotY },
         phase: 'memory-silhouette',
     };
+}
+
+function wallMountedPose(hostSpace, pose, pick, dims, blockers) {
+    const candidates = [];
+    const width = dims[0], height = dims[1], depth = dims[2];
+    const wallOffset = Math.max(0.01, finite(Number(pick?.placement?.wallOffsetM), 0.03));
+    const centerHeight = Math.max(height * 0.5 + 0.25, finite(Number(pick?.placement?.centerHeightAboveSurfaceM), 1.35));
+    const hostCenter = { x: finite(hostSpace?.bounds?.x, pose.x), z: finite(hostSpace?.bounds?.z, pose.z) };
+    for (const wall of hostSpace?.nearbyWalls ?? []) {
+        const x1 = Number(wall?.x1), z1 = Number(wall?.z1), x2 = Number(wall?.x2), z2 = Number(wall?.z2);
+        if (![x1, z1, x2, z2].every(Number.isFinite)) continue;
+        const dx = x2 - x1, dz = z2 - z1;
+        const length = Math.hypot(dx, dz);
+        if (length < width + 0.18) continue;
+        const tx = dx / length, tz = dz / length;
+        let nx = -tz, nz = tx;
+        const mx = (x1 + x2) * 0.5, mz = (z1 + z2) * 0.5;
+        if ((hostCenter.x - mx) * nx + (hostCenter.z - mz) * nz < 0) { nx = -nx; nz = -nz; }
+        const x = mx + nx * (depth * 0.5 + wallOffset);
+        const z = mz + nz * (depth * 0.5 + wallOffset);
+        const y = hostSpace.surfaceY + centerHeight;
+        const box = normalizedBox({
+            x, z,
+            halfX: Math.abs(tx) * width * 0.5 + Math.abs(nx) * depth * 0.5,
+            halfZ: Math.abs(tz) * width * 0.5 + Math.abs(nz) * depth * 0.5,
+            yMin: y - height * 0.5,
+            yMax: y + height * 0.5,
+        });
+        if (blockers.some(other => boxesOverlap(box, other, 0.04))) continue;
+        candidates.push({ x, y, z, rotY: facingRotation({ x, z }, { x: x + nx, z: z + nz }), box, score: Math.hypot(x - pose.x, z - pose.z) });
+    }
+    return candidates.sort((a, b) => b.score - a.score || a.x - b.x || a.z - b.z)[0] ?? null;
 }
 
 function chooseSupportPlacement({ locationId, pose, hostSpace, blockers, composition }) {
@@ -153,13 +187,15 @@ function chooseSupportPlacement({ locationId, pose, hostSpace, blockers, composi
     if (!supportPick || !tvPick) return null;
     const supportDims = dimsOf(supportPick, [0.92, 0.72, 0.48]);
     const tvDims = dimsOf(tvPick, [0.82, 0.62, 0.38]);
-    const halfX = Math.max(supportDims[0], tvDims[0]) * 0.5;
-    const halfZ = Math.max(supportDims[2], tvDims[2]) * 0.5;
+    const wallMounted = tvPick?.placement?.mount === 'wall';
+    const halfX = (wallMounted ? supportDims[0] : Math.max(supportDims[0], tvDims[0])) * 0.5;
+    const halfZ = (wallMounted ? supportDims[2] : Math.max(supportDims[2], tvDims[2])) * 0.5;
     const candidates = candidateCenters(hostSpace, halfX, halfZ)
         .map(point => {
             const box = normalizedBox({
                 x: point.x, z: point.z, halfX, halfZ,
-                yMin: hostSpace.surfaceY, yMax: hostSpace.surfaceY + supportDims[1] + tvDims[1],
+                yMin: hostSpace.surfaceY,
+                yMax: hostSpace.surfaceY + supportDims[1] + (wallMounted ? 0 : tvDims[1]),
             });
             const distanceFromSpawn = Math.hypot(point.x - pose.x, point.z - pose.z);
             return { ...point, box, score: distanceFromSpawn };
@@ -174,6 +210,18 @@ function chooseSupportPlacement({ locationId, pose, hostSpace, blockers, composi
         x: chosen.x, y: hostSpace.surfaceY + supportDims[1] * 0.5, z: chosen.z, rotY,
         fallbackDims: supportDims,
     });
+
+    if (wallMounted) {
+        const wallPose = wallMountedPose(hostSpace, pose, tvPick, tvDims, blockers);
+        if (!wallPose) return null;
+        const tv = makePlacement({
+            locationId, slot: 'primary-tv', pick: tvPick, index: 0,
+            x: wallPose.x, y: wallPose.y, z: wallPose.z, rotY: wallPose.rotY,
+            fallbackDims: tvDims,
+        });
+        return { support, tv, footprint: chosen.box, tvFootprint: wallPose.box };
+    }
+
     const tv = makePlacement({
         locationId, slot: 'primary-tv', pick: tvPick, index: 0,
         x: chosen.x,
@@ -295,6 +343,17 @@ export function compileSpawnSpatialPlan({
         });
         reservations.push(clusterReservation);
         structuralBlockers.push(clusterReservation);
+        if (tvCluster.tvFootprint) {
+            const tvReservation = normalizedBox({
+                ...tvCluster.tvFootprint,
+                id: `${locationId}:wall-tv-envelope`,
+                kind: 'spawn-wall-mounted-envelope',
+                ownerId: tvCluster.tv.instanceId,
+                source: 'spawn-spatial-plan',
+            });
+            reservations.push(tvReservation);
+            structuralBlockers.push(tvReservation);
+        }
     } else {
         unresolved.push('primary-tv', 'tv-support');
     }

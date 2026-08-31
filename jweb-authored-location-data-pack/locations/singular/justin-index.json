@@ -1,0 +1,63 @@
+{
+  "schema": "jweb.authored-location.v1",
+  "id": "singular.justin-index",
+  "legacyType": "justinIndex",
+  "exterior": {
+    "name": "Records",
+    "subtitle": "Dept. of"
+  },
+  "identity": "A bureaucratic records labyrinth about identity as data: reception, labeled cabinets, shelves, lockers, system noise, decoy identities, and increasingly deep stacks. It is not a biographical shrine.",
+  "requiredSpaces": [
+    "recordsLobby",
+    "searchHall",
+    "deepStacks",
+    "rearStacks",
+    "upperStacks as height allows"
+  ],
+  "requiredBeats": [
+    "reception or records desk near entrance",
+    "dense cabinets/shelves create navigable stack routes",
+    "some fixtures receive real decoy-record labels",
+    "system-noise panels intermingle with identity records",
+    "upper floors become deeper and more archival rather than more decorative"
+  ],
+  "contentBindings": [
+    {
+      "key": "decoy-identities",
+      "legacySource": "CONFIG.billboards.decoyIdentities"
+    },
+    {
+      "key": "system-noise",
+      "legacySource": "CONFIG.billboards.systemNoise / curated system pairs"
+    }
+  ],
+  "assetFamilies": [
+    "filing cabinets",
+    "archive shelves",
+    "locker banks",
+    "desk",
+    "chair",
+    "placards",
+    "wall panels"
+  ],
+  "variation": {
+    "allowed": [
+      "which decoy labels appear",
+      "cabinet/shelf mix",
+      "stack density",
+      "route shape"
+    ],
+    "forbidden": [
+      "making every record literally Justin Brown",
+      "celebrity biography framing",
+      "one-room records office"
+    ]
+  },
+  "progressivePriority": [
+    "structure/routes",
+    "lobby/reception",
+    "first stack rows",
+    "record labels/noise",
+    "upper/deep stack life"
+  ]
+}

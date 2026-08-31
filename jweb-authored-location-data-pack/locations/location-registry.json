@@ -1,0 +1,14 @@
+{
+  "schema": "jweb.location-registry.v1",
+  "singular": [
+    "spawn.rooftop-reality-leak",
+    "singular.art-gallery",
+    "singular.as400-archive",
+    "singular.justin-index",
+    "singular.systems-workshop",
+    "singular.lore-museum",
+    "singular.future-reserved"
+  ],
+  "generatedSource": "locations/generated/generated-location-families.json",
+  "rule": "Singular and generated locations share the same declarative semantics. Singularity changes placement/identity guarantees, not the existence of a second geometry engine."
+}

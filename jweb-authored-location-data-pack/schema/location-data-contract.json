@@ -1,0 +1,44 @@
+{
+  "schema": "jweb.location-data-contract.v1",
+  "locationRequired": [
+    "schema",
+    "id",
+    "identity"
+  ],
+  "principles": [
+    "Fabric/topology truth is external authority; location data never cuts its own hole through walls or circulation.",
+    "Location data declares meaning, relationships, progressive phases and variation; realization chooses geometry/assets later.",
+    "Stable semantic identity survives proxy-to-final visual refinement.",
+    "Required beats are stronger than exact object identity.",
+    "Authored procedural means invariant memory with variant evidence.",
+    "Generated locations and singular landmarks use one conceptual data model.",
+    "External media is runtime-only and nonauthoritative."
+  ],
+  "recommendedFields": [
+    "kind",
+    "role",
+    "thesis",
+    "hardInvariants",
+    "zones",
+    "compositionSlots",
+    "requiredSpaces",
+    "requiredBeats",
+    "variation",
+    "progressivePriority",
+    "semanticRequirements",
+    "contentBindings"
+  ],
+  "assetFamilyContract": [
+    "id",
+    "semanticRoles",
+    "variants"
+  ],
+  "variantRequired": [
+    "id",
+    "label",
+    "dimensionsM",
+    "constructionRecipe",
+    "tags",
+    "materials"
+  ]
+}

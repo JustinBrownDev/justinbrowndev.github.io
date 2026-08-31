@@ -1,0 +1,106 @@
+{
+  "schema": "jweb.authored-location.v1",
+  "id": "singular.art-gallery",
+  "legacyType": "artGallery",
+  "exterior": {
+    "name": "no food or drink allowed",
+    "subtitle": "Art Gallery"
+  },
+  "identity": "A compact personal art gallery embedded in the city rather than a neutral white-box museum.",
+  "requiredSpaces": [
+    "vestibule",
+    "mainGallery",
+    "sideGalleryA",
+    "sideGalleryB",
+    "courtyard",
+    "upperGallery",
+    "service/storage as footprint allows"
+  ],
+  "requiredBeats": [
+    "real named works are the subject, not procedural filler",
+    "main gallery gets the featured self portrait",
+    "Organic TV is a pedestal/courtyard sculptural beat",
+    "upper level holds web-project pieces when topology allows",
+    "placards retain work title and medium/source description"
+  ],
+  "catalog": [
+    {
+      "id": "teeth",
+      "title": "'TEETH'",
+      "medium": "acrylic on canvas",
+      "kind": "wall",
+      "preferredSpace": "sideGalleryA"
+    },
+    {
+      "id": "selfPortrait",
+      "title": "SELF PORTRAIT",
+      "medium": "acrylic on canvas",
+      "kind": "wall",
+      "featured": true,
+      "preferredSpace": "mainGallery"
+    },
+    {
+      "id": "garyFischer",
+      "title": "'GARY FISCHER'",
+      "medium": "india ink on paper",
+      "kind": "wall",
+      "preferredSpace": "sideGalleryA"
+    },
+    {
+      "id": "theFish",
+      "title": "'THE FISH'",
+      "medium": "linoleum print",
+      "kind": "wall",
+      "preferredSpace": "sideGalleryB"
+    },
+    {
+      "id": "organicTV",
+      "title": "ORGANIC TV",
+      "medium": "cast iron - lost wax",
+      "kind": "pedestal",
+      "featured": true,
+      "preferredSpace": "courtyard"
+    },
+    {
+      "id": "puppetHead",
+      "title": "PUPPET HEAD",
+      "medium": "wire & tissue paper",
+      "kind": "wall",
+      "preferredSpace": "sideGalleryB"
+    },
+    {
+      "id": "vitalsage",
+      "title": "VITALSAGE",
+      "medium": "wordpress build, 2024",
+      "kind": "wall",
+      "preferredSpace": "upperGallery"
+    },
+    {
+      "id": "brandyoupromo",
+      "title": "BRANDYOUPROMO",
+      "medium": "asp.net site, 2022",
+      "kind": "wall",
+      "preferredSpace": "upperGallery"
+    }
+  ],
+  "variation": {
+    "allowed": [
+      "footprint",
+      "route through rooms",
+      "wall assignment within preferred space",
+      "bench/plant/service dressing"
+    ],
+    "forbidden": [
+      "renaming works",
+      "inventing replacement artist biography",
+      "turning Organic TV into the live rooftop television"
+    ]
+  },
+  "progressivePriority": [
+    "structure/routes",
+    "featured works",
+    "remaining works/placards",
+    "gallery furniture",
+    "ambient dressing"
+  ]
+}

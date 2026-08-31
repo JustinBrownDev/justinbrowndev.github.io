@@ -1,0 +1,594 @@
+{
+  "schema": "jweb.spawn-composition-samples.v1",
+  "note": "Dry-run content selections only. Not runtime placement.",
+  "samples": [
+    {
+      "seed": "spearhead-1",
+      "story": "two-person-late-shift",
+      "identityBeats": [
+        "safe-arrival",
+        "social-media-focus",
+        "human-refuge",
+        "recent-presence",
+        "warm-cool-split",
+        "skyline-electronics-icon",
+        "real-roof-context",
+        "city-exit"
+      ],
+      "selected": {
+        "tv": "tv.field.video-monitor",
+        "support": "support.school-desk",
+        "seating": [
+          "seat.office-task",
+          "seat.monobloc-white",
+          "seat.wood-bench",
+          "seat.milk-crate"
+        ],
+        "soft": [
+          "soft.moving-blanket",
+          "soft.seat-cushion"
+        ],
+        "drinks": [
+          "clutter.plate",
+          "clutter.cigarette-pack",
+          "clutter.lighter",
+          "drink.soda-bottle"
+        ],
+        "personal": [
+          "personal.chess-tin",
+          "personal.radio",
+          "personal.flashlight"
+        ],
+        "light": "light.clamp",
+        "power": [
+          "power.cable-coil",
+          "power.junction-box",
+          "power.extension-black"
+        ],
+        "utilities": [
+          "roof.conduit-rack",
+          "roof.vent-box",
+          "roof.breaker-cabinet",
+          "roof.fan-cowl",
+          "roof.antenna-mast"
+        ],
+        "tube": "tube.rectifier",
+        "plants": []
+      }
+    },
+    {
+      "seed": "spearhead-2",
+      "story": "solitary-news-and-wine",
+      "identityBeats": [
+        "safe-arrival",
+        "social-media-focus",
+        "human-refuge",
+        "recent-presence",
+        "warm-cool-split",
+        "skyline-electronics-icon",
+        "real-roof-context",
+        "city-exit"
+      ],
+      "selected": {
+        "tv": "tv.flat.office-monitor",
+        "support": "support.cooler-stack",
+        "seating": [
+          "seat.diner-stool",
+          "seat.kitchen-wood"
+        ],
+        "soft": [],
+        "drinks": [
+          "drink.soda-bottle",
+          "drink.can-color"
+        ],
+        "personal": [
+          "electronics.solder-iron",
+          "electronics.antenna-loop",
+          "electronics.scanner",
+          "electronics.parts-tin"
+        ],
+        "light": "light.bare-cage",
+        "power": [
+          "power.cable-coil"
+        ],
+        "utilities": [
+          "roof.water-tank-small",
+          "roof.fan-cowl",
+          "roof.breaker-cabinet"
+        ],
+        "tube": "tube.metal-base",
+        "plants": [
+          "plant.herb-tin"
+        ]
+      }
+    },
+    {
+      "seed": "spearhead-3",
+      "story": "solitary-news-and-wine",
+      "identityBeats": [
+        "safe-arrival",
+        "social-media-focus",
+        "human-refuge",
+        "recent-presence",
+        "warm-cool-split",
+        "skyline-electronics-icon",
+        "real-roof-context",
+        "city-exit"
+      ],
+      "selected": {
+        "tv": "tv.crt.motel-woodgrain",
+        "support": "support.cooler-stack",
+        "seating": [
+          "seat.folding-metal",
+          "seat.wood-bench",
+          "seat.car-seat",
+          "seat.lawn-webbed"
+        ],
+        "soft": [
+          "soft.rubber-mat"
+        ],
+        "drinks": [
+          "clutter.ashtray-glass",
+          "clutter.thermos",
+          "clutter.takeout-box",
+          "drink.can-silver"
+        ],
+        "personal": [
+          "personal.screwdriver-set",
+          "personal.binoculars",
+          "personal.newspaper"
+        ],
+        "light": "light.trouble-cage",
+        "power": [
+          "power.weather-box"
+        ],
+        "utilities": [
+          "roof.vent-mushroom",
+          "roof.fan-cowl",
+          "roof.cable-tray"
+        ],
+        "tube": "tube.rectifier",
+        "plants": [
+          "plant.volunteer-weed"
+        ]
+      }
+    },
+    {
+      "seed": "spearhead-4",
+      "story": "radio-and-tv-watch",
+      "identityBeats": [
+        "safe-arrival",
+        "social-media-focus",
+        "human-refuge",
+        "recent-presence",
+        "warm-cool-split",
+        "skyline-electronics-icon",
+        "real-roof-context",
+        "city-exit"
+      ],
+      "selected": {
+        "tv": "tv.crt.portable-handle",
+        "support": "support.plywood-crates",
+        "seating": [
+          "seat.shop-stool",
+          "seat.folding-metal",
+          "seat.milk-crate",
+          "seat.office-task"
+        ],
+        "soft": [
+          "soft.wool-blanket"
+        ],
+        "drinks": [
+          "clutter.ashtray-glass",
+          "clutter.takeout-box",
+          "drink.coffee-mug"
+        ],
+        "personal": [
+          "electronics.crt-test-pattern-card",
+          "electronics.timer-box",
+          "electronics.scanner",
+          "electronics.parts-tin"
+        ],
+        "light": "light.string-short",
+        "power": [
+          "power.adapter-brick",
+          "power.coax-run"
+        ],
+        "utilities": [
+          "roof.antenna-mast",
+          "roof.conduit-rack",
+          "roof.vent-mushroom"
+        ],
+        "tube": "tube.thyratron",
+        "plants": []
+      }
+    },
+    {
+      "seed": "spearhead-5",
+      "story": "radio-and-tv-watch",
+      "identityBeats": [
+        "safe-arrival",
+        "social-media-focus",
+        "human-refuge",
+        "recent-presence",
+        "warm-cool-split",
+        "skyline-electronics-icon",
+        "real-roof-context",
+        "city-exit"
+      ],
+      "selected": {
+        "tv": "tv.flat.wall-salvage",
+        "support": "support.filing-cabinet",
+        "seating": [
+          "seat.kitchen-wood",
+          "seat.office-task",
+          "seat.lawn-webbed",
+          "seat.pallet-bench"
+        ],
+        "soft": [],
+        "drinks": [
+          "drink.soda-bottle",
+          "clutter.plate"
+        ],
+        "personal": [
+          "personal.keys",
+          "personal.cards"
+        ],
+        "light": "light.red-pilot-box",
+        "power": [
+          "power.cable-coil",
+          "power.power-strip"
+        ],
+        "utilities": [
+          "roof.breaker-cabinet",
+          "roof.hvac-large"
+        ],
+        "tube": "tube.caged-broadcast",
+        "plants": [
+          "plant.dead-planter"
+        ]
+      }
+    },
+    {
+      "seed": "spearhead-6",
+      "story": "snack-and-game",
+      "identityBeats": [
+        "safe-arrival",
+        "social-media-focus",
+        "human-refuge",
+        "recent-presence",
+        "warm-cool-split",
+        "skyline-electronics-icon",
+        "real-roof-context",
+        "city-exit"
+      ],
+      "selected": {
+        "tv": "tv.crt.portable-handle",
+        "support": "support.sawhorse-plank",
+        "seating": [
+          "seat.monobloc-green",
+          "seat.diner-stool",
+          "seat.upturned-bucket"
+        ],
+        "soft": [
+          "soft.moving-blanket"
+        ],
+        "drinks": [
+          "clutter.snack-bag",
+          "clutter.lighter"
+        ],
+        "personal": [
+          "electronics.parts-tin",
+          "electronics.multimeter",
+          "electronics.vhf-radio"
+        ],
+        "light": "light.neon-repair-stick",
+        "power": [
+          "power.extension-black"
+        ],
+        "utilities": [
+          "roof.pigeon-spikes",
+          "roof.water-tank-small",
+          "roof.breaker-cabinet"
+        ],
+        "tube": "tube.rectifier",
+        "plants": []
+      }
+    },
+    {
+      "seed": "spearhead-7",
+      "story": "radio-and-tv-watch",
+      "identityBeats": [
+        "safe-arrival",
+        "social-media-focus",
+        "human-refuge",
+        "recent-presence",
+        "warm-cool-split",
+        "skyline-electronics-icon",
+        "real-roof-context",
+        "city-exit"
+      ],
+      "selected": {
+        "tv": "tv.field.video-monitor",
+        "support": "support.filing-cabinet",
+        "seating": [
+          "seat.milk-crate",
+          "seat.shop-stool",
+          "seat.monobloc-white"
+        ],
+        "soft": [
+          "soft.moving-blanket",
+          "soft.seat-cushion"
+        ],
+        "drinks": [
+          "drink.tumbler",
+          "clutter.ashtray-metal",
+          "drink.coffee-mug",
+          "clutter.cigarette-pack"
+        ],
+        "personal": [
+          "electronics.antenna-loop",
+          "electronics.multimeter",
+          "electronics.crt-test-pattern-card",
+          "electronics.solder-iron"
+        ],
+        "light": "light.neon-repair-stick",
+        "power": [
+          "power.adapter-brick",
+          "power.weather-box",
+          "power.cable-coil"
+        ],
+        "utilities": [
+          "roof.hvac-small",
+          "roof.fan-cowl",
+          "roof.antenna-mast"
+        ],
+        "tube": "tube.radio-bottle",
+        "plants": []
+      }
+    },
+    {
+      "seed": "spearhead-8",
+      "story": "rain-cover-night",
+      "identityBeats": [
+        "safe-arrival",
+        "social-media-focus",
+        "human-refuge",
+        "recent-presence",
+        "warm-cool-split",
+        "skyline-electronics-icon",
+        "real-roof-context",
+        "city-exit"
+      ],
+      "selected": {
+        "tv": "tv.crt.shop-counter",
+        "support": "support.plywood-crates",
+        "seating": [
+          "seat.diner-stool",
+          "seat.pallet-bench"
+        ],
+        "soft": [
+          "soft.shop-towel"
+        ],
+        "drinks": [
+          "clutter.takeout-box",
+          "drink.beer.longneck",
+          "clutter.lighter"
+        ],
+        "personal": [
+          "electronics.scanner",
+          "electronics.parts-tin",
+          "electronics.antenna-loop",
+          "electronics.solder-iron"
+        ],
+        "light": "light.bare-cage",
+        "power": [
+          "power.weather-box",
+          "power.junction-box",
+          "power.extension-orange"
+        ],
+        "utilities": [
+          "roof.pigeon-spikes",
+          "roof.tar-patch"
+        ],
+        "tube": "tube.metal-base",
+        "plants": []
+      }
+    },
+    {
+      "seed": "spearhead-9",
+      "story": "quiet-lookout",
+      "identityBeats": [
+        "safe-arrival",
+        "social-media-focus",
+        "human-refuge",
+        "recent-presence",
+        "warm-cool-split",
+        "skyline-electronics-icon",
+        "real-roof-context",
+        "city-exit"
+      ],
+      "selected": {
+        "tv": "tv.crt.shop-counter",
+        "support": "support.school-desk",
+        "seating": [
+          "seat.lawn-webbed",
+          "seat.wood-bench"
+        ],
+        "soft": [],
+        "drinks": [
+          "drink.can-silver",
+          "drink.wine.amber"
+        ],
+        "personal": [
+          "electronics.crt-test-pattern-card",
+          "electronics.parts-tin"
+        ],
+        "light": "light.green-panel",
+        "power": [
+          "power.adapter-brick",
+          "power.power-strip",
+          "power.junction-box"
+        ],
+        "utilities": [
+          "roof.satellite-dish",
+          "roof.drain",
+          "roof.breaker-cabinet",
+          "roof.vent-mushroom"
+        ],
+        "tube": "tube.radio-bottle",
+        "plants": [
+          "plant.volunteer-weed"
+        ]
+      }
+    },
+    {
+      "seed": "spearhead-10",
+      "story": "solitary-news-and-wine",
+      "identityBeats": [
+        "safe-arrival",
+        "social-media-focus",
+        "human-refuge",
+        "recent-presence",
+        "warm-cool-split",
+        "skyline-electronics-icon",
+        "real-roof-context",
+        "city-exit"
+      ],
+      "selected": {
+        "tv": "tv.crt.portable-handle",
+        "support": "support.cable-spool",
+        "seating": [
+          "seat.car-seat",
+          "seat.monobloc-white",
+          "seat.wood-bench",
+          "seat.lawn-webbed"
+        ],
+        "soft": [
+          "soft.rubber-mat",
+          "soft.rug-runner"
+        ],
+        "drinks": [
+          "clutter.takeout-box",
+          "clutter.snack-bag"
+        ],
+        "personal": [
+          "personal.notebook",
+          "personal.magazine-stack",
+          "personal.binoculars",
+          "personal.keys"
+        ],
+        "light": "light.clamp",
+        "power": [
+          "power.adapter-brick",
+          "power.weather-box",
+          "power.coax-run"
+        ],
+        "utilities": [
+          "roof.tar-patch",
+          "roof.pigeon-spikes",
+          "roof.water-tank-small",
+          "roof.drain"
+        ],
+        "tube": "tube.twin-triode",
+        "plants": []
+      }
+    },
+    {
+      "seed": "spearhead-11",
+      "story": "snack-and-game",
+      "identityBeats": [
+        "safe-arrival",
+        "social-media-focus",
+        "human-refuge",
+        "recent-presence",
+        "warm-cool-split",
+        "skyline-electronics-icon",
+        "real-roof-context",
+        "city-exit"
+      ],
+      "selected": {
+        "tv": "tv.flat.wall-salvage",
+        "support": "support.workbench-offcut",
+        "seating": [
+          "seat.folding-metal",
+          "seat.diner-stool",
+          "seat.kitchen-wood"
+        ],
+        "soft": [],
+        "drinks": [
+          "drink.beer.longneck",
+          "drink.can-color"
+        ],
+        "personal": [
+          "electronics.vhf-radio",
+          "electronics.crt-test-pattern-card"
+        ],
+        "light": "light.clamp",
+        "power": [
+          "power.adapter-brick",
+          "power.extension-orange"
+        ],
+        "utilities": [
+          "roof.hvac-small",
+          "roof.fan-cowl",
+          "roof.hvac-large",
+          "roof.tar-patch",
+          "roof.vent-box"
+        ],
+        "tube": "tube.thyratron",
+        "plants": []
+      }
+    },
+    {
+      "seed": "spearhead-12",
+      "story": "quiet-lookout",
+      "identityBeats": [
+        "safe-arrival",
+        "social-media-focus",
+        "human-refuge",
+        "recent-presence",
+        "warm-cool-split",
+        "skyline-electronics-icon",
+        "real-roof-context",
+        "city-exit"
+      ],
+      "selected": {
+        "tv": "tv.crt.motel-woodgrain",
+        "support": "support.plywood-crates",
+        "seating": [
+          "seat.folding-metal",
+          "seat.office-task",
+          "seat.lawn-webbed"
+        ],
+        "soft": [
+          "soft.wool-blanket",
+          "soft.rubber-mat"
+        ],
+        "drinks": [
+          "drink.wine.amber",
+          "clutter.ashtray-metal",
+          "clutter.lighter"
+        ],
+        "personal": [
+          "electronics.vhf-radio",
+          "electronics.parts-tin",
+          "electronics.crt-test-pattern-card",
+          "electronics.antenna-loop"
+        ],
+        "light": "light.clamp",
+        "power": [
+          "power.cable-coil"
+        ],
+        "utilities": [
+          "roof.hvac-large",
+          "roof.pipe-risers"
+        ],
+        "tube": "tube.giant-triode",
+        "plants": [
+          "plant.herb-tin"
+        ]
+      }
+    }
+  ]
+}

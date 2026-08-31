@@ -1,0 +1,31 @@
+{
+  "schema": "jweb.authored-location-pack.v1",
+  "name": "JWEB Authored Location Data Pack - Spearhead",
+  "intent": "Pure declarative authored-location and asset vocabulary. No runtime integration is included.",
+  "integrationPolicy": {
+    "supercutMayMove": true,
+    "noRuntimeImports": true,
+    "noQuantitativeParameterBindings": true,
+    "noAbsoluteWorldCoordinates": true,
+    "consumerOwnsRealization": true,
+    "fabricTruthRemainsAuthoritative": true
+  },
+  "contents": [
+    "assets/spawnpoint-asset-families.json",
+    "locations/spawn-rooftop-reality-leak.json",
+    "locations/singular/art-gallery.json",
+    "locations/singular/as400-archive.json",
+    "locations/singular/justin-index.json",
+    "locations/singular/systems-workshop.json",
+    "locations/singular/lore-museum.json",
+    "locations/singular/future-reserved.json",
+    "locations/generated/generated-location-families.json",
+    "locations/location-registry.json",
+    "media/live-media-sources.json",
+    "schema/location-data-contract.json",
+    "SOURCE-MAP.md",
+    "README.md",
+    "SAMPLE-SPAWN-COMPOSITIONS.json",
+    "tests/sample-spawn-compositions.mjs"
+  ]
+}

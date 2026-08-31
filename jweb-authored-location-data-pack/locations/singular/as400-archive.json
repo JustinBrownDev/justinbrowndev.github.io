@@ -1,0 +1,187 @@
+{
+  "schema": "jweb.authored-location.v1",
+  "id": "singular.as400-archive",
+  "legacyType": "as400Archive",
+  "exterior": {
+    "name": "*ARCHVE",
+    "subtitle": "IBM.MDRNGCPU(REFLIB)"
+  },
+  "identity": "An affectionate, technically literate archive of the IBM midrange lineage: machine heat, object-system vocabulary, operator commands, reference material, terminals, and roof communications hardware.",
+  "requiredSpaces": [
+    "orientation/history",
+    "machineRoom",
+    "referenceLibrary",
+    "terminalLab",
+    "roofCommunications"
+  ],
+  "lineage": [
+    [
+      "SYSTEM/38",
+      "1978 -- introduced the single-level store & integrated database this whole lineage still runs on"
+    ],
+    [
+      "AS/400",
+      "1988 -- System/38 and System/36 unified into one machine"
+    ],
+    [
+      "ISERIES",
+      "2000 rebrand -- same OS lineage, eServer branding era"
+    ],
+    [
+      "SYSTEM I",
+      "2006 rebrand"
+    ],
+    [
+      "IBM I",
+      "2008 -- current name; same underlying architecture throughout"
+    ]
+  ],
+  "commands": [
+    [
+      "WRKACTJOB",
+      "work with active jobs"
+    ],
+    [
+      "WRKOBJ",
+      "work with objects"
+    ],
+    [
+      "WRKLIB",
+      "work with libraries"
+    ],
+    [
+      "WRKSPLF",
+      "work with spooled files"
+    ],
+    [
+      "DSPJOB",
+      "display job"
+    ],
+    [
+      "DSPMSG",
+      "display messages"
+    ],
+    [
+      "DSPOBJD",
+      "display object description"
+    ],
+    [
+      "DSPFD",
+      "display file description"
+    ],
+    [
+      "DSPPGMREF",
+      "display program references"
+    ],
+    [
+      "CRTLIB",
+      "create library"
+    ],
+    [
+      "CRTBNDRPG",
+      "create bound RPG program"
+    ],
+    [
+      "CRTSQLRPGI",
+      "create SQL RPG ILE program"
+    ]
+  ],
+  "concepts": [
+    [
+      "LIBRARY",
+      "a container object for other objects -- not a folder; an object of type *LIB"
+    ],
+    [
+      "OBJECT",
+      "everything on the system is a typed object (*PGM, *FILE, *LIB...) with attributes, not a raw byte stream"
+    ],
+    [
+      "DDS",
+      "Data Description Specifications -- fixed-format file/screen/printer-output layout definitions"
+    ],
+    [
+      "RPG",
+      "Report Program Generator -- the platform's dominant business-logic language, still actively developed"
+    ],
+    [
+      "CL",
+      "Control Language -- the shell/scripting language for job & system control"
+    ],
+    [
+      "ILE",
+      "Integrated Language Environment -- lets RPG/COBOL/C/CL modules bind into one program"
+    ],
+    [
+      "JOB",
+      "the unit of work the OS schedules & tracks -- interactive, batch, or autostart"
+    ],
+    [
+      "SUBSYSTEM",
+      "a runtime environment controlling how jobs are routed & given resources"
+    ],
+    [
+      "MESSAGE QUEUE",
+      "how jobs/programs communicate & how operators are notified"
+    ],
+    [
+      "SPOOL FILE",
+      "print output held on the system before/instead of printing"
+    ],
+    [
+      "DB2 FOR I",
+      "the integrated relational database -- built into the OS, not a separate product"
+    ],
+    [
+      "QSYS2",
+      "SQL services library -- system information exposed as queryable views"
+    ],
+    [
+      "IFS",
+      "Integrated File System -- a Unix-like hierarchical filesystem layered over the object-based one"
+    ],
+    [
+      "JTOPEN",
+      "open-source Java toolbox for talking to IBM i from external programs"
+    ]
+  ],
+  "machineRoom": {
+    "requiredFamilies": [
+      "rack/mainframe cabinets",
+      "line printer",
+      "tape drive",
+      "disk unit",
+      "operator console"
+    ],
+    "placard": {
+      "title": "MACHINE ROOM",
+      "subtitle": "real hardware, real heat -- keep clear of the racks"
+    }
+  },
+  "roofCommunications": {
+    "required": [
+      "mast",
+      "dish or equivalent communications silhouette"
+    ]
+  },
+  "variation": {
+    "allowed": [
+      "hardware variant mix",
+      "rack arrangement respecting service aisles",
+      "panel placement",
+      "room order within connected footprint"
+    ],
+    "forbidden": [
+      "generic hacker-movie green code as primary identity",
+      "calling IBM i a Unix distribution",
+      "flattening library/object concepts into folders/files"
+    ]
+  },
+  "progressivePriority": [
+    "structure/routes",
+    "machine room silhouette",
+    "orientation lineage",
+    "library concepts",
+    "terminal commands",
+    "roof communications/detail"
+  ]
+}

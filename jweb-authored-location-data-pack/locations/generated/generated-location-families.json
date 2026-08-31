@@ -1,0 +1,235 @@
+{
+  "schema": "jweb.generated-location-corpus.v1",
+  "purpose": "Data vocabulary for recurring places. Existing semantic room recipes are already declarative; preserve/ingest them rather than rewriting them as bespoke builders.",
+  "legacyDataSources": [
+    {
+      "path": "vendor/city-pack/semantic-megapack/room-recipes.js",
+      "status": "already-data-native",
+      "policy": "ingest complete recipe corpus as location/program data; do not regress to hard-coded builders"
+    },
+    {
+      "path": "world/kowloon-fabric-enrichment.js",
+      "status": "mixed data + realization",
+      "policy": "extract remaining named outdoor/roof/plaza life patterns into the families below as runtime is cut over"
+    }
+  ],
+  "knownSemanticPrograms": [
+    "diner",
+    "laundromat",
+    "grocery",
+    "convenience",
+    "pharmacy",
+    "post_office",
+    "bank",
+    "office",
+    "1980s_office",
+    "clinic",
+    "motel_room",
+    "auto_shop",
+    "hardware_store",
+    "library",
+    "archive",
+    "school_classroom",
+    "server_room",
+    "mainframe_room",
+    "bar"
+  ],
+  "programContract": {
+    "identity": "props/relationships that make the room immediately itself",
+    "functional": "equipment/furniture required to operate",
+    "life": "mess, waiting, comfort, maintenance and small traces",
+    "relations": "spatial grammar between pieces",
+    "population": "density/attempt targets remain data, never topology authority"
+  },
+  "outdoorFamilies": [
+    {
+      "id": "generated.alley",
+      "identity": [
+        "narrow circulation",
+        "service doors/vents",
+        "trash/utility pressure",
+        "signage spill"
+      ],
+      "optional": [
+        "dumpster",
+        "bags",
+        "pipes",
+        "small table/chair intrusion",
+        "graffiti",
+        "fire escape"
+      ],
+      "rule": "circulation remains authoritative even when visually cramped"
+    },
+    {
+      "id": "generated.courtyard",
+      "identity": [
+        "enclosed exterior pocket",
+        "paved or patched floor",
+        "seating/plant possibility"
+      ],
+      "optional": [
+        "benches",
+        "potted plants",
+        "junk",
+        "single practical light"
+      ],
+      "rule": "must feel like relief from alley compression, not empty leftover cell"
+    },
+    {
+      "id": "generated.service-yard",
+      "identity": [
+        "rear/service access",
+        "industrial storage",
+        "utility equipment"
+      ],
+      "optional": [
+        "cable spools",
+        "drums",
+        "electrical cabinets",
+        "pallets",
+        "trash"
+      ],
+      "rule": "service route and doors stay usable"
+    },
+    {
+      "id": "generated.storefront-threshold",
+      "identity": [
+        "street-facing aperture",
+        "signage/menu/identity layer",
+        "small transition zone"
+      ],
+      "optional": [
+        "awning",
+        "flyers",
+        "ATM",
+        "crate",
+        "waiting chair"
+      ],
+      "rule": "destination/program exists before decoration"
+    },
+    {
+      "id": "generated.roof-utility",
+      "identity": [
+        "roof fabric",
+        "mechanical/communications hardware",
+        "edge/parapet"
+      ],
+      "optional": [
+        "HVAC",
+        "vents",
+        "dish",
+        "mast",
+        "pipes",
+        "maintenance clutter"
+      ],
+      "rule": "ordinary roof family; does not automatically become the singular spawn refuge"
+    },
+    {
+      "id": "generated.roof-hangout",
+      "identity": [
+        "small human-use pocket on valid roof",
+        "seat or resting surface",
+        "view or shelter motive"
+      ],
+      "optional": [
+        "chair",
+        "crate table",
+        "drink",
+        "plant",
+        "light"
+      ],
+      "rule": "echoes city life but never duplicates all spawn hard invariants"
+    },
+    {
+      "id": "generated.stair-landing",
+      "identity": [
+        "connector-owned circulation",
+        "pause platform",
+        "guard/edge logic"
+      ],
+      "optional": [
+        "sign",
+        "utility box",
+        "small clutter outside keep-clear"
+      ],
+      "rule": "connector geometry and reservation are authoritative"
+    },
+    {
+      "id": "generated.fire-escape-landing",
+      "identity": [
+        "exterior vertical circulation",
+        "wall relationship",
+        "guard/platform"
+      ],
+      "optional": [
+        "window/door adjacency",
+        "plant",
+        "tiny chair where legal space exists"
+      ],
+      "rule": "never decorate across escape path"
+    },
+    {
+      "id": "generated.bridge-portal",
+      "identity": [
+        "two fabric endpoints joined by connector",
+        "threshold at each end"
+      ],
+      "optional": [
+        "sign",
+        "light",
+        "cables",
+        "weather cover"
+      ],
+      "rule": "portal/aperture derived from connector object"
+    },
+    {
+      "id": "generated.plaza-pocket",
+      "identity": [
+        "wider public exterior pocket",
+        "multiple approach routes",
+        "one social/visual anchor"
+      ],
+      "optional": [
+        "benches",
+        "planter",
+        "kiosk",
+        "tape/barrier",
+        "glass/metal street furniture"
+      ],
+      "rule": "remain traversable and visibly connected to surrounding maze"
+    },
+    {
+      "id": "generated.mechanical-room",
+      "identity": [
+        "equipment service space",
+        "clear service aisles",
+        "wall utilities"
+      ],
+      "optional": [
+        "panels",
+        "pumps",
+        "racks",
+        "tool cart",
+        "warning text"
+      ],
+      "rule": "equipment clearance is functional data, not decorative guesswork"
+    },
+    {
+      "id": "generated.residential-stoop",
+      "identity": [
+        "private/public threshold",
+        "small sitting opportunity",
+        "domestic trace"
+      ],
+      "optional": [
+        "chair",
+        "plant",
+        "shoe",
+        "mail",
+        "porch light"
+      ],
+      "rule": "small and intimate; do not widen city circulation to accommodate it"
+    }
+  ],
+  "migrationRule": "A location is data when its meaning, required beats, relationships, variation, topology expectations and progressive phases can be inspected without executing geometry code."
+}

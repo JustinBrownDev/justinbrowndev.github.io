@@ -1,0 +1,23 @@
+{
+  "schema": "jweb.live-media-source-registry.v1",
+  "sources": [
+    {
+      "key": "live-news.al-jazeera-english",
+      "label": "Al Jazeera English live",
+      "intent": "Official, free-to-watch live news used as the rooftop's window into current reality.",
+      "resolutionPolicy": "Resolve through an official embed-capable Al Jazeera/YouTube surface at integration/runtime. Do not scrape, proxy, or rebroadcast raw HLS merely because the stream is free to watch.",
+      "renderingPolicy": "Cross-origin embed is an external-media layer aligned to the physical TV screen; it is not topology and need not be a WebGL VideoTexture.",
+      "activation": {
+        "default": "muted",
+        "instantiate": "only when containing chunk is active and viewer is near/potentially sees screen",
+        "globalBudgetHint": 1,
+        "destroyOrSuspendWhenFar": true
+      },
+      "failure": {
+        "fatal": false,
+        "fallback": "physical TV remains; dark glass, subtle static, or NO SIGNAL; no retry storm"
+      },
+      "determinism": "World stores semantic source key only. Live pixels/audio are intentionally nondeterministic."
+    }
+  ]
+}

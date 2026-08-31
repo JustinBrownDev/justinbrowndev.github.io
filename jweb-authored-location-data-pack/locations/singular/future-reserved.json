@@ -1,0 +1,33 @@
+{
+  "schema": "jweb.authored-location.v1",
+  "id": "singular.future-reserved",
+  "legacyType": "futurePlaceholder",
+  "exterior": {
+    "name": "RESERVED",
+    "subtitle": "future singular area"
+  },
+  "identity": "An intentionally unfilled singular reservation. Its emptiness is authored and must not be mistaken for missing enrichment.",
+  "requiredSpaces": [
+    "open reserved courtyard/void"
+  ],
+  "requiredBeats": [
+    "clear readable reservation",
+    "street connection remains valid",
+    "ordinary generators do not colonize the footprint"
+  ],
+  "variation": {
+    "allowed": [
+      "surface weathering",
+      "minor boundary treatment"
+    ],
+    "forbidden": [
+      "automatic generic building",
+      "random prop filling",
+      "quietly reassigning site to ordinary generation"
+    ]
+  },
+  "progressivePriority": [
+    "reservation/topology",
+    "boundary/readability"
+  ]
+}

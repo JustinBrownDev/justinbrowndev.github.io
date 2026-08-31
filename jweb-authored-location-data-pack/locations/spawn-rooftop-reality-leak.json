@@ -1,0 +1,415 @@
+{
+  "schema": "jweb.authored-location.v1",
+  "id": "spawn.rooftop-reality-leak",
+  "workingNames": [
+    "Rooftop Reality Leak",
+    "Vacuum Tube Terrace",
+    "Late Shift Roof"
+  ],
+  "kind": "singular-authored-procedural-location",
+  "role": "player-spawn-and-first-real-authored-place",
+  "thesis": "A cheap, improvised rooftop refuge at night where somebody has been watching live television above the generated city. It feels lonely, comforting, inhabited, technically plausible, and a little impossible because a giant glowing vacuum-tube monument occupies the nearby skyline.",
+  "emotionalFingerprint": {
+    "mustAlwaysFeelLike": [
+      "a private refuge discovered rather than presented",
+      "late-night current reality leaking into a procedural world",
+      "someone was here very recently",
+      "cheap objects made comfortable through arrangement",
+      "electronics as ordinary life and minor mythology",
+      "a safe pause before descending into the cramped city"
+    ],
+    "mustNeverFeelLike": [
+      "tutorial room",
+      "developer test scene",
+      "luxury rooftop bar",
+      "post-apocalypse survivor camp",
+      "quest hub",
+      "cyberpunk showroom",
+      "random junk dump"
+    ]
+  },
+  "hardInvariants": [
+    {
+      "beat": "safe-arrival",
+      "rule": "Spawn stands on structurally safe roof fabric with a clear capsule and an immediately legible path away."
+    },
+    {
+      "beat": "social-media-focus",
+      "rule": "One real-broadcast-capable television or monitor is the social focus, supported plausibly and visible from multiple seats."
+    },
+    {
+      "beat": "human-refuge",
+      "rule": "At least two believable seating opportunities and one small shared surface create a place to stay, not merely pass through."
+    },
+    {
+      "beat": "recent-presence",
+      "rule": "At least three life props imply very recent occupancy: drink, ash/snack, paper, clothing, tool, keys, or similar."
+    },
+    {
+      "beat": "warm-cool-split",
+      "rule": "Cool moving screen light and at least one warmer practical light overlap without flattening the roof into uniform illumination."
+    },
+    {
+      "beat": "skyline-electronics-icon",
+      "rule": "A fictionalized giant vacuum-tube structure on a nearby building is visible from the refuge and acts as the first navigational memory."
+    },
+    {
+      "beat": "real-roof-context",
+      "rule": "Mechanical or communications hardware makes the location unambiguously a working rooftop."
+    },
+    {
+      "beat": "city-exit",
+      "rule": "A connector toward stairs, fire escape, hatch, door, bridge, or equivalent city circulation remains visually and physically unobstructed."
+    }
+  ],
+  "zones": [
+    {
+      "id": "arrival",
+      "role": "spawn threshold",
+      "rules": [
+        "clear capsule",
+        "first glance sees either TV glow or vacuum-tube silhouette",
+        "never spawn inside furniture"
+      ]
+    },
+    {
+      "id": "refuge",
+      "role": "social cluster",
+      "rules": [
+        "TV + support + seats + shared surface",
+        "slightly asymmetric",
+        "tight enough to feel intentional"
+      ]
+    },
+    {
+      "id": "edge-lookout",
+      "role": "skyline reading zone",
+      "rules": [
+        "parapet or protected edge",
+        "vacuum landmark sightline",
+        "optional single seat or binoculars"
+      ]
+    },
+    {
+      "id": "utility",
+      "role": "roof credibility",
+      "rules": [
+        "HVAC/vents/conduit/antenna cluster",
+        "frames refuge",
+        "does not block connector"
+      ]
+    },
+    {
+      "id": "descent",
+      "role": "connection to generated city",
+      "rules": [
+        "connector authority owns aperture/circulation",
+        "authored props respect keep-clear reservation"
+      ]
+    }
+  ],
+  "compositionSlots": [
+    {
+      "slot": "primary-tv",
+      "required": true,
+      "count": [
+        1,
+        1
+      ],
+      "families": [
+        "spawn.media.television"
+      ]
+    },
+    {
+      "slot": "tv-support",
+      "required": true,
+      "count": [
+        1,
+        1
+      ],
+      "families": [
+        "spawn.support.tv"
+      ],
+      "relationship": "supports primary-tv"
+    },
+    {
+      "slot": "seating",
+      "required": true,
+      "count": [
+        2,
+        4
+      ],
+      "families": [
+        "spawn.seating"
+      ],
+      "relationship": "mostly faces primary-tv or shared surface"
+    },
+    {
+      "slot": "softening",
+      "required": false,
+      "count": [
+        0,
+        3
+      ],
+      "families": [
+        "spawn.soft-goods"
+      ]
+    },
+    {
+      "slot": "drink-evidence",
+      "required": true,
+      "count": [
+        1,
+        4
+      ],
+      "families": [
+        "spawn.drink-and-table-clutter"
+      ]
+    },
+    {
+      "slot": "personal-evidence",
+      "required": true,
+      "count": [
+        2,
+        6
+      ],
+      "families": [
+        "spawn.personal-clutter",
+        "spawn.small-electronics"
+      ]
+    },
+    {
+      "slot": "warm-practical",
+      "required": true,
+      "count": [
+        1,
+        2
+      ],
+      "families": [
+        "spawn.lighting"
+      ]
+    },
+    {
+      "slot": "power-explanation",
+      "required": true,
+      "count": [
+        1,
+        4
+      ],
+      "families": [
+        "spawn.power-and-cables"
+      ]
+    },
+    {
+      "slot": "roof-credibility",
+      "required": true,
+      "count": [
+        2,
+        6
+      ],
+      "families": [
+        "spawn.roof-utilities"
+      ]
+    },
+    {
+      "slot": "vacuum-landmark",
+      "required": true,
+      "count": [
+        1,
+        1
+      ],
+      "families": [
+        "spawn.vacuum-landmark"
+      ],
+      "relationship": "nearby-building sightline, never lounge footprint"
+    },
+    {
+      "slot": "plant-softener",
+      "required": false,
+      "count": [
+        0,
+        2
+      ],
+      "families": [
+        "spawn.plants"
+      ]
+    }
+  ],
+  "microstories": [
+    {
+      "id": "solitary-news-and-wine",
+      "weight": 1.3,
+      "bias": [
+        "wine",
+        "newspaper",
+        "single-cushion",
+        "warm desk lamp"
+      ],
+      "story": "Someone has been sitting alone with the news and one slow drink."
+    },
+    {
+      "id": "repair-during-broadcast",
+      "weight": 1.1,
+      "bias": [
+        "toolbox",
+        "screwdriver",
+        "tape",
+        "multimeter",
+        "parts",
+        "shop light"
+      ],
+      "story": "The television or its power arrangement has recently been repaired while still in use."
+    },
+    {
+      "id": "two-person-late-shift",
+      "weight": 1.2,
+      "bias": [
+        "two unlike chairs",
+        "two drink vessels",
+        "takeout",
+        "cards"
+      ],
+      "story": "Two people share the roof after work; they are absent now, but only barely."
+    },
+    {
+      "id": "rain-cover-night",
+      "weight": 0.8,
+      "bias": [
+        "tarp",
+        "rubber mat",
+        "thermos",
+        "trouble light"
+      ],
+      "story": "Rain protection has been improvised around the valuable electronics and seats."
+    },
+    {
+      "id": "radio-and-tv-watch",
+      "weight": 0.8,
+      "bias": [
+        "scanner",
+        "VHF radio",
+        "loop antenna",
+        "coax",
+        "notebook"
+      ],
+      "story": "The refuge doubles as a casual listening/watch station without becoming a surveillance room."
+    },
+    {
+      "id": "snack-and-game",
+      "weight": 0.7,
+      "bias": [
+        "snack bag",
+        "paper cup",
+        "playing cards",
+        "floor cushion"
+      ],
+      "story": "A small social night rather than a workstation."
+    },
+    {
+      "id": "quiet-lookout",
+      "weight": 0.9,
+      "bias": [
+        "binoculars",
+        "wool blanket",
+        "mug",
+        "single edge seat"
+      ],
+      "story": "The skyline matters as much as the television."
+    }
+  ],
+  "variationPolicy": {
+    "seeded": true,
+    "preserveHardInvariants": true,
+    "antiRepeat": [
+      "do not reuse exact TV+support+primary-seat tuple on consecutive world seeds when alternatives exist",
+      "expand family variety before exact asset repeat",
+      "vary microstory independently from roof utility mix",
+      "allow furniture orientation jitter only inside semantic relationships"
+    ],
+    "matchingFurniturePenalty": 0.75,
+    "symmetryPenalty": 0.85,
+    "luxuryPenalty": 1.0
+  },
+  "progressiveRealization": [
+    {
+      "phase": 0,
+      "id": "structural-safe",
+      "mustExistBeforePlay": true,
+      "contents": [
+        "roof fabric",
+        "parapets/edge safety",
+        "spawn capsule",
+        "descent connector",
+        "collision and keep-clear reservations"
+      ]
+    },
+    {
+      "phase": 1,
+      "id": "memory-silhouette",
+      "mustExistBeforeFirstStableLook": true,
+      "contents": [
+        "TV/support mass",
+        "minimum two seats",
+        "one practical light proxy",
+        "vacuum-tube skyline silhouette",
+        "one roof utility silhouette"
+      ]
+    },
+    {
+      "phase": 2,
+      "id": "identity",
+      "contents": [
+        "selected authored asset variants",
+        "shared surface",
+        "primary cable logic",
+        "recent-presence props"
+      ]
+    },
+    {
+      "phase": 3,
+      "id": "life",
+      "contents": [
+        "soft goods",
+        "additional clutter",
+        "secondary utilities",
+        "plants",
+        "wear and small residue"
+      ]
+    },
+    {
+      "phase": 4,
+      "id": "live-reality",
+      "contents": [
+        "official live media embed if available",
+        "muted autoplay",
+        "distance-aware activation",
+        "nonfatal fallback screen"
+      ]
+    },
+    {
+      "phase": 5,
+      "id": "fine-detail",
+      "contents": [
+        "micro cables",
+        "labels/text from semantic content",
+        "small repair parts",
+        "minor light spill refinements"
+      ]
+    }
+  ],
+  "mediaIntent": {
+    "sourceKey": "live-news.al-jazeera-english",
+    "importance": "identity-but-nonauthoritative-runtime",
+    "defaultAudio": "muted",
+    "fallback": "dark glass / subtle static / NO SIGNAL",
+    "networkFailureIsFatal": false
+  },
+  "semanticRequirements": [
+    "fabric-published rooftop space",
+    "connector-owned descent aperture",
+    "circulation reservations authoritative",
+    "stable location/space/entity ids",
+    "external media lifecycle separate from world identity"
+  ],
+  "successTest": "Across seeds, screenshots should not match object-for-object, but a player should identify the place as the same rooftop memory without being told its name."
+}

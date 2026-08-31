@@ -1,0 +1,148 @@
+{
+  "schema": "jweb.authored-location.v1",
+  "id": "singular.lore-museum",
+  "legacyType": "loreShrine",
+  "exterior": {
+    "name": "Museum",
+    "subtitle": "of caliper history"
+  },
+  "identity": "A deadpan museum where practical tools and appliance/electronics obsessions receive exactly enough ceremonial treatment to become mythology while the technical facts remain mostly straight.",
+  "requiredSpaces": [
+    "fourButtonChamber",
+    "refrigerationSanctum",
+    "handToolsHall",
+    "viseGripAltar",
+    "metrologyThread"
+  ],
+  "fourButtonChamber": {
+    "labels": [
+      "TIME",
+      "POWER",
+      "START",
+      "STOP"
+    ],
+    "placard": {
+      "title": "THE FOUR BUTTON CHAMBER",
+      "subtitle": "TIME - POWER - START - STOP -- nothing more, nothing less"
+    },
+    "rule": "Exactly four controls. Do not improve the appliance interface with extra buttons."
+  },
+  "refrigerationSanctum": {
+    "stages": [
+      [
+        "COMPRESSOR",
+        "raises pressure & temperature"
+      ],
+      [
+        "CONDENSER",
+        "rejects heat, refrigerant liquefies"
+      ],
+      [
+        "EXPANSION DEVICE",
+        "pressure drops sharply"
+      ],
+      [
+        "EVAPORATOR",
+        "absorbs heat, refrigerant boils"
+      ]
+    ],
+    "diagram": "compress -> condense -> expand -> evaporate"
+  },
+  "handToolsHall": {
+    "exhibits": [
+      [
+        "VISE GRIP, 10-INCH",
+        "locking pliers -- see also: the Altar"
+      ],
+      [
+        "CRESCENT WRENCH",
+        "adjustable, forged steel"
+      ],
+      [
+        "CLAW HAMMER",
+        "one head, two purposes"
+      ],
+      [
+        "NEEDLE-NOSE PLIERS",
+        "precision, not force"
+      ]
+    ]
+  },
+  "viseGripAltar": {
+    "title": "THE VISE-GRIP ALTAR",
+    "subtitle": "locking pliers, mounted with undue ceremony"
+  },
+  "metrologyThread": {
+    "pairs": [
+      [
+        "DATUM",
+        "agreement begins somewhere"
+      ],
+      [
+        "TOLERANCE",
+        "correctness has width"
+      ],
+      [
+        "REPEATABILITY",
+        "one measurement is a story"
+      ],
+      [
+        "RESOLUTION",
+        "more digits are not always more truth"
+      ],
+      [
+        "GAUGE BLOCK",
+        "a dimension stored in steel"
+      ],
+      [
+        "RUNOUT",
+        "rotation reveals misalignment"
+      ],
+      [
+        "ZERO FIRST",
+        "reference before confidence"
+      ],
+      [
+        "CALIBRATION",
+        "the measuring tool also gets measured"
+      ],
+      [
+        "UNCERTAINTY",
+        "honesty has units"
+      ],
+      [
+        "SURFACE PLATE",
+        "flatness as infrastructure"
+      ],
+      [
+        "PIN GAUGE",
+        "sometimes the answer either fits or does not"
+      ],
+      [
+        "LOG THE VALUE",
+        "memory is not instrumentation"
+      ]
+    ]
+  },
+  "variation": {
+    "allowed": [
+      "museum route",
+      "pedestal forms",
+      "lighting emphasis",
+      "additional metrology labels from curated corpus"
+    ],
+    "forbidden": [
+      "adding more than four buttons to the Four Button Chamber",
+      "turning refrigeration stages into mystical misinformation",
+      "losing the deadpan undue-ceremony tone"
+    ]
+  },
+  "progressivePriority": [
+    "structure/routes",
+    "Four Button silhouette",
+    "refrigeration cycle",
+    "Vise-Grip altar",
+    "tool hall",
+    "metrology labels/detail"
+  ]
+}

@@ -1,0 +1,77 @@
+{
+  "schema": "jweb.authored-location.v1",
+  "id": "singular.systems-workshop",
+  "legacyType": "systemsWorkshop",
+  "exterior": {
+    "name": "WORKSHOP",
+    "subtitle": "parts - repair - fabrication"
+  },
+  "identity": "A working mixed-discipline repair/fabrication shop where computers, electronics, hand tools, parts storage, 3D printing, soldering, and dirty rear-yard infrastructure coexist.",
+  "requiredSpaces": [
+    "frontShop",
+    "mainWorkshop",
+    "computerLab",
+    "electronicsBench",
+    "rearYard"
+  ],
+  "requiredBeats": [
+    "main workshop has real work surfaces, pegboards, tools and fabrication equipment",
+    "front shop exposes parts/tool storage",
+    "computer lab uses server benches and cable handling rather than generic office desks",
+    "electronics bench has soldering/repair identity",
+    "rear yard carries spools, electrical cabinets and drums",
+    "real code-project content appears as terminal-style plaques when available"
+  ],
+  "assetFamilies": {
+    "mainWorkshop": [
+      "workbench",
+      "pegboard",
+      "3d printer",
+      "tool chest"
+    ],
+    "frontShop": [
+      "tool chest",
+      "parts rack"
+    ],
+    "computerLab": [
+      "server bench",
+      "cable cart"
+    ],
+    "electronicsBench": [
+      "workbench",
+      "solder station",
+      "pegboard"
+    ],
+    "rearYard": [
+      "cable spool",
+      "electrical cabinet",
+      "drum cluster"
+    ]
+  },
+  "contentBindings": [
+    {
+      "key": "real-code-projects",
+      "legacySource": "CONFIG.siteContent.codeProjects"
+    }
+  ],
+  "variation": {
+    "allowed": [
+      "tool/bench variants",
+      "work-in-progress clutter",
+      "which projects are visible",
+      "rear-yard hardware mix"
+    ],
+    "forbidden": [
+      "maker-space showroom cleanliness",
+      "pure software-office treatment",
+      "random sci-fi machinery"
+    ]
+  },
+  "progressivePriority": [
+    "structure/routes",
+    "workbench silhouettes",
+    "discipline-specific equipment",
+    "project plaques",
+    "parts/cables/life clutter"
+  ]
+}

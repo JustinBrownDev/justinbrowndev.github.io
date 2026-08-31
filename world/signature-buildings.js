@@ -11,6 +11,8 @@ export function createSignatureBuildingSystem(deps) {
         pickRandomizedCuratedPair, placeCityAsset, placeSemanticCityAsset, pointOnFacade, randRange, rng,
         rowHalf, sharedBuildingFacadeMaterial, siteIdOf, streetSetbackRoll
     } = deps;
+    const plannerOwnsBuildingExterior = deps.exteriorCompositionOwned === true;
+    const addBuildingExteriorSign = (...args) => plannerOwnsBuildingExterior ? null : addSign(...args);
 
     function* buildFuturePlaceholderSteps(site) {
         const { cells, signatureInstance } = site;
@@ -84,7 +86,7 @@ export function createSignatureBuildingSystem(deps) {
          
          
          
-        addSign(e.doorX, primaryFloorCount * floorHeight - QP[2182], e.doorZ, e.outwardRotY, typeCfg.exteriorName, typeCfg.exteriorSubtitle, QP[2183], false, QP[2184], { w: QP[2185], h: QP[2186] });
+        addBuildingExteriorSign(e.doorX, primaryFloorCount * floorHeight - QP[2182], e.doorZ, e.outwardRotY, typeCfg.exteriorName, typeCfg.exteriorSubtitle, QP[2183], false, QP[2184], { w: QP[2185], h: QP[2186] });
     
         yield { phase: 'signature-placeholder-exterior' };
         console.log(`[signature] ${typeCfg.exteriorName}: placeholder massing built (${cells.length} cells, ${primaryFloorCount} floors) -- authored interior pending, see task list`);
@@ -324,28 +326,29 @@ export function createSignatureBuildingSystem(deps) {
          
          
         {
-            const { x: rx, z: rz } = cellToWorld(primary.col, primary.row);
             const roofY = floorCount * floorHeight;
-            const mr = rectByCellKey.get(`${primary.row},${primary.col}`);
-            const rhw = Math.min(mr?.hwx ?? QP[2335], mr?.hwz ?? QP[2336]) * QP[2337];
-            addPottedPlant(rx + rhw, rz + rhw * QP[2338]);
-            addPottedPlant(rx - rhw, rz - rhw * QP[2339]);
-            addBench(rx + rhw * QP[2340], rz - rhw * QP[2341], randRange(QP[2342], Math.PI * QP[2343]));
-            console.log(`[signature] ART GALLERY: roof terrace at y=${roofY.toFixed(QP[2344])} above the main gallery`);
-            yield { phase: 'signature-art-roof' };
+            if (!plannerOwnsBuildingExterior) {
+                const { x: rx, z: rz } = cellToWorld(primary.col, primary.row);
+                const mr = rectByCellKey.get(`${primary.row},${primary.col}`);
+                const rhw = Math.min(mr?.hwx ?? QP[2335], mr?.hwz ?? QP[2336]) * QP[2337];
+                addPottedPlant(rx + rhw, rz + rhw * QP[2338]);
+                addPottedPlant(rx - rhw, rz - rhw * QP[2339]);
+                addBench(rx + rhw * QP[2340], rz - rhw * QP[2341], randRange(QP[2342], Math.PI * QP[2343]));
+            }
+            yield { phase: 'signature-art-roof', exteriorAuthority: plannerOwnsBuildingExterior ? 'ExteriorCompositionAuthority' : 'legacy-signature-recipe' };
         }
     
          
          
         const e = mainEntrance;
         const vestFacade = facadesFor(vestibule)[QP[2345]] ?? facadesFor(primary)[QP[2346]];
-        if (vestFacade) {
+        if (vestFacade && !plannerOwnsBuildingExterior) {
             const spot = findFreeFacadeRect(vestFacade, 'sign', QP[2347], QP[2348], floorCount * floorHeight - QP[2349], floorCount * floorHeight - QP[2350], QP[2351], QP[2352]);
             if (spot) {
                 const p = pointOnFacade(vestFacade, spot.u, spot.v);
-                addSign(p.x, p.y, p.z, vestFacade.rotY, typeCfg.exteriorName, typeCfg.exteriorSubtitle, QP[2353], false, QP[2354], { w: QP[2355], h: QP[2356] });
+                addBuildingExteriorSign(p.x, p.y, p.z, vestFacade.rotY, typeCfg.exteriorName, typeCfg.exteriorSubtitle, QP[2353], false, QP[2354], { w: QP[2355], h: QP[2356] });
             } else {
-                addSign(e.doorX, floorCount * floorHeight - QP[2357], e.doorZ, e.outwardRotY, typeCfg.exteriorName, typeCfg.exteriorSubtitle, QP[2358], false, QP[2359], { w: QP[2360], h: QP[2361] });
+                addBuildingExteriorSign(e.doorX, floorCount * floorHeight - QP[2357], e.doorZ, e.outwardRotY, typeCfg.exteriorName, typeCfg.exteriorSubtitle, QP[2358], false, QP[2359], { w: QP[2360], h: QP[2361] });
             }
         }
          
@@ -353,7 +356,7 @@ export function createSignatureBuildingSystem(deps) {
          
          
          
-        if (vestFacade) {
+        if (vestFacade && !plannerOwnsBuildingExterior) {
             for (const piece of [ART_GALLERY_CATALOG[QP[2362]], ART_GALLERY_CATALOG[QP[2363]]]) {
                 const spot = findFreeFacadeRect(vestFacade, 'posterCase', QP[2364], QP[2365], QP[2366], QP[2367], QP[2368], QP[2369]);
                 if (spot) {
@@ -527,35 +530,37 @@ export function createSignatureBuildingSystem(deps) {
          
          
         {
-            const { x: rx, z: rz } = cellToWorld(primary.col, primary.row);
             const roofY = floorCount * floorHeight;
-            const mast = new THREE.Mesh(
-                new THREE.CylinderGeometry(QP[2449], QP[2450], QP[2451], QP[2452]),
-                new THREE.MeshStandardMaterial({ color: QP[2453], roughness: QP[2454], metalness: QP[2455] })
-            );
-            mast.position.set(rx - QP[2456], roofY + QP[2457], rz - QP[2458]);
-            scene.add(mast);
-            const dish = new THREE.Mesh(
-                new THREE.SphereGeometry(QP[2459], QP[2460], QP[2461], QP[2462], Math.PI * QP[2463], QP[2464], Math.PI / QP[2465]),
-                new THREE.MeshStandardMaterial({ color: QP[2466], roughness: QP[2467], metalness: QP[2468], side: THREE.DoubleSide })
-            );
-            dish.rotation.x = Math.PI * QP[2469];
-            dish.position.set(rx + QP[2470], roofY + QP[2471], rz + QP[2472]);
-            scene.add(dish);
-            console.log(`[signature] AS/400 ARCHIVE: roof antenna/dish at y=${roofY.toFixed(QP[2473])}`);
-            yield { phase: 'as400-roof' };
+            if (!plannerOwnsBuildingExterior) {
+                const { x: rx, z: rz } = cellToWorld(primary.col, primary.row);
+                const mast = new THREE.Mesh(
+                    new THREE.CylinderGeometry(QP[2449], QP[2450], QP[2451], QP[2452]),
+                    new THREE.MeshStandardMaterial({ color: QP[2453], roughness: QP[2454], metalness: QP[2455] })
+                );
+                mast.position.set(rx - QP[2456], roofY + QP[2457], rz - QP[2458]);
+                scene.add(mast);
+                const dish = new THREE.Mesh(
+                    new THREE.SphereGeometry(QP[2459], QP[2460], QP[2461], QP[2462], Math.PI * QP[2463], QP[2464], Math.PI / QP[2465]),
+                    new THREE.MeshStandardMaterial({ color: QP[2466], roughness: QP[2467], metalness: QP[2468], side: THREE.DoubleSide })
+                );
+                dish.rotation.x = Math.PI * QP[2469];
+                dish.position.set(rx + QP[2470], roofY + QP[2471], rz + QP[2472]);
+                scene.add(dish);
+                console.log(`[signature] AS/400 ARCHIVE: legacy roof antenna/dish at y=${roofY.toFixed(QP[2473])}`);
+            }
+            yield { phase: 'as400-roof', exteriorAuthority: plannerOwnsBuildingExterior ? 'ExteriorCompositionAuthority' : 'legacy-signature-recipe' };
         }
     
          
         const vestFacade = facadesFor(orientation)[QP[2474]] ?? facadesFor(primary)[QP[2475]];
-        if (vestFacade) {
+        if (vestFacade && !plannerOwnsBuildingExterior) {
             const spot = findFreeFacadeRect(vestFacade, 'sign', QP[2476], QP[2477], floorCount * floorHeight - QP[2478], floorCount * floorHeight - QP[2479], QP[2480], QP[2481]);
             const e = mainEntrance;
             if (spot) {
                 const p = pointOnFacade(vestFacade, spot.u, spot.v);
-                addSign(p.x, p.y, p.z, vestFacade.rotY, typeCfg.exteriorName, typeCfg.exteriorSubtitle, QP[2482], false, QP[2483], { w: QP[2484], h: QP[2485] });
+                addBuildingExteriorSign(p.x, p.y, p.z, vestFacade.rotY, typeCfg.exteriorName, typeCfg.exteriorSubtitle, QP[2482], false, QP[2483], { w: QP[2484], h: QP[2485] });
             } else {
-                addSign(e.doorX, floorCount * floorHeight - QP[2486], e.doorZ, e.outwardRotY, typeCfg.exteriorName, typeCfg.exteriorSubtitle, QP[2487], false, QP[2488], { w: QP[2489], h: QP[2490] });
+                addBuildingExteriorSign(e.doorX, floorCount * floorHeight - QP[2486], e.doorZ, e.outwardRotY, typeCfg.exteriorName, typeCfg.exteriorSubtitle, QP[2487], false, QP[2488], { w: QP[2489], h: QP[2490] });
             }
         }
     
@@ -704,14 +709,14 @@ export function createSignatureBuildingSystem(deps) {
     
          
         const vestFacade = facadesFor(lobby)[QP[2558]] ?? facadesFor(primary)[QP[2559]];
-        if (vestFacade) {
+        if (vestFacade && !plannerOwnsBuildingExterior) {
             const spot = findFreeFacadeRect(vestFacade, 'sign', QP[2560], QP[2561], floorCount * floorHeight - QP[2562], floorCount * floorHeight - QP[2563], QP[2564], QP[2565]);
             const e = mainEntrance;
             if (spot) {
                 const p = pointOnFacade(vestFacade, spot.u, spot.v);
-                addSign(p.x, p.y, p.z, vestFacade.rotY, typeCfg.exteriorName, typeCfg.exteriorSubtitle, QP[2566], false, QP[2567], { w: QP[2568], h: QP[2569] });
+                addBuildingExteriorSign(p.x, p.y, p.z, vestFacade.rotY, typeCfg.exteriorName, typeCfg.exteriorSubtitle, QP[2566], false, QP[2567], { w: QP[2568], h: QP[2569] });
             } else {
-                addSign(e.doorX, floorCount * floorHeight - QP[2570], e.doorZ, e.outwardRotY, typeCfg.exteriorName, typeCfg.exteriorSubtitle, QP[2571], false, QP[2572], { w: QP[2573], h: QP[2574] });
+                addBuildingExteriorSign(e.doorX, floorCount * floorHeight - QP[2570], e.doorZ, e.outwardRotY, typeCfg.exteriorName, typeCfg.exteriorSubtitle, QP[2571], false, QP[2572], { w: QP[2573], h: QP[2574] });
             }
         }
     
@@ -835,14 +840,14 @@ export function createSignatureBuildingSystem(deps) {
     
          
         const vestFacade = facadesFor(frontShop)[QP[2641]] ?? facadesFor(primary)[QP[2642]];
-        if (vestFacade) {
+        if (vestFacade && !plannerOwnsBuildingExterior) {
             const spot = findFreeFacadeRect(vestFacade, 'sign', QP[2643], QP[2644], floorCount * floorHeight - QP[2645], floorCount * floorHeight - QP[2646], QP[2647], QP[2648]);
             const e = mainEntrance;
             if (spot) {
                 const p = pointOnFacade(vestFacade, spot.u, spot.v);
-                addSign(p.x, p.y, p.z, vestFacade.rotY, typeCfg.exteriorName, typeCfg.exteriorSubtitle, QP[2649], false, QP[2650], { w: QP[2651], h: QP[2652] });
+                addBuildingExteriorSign(p.x, p.y, p.z, vestFacade.rotY, typeCfg.exteriorName, typeCfg.exteriorSubtitle, QP[2649], false, QP[2650], { w: QP[2651], h: QP[2652] });
             } else {
-                addSign(e.doorX, floorCount * floorHeight - QP[2653], e.doorZ, e.outwardRotY, typeCfg.exteriorName, typeCfg.exteriorSubtitle, QP[2654], false, QP[2655], { w: QP[2656], h: QP[2657] });
+                addBuildingExteriorSign(e.doorX, floorCount * floorHeight - QP[2653], e.doorZ, e.outwardRotY, typeCfg.exteriorName, typeCfg.exteriorSubtitle, QP[2654], false, QP[2655], { w: QP[2656], h: QP[2657] });
             }
         }
     
@@ -1010,14 +1015,14 @@ export function createSignatureBuildingSystem(deps) {
          
          
         const vestFacade = facadesFor(fourButtonChamber)[QP[2835]] ?? facadesFor(primary)[QP[2836]];
-        if (vestFacade) {
+        if (vestFacade && !plannerOwnsBuildingExterior) {
             const spot = findFreeFacadeRect(vestFacade, 'sign', QP[2837], QP[2838], floorCount * floorHeight - QP[2839], floorCount * floorHeight - QP[2840], QP[2841], QP[2842]);
             const e = mainEntrance;
             if (spot) {
                 const p = pointOnFacade(vestFacade, spot.u, spot.v);
-                addSign(p.x, p.y, p.z, vestFacade.rotY, typeCfg.exteriorName, typeCfg.exteriorSubtitle, QP[2843], false, QP[2844], { w: QP[2845], h: QP[2846] });
+                addBuildingExteriorSign(p.x, p.y, p.z, vestFacade.rotY, typeCfg.exteriorName, typeCfg.exteriorSubtitle, QP[2843], false, QP[2844], { w: QP[2845], h: QP[2846] });
             } else {
-                addSign(e.doorX, floorCount * floorHeight - QP[2847], e.doorZ, e.outwardRotY, typeCfg.exteriorName, typeCfg.exteriorSubtitle, QP[2848], false, QP[2849], { w: QP[2850], h: QP[2851] });
+                addBuildingExteriorSign(e.doorX, floorCount * floorHeight - QP[2847], e.doorZ, e.outwardRotY, typeCfg.exteriorName, typeCfg.exteriorSubtitle, QP[2848], false, QP[2849], { w: QP[2850], h: QP[2851] });
             }
         }
     

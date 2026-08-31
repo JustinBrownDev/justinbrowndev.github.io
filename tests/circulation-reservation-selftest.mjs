@@ -122,7 +122,7 @@ for (const shaft of shafts) {
 
 // Interior room dividers and optional structural weirdness must lose conflicts.
 for (const shaft of shafts) {
-  for (const wall of payload.physics.mazeWalls.filter(w => w.supportKind === 'partition')) {
+  for (const wall of payload.physics.mazeWalls.filter(w => ['partition', 'building-plan-partition'].includes(w.supportKind))) {
     const horizontal = Math.abs(wall.x2 - wall.x1) >= Math.abs(wall.z2 - wall.z1);
     const x = (wall.x1 + wall.x2) * 0.5;
     const z = (wall.z1 + wall.z2) * 0.5;

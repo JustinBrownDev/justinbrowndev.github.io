@@ -6,12 +6,13 @@ import { SEMANTIC_RUNTIME_PROP_ASSETS as SEMANTIC_INTERIOR_ASSETS, SEMANTIC_RUNT
 import { SEMANTIC_ROOM_RECIPES } from '../vendor/city-pack/semantic-megapack/room-recipes.js';
 import { anyReservationIntersectsBox } from './circulation-reservations.js';
 import { solveSemanticLayout } from './semantic-layout.js';
-import { compileSemanticContextMultiplier } from './semantic-context-multiplier.js';
+import { selectSemanticContextAsset, semanticContextCatalogStats } from './semantic-context-multiplier.js';
 import { createExteriorPropFieldSystem } from './exterior-prop-field.js';
 import { requiresSemanticExteriorPlacement, semanticExteriorProvenance, semanticPlacementPoint } from './semantic-exterior-authority.js';
 import { semanticAssetAlignment, semanticAssetFitScale } from './semantic-asset-frame.js';
 import { EXTERIOR_FIRST_PASS_KIND_ORDER, EXTERIOR_TASK_KIND_PRIORITY, compareExteriorPriorityKeys, exteriorTaskPriorityKey, exteriorTaskVisualImpact } from './exterior-spectacle-priority.js';
 import { attachSpectacleMedia, compileExteriorCompositionAuthority } from './exterior-composition-authority.js';
+import { createExteriorCoverageRuntime, exteriorCoverageSnapshot, noteMicroAheadCoverageViolation, recordExteriorCoverageResult } from './exterior-composition-runtime.js';
 
 function mulberry32(seed) {
     let a = seed >>> 0;
@@ -455,6 +456,45 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
         return programs[index];
     }
 
+    function semanticSlotsForEntity(entity) {
+        const modules = entity.footprintModules ?? [];
+        const authored = Array.isArray(entity?.buildingPlan?.topologySpaces)
+            ? entity.buildingPlan.topologySpaces.filter(space => space?.regions?.length)
+            : [];
+        if (authored.length) {
+            const occupiable = authored.filter(space => !['circulation', 'entry'].includes(space.role));
+            const source = occupiable.length ? occupiable : authored;
+            const slots = source.map(space => {
+                const moduleKeys = new Set([...(space.moduleKeys ?? []), space.moduleKey].filter(Boolean));
+                const cx = Number(space?.centroid?.x);
+                const cz = Number(space?.centroid?.z);
+                const module = modules.find(candidate =>
+                    moduleKeys.has(candidate.key)
+                    && Number.isFinite(cx) && Number.isFinite(cz)
+                    && cx >= candidate.cx - candidate.halfX && cx <= candidate.cx + candidate.halfX
+                    && cz >= candidate.cz - candidate.halfZ && cz <= candidate.cz + candidate.halfZ)
+                    ?? modules.find(candidate => moduleKeys.has(candidate.key))
+                    ?? modules[0];
+                if (!module) return null;
+                return {
+                    module,
+                    floor: Math.max(0, Math.floor(Number(space.floor) || 0)),
+                    spaceId: space.id,
+                    program: space.semanticProgram ?? null,
+                    role: space.role ?? null,
+                    spaceType: space.spaceType ?? null,
+                };
+            }).filter(Boolean);
+            if (slots.length) return slots;
+        }
+        const legacy = [];
+        for (const module of modules) {
+            const maxFloor = Math.max(1, Math.min(6, module.floors || 1));
+            for (let floor = 0; floor < maxFloor; floor++) legacy.push({ module, floor, spaceId: null, program: null, role: null, spaceType: null });
+        }
+        return legacy;
+    }
+
     function detailReservations(payload) {
         return payload.detailReservations ?? (payload.detailReservations = []);
     }
@@ -703,10 +743,12 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
         const floors = Math.max(1, entity.floors || 1);
         const wallHeight = floors * (entity.floorH || 3.15);
 
-        if (rng() < 0.96) {
+        if (entity.exteriorIdentity || rng() < 0.96) {
             const labelRng = mulberry32(taskSeed(chunk, entity.id, 'sign-label'));
             const basePair = pickMassiveNoisePair(labelRng);
-            const [title, subtitle] = textExciter.pairFor(chunk, entity.id, 'sign-label', basePair);
+            const generatedPair = textExciter.pairFor(chunk, entity.id, 'sign-label', basePair);
+            const title = String(entity.exteriorIdentity?.title ?? generatedPair[0]);
+            const subtitle = String(entity.exteriorIdentity?.subtitle ?? generatedPair[1]);
             tasks.push({
                 kind: 'sign', entityId: entity.id, side: front, facadeIndex: frontFacadeIndex,
                 y: clamp(2.45 + rng() * Math.min(2.6, wallHeight * 0.28), 2.25, Math.max(2.4, wallHeight - 0.8)),
@@ -715,6 +757,8 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
                 height: 0.86 + rng() * 0.54,
                 title, subtitle,
                 seed: taskSeed(chunk, entity.id, 'sign'),
+                signatureIdentity: !!entity.exteriorIdentity,
+                exteriorVisualTier: 'identity',
             });
         }
 
@@ -817,7 +861,7 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
         }
         tasks.push({
             kind: 'roof-clutter', entityId: entity.id, seed: taskSeed(chunk, entity.id, 'roof-clutter'),
-            count: 8 + Math.floor(rng() * (8 + Math.max(0, entity.kowloonIntensity || 0) * 10)),
+            count: 2 + (rng() < 0.35 ? 1 : 0),
         });
         if (tasks.some(task => task.kind === 'graffiti') && rng() < 0.46) tasks.push({
             kind: 'spray-cans', entityId: entity.id, side, facadeIndex: sideFacadeIndex,
@@ -840,38 +884,40 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
             });
         }
         if (!entity.suppressInteriorEnrichment && entity.footprintModules?.length) {
-            const semanticSlots = [];
-            for (const module of entity.footprintModules) {
-                const maxFloor = Math.max(1, Math.min(6, module.floors || 1));
-                for (let floor = 0; floor < maxFloor; floor++) semanticSlots.push({ module, floor });
-            }
-            const activeSlotCount = Math.max(1, Math.min(12, semanticSlots.length));
-            const slotStart = taskSeed(chunk, entity.id, 'semantic-space-rotation') % semanticSlots.length;
-            const activeSlots = Array.from({ length: activeSlotCount }, (_, i) => semanticSlots[(slotStart + i) % semanticSlots.length]);
-            for (let slotOrdinal = 0; slotOrdinal < activeSlots.length; slotOrdinal++) {
-                const slot = activeSlots[slotOrdinal];
-                const module = slot.module;
-                const floor = slot.floor;
-                const program = semanticProgramForSpace(chunk, entity, module.key, floor);
-                const recipe = semanticRecipeById.get(program)
-                    ?? SEMANTIC_ROOM_RECIPES[taskSeed(chunk, entity.id, `semantic-room-fallback:${module.key}:${floor}`) % SEMANTIC_ROOM_RECIPES.length];
-                const phaseTargets = recipe?.population?.phaseTargets ?? { identity: 6, functional: 10, life: 8 };
-                for (const phase of ['identity', 'functional', 'life']) {
-                    const target = Math.max(0, Math.floor(Number(phaseTargets[phase]) || 0));
-                    const base = Math.floor(target / activeSlots.length);
-                    const extra = slotOrdinal < target % activeSlots.length ? 1 : 0;
-                    const wanted = base + extra;
-                    const pool = recipe?.[phase] ?? [];
-                    const fallbackPool = semanticProgramPhasePools.get(`${program}:${phase}`) ?? semanticAllPhasePools.get(phase) ?? [];
-                    const phaseSeed = taskSeed(chunk, entity.id, `semantic-space:${module.key}:${floor}:${phase}`);
-                    for (let i = 0; i < wanted; i++) {
-                        const assetId = denseSemanticAssetId(pool, fallbackPool, phaseSeed, i);
-                        if (!assetId) continue;
-                        tasks.push({
-                            kind: `semantic-${phase}`, entityId: entity.id, assetId, program,
-                            moduleKey: module.key, floor,
-                            seed: taskSeed(chunk, entity.id, `semantic-object:${module.key}:${floor}:${phase}`, i),
-                        });
+            const semanticSlots = semanticSlotsForEntity(entity);
+            if (semanticSlots.length) {
+                const activeSlotCount = Math.max(1, Math.min(12, semanticSlots.length));
+                const slotStart = taskSeed(chunk, entity.id, 'semantic-space-rotation') % semanticSlots.length;
+                const activeSlots = Array.from({ length: activeSlotCount }, (_, i) => semanticSlots[(slotStart + i) % semanticSlots.length]);
+                for (let slotOrdinal = 0; slotOrdinal < activeSlots.length; slotOrdinal++) {
+                    const slot = activeSlots[slotOrdinal];
+                    const module = slot.module;
+                    const floor = slot.floor;
+                    const stableSpaceKey = slot.spaceId ?? `${module.key}:floor:${floor}`;
+                    const program = slot.program ?? semanticProgramForSpace(chunk, entity, module.key, floor);
+                    const recipe = semanticRecipeById.get(program)
+                        ?? SEMANTIC_ROOM_RECIPES[taskSeed(chunk, entity.id, `semantic-room-fallback:${stableSpaceKey}`) % SEMANTIC_ROOM_RECIPES.length];
+                    const phaseTargets = recipe?.population?.phaseTargets ?? { identity: 6, functional: 10, life: 8 };
+                    for (const phase of ['identity', 'functional', 'life']) {
+                        const target = Math.max(0, Math.floor(Number(phaseTargets[phase]) || 0));
+                        const base = Math.floor(target / activeSlots.length);
+                        const extra = slotOrdinal < target % activeSlots.length ? 1 : 0;
+                        const wanted = base + extra;
+                        const pool = recipe?.[phase] ?? [];
+                        const fallbackPool = semanticProgramPhasePools.get(`${program}:${phase}`) ?? semanticAllPhasePools.get(phase) ?? [];
+                        const phaseSeed = taskSeed(chunk, entity.id, `semantic-space:${stableSpaceKey}:${phase}`);
+                        for (let i = 0; i < wanted; i++) {
+                            const assetId = denseSemanticAssetId(pool, fallbackPool, phaseSeed, i);
+                            if (!assetId) continue;
+                            tasks.push({
+                                kind: `semantic-${phase}`, entityId: entity.id, assetId, program,
+                                moduleKey: module.key, floor, spaceId: slot.spaceId,
+                                architecturalSpaceRole: slot.role,
+                                architecturalSpaceType: slot.spaceType,
+                                architecturalProgram: slot.program,
+                                seed: taskSeed(chunk, entity.id, `semantic-object:${stableSpaceKey}:${phase}`, i),
+                            });
+                        }
                     }
                 }
             }
@@ -1584,6 +1630,15 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
                 bestKey = key;
             }
         }
+        noteMicroAheadCoverageViolation({
+            state,
+            payload,
+            playerPosition,
+            chosen: state.tasks[bestIndex],
+            chosenPriorityKey: bestKey,
+            remainingTasks: state.tasks.slice(state.cursor),
+            taskPositionFor: task => taskRuntimePosition(payload, task),
+        });
         return bestIndex;
     }
 
@@ -1607,7 +1662,7 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
         if (!hasPending(payload)) {
             state.phase = DETAIL_PHASE.READY;
             if (!state.completedAt) state.completedAt = performance.now();
-            return { progressed: false, steps: 0, complete: true, pending: 0, elapsedMs: 0 };
+            return { progressed: false, steps: 0, complete: true, pending: 0, elapsedMs: 0, exteriorCoverage: exteriorCoverageSnapshot(state, payload, playerPosition) };
         }
         if (!state.startedAt) state.startedAt = performance.now();
         state.phase = DETAIL_PHASE.REFINING;
@@ -1632,6 +1687,7 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
                     published++;
                     state.published++;
                     state.completed = state.published;
+                    recordExteriorCoverageResult(state, task, true);
                     if (task.firstPassBundle) {
                         const entityId = String(task.entityId ?? '');
                         const target = Number(state.firstPassTargetByEntity?.[entityId]) || 0;
@@ -1647,12 +1703,14 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
                 } else {
                     noOp++;
                     state.noOp++;
+                    recordExteriorCoverageResult(state, task, false);
                     settleFirstPassMiss(state, task);
                 }
             } catch (error) {
                 failed++;
                 state.failed++;
                 state.failures = state.failed;
+                recordExteriorCoverageResult(state, task, false);
                 settleFirstPassMiss(state, task);
                 console.warn?.(`[world] chunk ${chunk.key} detail ${task.kind} failed`, error);
             }
@@ -1681,6 +1739,7 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
             firstPassComplete: !!state.firstPassComplete,
             firstPassEntitiesComplete: state.firstPassEntitiesComplete,
             firstPassEntityTarget: state.firstPassEntityTarget,
+            exteriorCoverage: exteriorCoverageSnapshot(state, payload, playerPosition),
         };
     }
 
@@ -1708,34 +1767,32 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
         state.semanticDensityTasksPlanned = state.semanticLayout.densityPlanned ?? state.semanticLayout.planned;
         state.semanticDensityTasksSolved = state.semanticLayout.densitySolved ?? state.semanticLayout.solved;
         state.semanticDensityTasksUnresolved = state.semanticLayout.densityUnresolved ?? state.semanticLayout.unresolved;
-        state.semanticExteriorUnresolved = state.tasks.filter(task => requiresSemanticExteriorPlacement(task) && !task.semanticPlacement).length;
+        state.semanticExteriorDeferred = state.tasks.filter(task => requiresSemanticExteriorPlacement(task) && task.exteriorPlacementDeferred).length;
+        state.semanticExteriorUnresolved = state.tasks.filter(task => requiresSemanticExteriorPlacement(task) && !task.semanticPlacement && !task.exteriorPlacementDeferred).length;
         state.tasks = state.tasks.filter(task =>
-            (!String(task.kind).startsWith('semantic-') || !!task.semanticPlacement)
-            && (!requiresSemanticExteriorPlacement(task) || !!task.semanticPlacement));
-        const semanticContextMultiplier = compileSemanticContextMultiplier({
-            chunk,
-            payload,
-            assets: SEMANTIC_INTERIOR_ASSETS,
-            existingTasks: state.tasks,
-        });
-        // SINGLE EXTERIOR AUTHORITY: authored facade details, contextual GLB
-        // candidates, and primitive spectacle/macro candidates are not runtime
-        // populations until one building-level composition plan admits them.
-        const exteriorPropFieldTasks = exteriorPropField.planTasks(chunk, payload);
+            (!String(task.kind).startsWith('semantic-') || !!task.semanticPlacement || !!task.exteriorPlacementDeferred)
+            && (!requiresSemanticExteriorPlacement(task) || !!task.semanticPlacement || !!task.exteriorPlacementDeferred));
+
+        // SINGLE EXTERIOR AUTHORITY: legacy authored objects are candidate intelligence,
+        // while the corpus selector and primitive field are request/realization services.
+        // Neither service is allowed to derive quantity from opportunity count.
         const exteriorComposition = compileExteriorCompositionAuthority({
             chunk,
             payload,
             authoredTasks: state.tasks,
-            contextualTasks: semanticContextMultiplier.tasks,
-            fieldTasks: exteriorPropFieldTasks,
+            selectContextAsset: ({ opportunity, request, usedAssetIds }) => selectSemanticContextAsset({
+                chunk, payload, assets: SEMANTIC_INTERIOR_ASSETS, opportunity, request, usedAssetIds,
+            }),
+            planFieldRequest: ({ opportunity, request }) => exteriorPropField.planRequestTask(chunk, payload, opportunity, request),
         });
         const mediaStats = attachSpectacleMedia({
             chunk,
             tasks: exteriorComposition.acceptedExteriorTasks,
-            pairFor: ({ task, rng }) => textExciter.pairFor(chunk, task.entityId, 'megascreen', pickMassiveNoisePair(rng)),
+            pairFor: ({ task, assemblyId, rng }) => textExciter.pairFor(chunk, task.entityId, `megascreen:${assemblyId}`, pickMassiveNoisePair(rng)),
         });
         state.tasks = exteriorComposition.tasks;
         state.exteriorComposition = { ...exteriorComposition.stats, media: mediaStats };
+        state.exteriorCoverage = createExteriorCoverageRuntime(exteriorComposition);
 
         // Rebuild first-pass accounting from the one admitted queue. The authority
         // guarantees exactly one building exterior anchor while leaving plaza and
@@ -1756,16 +1813,20 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
         state.firstPassTaskCount = state.firstPassPublicationTarget;
         state.firstPassComplete = state.firstPassEntityTarget === 0;
         state.semanticContextMultiplier = {
-            ...semanticContextMultiplier.stats,
-            candidateOnly: true,
-            acceptedByComposition: exteriorComposition.stats.contextAccepted,
-            rejectedByComposition: Math.max(0, semanticContextMultiplier.tasks.length - exteriorComposition.stats.contextAccepted),
+            ...semanticContextCatalogStats(SEMANTIC_INTERIOR_ASSETS),
+            plannerRequestOnly: true,
+            automaticPopulationDisabled: true,
+            plannerCandidates: exteriorComposition.stats.plannerContextCandidates,
+            acceptedByComposition: exteriorComposition.stats.plannerContextAccepted,
         };
         state.topologyPrecommit = solveBlockingTopology(chunk, payload, state.tasks);
         state.exteriorPropField = {
-            ...(exteriorPropFieldTasks[0]?.fieldPlan?.aggregateStats ?? { generated: 0 }),
-            candidateTasks: exteriorPropFieldTasks.length,
-            acceptedTasks: exteriorComposition.stats.fieldAccepted,
+            plannerRequestOnly: true,
+            automaticPopulationDisabled: true,
+            plannerCandidates: exteriorComposition.stats.plannerFieldCandidates,
+            acceptedTasks: exteriorComposition.stats.plannerFieldAccepted,
+            mediaAssemblies: mediaStats.assemblies,
+            coordinatedMediaAssemblies: mediaStats.coordinatedAssemblies,
             mediaSurfaces: mediaStats.surfaces,
         };
         payload.refinement = state;

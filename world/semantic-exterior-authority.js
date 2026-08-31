@@ -17,9 +17,7 @@ const TASK_ROLE_PREFERENCES = Object.freeze({
 
 const EXTERIOR_TASK_KINDS = new Set(Object.keys(TASK_ROLE_PREFERENCES));
 
-function finite(value, fallback = 0) {
-    return Number.isFinite(value) ? value : fallback;
-}
+function finite(value, fallback = 0) { return Number.isFinite(value) ? value : fallback; }
 
 function hash32(value) {
     let h = 2166136261 >>> 0;
@@ -79,9 +77,7 @@ export function bindSemanticExteriorPlacement(task, opportunity) {
     task.spatialTopologyHostId = opportunity.spatialTopologyHostId ?? opportunity.connectorId ?? task.semanticHostId;
     task.semanticPlacement = {
         schema: SEMANTIC_EXTERIOR_AUTHORITY_SCHEMA,
-        x: transform.x,
-        y: transform.y,
-        z: transform.z,
+        x: transform.x, y: transform.y, z: transform.z,
         rotY: finite(transform.rotY),
         mode: `semantic-exterior:${opportunity.role}`,
         role: opportunity.role,
@@ -94,10 +90,7 @@ export function bindSemanticExteriorPlacement(task, opportunity) {
     };
     if (opportunity.bounds) task.semanticOpportunityBounds = { ...opportunity.bounds };
     if (opportunity.region) task.semanticOpportunityRegion = { ...opportunity.region };
-    if (opportunity.span) task.semanticSpan = {
-        start: { ...opportunity.span.start },
-        end: { ...opportunity.span.end },
-    };
+    if (opportunity.span) task.semanticSpan = { start: { ...opportunity.span.start }, end: { ...opportunity.span.end } };
     return task.semanticPlacement;
 }
 
@@ -111,15 +104,22 @@ export function semanticPlacementPoint(task) {
 
 export function semanticExteriorProvenance(task) {
     const placement = task?.semanticPlacement;
-    if (!placement) return null;
+    const composition = task?.exteriorComposition;
+    if (!placement && !composition) return null;
     return {
         schema: SEMANTIC_EXTERIOR_AUTHORITY_SCHEMA,
-        opportunityId: task.semanticOpportunityId ?? placement.opportunityId ?? null,
-        hostId: task.semanticHostId ?? placement.hostId ?? null,
+        opportunityId: task.semanticOpportunityId ?? placement?.opportunityId ?? null,
+        hostId: task.semanticHostId ?? placement?.hostId ?? null,
         spatialTopologyHostId: task.spatialTopologyHostId ?? null,
-        connectorId: placement.connectorId ?? null,
-        apertureId: placement.apertureId ?? null,
-        role: placement.role ?? null,
-        mode: placement.mode ?? null,
+        connectorId: placement?.connectorId ?? null,
+        apertureId: placement?.apertureId ?? null,
+        role: placement?.role ?? null,
+        mode: placement?.mode ?? (composition ? 'exterior-composition-plan' : null),
+        exteriorCompositionSchema: composition?.schema ?? null,
+        exteriorPlanId: composition?.planId ?? task?.exteriorPlanId ?? null,
+        exteriorRequestId: composition?.requestId ?? task?.exteriorRequestId ?? null,
+        exteriorTier: composition?.tier ?? null,
+        exteriorSource: composition?.source ?? null,
+        exteriorReservationIds: [...(composition?.reservationIds ?? task?.exteriorReservationIds ?? [])],
     };
 }

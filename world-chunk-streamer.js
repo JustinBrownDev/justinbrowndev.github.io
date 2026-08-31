@@ -12,6 +12,7 @@ import {
     worldChunkKey,
     worldWeirdnessAt,
 } from './world-contract.js';
+import { refinementCoverageFloorRank } from './world/neighborhood-refinement-priority.js';
 
 export { deterministicChunkSeed, hashString32, worldWeirdnessAt } from './world-contract.js';
 
@@ -731,12 +732,12 @@ export function createWorldChunkStreamer({
                 syncChunkPublication(chunk);
                 if (!chunk.renderPublished || !chunk.physicsAuthoritative) continue;
             }
-            // No new state machine: this is only a sort key. The block under the
-            // player converges first, then immediate/forward neighbors, then the
-            // rest of the visible ring, while prefetch detail remains last.
+            // Still only a sort key, not a synchronous phase: visible chunks
+            // breadth-first across refinement waves, then center/near focus inside
+            // the same wave. Prefetch detail remains strictly behind visible work.
             const focusRank = visibilityRank > 0 ? 3 : ring === 0 ? 0 : ring === 1 ? 1 : 2;
             const firstPassPending = visibilityRank === 0 && !chunkVisibleFirstPassComplete(chunk);
-            const floorRank = firstPassPending ? 0 : 1;
+            const floorRank = refinementCoverageFloorRank(chunk.payload.refinement, { visible: visibilityRank === 0 });
             const semanticFocus = firstPassPending && semanticFirstPassTarget(chunk) !== null;
             const serial = chunk.lastRefinedSerial || 0;
             const priority = chunkPriorityScore(chunk);
@@ -744,10 +745,10 @@ export function createWorldChunkStreamer({
             let better = false;
             if (visibilityRank < bestVisibilityRank) better = true;
             else if (visibilityRank === bestVisibilityRank) {
-                if (focusRank < bestFocusRank) better = true;
-                else if (focusRank === bestFocusRank) {
-                    if (floorRank < bestFloorRank) better = true;
-                    else if (floorRank === bestFloorRank) {
+                if (floorRank < bestFloorRank) better = true;
+                else if (floorRank === bestFloorRank) {
+                    if (focusRank < bestFocusRank) better = true;
+                    else if (focusRank === bestFocusRank) {
                         if (semanticFocus !== bestSemanticFocus) better = semanticFocus;
                         else better = priority < bestPriority
                             || (priority === bestPriority && (serial < bestSerial

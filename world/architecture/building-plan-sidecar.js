@@ -372,16 +372,20 @@ function pointInsideAnyModule(x, z, modules) {
     && z > module.cz - module.halfZ - EPS && z < module.cz + module.halfZ + EPS);
 }
 
-function chooseCellSize(modules) {
+function chooseCellSize(modules, minimumClearWidth = 0.72) {
   const minSpan = Math.min(...modules.map(module => Math.min(module.halfX * 2, module.halfZ * 2)));
-  return clamp(minSpan / 7.5, 0.52, 0.82);
+  const natural = clamp(minSpan / 7.5, 0.52, 1.08);
+  // A one-cell circulation band is allowed to be a real route, so the planning
+  // lattice itself must never be narrower than the resolved player-scale route.
+  // Tiny envelopes clamp to their own span rather than disappearing entirely.
+  return Math.min(minSpan, Math.max(natural, Math.min(minSpan, Math.max(0.72, minimumClearWidth))));
 }
 
-function buildFloorGrid({ modules, floor, floorH, reservations }) {
+function buildFloorGrid({ modules, floor, floorH, reservations, minimumClearWidth = 0.72 }) {
   const activeModules = modules.filter(module => module.floors > floor);
   if (!activeModules.length) return null;
   const bounds = floorBounds(activeModules);
-  const cellSize = chooseCellSize(activeModules);
+  const cellSize = chooseCellSize(activeModules, minimumClearWidth);
   const minIx = Math.floor(bounds.minX / cellSize);
   const maxIx = Math.ceil(bounds.maxX / cellSize);
   const minIz = Math.floor(bounds.minZ / cellSize);
@@ -865,7 +869,12 @@ function planFloor({
   semanticProgram, physicalTruth, stableKey,
 }) {
   const area = floorArea(modules, floor);
-  const grid = buildFloorGrid({ modules, floor, floorH, reservations });
+  const minimumClearWidth = Math.max(0.72,
+    Number(physicalTruth?.route?.clearWidthSI)
+      || Number(physicalTruth?.door?.clearWidth?.realizedSI)
+      || Number(physicalTruth?.door?.clearWidthSI)
+      || 0.86);
+  const grid = buildFloorGrid({ modules, floor, floorH, reservations, minimumClearWidth });
   if (!grid || !grid.cells.length) return null;
   let spaces = expandedTemplates({ grammar, floor, area, profile, authoredIntent, stableKey, semanticProgram });
 
@@ -974,6 +983,7 @@ function planFloor({
     floorHeight: floorH,
     approximateArea: area,
     rasterCellSize: grid.cellSize,
+    minimumClearWidth,
     rootSpaceKey: rootSpace.key,
     spaces: realizedSpaces,
     desiredEdges,
@@ -992,6 +1002,10 @@ function planFloor({
       unclaimedCellCount: unclaimedCells.length,
       geometryNotes,
       structuralReservationCellCount: grid.cells.filter(cell => cell.structuralReservationId).length,
+      minimumClearWidth,
+      circulationWidthHealthy: realizedSpaces
+        .filter(space => space.role === 'circulation' || space.role === 'entry')
+        .every(space => space.regions.some(region => Math.min(region.halfX * 2, region.halfZ * 2) + EPS >= minimumClearWidth)),
     },
   };
 }

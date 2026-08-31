@@ -18,15 +18,23 @@ opportunities.push({
   transform:{x:0,y:2.7,z:-4.05,rotY:0}, clearanceBudget:{width:1.8,height:0.7}, decorationMayIntrude:true,
   surfaceFrame:{tangentX:1,tangentZ:0,normalX:0,normalZ:-1},
 });
-const payload={semanticContext:{opportunities,surfaces:[{id:'b:a:n',entityId:'b:a',half:5,yMin:0,yMax:12.6}]}};
-const a=planExteriorPropField({chunk:{key:'3,-2'},payload});
-const b=planExteriorPropField({chunk:{key:'3,-2'},payload});
+const payload={semanticContext:{opportunities,surfaces:[{id:'b:a:n',entityId:'b:a',half:5,yMin:0,yMax:12.6}],spatialTopology:{reservations:[]}}};
+const chunk={key:'3,-2'};
+const disabled=planExteriorPropField({chunk,payload});
+assert.equal(disabled.placements.length,0,'opportunity count alone must never populate the facade');
+const requests=[
+  {opportunityId:'facade:service:3',semanticFamily:'vertical-mechanical',desiredScaleClass:'large',priorityTier:'macro'},
+  {opportunityId:'facade:macro',semanticFamily:'signage',desiredScaleClass:'large',priorityTier:'identity'},
+  {opportunityId:'portal:lintel',semanticFamily:'security-hardware',desiredScaleClass:'medium',priorityTier:'medium'},
+];
+const a=planExteriorPropField({chunk,payload,requests});
+const b=planExteriorPropField({chunk,payload,requests});
 assert.deepEqual(a,b);
 const facade=a.placements.filter(p=>p.domain.startsWith('facade')||p.domain==='portal-hardware');
 const macro=a.placements.filter(p=>p.domain==='facade-macro');
-assert.ok(facade.length>=10,`expected semantic facade occupation, got ${facade.length}`);
-assert.ok(macro.length>=3,`expected multi-part macro facade assembly, got ${macro.length}`);
-assert.ok(macro.some(p=>Math.max(p.sx,p.sy,p.sz)>=2));
-assert.ok(facade.every(p=>p.semanticOpportunityId),'facade infrastructure must never be coordinate-orphaned');
-assert.ok(a.stats.drawBuckets<=4);
-console.log('PASS semantic facade infrastructure',a.stats);
+assert.ok(facade.length>=5,`three planner requests should realize composed assemblies, got ${facade.length}`);
+assert.ok(macro.length>=3,`large mechanical request should be multi-part, got ${macro.length}`);
+assert.ok(macro.some(p=>Math.max(p.sx,p.sy,p.sz)>=1.4));
+assert.ok(facade.every(p=>p.semanticOpportunityId));
+assert.ok(a.stats.opportunitiesConsumed<=requests.length);
+console.log('PASS semantic facade request realization',a.stats);

@@ -112,6 +112,47 @@ function findModule(entity, key) {
     return entity?.footprintModules?.find(module => module.key === key) ?? null;
 }
 
+function plannedSpaceForTask(entity, task) {
+    const spaces = Array.isArray(entity?.buildingPlan?.topologySpaces)
+        ? entity.buildingPlan.topologySpaces
+        : [];
+    if (!spaces.length) return null;
+    if (task?.spaceId) {
+        const exact = spaces.find(space => space.id === task.spaceId);
+        if (exact) return exact;
+    }
+    const floor = Math.max(0, Math.floor(Number(task?.floor) || 0));
+    const candidates = spaces.filter(space =>
+        space.floor === floor
+        && (!task?.moduleKey || space.moduleKey === task.moduleKey || space.moduleKeys?.includes(task.moduleKey)));
+    if (!candidates.length) return null;
+    const roleRank = role => {
+        const phase = semanticPhase(task);
+        const priorities = phase === 'identity'
+            ? ['public', 'program', 'work', 'shared', 'private', 'service', 'storage', 'entry', 'circulation']
+            : phase === 'life'
+                ? ['private', 'shared', 'public', 'program', 'work', 'service', 'storage', 'entry', 'circulation']
+                : ['program', 'work', 'service', 'storage', 'public', 'private', 'shared', 'entry', 'circulation'];
+        const index = priorities.indexOf(role);
+        return index < 0 ? priorities.length : index;
+    };
+    return [...candidates].sort((a, b) =>
+        Number(b.semanticProgram === task?.program) - Number(a.semanticProgram === task?.program)
+        || roleRank(a.role) - roleRank(b.role)
+        || String(a.id).localeCompare(String(b.id)))[0];
+}
+
+function bindTaskToBuildingPlanRoom(entity, task) {
+    const space = plannedSpaceForTask(entity, task);
+    if (!space) return null;
+    task.spaceId = space.id;
+    task.architecturalSpaceRole = space.role ?? null;
+    task.architecturalSpaceType = space.spaceType ?? null;
+    task.architecturalProgram = space.semanticProgram ?? null;
+    if (!task.program && space.semanticProgram) task.program = space.semanticProgram;
+    return space;
+}
+
 function semanticPhase(task) {
     if (task?.kind === 'semantic-identity') return 'identity';
     if (task?.kind === 'semantic-life') return 'life';
@@ -131,11 +172,15 @@ function assetValues(assetById) {
 
 function destinationTaskGroupKey(chunk, payload, task) {
     const entity = findEntity(payload, task.entityId);
+    if (entity) {
+        const plannedSpace = bindTaskToBuildingPlanRoom(entity, task);
+        if (plannedSpace) return plannedSpace.id;
+    }
     const module = findModule(entity, task.moduleKey);
     if (!entity || !module) return `missing:${task.entityId}:${task.moduleKey}:${task.floor ?? 0}`;
     const floor = Math.max(0, Math.min((module.floors || 1) - 1, task.floor || 0));
     const siteKey = entity.semanticSiteKey ?? entity.siteId ?? entity.id;
-    return semanticSpaceId(chunk.key, siteKey, module.key, floor);
+    return task.spaceId || semanticSpaceId(chunk.key, siteKey, module.key, floor);
 }
 
 function compileDestinationCompatibility({ chunk, payload, tasks, assetById }) {
@@ -226,9 +271,16 @@ function publishSpace(payload, spaceById, plan, task) {
         chunkKey: plan.chunkKey,
         entityId: plan.entityId,
         moduleKey: plan.moduleKey,
+        moduleKeys: [...(plan.moduleKeys ?? (plan.moduleKey ? [plan.moduleKey] : []))],
         floor: plan.floor,
         floorH: plan.floorH,
         yBase: plan.yBase,
+        architecturalAuthority: plan.architecturalAuthority ?? null,
+        buildingPlanId: plan.buildingPlanId ?? null,
+        role: plan.role ?? null,
+        spaceType: plan.spaceType ?? null,
+        semanticProgram: plan.semanticProgram ?? task.program,
+        adjacentSpaceIds: [...(plan.adjacentSpaceIds ?? [])],
         program: task.program,
         requestedProgram: task.requestedProgram ?? task.program,
         physicalUse: entity?.physicalUse ?? null,
@@ -254,6 +306,11 @@ export function solveSemanticLayout({ chunk, payload, tasks, assetById } = {}) {
     const spaces = payload.semanticSpaces ?? (payload.semanticSpaces = []);
     const spaceById = new Map(spaces.map(space => [space.id, space]));
 
+    for (const task of tasks) {
+        if (!semanticTask(task)) continue;
+        const entity = findEntity(payload, task.entityId);
+        if (entity) bindTaskToBuildingPlanRoom(entity, task);
+    }
     const destinationCompatibility = compileDestinationCompatibility({ chunk, payload, tasks, assetById });
     const baseSemanticTasks = destinationCompatibility.tasks;
     const semanticTasks = baseSemanticTasks;

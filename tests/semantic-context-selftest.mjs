@@ -53,11 +53,15 @@ assert.ok(wallMounts.some(item => item.transform.y >= 7 && item.layer === 'mid')
 assert.ok(wallMounts.some(item => item.shellPriority === 'first-pass') && wallMounts.some(item => item.shellPriority === 'deepen'), 'facade slots must distinguish shell coverage from later deepening');
 assert.ok(new Set(wallMounts.map(item => item.transform.y.toFixed(2))).size >= 3, 'wall mounting must occupy several vertical bands');
 assert.ok(compiled.opportunities.some(item => item.role === 'connector-adjacent-zone' && item.connectorId === 'bridge:upper' && item.layer === 'upper'), 'upper connectors must use the same context machinery');
-assert.ok(first.tasks.filter(task => task.semanticOpportunityId).length >= 6);
+const exteriorTasks = first.tasks.filter(task => task.kind !== 'semantic-functional');
+assert.equal(exteriorTasks.length, 6);
+assert.ok(exteriorTasks.every(task => task.exteriorPlacementDeferred === true), 'building exterior tasks must defer placement to composition authority');
+assert.ok(exteriorTasks.every(task => task.semanticOpportunityId == null), 'semantic context must not pre-claim building exterior opportunities');
+assert.equal(compiled.stats.exteriorPlacementDeferred, 6);
 assert.equal(first.tasks[0].semanticDebug, true);
 assert.match(first.tasks[0].title, /DISTRICT:/);
 assert.match(first.tasks[0].subtitle, /PROGRAM:/);
-assert.notEqual(first.tasks[0].along, 0, 'sign should move away from the centered entrance aperture');
+assert.equal(first.tasks[0].along, 0, 'semantic content may change before composition, but placement may not');
 assert.equal(first.payload.semanticPlacements[0].semanticContextId, first.payload.semanticSpaces[0].semanticContextId);
 
 const second = fixture();

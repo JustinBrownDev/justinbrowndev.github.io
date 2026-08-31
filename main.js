@@ -1982,6 +1982,7 @@ function* unifiedSignatureModuleAdapterSteps(cell, opts = {}) {
     sharedBuildingFacadeMaterial,
     siteIdOf,
     streetSetbackRoll,
+    exteriorCompositionOwned: true,
 }));
 adornmentSystem.setGalleryPanelBuilder(buildGalleryArtPanel);
 
@@ -2194,6 +2195,7 @@ function signatureFabricProfile(site) {
                 : type === 'systemsWorkshop' ? Math.max(2, Math.min(3, preferred))
                     : type === 'loreShrine' ? Math.max(2, Math.min(4, preferred))
                         : Math.max(1, preferred);
+    const typeCfg = CONFIG.signatureBuildings[type] ?? {};
     const floorCountByCell = Object.fromEntries(site.cells.map(cell => [`${cell.col},${cell.row}`, floors]));
     const entrances = [site.signatureInstance?.mainEntrance, site.signatureInstance?.secondaryEntrance]
         .filter(Boolean)
@@ -2207,6 +2209,16 @@ function signatureFabricProfile(site) {
         suppressInteriorClutter: true,
         suppressMezzanines: true,
         singularRecipe: type,
+        exteriorCompositionOwned: true,
+        exteriorIdentity: {
+            title: typeCfg.exteriorName ?? String(type).toUpperCase(),
+            subtitle: typeCfg.exteriorSubtitle ?? '',
+            semanticFamily: 'signage',
+            priorityTier: 'identity',
+        },
+        exteriorMacroPreference: type === 'as400Archive'
+            ? { roofSemanticFamily: 'roof-antenna', facadeSemanticFamily: 'vertical-mechanical' }
+            : null,
     };
 }
 

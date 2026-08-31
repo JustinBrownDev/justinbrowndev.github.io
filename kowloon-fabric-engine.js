@@ -5,6 +5,8 @@ import { assertBuildingFootprintsDoNotOverlap } from './world/building-footprint
 import { createKowloonMazeTopology } from './world/kowloon-district-plan.js';
 import { classifyPhysicalUse } from './world/physical-use.js';
 import { deriveStairFlight, resolvePhysicalTruth } from './world/physical-truth.js';
+import { planBuildingSidecar } from './world/architecture/building-plan-sidecar.js';
+import { assertBuildingPlanAuthority, promoteBuildingPlanAuthority } from './world/architecture/building-plan-authority.js';
 import { planExteriorScaffoldRoute } from './world/scaffold-circulation-plan.js';
 import {
     anyReservationIntersectsBox,
@@ -70,6 +72,119 @@ function oppositeSide(side) {
     if (side === 'south') return 'north';
     if (side === 'west') return 'east';
     return 'west';
+}
+
+
+
+function kowloonCellSetConnected(cells) {
+    if (cells.length <= 1) return true;
+    const byCell = new Map(cells.map(cell => [key(cell.col, cell.row), cell]));
+    const seen = new Set();
+    const queue = [cells[0]];
+    seen.add(key(cells[0].col, cells[0].row));
+    while (queue.length) {
+        const current = queue.shift();
+        const neighbors = KOWLOON_DIRS
+            .map(dir => byCell.get(key(current.col + dir.dc, current.row + dir.dr)))
+            .filter(Boolean)
+            .sort((a, b) => key(a.col, a.row).localeCompare(key(b.col, b.row)));
+        for (const next of neighbors) {
+            const nextKey = key(next.col, next.row);
+            if (seen.has(nextKey)) continue;
+            seen.add(nextKey);
+            queue.push(next);
+        }
+    }
+    return seen.size === byCell.size;
+}
+
+function normalizeModuleFloorConnectivity(modulePlans, primaryModule, bridgePortals = []) {
+    if (!primaryModule || modulePlans.length <= 1) {
+        return { raisedForBridgeModules: [], raisedFloorLevels: 0, trimmedModules: [], trimmedFloorLevels: 0 };
+    }
+    const byCell = new Map(modulePlans.map(module => [key(module.cell.col, module.cell.row), module]));
+    const raised = new Map();
+    const trimmed = new Map();
+
+    const neighborsOfModule = module => KOWLOON_DIRS
+        .map(dir => byCell.get(key(module.cell.col + dir.dc, module.cell.row + dir.dr)))
+        .filter(Boolean)
+        .sort((a, b) => a.key.localeCompare(b.key));
+
+    const pathToPrimary = start => {
+        if (start === primaryModule) return [start];
+        const queue = [start];
+        const parent = new Map([[start.key, null]]);
+        while (queue.length) {
+            const current = queue.shift();
+            for (const next of neighborsOfModule(current)) {
+                if (parent.has(next.key)) continue;
+                parent.set(next.key, current.key);
+                if (next === primaryModule) {
+                    const path = [primaryModule];
+                    let cursor = current.key;
+                    while (cursor) {
+                        path.push(byCell.get(cursor));
+                        cursor = parent.get(cursor);
+                    }
+                    return path.reverse();
+                }
+                queue.push(next);
+            }
+        }
+        return null;
+    };
+
+    // A bridge is already a real circulation connector, so preserve the floor it
+    // lands on and raise only the shortest same-site support path back to the
+    // persistent stair spine. Current bridges use floor 1, but keep this generic.
+    for (const portal of bridgePortals) {
+        const target = modulePlans.find(module => module.key === portal.moduleKey);
+        if (!target) continue;
+        const requiredFloors = Math.min(primaryModule.floors, Math.max(1, Number(portal.floor) + 1 || 1));
+        if (requiredFloors <= 1) continue;
+        const path = pathToPrimary(target);
+        if (!path) throw new Error(`Kowloon bridge module ${target.key} is disconnected from primary ${primaryModule.key}`);
+        for (const module of path) {
+            if (module.floors >= requiredFloors) continue;
+            const before = module.floors;
+            module.floors = requiredFloors;
+            raised.set(module.key, (raised.get(module.key) ?? 0) + (requiredFloors - before));
+        }
+    }
+
+    // Random height variation may otherwise leave an upper-floor island with no
+    // stair or bridge route. Trim only the inaccessible levels; never invent a
+    // second vertical core and never grow the whole compound to match one tower.
+    for (let floor = 1; floor < primaryModule.floors; floor++) {
+        const active = new Set(modulePlans.filter(module => module.floors > floor).map(module => module.key));
+        if (!active.has(primaryModule.key)) break;
+        const reachable = new Set([primaryModule.key]);
+        const queue = [primaryModule];
+        while (queue.length) {
+            const current = queue.shift();
+            for (const next of neighborsOfModule(current)) {
+                if (!active.has(next.key) || reachable.has(next.key)) continue;
+                reachable.add(next.key);
+                queue.push(next);
+            }
+        }
+        for (const module of modulePlans) {
+            if (module.floors <= floor || reachable.has(module.key)) continue;
+            const before = module.floors;
+            module.floors = floor;
+            trimmed.set(module.key, (trimmed.get(module.key) ?? 0) + (before - floor));
+        }
+    }
+
+    return {
+        raisedForBridgeModules: [...raised.entries()].sort((a, b) => a[0].localeCompare(b[0]))
+            .map(([moduleKey, floorsAdded]) => ({ moduleKey, floorsAdded })),
+        raisedFloorLevels: [...raised.values()].reduce((sum, count) => sum + count, 0),
+        trimmedModules: [...trimmed.entries()].sort((a, b) => a[0].localeCompare(b[0]))
+            .map(([moduleKey, floorsRemoved]) => ({ moduleKey, floorsRemoved })),
+        trimmedFloorLevels: [...trimmed.values()].reduce((sum, count) => sum + count, 0),
+    };
 }
 
 function primaryPhysicalRole(family) {
@@ -266,58 +381,128 @@ export function createKowloonFabricEngine({
         if (gz1 < z1) transforms.slabs.push({ x: (gx0 + gx1) * 0.5, y: y - slabT * 0.5, z: (gz1 + z1) * 0.5, sx: gx1 - gx0, sy: slabT, sz: z1 - gz1 });
     }
 
-    function addPartitionWall(wallList, physics, fp, y0, y1, spec, stairCx, stairCz, circulationReservation = null) {
-        if (!spec) return 0;
-        const wallH = y1 - y0;
-        const wallY = y0 + wallH * 0.5;
+    function realizeBuildingPlanWallRuns({ physics, wallList, plan }) {
         const wallT = 0.14;
-        const legacyGap = 1.25;
+        const coreReservation = plan?.verticalCore?.reservation ?? null;
         let segments = 0;
-
-        const emit = (axis, fixed, a, b) => {
-            if (b - a <= 0.04) return;
+        const emitRaw = (run, a, b, yMin = run.yBase, yMax = run.yBase + run.height) => {
+            if (b - a <= 0.04 || yMax - yMin <= 0.04) return;
+            const wallH = yMax - yMin;
+            const wallY = yMin + wallH * 0.5;
             const mid = (a + b) * 0.5;
-            if (axis === 'x') {
-                wallTransform(wallList, mid, wallY, fixed, b - a, wallH, wallT);
-                physics.mazeWalls.push({ x1: a, z1: fixed, x2: b, z2: fixed, yMin: y0, yMax: y1, supportKind: 'partition' });
+            if (run.axis === 'x') {
+                wallTransform(wallList, mid, wallY, run.fixedCoord, b - a, wallH, wallT);
+                physics.mazeWalls.push({
+                    x1: a, z1: run.fixedCoord, x2: b, z2: run.fixedCoord,
+                    yMin, yMax, thickness: wallT, supportKind: 'building-plan-partition',
+                    buildingPlanWallId: run.id, fromSpaceId: run.fromSpaceId, toSpaceId: run.toSpaceId,
+                });
             } else {
-                wallTransform(wallList, fixed, wallY, mid, wallT, wallH, b - a);
-                physics.mazeWalls.push({ x1: fixed, z1: a, x2: fixed, z2: b, yMin: y0, yMax: y1, supportKind: 'partition' });
+                wallTransform(wallList, run.fixedCoord, wallY, mid, wallT, wallH, b - a);
+                physics.mazeWalls.push({
+                    x1: run.fixedCoord, z1: a, x2: run.fixedCoord, z2: b,
+                    yMin, yMax, thickness: wallT, supportKind: 'building-plan-partition',
+                    buildingPlanWallId: run.id, fromSpaceId: run.fromSpaceId, toSpaceId: run.toSpaceId,
+                });
             }
             segments++;
         };
-
-        const emitAroundCut = (axis, fixed, a0, a1, legacyCenter) => {
-            if (circulationReservation) {
-                const cut = reservationCutForAxisSegment(circulationReservation, {
-                    axis, fixedCoord: fixed, from: a0, to: a1, yMin: y0, yMax: y1,
-                }, wallT * 0.5);
-                if (!cut) {
-                    emit(axis, fixed, a0, a1);
-                    return;
-                }
-                emit(axis, fixed, a0, cut.from);
-                emit(axis, fixed, cut.to, a1);
-                return;
-            }
-
-            // Non-spine modules retain the old seeded room-divider shape for this
-            // landing. P5 only changes a divider when real circulation authority exists.
-            const gapCenter = clamp(legacyCenter, a0 + legacyGap * 0.55, a1 - legacyGap * 0.55);
-            emit(axis, fixed, a0, gapCenter - legacyGap * 0.5);
-            emit(axis, fixed, gapCenter + legacyGap * 0.5, a1);
+        const emit = (run, a, b, yMin = run.yBase, yMax = run.yBase + run.height) => {
+            if (!coreReservation) return emitRaw(run, a, b, yMin, yMax);
+            const coreCut = reservationCutForAxisSegment(coreReservation, {
+                axis: run.axis,
+                fixedCoord: run.fixedCoord,
+                from: a,
+                to: b,
+                yMin,
+                yMax,
+            }, wallT * 0.5 + 0.01);
+            if (!coreCut) return emitRaw(run, a, b, yMin, yMax);
+            emitRaw(run, a, coreCut.from, yMin, yMax);
+            emitRaw(run, coreCut.to, b, yMin, yMax);
         };
 
-        if (spec.axis === 'x') {
-            const z = fp.cz + spec.offset * fp.halfZ;
-            const x0 = fp.cx - fp.halfX + 0.18, x1 = fp.cx + fp.halfX - 0.18;
-            emitAroundCut('x', z, x0, x1, stairCx);
-        } else {
-            const x = fp.cx + spec.offset * fp.halfX;
-            const z0 = fp.cz - fp.halfZ + 0.18, z1 = fp.cz + fp.halfZ - 0.18;
-            emitAroundCut('z', x, z0, z1, stairCz);
+        for (const run of plan?.wallRuns ?? []) {
+            let cursor = run.spanA;
+            const gaps = [...(run.gaps ?? [])].sort((a, b) => a.lo - b.lo || a.hi - b.hi);
+            for (const gap of gaps) {
+                const lo = Math.max(run.spanA, gap.lo);
+                const hi = Math.min(run.spanB, gap.hi);
+                if (hi <= lo) continue;
+                emit(run, cursor, lo);
+                const openingTop = Math.min(run.yBase + run.height, run.yBase + Math.max(1.9, Number(gap.height) || 2.03));
+                emit(run, lo, hi, openingTop, run.yBase + run.height);
+                cursor = Math.max(cursor, hi);
+            }
+            emit(run, cursor, run.spanB);
         }
         return segments;
+    }
+
+    function registerBuildingPlanInteriorDoors(physics, plan, physicalTruth) {
+        const result = [];
+        const approachDepth = Math.max(0.85, Number(physicalTruth?.door?.approachDepthSI) || 1.0);
+        for (const floor of plan?.floors ?? []) {
+            const byKey = new Map((floor.spaces ?? []).map(space => [space.key, space]));
+            for (const opening of floor.openings ?? []) {
+                if (opening.kind !== 'interior-door') continue;
+                const fromSpace = byKey.get(opening.fromSpaceKey);
+                const toSpace = byKey.get(opening.toSpaceKey);
+                if (!fromSpace || !toSpace) throw new Error(`building plan opening ${opening.id} references missing spaces`);
+                const side = opening.axis === 'x' ? 'north' : 'west';
+                const portal = {
+                    id: `${opening.id}:portal`, kind: 'portal-endpoint',
+                    x: opening.x, y: floor.yBase, z: opening.z,
+                    width: opening.width, height: opening.height, depth: approachDepth,
+                    floorH: floor.floorHeight, side,
+                    normalX: side === 'west' ? -1 : 0,
+                    normalZ: side === 'north' ? -1 : 0,
+                    source: 'building-plan-authority',
+                    fromSpaceId: fromSpace.id, toSpaceId: toSpace.id,
+                    physicalTruth,
+                    dimensionAuthority: 'resolved-physical-truth',
+                };
+                const connector = createPortalConnector({
+                    id: `${opening.id}:connector`, portal,
+                    kind: 'door', source: 'building-plan-authority', visualRole: 'interior-doorway',
+                    physicalTruth,
+                    metadata: {
+                        buildingPlanId: plan.deterministicKey,
+                        openingId: opening.id,
+                        floor: floor.floor,
+                        fromSpaceId: fromSpace.id,
+                        toSpaceId: toSpace.id,
+                    },
+                });
+                connector.spaceIds = [fromSpace.id, toSpace.id];
+                registerSemanticConnector(physics, connector);
+                opening.connectorId = connector.id;
+                result.push(connector);
+            }
+        }
+        return result;
+    }
+
+    function buildingPlanReservationsForModule(plan, module, doorConnectors = []) {
+        const result = [];
+        const push = reservation => {
+            if (!reservation?.id || result.some(existing => existing.id === reservation.id)) return;
+            result.push(reservation);
+        };
+        for (const clearance of plan?.circulationClearances ?? []) {
+            if (clearance.moduleKeys?.includes(module.key)) push(clearance);
+        }
+        const moduleBox = {
+            x: module.rect.cx, z: module.rect.cz,
+            sx: module.rect.halfX * 2, sz: module.rect.halfZ * 2,
+            yMin: 0, yMax: module.floors * (plan?.floors?.[0]?.floorHeight || 3.15),
+        };
+        for (const connector of doorConnectors) {
+            for (const reservation of connector.reservations ?? []) {
+                if (reservationIntersectsBox(reservation, moduleBox)) push(reservation);
+            }
+        }
+        return result;
     }
 
     function addBalcony({ physics, transforms, wallList, fp, y, side }) {
@@ -579,10 +764,19 @@ export function createKowloonFabricEngine({
         const siteSeed = hashString32(`${worldSeed}:kowloon-compound:${chunk.key}:${siteSignature}`);
         const rng = mulberry32(siteSeed);
         const topology = analyzeKowloonCompound(site, siteIdOf);
-        const courtyard = courtyardCellOverride !== undefined
+        const requestedCourtyard = courtyardCellOverride !== undefined
             ? courtyardCellOverride
             : (topology.courtyardCandidate
                 ?? selectKowloonCourtyardCell(site, topology.degreeOf, topology.primary, { minCells: 5, degree: 3 }));
+        // A courtyard is an open cell inside one compound, not permission to split
+        // that building into unreachable detached masses. Articulation-point
+        // candidates are suppressed so the Building Plan Authority can own one
+        // physically connected ground-floor topology.
+        const courtyard = requestedCourtyard
+            && kowloonCellSetConnected(site.cells.filter(cell => cell !== requestedCourtyard))
+            ? requestedCourtyard
+            : null;
+        const courtyardSuppressedForConnectivity = !!requestedCourtyard && !courtyard;
         const activeCells = site.cells.filter(cell => cell !== courtyard);
         if (!activeCells.length) return null;
 
@@ -719,6 +913,10 @@ export function createKowloonFabricEngine({
         // floor can be reached laterally through same-site openings.
         let primaryModule = modulePlans.find(module => module.key === primaryKey) || modulePlans[0];
         for (const module of modulePlans) module.floors = Math.min(module.floors, primaryModule.floors);
+        // Every occupied upper-floor module must have a same-site lateral route to
+        // the persistent vertical spine. Raise only the deterministic shortest
+        // support chain needed to preserve requested/bridge-served upper floors.
+        const floorConnectivityRepair = normalizeModuleFloorConnectivity(modulePlans, primaryModule, bridgePortals);
         const moduleByKey = new Map(modulePlans.map(module => [module.key, module]));
 
         const streetFaces = [];
@@ -930,11 +1128,138 @@ export function createKowloonFabricEngine({
         const circulationStartCount = physics.circulationReservations.length;
         const circulationByModule = new Map();
 
+        // BUILDING PLAN AUTHORITY: physical envelope, entrance connectors and the
+        // persistent vertical core are known now.  Author the semantic floor graph
+        // before any partition geometry is published, then make geometry consume it.
+        const primaryCoreRng = mulberry32(hashString32(`${siteSeed}:vertical-core`));
+        const primaryStairCx = primaryModule.rect.cx + (primaryCoreRng() - 0.5) * primaryModule.rect.halfX * 0.18;
+        const primaryStairCz = primaryModule.rect.cz + (primaryCoreRng() - 0.5) * primaryModule.rect.halfZ * 0.18;
+        const primaryStairFrom = primaryStairAxis === 'z'
+            ? primaryStairCz - primaryStairAvailableRun * 0.5
+            : primaryStairCx - primaryStairAvailableRun * 0.5;
+        const primaryStairTo = primaryStairAxis === 'z'
+            ? primaryStairCz + primaryStairAvailableRun * 0.5
+            : primaryStairCx + primaryStairAvailableRun * 0.5;
+        const primaryStairHalfWidth = primaryActualStairClearWidth * 0.5;
+        const primaryStairFlight = deriveStairFlight({
+            rise: floorH,
+            truth: stairPhysicalTruth,
+            stableKey: `${chunk.key}:${siteSignature}:${primaryModule.key}:flight`,
+            availableRun: primaryStairAvailableRun,
+        });
+        const primaryModuleRoofY = primaryModule.floors > 0
+            ? (primaryModule.floors - 1) * floorH + floorH
+            : 0;
+        const buildingPlanEntityId = worldEntityId(worldSeed, chunk.x, chunk.z, 'building', siteSignature);
+        const primaryStairConnector = createStairConnector({
+            id: `${chunk.key}:${siteSignature}:${primaryModule.key}:stair`,
+            x: primaryStairCx, z: primaryStairCz,
+            openingWidth: primaryStairGapW,
+            openingDepth: primaryStairGapD,
+            baseY: 0,
+            roofY: primaryModuleRoofY,
+            exitHeadroom: stairPhysicalTruth.stair.headroomSI,
+            rampAxis: primaryStairAxis,
+            rampFrom: primaryStairFrom,
+            rampTo: primaryStairTo,
+            rampHalfWidth: primaryStairHalfWidth,
+            source: 'compound-stair',
+            visualRole: 'vertical-spine',
+            fromSpaceId: null,
+            toSpaceId: null,
+            physicalTruth: stairPhysicalTruth,
+            stairFlight: primaryStairFlight,
+            metadata: {
+                moduleKey: primaryModule.key,
+                floors: primaryModule.floors,
+                floorH,
+                physicalUse: physicalUse.family,
+                clearWidthRealizedSI: primaryActualStairClearWidth,
+                widthFitClassification: primaryActualStairClearWidth + 1e-9 < stairPhysicalTruth.stair.widthSI
+                    ? 'geometry-fit-outside-truth'
+                    : 'fits-resolved-truth',
+                runFitClassification: primaryStairFlight.fitClassification,
+                buildingPlanId: buildingPlanEntityId,
+            },
+        });
+        registerSemanticConnector(physics, primaryStairConnector);
+        const primaryStairReservation = primaryStairConnector.primaryReservation;
+        const accessAnchors = [...entranceConnectorByKey.values()].map((connector, index) => {
+            const endpoint = connector.endpoints?.[0];
+            return {
+                id: connector.id,
+                kind: index ? 'secondary-entry' : 'main-entry',
+                x: endpoint?.x ?? primaryModule.rect.cx,
+                z: endpoint?.z ?? primaryModule.rect.cz,
+                side: endpoint?.side ?? null,
+                floor: 0,
+                connectorId: connector.id,
+            };
+        });
+        const buildingPlan = promoteBuildingPlanAuthority(planBuildingSidecar({
+            worldSeed,
+            chunkKey: chunk.key,
+            chunkX: chunk.x,
+            chunkZ: chunk.z,
+            distanceChunks: chunk.weirdness?.distanceChunks ?? Math.hypot(chunk.x || 0, chunk.z || 0),
+            weirdnessSampled: weird,
+            isSpawn: chunk.key === spawnChunkKey || String(chunk.key).startsWith('spawn-'),
+            entityId: buildingPlanEntityId,
+            signatureType: structureProfile?.signatureType ?? null,
+            programHint: structureProfile?.semanticProgram ?? structureProfile?.programHint ?? null,
+            physicalUse,
+            physicalTruth,
+            floorHeight: floorH,
+            modules: modulePlans.map(module => ({
+                key: module.key,
+                cx: module.rect.cx,
+                cz: module.rect.cz,
+                halfX: module.rect.halfX,
+                halfZ: module.rect.halfZ,
+                floors: module.floors,
+            })),
+            accessAnchors,
+            circulationReservations: [
+                primaryStairReservation,
+                ...[...entranceConnectorByKey.values()].flatMap(connector => connector.reservations ?? []),
+            ],
+        }), {
+            coreReservationId: primaryStairReservation.id,
+            coreReservation: primaryStairReservation,
+            chunkKey: chunk.key,
+            entityId: buildingPlanEntityId,
+        });
+        assertBuildingPlanAuthority(buildingPlan);
+
+        const groundFloorPlan = buildingPlan.floors.find(floor => floor.floor === 0) ?? buildingPlan.floors[0];
+        const groundRoot = groundFloorPlan?.spaces?.find(space => space.key === groundFloorPlan.rootSpaceKey) ?? groundFloorPlan?.spaces?.[0];
+        if (groundRoot) {
+            for (const connector of entranceConnectorByKey.values()) {
+                connector.fromSpaceId = groundRoot.id;
+                connector.toSpaceId = `${chunk.key}:street`;
+                connector.spaceIds = [groundRoot.id];
+                for (const endpoint of connector.endpoints ?? []) {
+                    endpoint.fromSpaceId = groundRoot.id;
+                    endpoint.toSpaceId = connector.toSpaceId;
+                }
+            }
+        }
+        const coreSpaceIds = buildingPlan.verticalCore?.floorSpaceIds ?? [];
+        primaryStairConnector.fromSpaceId = coreSpaceIds[0] ?? null;
+        primaryStairConnector.toSpaceId = coreSpaceIds[coreSpaceIds.length - 1] ?? null;
+        primaryStairConnector.spaceIds = [...coreSpaceIds];
+        const buildingPlanDoorConnectors = registerBuildingPlanInteriorDoors(physics, buildingPlan, physicalTruth);
+        for (const module of modulePlans) {
+            circulationByModule.set(module.key, buildingPlanReservationsForModule(buildingPlan, module, buildingPlanDoorConnectors));
+        }
+
         for (const module of modulePlans) {
             const wallList = transforms.wallGroups[materialIndex];
-            const stairCx = module.rect.cx + (rng() - 0.5) * module.rect.halfX * 0.18;
-            const stairCz = module.rect.cz + (rng() - 0.5) * module.rect.halfZ * 0.18;
+            const sampledStairCx = module.rect.cx + (rng() - 0.5) * module.rect.halfX * 0.18;
+            const sampledStairCz = module.rect.cz + (rng() - 0.5) * module.rect.halfZ * 0.18;
             const isSpine = module === primaryModule;
+            const stairCx = isSpine ? primaryStairCx : sampledStairCx;
+            const stairCz = isSpine ? primaryStairCz : sampledStairCz;
             const stairRunAxis = module.rect.halfZ >= module.rect.halfX ? 'z' : 'x';
             const runInterior = Math.max(1.2, (stairRunAxis === 'z' ? module.rect.halfZ : module.rect.halfX) * 2 - 0.44);
             const crossInterior = Math.max(0.8, (stairRunAxis === 'z' ? module.rect.halfX : module.rect.halfZ) * 2 - 0.38);
@@ -962,37 +1287,14 @@ export function createKowloonFabricEngine({
             // JS can represent floors * floorH and (floors - 1) * floorH + floorH
             // a few ulps apart, which breaks the circulation contract's exact roof key.
             const moduleRoofY = module.floors > 0 ? (module.floors - 1) * floorH + floorH : 0;
-            const stairConnector = isSpine ? createStairConnector({
-                id: `${chunk.key}:${siteSignature}:${module.key}:stair`,
-                x: stairCx, z: stairCz,
-                openingWidth: stairGapW,
-                openingDepth: stairGapD,
-                baseY: 0,
-                roofY: moduleRoofY,
-                exitHeadroom: stairPhysicalTruth.stair.headroomSI,
-                rampAxis: stairRunAxis,
-                rampFrom: stairFrom,
-                rampTo: stairTo,
-                rampHalfWidth: stairHalfWidth,
-                source: 'compound-stair',
-                visualRole: 'vertical-spine',
-                fromSpaceId: `${chunk.key}:${siteSignature}:${module.key}:ground`,
-                toSpaceId: `${chunk.key}:${siteSignature}:${module.key}:roof`,
-                physicalTruth: stairPhysicalTruth,
-                stairFlight,
-                metadata: {
-                    moduleKey: module.key, floors: module.floors, floorH,
-                    physicalUse: physicalUse.family,
-                    clearWidthRealizedSI: actualStairClearWidth,
-                    widthFitClassification: actualStairClearWidth + 1e-9 < stairPhysicalTruth.stair.widthSI ? 'geometry-fit-outside-truth' : 'fits-resolved-truth',
-                    runFitClassification: stairFlight.fitClassification,
-                },
-            }) : null;
+            const stairConnector = isSpine ? primaryStairConnector : null;
             const stairReservation = stairConnector?.primaryReservation ?? null;
             if (stairConnector) {
                 registerSemanticConnector(physics, stairConnector);
-                circulationByModule.set(module.key, [stairReservation]);
-            } else {
+                const reservations = circulationByModule.get(module.key) ?? [];
+                if (stairReservation && !reservations.some(item => item.id === stairReservation.id)) reservations.push(stairReservation);
+                circulationByModule.set(module.key, reservations);
+            } else if (!circulationByModule.has(module.key)) {
                 circulationByModule.set(module.key, []);
             }
 
@@ -1063,13 +1365,19 @@ export function createKowloonFabricEngine({
 
                 if (floor > 0) {
                     const slabRect = computeKowloonSlabRect(module, moduleByKey, floor);
-                    if (isSpine) {
+                    const primaryShaftCutsSlab = reservationIntersectsBox(primaryStairReservation, {
+                        x: slabRect.cx, z: slabRect.cz, sx: slabRect.width, sz: slabRect.depth,
+                        yMin: y0 - 0.02, yMax: y0 + 0.02,
+                    });
+                    if (primaryShaftCutsSlab) {
                         addNotchedFloor(physics.platforms, slabRect.cx, slabRect.cz,
                             slabRect.width, slabRect.depth,
-                            y0, stairReservation.x, stairReservation.z, stairReservation.openingWidth, stairReservation.openingDepth);
+                            y0, primaryStairReservation.x, primaryStairReservation.z,
+                            primaryStairReservation.openingWidth, primaryStairReservation.openingDepth);
                         addRenderedNotchedSlab(transforms, slabRect.cx, slabRect.cz,
                             slabRect.width, slabRect.depth,
-                            y0, stairReservation.x, stairReservation.z, stairReservation.openingWidth, stairReservation.openingDepth);
+                            y0, primaryStairReservation.x, primaryStairReservation.z,
+                            primaryStairReservation.openingWidth, primaryStairReservation.openingDepth);
                     } else {
                         addRectPlatform(physics.platforms, slabRect.cx, slabRect.cz, slabRect.width, slabRect.depth, y0, 'floor');
                         transforms.slabs.push({ x: slabRect.cx, y: y0 - 0.06, z: slabRect.cz,
@@ -1077,16 +1385,8 @@ export function createKowloonFabricEngine({
                     }
                 }
 
-                const partitionRng = mulberry32(hashString32(`${siteSeed}:${module.key}:partition:${floor}`));
-                const partitionChance = archetype === 'workshop-warehouse'
-                    ? (floor === 0 ? 0.28 : 0.18)
-                    : archetype === 'vertical-stack'
-                        ? (floor === 0 ? 0.78 : 0.66)
-                        : (floor === 0 ? 0.72 : 0.52);
-                if (module.rect.halfX > 1.55 && module.rect.halfZ > 1.55 && partitionRng() < partitionChance) {
-                    const spec = { axis: partitionRng() < 0.5 ? 'x' : 'z', offset: (partitionRng() - 0.5) * 0.42 };
-                    partitionSegments += addPartitionWall(wallList, physics, module.rect, y0, y1, spec, stairCx, stairCz, stairReservation);
-                }
+                // Interior room geometry is no longer sampled independently here.
+                // Planned wall runs are emitted once after the envelope/slab pass.
 
                 if (isSpine && floor < module.floors) {
                     physics.ramps.push({
@@ -1110,16 +1410,22 @@ export function createKowloonFabricEngine({
 
             const roofY = moduleRoofY;
             const roofRect = computeKowloonSlabRect(module, moduleByKey, module.floors, { roof: true });
-            if (isSpine) {
-                // The final flight reaches the roof, so the roof must obey the exact
-                // same shaft reservation as every intermediate floor. A solid cap
-                // here used to turn a valid stair into a procedural dead end.
+            const primaryShaftCutsRoof = reservationIntersectsBox(primaryStairReservation, {
+                x: roofRect.cx, z: roofRect.cz, sx: roofRect.width, sz: roofRect.depth,
+                yMin: roofY - 0.02, yMax: roofY + 0.02,
+            });
+            if (primaryShaftCutsRoof) {
+                // The vertical-core reservation is building-wide. If a neighboring
+                // module's floor/roof overlaps the shaft envelope, it must yield too;
+                // otherwise a valid stair can still arrive under another module's slab.
                 addNotchedFloor(physics.platforms, roofRect.cx, roofRect.cz,
                     roofRect.width, roofRect.depth,
-                    roofY, stairReservation.x, stairReservation.z, stairReservation.openingWidth, stairReservation.openingDepth, 'roof');
+                    roofY, primaryStairReservation.x, primaryStairReservation.z,
+                    primaryStairReservation.openingWidth, primaryStairReservation.openingDepth, 'roof');
                 addRenderedNotchedSlab(transforms, roofRect.cx, roofRect.cz,
                     roofRect.width, roofRect.depth,
-                    roofY, stairReservation.x, stairReservation.z, stairReservation.openingWidth, stairReservation.openingDepth);
+                    roofY, primaryStairReservation.x, primaryStairReservation.z,
+                    primaryStairReservation.openingWidth, primaryStairReservation.openingDepth);
             } else {
                 addRectPlatform(physics.platforms, roofRect.cx, roofRect.cz, roofRect.width, roofRect.depth, roofY, 'roof');
                 transforms.slabs.push({ x: roofRect.cx, y: roofY - 0.06, z: roofRect.cz,
@@ -1134,6 +1440,12 @@ export function createKowloonFabricEngine({
                 if (exposed) addCompoundRoofParapetSide({ physics, wallList, rect: module.rect, roofY, side: dir.side });
             }
         }
+
+        partitionSegments += realizeBuildingPlanWallRuns({
+            physics,
+            wallList: transforms.wallGroups[materialIndex],
+            plan: buildingPlan,
+        });
 
         // Keep the old readable facade layer, but derive it from the shared
         // compound faces instead of painting every side of a one-cell box.
@@ -1438,11 +1750,17 @@ export function createKowloonFabricEngine({
             compoundCells: site.cells.map(cell => ({ col: cell.col, row: cell.row })),
             primaryCell: { col: topology.primary.col, row: topology.primary.row },
             courtyardCell: courtyard ? { col: courtyard.col, row: courtyard.row } : null,
+            courtyardSuppressedForConnectivity,
             moduleCount: modulePlans.length,
             footprintModules: modulePlans.map(module => ({ ...module.rect, floors: module.floors, key: module.key })),
             modularSetbacks: Math.max(0, new Set(floorCounts).size - 1) + Math.max(0, modulePlans.length - 1),
+            floorConnectivityRepair,
             heightVariance: Math.max(...floorCounts) - Math.min(...floorCounts),
             partitionSegments,
+            buildingPlan,
+            buildingPlanAuthority: buildingPlan.authoritySchema,
+            buildingPlanFingerprint: buildingPlan.fingerprint,
+            buildingPlanInspection: buildingPlan.inspection,
             internalOpenFaces,
             exposedSetbackFaces,
             partyFaces,
@@ -1459,6 +1777,9 @@ export function createKowloonFabricEngine({
             roofTopper,
             circulationReservationCount: physics.circulationReservations.length - circulationStartCount,
             singularRecipe: structureProfile?.singularRecipe ?? null,
+            exteriorIdentity: structureProfile?.exteriorIdentity ? { ...structureProfile.exteriorIdentity } : null,
+            exteriorMacroPreference: structureProfile?.exteriorMacroPreference ? { ...structureProfile.exteriorMacroPreference } : null,
+            exteriorCompositionOwned: structureProfile?.exteriorCompositionOwned === true,
             suppressInteriorEnrichment: !!structureProfile?.suppressInteriorClutter,
             bridgePortalCount: bridgeOpeningKeys.size,
             facades,
@@ -1493,7 +1814,18 @@ export function createKowloonFabricEngine({
         return { tiers, topY };
     }
 
-    function semanticSpaceIdForEntity(entity, moduleKey, floor) {
+    function semanticSpaceIdForEntity(entity, moduleKey, floor, point = null) {
+        const planned = (entity?.buildingPlan?.topologySpaces ?? [])
+            .filter(space => space.floor === floor && (!moduleKey || space.moduleKeys?.includes(moduleKey)));
+        if (planned.length) {
+            const containsPoint = point ? planned.find(space => (space.regions ?? []).some(region =>
+                point.x >= region.minX - 0.25 && point.x <= region.maxX + 0.25
+                && point.z >= region.minZ - 0.25 && point.z <= region.maxZ + 0.25)) : null;
+            if (containsPoint) return containsPoint.id;
+            const roleRank = role => role === 'circulation' ? 0 : role === 'entry' ? 1 : role === 'public' ? 2 : 3;
+            planned.sort((a, b) => roleRank(a.role) - roleRank(b.role) || a.id.localeCompare(b.id));
+            return planned[0].id;
+        }
         if (!entity?.semanticChunkKey || !entity?.semanticSiteKey || !moduleKey) return null;
         return `${entity.semanticChunkKey}:${entity.semanticSiteKey}:${moduleKey}:floor:${floor}`;
     }
@@ -1521,8 +1853,8 @@ export function createKowloonFabricEngine({
                 id: `${bridge.id}:connector`,
                 axis: 'x', from: x0, to: x1, fixedCoord: z, halfWidth: width * 0.5, y,
                 source: 'skybridge', visualRole: bridge.variant || 'skybridge',
-                fromSpaceId: semanticSpaceIdForEntity(aEntity, bridge.aModuleKey, bridge.floor),
-                toSpaceId: semanticSpaceIdForEntity(bEntity, bridge.bModuleKey, bridge.floor),
+                fromSpaceId: semanticSpaceIdForEntity(aEntity, bridge.aModuleKey, bridge.floor, { x: x0, z }),
+                toSpaceId: semanticSpaceIdForEntity(bEntity, bridge.bModuleKey, bridge.floor, { x: x1, z }),
                 physicalTruth: bridgeTruth,
                 metadata: { bridgeId: bridge.id, variant: bridge.variant || 'skybridge', floor: bridge.floor, physicalUse: bridgeTruth?.physicalUse ?? null },
             }));
@@ -1552,8 +1884,8 @@ export function createKowloonFabricEngine({
                 id: `${bridge.id}:connector`,
                 axis: 'z', from: z0, to: z1, fixedCoord: x, halfWidth: width * 0.5, y,
                 source: 'skybridge', visualRole: bridge.variant || 'skybridge',
-                fromSpaceId: semanticSpaceIdForEntity(aEntity, bridge.aModuleKey, bridge.floor),
-                toSpaceId: semanticSpaceIdForEntity(bEntity, bridge.bModuleKey, bridge.floor),
+                fromSpaceId: semanticSpaceIdForEntity(aEntity, bridge.aModuleKey, bridge.floor, { x, z: z0 }),
+                toSpaceId: semanticSpaceIdForEntity(bEntity, bridge.bModuleKey, bridge.floor, { x, z: z1 }),
                 physicalTruth: bridgeTruth,
                 metadata: { bridgeId: bridge.id, variant: bridge.variant || 'skybridge', floor: bridge.floor, physicalUse: bridgeTruth?.physicalUse ?? null },
             }));

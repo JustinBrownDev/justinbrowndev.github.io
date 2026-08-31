@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en-US">
+  <head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+
+<!-- Begin Jekyll SEO tag v2.8.0 -->
+<title>Claude City Model Dump | Justin Brown</title>
+<meta name="generator" content="Jekyll v3.10.0" />
+<meta property="og:title" content="Claude City Model Dump" />
+<meta property="og:locale" content="en_US" />
+<link rel="canonical" href="http://jweb.dev/vendor/city-pack/" />
+<meta property="og:url" content="http://jweb.dev/vendor/city-pack/" />
+<meta property="og:site_name" content="Justin Brown" />
+<meta property="og:type" content="website" />
+<meta name="twitter:card" content="summary" />
+<meta property="twitter:title" content="Claude City Model Dump" />
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"WebPage","headline":"Claude City Model Dump","url":"http://jweb.dev/vendor/city-pack/"}</script>
+<!-- End Jekyll SEO tag -->
+
+    <link rel="stylesheet" href="/assets/css/style.css?v=fdaf85959e00d745be2461584069d4300f8fcf24">
+    <!-- start custom head snippets, customize with your own _includes/head-custom.html file -->
+
+<!-- Setup Google Analytics -->
+
+
+
+<!-- You can set your favicon here -->
+<!-- link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" -->
+
+<!-- end custom head snippets -->
+
+  </head>
+  <body>
+    <div class="container-lg px-3 my-5 markdown-body">
+      
+      <h1><a href="http://jweb.dev/">Justin Brown</a></h1>
+      
+
+      <h1 id="claude-city-model-dump">Claude City Model Dump</h1>
+
+<p><strong>340 original low-poly GLB models</strong> generated specifically for the JustinBrownDev Three.js city.</p>
+
+<ul>
+  <li>glTF binary (<code class="language-plaintext highlighter-rouge">.glb</code>)</li>
+  <li>meters / human scale (game eye height is ~1.65 m)</li>
+  <li>Y-up</li>
+  <li>model origin is intended at ground center unless <code class="language-plaintext highlighter-rouge">mount</code> says wall/roof/desk/etc.</li>
+  <li>no image textures; PBR base-color materials only</li>
+  <li>built from compact primitive meshes for web runtime use</li>
+  <li><code class="language-plaintext highlighter-rouge">manifest.json</code> includes dimensions, tags, mount type, collider suggestion and climbability</li>
+  <li><code class="language-plaintext highlighter-rouge">asset-catalog.js</code> is directly importable JavaScript metadata</li>
+</ul>
+
+<h2 id="counts">Counts</h2>
+
+<ul>
+  <li><code class="language-plaintext highlighter-rouge">architecture</code>: 40</li>
+  <li><code class="language-plaintext highlighter-rouge">art_gallery</code>: 22</li>
+  <li><code class="language-plaintext highlighter-rouge">as400_archive</code>: 30</li>
+  <li><code class="language-plaintext highlighter-rouge">industrial</code>: 35</li>
+  <li><code class="language-plaintext highlighter-rouge">interior</code>: 35</li>
+  <li><code class="language-plaintext highlighter-rouge">rooftop</code>: 40</li>
+  <li><code class="language-plaintext highlighter-rouge">street</code>: 45</li>
+  <li><code class="language-plaintext highlighter-rouge">systems_workshop</code>: 28</li>
+  <li><code class="language-plaintext highlighter-rouge">trash_climbable</code>: 45</li>
+  <li><code class="language-plaintext highlighter-rouge">vegetation</code>: 20</li>
+</ul>
+
+<h2 id="important-integration-rule">Important integration rule</h2>
+
+<p>Do <strong>not</strong> instantiate all 340 models at once. Treat this as a vocabulary. Load/cache by model ID, clone cached scenes, and use category/context weighted pools. Prefer instancing for repeated static props if the same GLB is used many times.</p>
+
+<h3 id="parkour--collision">Parkour / collision</h3>
+
+<p>Models tagged <code class="language-plaintext highlighter-rouge">climbable: true</code> are intended to participate in the game’s height-aware surface/collider system. <code class="language-plaintext highlighter-rouge">trash_climbable/debris_ramp_*</code> are intentionally slope/ramp-like garbage terrain. Do not reduce all piles to one circular collider; use either compound simple colliders or derive a low-cost convex/box approximation.</p>
+
+<h3 id="materials">Materials</h3>
+
+<p>These assets intentionally avoid texture dependencies. Claude may remap/clone materials at runtime to fit the light-web/dark-web gradient and building maintenance state. Do not mutate a cached shared material globally unless that is intended.</p>
+
+<h3 id="signature-buildings">Signature buildings</h3>
+
+<p><code class="language-plaintext highlighter-rouge">art_gallery</code>, <code class="language-plaintext highlighter-rouge">as400_archive</code>, and <code class="language-plaintext highlighter-rouge">systems_workshop</code> are explicitly intended to seed the authored landmarks. They are <strong>props and modules</strong>, not complete buildings. The landmark builders should still construct their own real, non-square floor plans and place these inside.</p>
+
+<h3 id="architectural-pieces">Architectural pieces</h3>
+
+<p><code class="language-plaintext highlighter-rouge">architecture/*</code> contains stairs, landings, ladders, fire escapes, catwalks, railings, awnings, portals, windows, and parapets. These should decorate/instantiate from the traversal geometry; they must not become a second independent collision truth.</p>
+
+<h2 id="quick-loader-pattern">Quick loader pattern</h2>
+
+<div class="language-js highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">import</span>  <span class="k">from</span> <span class="dl">'</span><span class="s1">./asset-catalog.js</span><span class="dl">'</span><span class="p">;</span>
+
+<span class="kd">const</span> <span class="nx">byId</span> <span class="o">=</span> <span class="k">new</span> <span class="nb">Map</span><span class="p">(</span><span class="nx">CLAUDE_CITY_ASSETS</span><span class="p">.</span><span class="nx">map</span><span class="p">(</span><span class="nx">a</span> <span class="o">=&gt;</span> <span class="p">[</span><span class="nx">a</span><span class="p">.</span><span class="nx">id</span><span class="p">,</span> <span class="nx">a</span><span class="p">]));</span>
+<span class="kd">const</span> <span class="nx">cache</span> <span class="o">=</span> <span class="k">new</span> <span class="nb">Map</span><span class="p">();</span>
+
+<span class="k">async</span> <span class="kd">function</span> <span class="nx">loadCityAsset</span><span class="p">(</span><span class="nx">id</span><span class="p">)</span> <span class="s2">`);
+  const gltf = await new Promise((resolve, reject) =&gt; loader.load(def.file, resolve, undefined, reject));
+  cache.set(id, gltf.scene);
+  return gltf.scene.clone(true);
+}}
+</span></code></pre></div></div>
+
+<h2 id="licenseprovenance">License/provenance</h2>
+
+<p>The GLB files in this zip are newly generated primitive geometry for this task and contain no downloaded third-party meshes or textures. <code class="language-plaintext highlighter-rouge">EXTERNAL_CC0_SOURCES.md</code> separately lists excellent third-party CC0 packs worth ingesting if more authored art is desired.</p>
+
+
+      
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/anchor-js/4.1.0/anchor.min.js" integrity="sha256-lZaRhKri35AyJSypXXs4o6OPFTbTmUoltBbDCbdzegg=" crossorigin="anonymous"></script>
+    <script>anchors.add();</script>
+  </body>
+</html>

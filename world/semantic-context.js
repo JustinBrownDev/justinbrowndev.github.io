@@ -1,5 +1,6 @@
 import { compileSpatialTopologyGraph } from './spatial-topology.js';
 import { bindSemanticExteriorPlacement, chooseSemanticExteriorOpportunity } from './semantic-exterior-authority.js';
+import { isManagedBuildingExteriorTask } from './exterior-composition-authority.js';
 
 export const SEMANTIC_CONTEXT_SCHEMA = 'jweb.semantic-context.v1';
 
@@ -729,16 +730,42 @@ export function compileSemanticContext({ chunk, payload, tasks = [], debugWeight
     }
 
     let integrated = 0;
+    let exteriorPlacementDeferred = 0;
     const claimedExteriorOpportunities = new Set();
     let debugSigns = 0;
     const debugEnabled = (hash32(`${chunk.key}:semantic-debug`) % 10000) < Math.floor(clamp(debugWeight, 0, 1) * 10000);
     let debugClaimed = false;
     for (const task of tasks) {
         const entity = entityById(payload, task.entityId);
-        const opportunity = chooseOpportunity(task, opportunities, claimedExteriorOpportunities);
         const context = task.spaceId ? contextBySpace.get(task.spaceId) : contextByEntity.get(task.entityId);
         task.semanticContext = context ?? null;
         task.semanticContextId = context?.id ?? null;
+
+        // Building exteriors are candidates only at this phase. The composition
+        // authority owns the later opportunity claim, quantity, and surface mix.
+        // Plaza/span work is still bound here because it is not building decoration.
+        const deferToExteriorPlan = isManagedBuildingExteriorTask(task, payload);
+        if (deferToExteriorPlan) {
+            task.semanticOpportunityId = null;
+            task.semanticHostId = task.entityId ?? null;
+            task.spatialTopologyHostId = task.spaceId ?? task.entityId ?? null;
+            task.exteriorPlacementDeferred = true;
+            exteriorPlacementDeferred++;
+            // Debug signage is semantic content, not placement authority. Apply it
+            // before deferral so the later exterior planner can place the same
+            // deterministic diagnostic identity without claiming a slot here.
+            if (task.kind === 'sign' && !task.signatureIdentity && debugEnabled && !debugClaimed) {
+                const [title, subtitle] = debugLabel(context ?? contextByEntity.get(task.entityId), null);
+                task.title = title;
+                task.subtitle = subtitle;
+                task.semanticDebug = true;
+                debugClaimed = true;
+                debugSigns++;
+            }
+            continue;
+        }
+
+        const opportunity = chooseOpportunity(task, opportunities, claimedExteriorOpportunities);
         task.semanticOpportunityId = opportunity?.id ?? null;
         task.semanticHostId = opportunity?.surfaceId ?? opportunity?.hostId ?? task.entityId ?? null;
         task.spatialTopologyHostId = opportunity?.spatialTopologyHostId ?? task.spaceId ?? task.semanticHostId ?? null;
@@ -752,7 +779,7 @@ export function compileSemanticContext({ chunk, payload, tasks = [], debugWeight
         if (Number.isFinite(opportunity.along)) task.along = opportunity.along;
         if (Number.isFinite(opportunity.transform?.y)) task.y = opportunity.transform.y;
         if (String(task.kind ?? '').startsWith('plaza-')) { task.x = opportunity.transform.x; task.z = opportunity.transform.z; }
-        if (task.kind === 'sign' && debugEnabled && !debugClaimed) {
+        if (task.kind === 'sign' && !task.signatureIdentity && debugEnabled && !debugClaimed) {
             const [title, subtitle] = debugLabel(context ?? contextByEntity.get(task.entityId), opportunity);
             task.title = title;
             task.subtitle = subtitle;
@@ -804,7 +831,7 @@ export function compileSemanticContext({ chunk, payload, tasks = [], debugWeight
         opportunities,
         instances,
         spatialTopology,
-        stats: { integratedTasks: integrated, debugSigns, surfaces: surfaces.length, apertures: apertures.length, opportunities: opportunities.length, destinations: destinations.length, instances: instances.length, topologyEdges: spatialTopology.edges.length, topologyOrphans: spatialTopology.stats.orphanReservations + spatialTopology.stats.orphanApertures + spatialTopology.stats.unboundEntranceFaces },
+        stats: { integratedTasks: integrated, exteriorPlacementDeferred, debugSigns, surfaces: surfaces.length, apertures: apertures.length, opportunities: opportunities.length, destinations: destinations.length, instances: instances.length, topologyEdges: spatialTopology.edges.length, topologyOrphans: spatialTopology.stats.orphanReservations + spatialTopology.stats.orphanApertures + spatialTopology.stats.unboundEntranceFaces },
     };
     payload.semanticContext = semanticContext;
     return semanticContext;

@@ -67,8 +67,13 @@ const payload = {
     surfaces:[{id:'surface:north',half:4,yMin:0,yMax:9.45}],
   },
 };
-const planA = planExteriorPropField({chunk:{key:'0,0'},payload});
-const planB = planExteriorPropField({chunk:{key:'0,0'},payload});
+const requests = [
+  {opportunityId:'surface:north:service',semanticFamily:'vertical-mechanical',desiredScaleClass:'large',priorityTier:'macro'},
+  {opportunityId:'door:a:left-ground',semanticFamily:'street-service',desiredScaleClass:'medium',priorityTier:'medium'},
+  {opportunityId:'roof:a',semanticFamily:'roof-mechanical',desiredScaleClass:'large',priorityTier:'macro'},
+];
+const planA = planExteriorPropField({chunk:{key:'0,0'},payload,requests});
+const planB = planExteriorPropField({chunk:{key:'0,0'},payload,requests});
 assert.deepEqual(planB, planA, 'semantic exterior field must remain deterministic');
 assert.equal(planA.stats.semanticAuthority, true);
 assert.ok(planA.placements.length > 0);

@@ -124,7 +124,11 @@ function candidateEnvelope(def, graph, candidate) {
     return { x: centerX, z: centerZ, halfX, halfZ, yMin, yMax: yMin + height };
 }
 
-function candidateFitsModule(def, candidate, module) {
+function candidateFitsModule(def, candidate, module, spacePlan = null) {
+    // Building Plan Authority may assign one authored room across multiple envelope
+    // modules. Once that room owns placement geometry, its SpacePlan is the tighter
+    // authority; a single legacy module rectangle must not clip valid room space.
+    if (spacePlan?.architecturalAuthority === 'building-plan') return true;
     if (!module) return true;
     const body = candidateBodyBox(def, candidate);
     return body.minX >= module.cx - module.halfX + 0.03
@@ -139,7 +143,7 @@ function candidateFitsSpacePlan(def, candidate, spacePlan) {
 }
 
 function tryCandidate(def, graph, candidate, tryReserve, module, spacePlan) {
-    if (!candidateFitsModule(def, candidate, module)) return null;
+    if (!candidateFitsModule(def, candidate, module, spacePlan)) return null;
     if (!candidateFitsSpacePlan(def, candidate, spacePlan)) return null;
     const reservation = candidateEnvelope(def, graph, candidate);
     if (typeof tryReserve === 'function' && !tryReserve(reservation)) return null;

@@ -2,7 +2,7 @@
 //
 // Deterministic planning decides what exists. Runtime refinement decides what
 // the player sees next. The visual order is intentionally coarse-to-fine:
-// near -> spectacle -> identity -> macro infrastructure -> medium -> micro.
+// near neighborhood -> coverage wave -> local proximity -> visual mass.
 
 export const EXTERIOR_VISUAL_TIER = Object.freeze({
     spectacle: 0,
@@ -11,6 +11,13 @@ export const EXTERIOR_VISUAL_TIER = Object.freeze({
     medium: 3,
     micro: 4,
 });
+
+// A street pocket is deliberately wider than the old six-meter scheduler band.
+// Inside this radius-equivalent band, an uncovered building's meaningful coarse
+// work beats trivial refinement on a neighbor. Crossing into a farther band still
+// makes proximity authoritative, so distant spectacle cannot starve nearby work.
+export const EXTERIOR_COVERAGE_NEIGHBORHOOD_METERS = 18;
+export const EXTERIOR_LOCAL_DISTANCE_BAND_METERS = 6;
 
 export const EXTERIOR_OPPORTUNITY_PRIORITY = Object.freeze({
     'corner-media-band': 0,
@@ -141,6 +148,22 @@ export function exteriorTaskVisualTier(task = {}) {
     return 'medium';
 }
 
+// Composition waves are explicit building-plan policy, not a probabilistic prop
+// heuristic. Unmanaged tasks receive a conservative tier-derived wave so existing
+// semantic/interior work keeps a deterministic place in the same scheduler.
+export function exteriorTaskCompositionWave(task = {}) {
+    const planned = Number(task?.exteriorComposition?.wave);
+    if (Number.isFinite(planned)) return Math.max(0, Math.floor(planned));
+    const tier = exteriorTaskVisualTier(task);
+    if (tier === 'spectacle' || tier === 'identity' || tier === 'macro') return 2;
+    if (tier === 'medium') return 3;
+    return 4;
+}
+
+export function exteriorTaskNeighborhoodBand(distance) {
+    return Math.floor(Math.max(0, finite(distance)) / EXTERIOR_COVERAGE_NEIGHBORHOOD_METERS);
+}
+
 export function exteriorTaskPriorityKey(task, { playerPosition = null, taskPosition = null, firstPassIncomplete = false } = {}) {
     const position = taskPosition ?? task.semanticPlacement ?? task.transform ?? null;
     const hasPlayer = Number.isFinite(playerPosition?.x) && Number.isFinite(playerPosition?.z);
@@ -148,13 +171,20 @@ export function exteriorTaskPriorityKey(task, { playerPosition = null, taskPosit
     const distance = hasPlayer && hasTask
         ? Math.hypot(position.x - playerPosition.x, position.z - playerPosition.z)
         : 0;
-    // Six-meter bands make proximity lexicographically stronger without letting a
-    // one-centimeter difference beat a skyline-sized object in the same street pocket.
-    const distanceBand = Math.floor(distance / 6);
+    const neighborhoodBand = exteriorTaskNeighborhoodBand(distance);
+    const localDistanceBand = Math.floor(distance / EXTERIOR_LOCAL_DISTANCE_BAND_METERS);
     const tier = exteriorTaskVisualTier(task);
+    const wave = exteriorTaskCompositionWave(task);
     return [
+        // Existing first-pass contract remains the strongest breadth guarantee:
+        // every visible entity gets its one composition anchor before deepening.
         firstPassIncomplete ? (task.firstPassBundle ? 0 : 1) : 0,
-        distanceBand,
+        // Across the active street pocket, breadth of meaningful composition wins.
+        neighborhoodBand,
+        // Wave 0 anchor, 1 coverage floor, 2 optional coarse, 3 medium, 4 micro.
+        firstPassIncomplete ? 0 : wave,
+        // Once wave parity is satisfied, return to tight near-before-far ordering.
+        localDistanceBand,
         EXTERIOR_VISUAL_TIER[tier] ?? EXTERIOR_VISUAL_TIER.medium,
         -exteriorTaskVisualImpact(task),
         distance,

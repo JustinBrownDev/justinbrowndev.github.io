@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { compileSemanticContextMultiplier } from '../world/semantic-context-multiplier.js';
+import { compileSemanticContextMultiplier, selectSemanticContextAsset } from '../world/semantic-context-multiplier.js';
 
 const def = (id, mount, kind, dims = [0.5, 0.8, 0.5], programs = ['commercial'], collision = 'none') => ({
     id, file: `semantic-megapack/assets/${id}.glb`, kind, semanticClass: kind, mount,
@@ -8,21 +8,22 @@ const def = (id, mount, kind, dims = [0.5, 0.8, 0.5], programs = ['commercial'],
 
 const assets = [
     def('wall-camera', 'wall', 'security_camera', [0.32, 0.24, 0.22]),
-    def('wall-poster', 'wall', 'notice_board', [0.7, 0.9, 0.08]),
+    def('wall-panel', 'wall', 'electrical_service_panel', [0.7, 0.9, 0.12]),
     def('wall-clock', 'wall', 'indoor_clock', [0.45, 0.45, 0.08]),
     def('wall-megascreen', 'wall', 'exterior_sign_panel', [3.8, 2.4, 0.20]),
+    def('wall-duct-riser', 'wall', 'vertical_service_duct_riser', [1.6, 4.8, 0.42], ['industrial']),
     def('door-crate', 'ground', 'crate', [0.48, 0.55, 0.42]),
-    def('door-chair', 'ground', 'chair', [0.48, 0.92, 0.50]),
-    def('roof-vent', 'ground', 'roof_vent_fan', [0.85, 0.72, 0.85]),
+    def('roof-vent', 'ground', 'roof_vent_fan_cluster', [2.1, 1.25, 1.9], ['industrial']),
     def('needs-collider', 'ground', 'vending_machine', [0.8, 1.8, 0.7], ['commercial'], 'decorative-box-recommended'),
     { id: 'not-semantic', file: 'x.glb', mount: 'wall', collision: 'none', semanticGraph: { roles: ['topology'] } },
 ];
 
 const opportunities = [
     { id: 'wall-1', role: 'wall-mounted-prop-zone', entityId: 'b1', hostId: 'b1', contextId: 'ctx-b1', transform: { x: 1, y: 2.1, z: 3, rotY: 0 }, clearanceBudget: { width: 1.2, height: 1.2 } },
-    { id: 'poster-1', role: 'facade-poster-zone', entityId: 'b1', hostId: 'b1', contextId: 'ctx-b1', transform: { x: 2, y: 1.4, z: 3, rotY: 0 }, clearanceBudget: { width: 1.4, height: 1.2 } },
+    { id: 'sign-1', role: 'facade-sign-zone', entityId: 'b1', hostId: 'b1', contextId: 'ctx-b1', transform: { x: 2, y: 4.4, z: 3, rotY: 0 }, clearanceBudget: { width: 5.2, height: 3.2 } },
     { id: 'door-1', role: 'beside-door-zone', entityId: 'b2', hostId: 'b2', contextId: 'ctx-b2', transform: { x: 5, y: 0, z: 2, rotY: 1.57 }, clearanceBudget: { width: 0.62, depth: 0.72 } },
-    { id: 'roof-1', role: 'roof-utility-zone', entityId: 'b3', hostId: 'b3', contextId: 'ctx-b3', transform: { x: 8, y: 12, z: 8, rotY: 0 }, clearanceBudget: { width: 2.4, depth: 2.4 }, layer: 'mid' },
+    { id: 'roof-1', role: 'roof-utility-zone', entityId: 'b3', hostId: 'b3', contextId: 'ctx-b3', transform: { x: 8, y: 12, z: 8, rotY: 0 }, clearanceBudget: { width: 3.4, depth: 3.2 }, bounds: { x: 8, y: 12, z: 8, halfX: 2.2, halfZ: 2.0 }, layer: 'mid' },
+    { id: 'service-1', role: 'facade-service-band', entityId: 'b3', hostId: 'b3', contextId: 'ctx-b3', transform: { x: 8, y: 5, z: 4, rotY: 0 }, clearanceBudget: { width: 2.4, height: 6.0 }, layer: 'mid' },
     { id: 'connector-1', role: 'connector-adjacent-zone', entityId: 'b3', hostId: 'b3', contextId: 'ctx-b3', transform: { x: 8, y: 12, z: 7, rotY: 0 }, decorationMayIntrude: false },
 ];
 
@@ -34,51 +35,50 @@ const payload = {
             { id: 'ctx-b2', entityId: 'b2', program: 'commercial', layer: 'street' },
             { id: 'ctx-b3', entityId: 'b3', program: 'industrial', layer: 'mid' },
         ],
-        spaces: [],
-        opportunities,
+        spaces: [], opportunities,
     },
 };
 const chunk = { key: '2,-3', seed: 123456 };
-const existingTasks = [{ kind: 'sign', semanticOpportunityId: 'poster-1' }];
-const a = compileSemanticContextMultiplier({ chunk, payload, assets, existingTasks, maxTasks: 8 });
-const b = compileSemanticContextMultiplier({ chunk, payload, assets, existingTasks, maxTasks: 8 });
 
-assert.deepEqual(a, b, 'multiplier must be deterministic');
-assert.ok(a.tasks.length >= 3, 'representative wall/ground/roof opportunities should produce tasks');
-assert.ok(a.tasks.every(task => task.kind === 'semantic-context-prop'));
-assert.ok(a.tasks.every(task => task.semanticOpportunityId && task.semanticContextId && task.semanticPlacement));
-assert.ok(a.tasks.every(task => task.assetId !== 'needs-collider'), 'late contextual multiplier must reject collider-requiring assets');
-assert.ok(a.tasks.every(task => task.assetId !== 'not-semantic'), 'non semantic-props must stay out');
-assert.ok(a.tasks.every(task => task.semanticOpportunityId !== 'poster-1'), 'occupied opportunities must remain exclusive');
-assert.ok(a.tasks.every(task => task.semanticOpportunityId !== 'connector-1'), 'connector clearance is never a decoration slot');
-assert.ok(a.stats.roles.wall >= 1 && a.stats.roles.ground >= 1 && a.stats.roles.roof >= 1, 'all representative context roles should be exercised');
-assert.ok(a.tasks.filter(task => task.semanticContextRole === 'wall').every(task => task.assetId !== 'wall-clock'), 'outdoor facade hardware should outrank obviously indoor wall decoration');
+const disabled = compileSemanticContextMultiplier({ chunk, payload, assets });
+assert.equal(disabled.tasks.length, 0, 'the corpus selector must never derive population from opportunity count');
+assert.equal(disabled.stats.automaticPopulationDisabled, true);
+
+const requests = [
+    { opportunityId: 'wall-1', semanticFamily: 'security-hardware', desiredScaleClass: 'medium', priorityTier: 'medium' },
+    { opportunityId: 'sign-1', semanticFamily: 'signage', desiredScaleClass: 'large', priorityTier: 'identity' },
+    { opportunityId: 'door-1', semanticFamily: 'street-service', desiredScaleClass: 'medium', priorityTier: 'medium' },
+    { opportunityId: 'roof-1', semanticFamily: 'roof-mechanical', desiredScaleClass: 'large', priorityTier: 'macro' },
+    { opportunityId: 'service-1', semanticFamily: 'vertical-mechanical', desiredScaleClass: 'large', priorityTier: 'macro' },
+];
+const a = compileSemanticContextMultiplier({ chunk, payload, assets, requests });
+const b = compileSemanticContextMultiplier({ chunk, payload, assets, requests });
+assert.deepEqual(a, b, 'planner-requested corpus selection must remain deterministic');
+assert.equal(a.tasks.length, requests.length);
+assert.ok(a.tasks.every(task => task.kind === 'semantic-context-prop' && task.semanticOpportunityId && task.semanticPlacement));
+assert.ok(a.tasks.every(task => task.assetId !== 'needs-collider' && task.assetId !== 'not-semantic'));
+assert.equal(a.tasks.find(task => task.semanticOpportunityId === 'sign-1')?.assetId, 'wall-megascreen', 'large sign host should receive the large fitting sign asset');
+assert.equal(a.tasks.find(task => task.semanticOpportunityId === 'service-1')?.assetId, 'wall-duct-riser', 'large vertical mechanical request should deliberately reach the duct-riser corpus');
+assert.equal(a.tasks.find(task => task.semanticOpportunityId === 'roof-1')?.assetId, 'roof-vent', 'roof macro request should deliberately reach roof mechanical corpus');
+assert.ok(a.tasks.every(task => task.exteriorPlanOwner && task.exteriorReservationOwner));
 
 const denseWallOpportunities = Array.from({ length: 28 }, (_, i) => ({
     id: `dense-wall-${i}`, role: 'wall-mounted-prop-zone', entityId: 'dense', hostId: 'dense', surfaceId: 'dense:north',
     contextId: 'ctx-dense', transform: { x: -3.5 + (i % 7) * 1.1, y: 2.0 + Math.floor(i / 7) * 2.6, z: -4, rotY: 0 },
-    clearanceBudget: { width: 1.0, height: 1.35 }, layer: i >= 14 ? 'mid' : 'street', shellPriority: i < 8 ? 'first-pass' : 'deepen',
+    clearanceBudget: { width: 1.0, height: 1.35 }, layer: i >= 14 ? 'mid' : 'street',
 }));
 const densePayload = {
     entities: [{ id: 'dense', kind: 'building' }],
-    semanticContext: {
-        entities: [{ id: 'ctx-dense', entityId: 'dense', program: 'commercial', layer: 'street' }],
-        spaces: [],
-        surfaces: [{ id: 'dense:north', entityId: 'dense', half: 4, yMin: 0, yMax: 12.5 }],
-        opportunities: [
-            { id: 'dense-sign', role: 'facade-sign-zone', entityId: 'dense', hostId: 'dense', surfaceId: 'dense:north', contextId: 'ctx-dense', transform: { x: 0, y: 4.5, z: -4, rotY: 0 }, clearanceBudget: { width: 5.2, height: 3.2 }, layer: 'mid', shellPriority: 'first-pass' },
-            ...denseWallOpportunities,
-            { id: 'dense-roof', role: 'roof-utility-zone', entityId: 'dense', hostId: 'dense', contextId: 'ctx-dense', transform: { x: 0, y: 12.5, z: 0, rotY: 0 }, clearanceBudget: { width: 2, depth: 2 } },
-            { id: 'dense-ground', role: 'beside-door-zone', entityId: 'dense', hostId: 'dense', contextId: 'ctx-dense', transform: { x: 2, y: 0, z: -4.2, rotY: 0 }, clearanceBudget: { width: 0.7, depth: 0.7 } },
-        ],
-    },
+    semanticContext: { entities: [{ id: 'ctx-dense', entityId: 'dense', program: 'commercial' }], spaces: [], opportunities: denseWallOpportunities },
 };
-const dense = compileSemanticContextMultiplier({ chunk: { key: '4,1', seed: 77 }, payload: densePayload, assets, existingTasks: [] });
-assert.ok(dense.stats.entityBudgets.dense.wall > 8, 'physical wall area should permit substantially more than the old eight-prop entity cap');
-assert.ok(dense.stats.roles.wall >= 8, `dense facades should still receive substantial contextual enrichment, got ${dense.stats.roles.wall}`);
-assert.equal(dense.tasks[0].semanticOpportunityRole, 'facade-sign-zone', 'identity/sign opportunity must beat generic wall hardware');
-assert.equal(dense.tasks[0].assetId, 'wall-megascreen', 'large fitting exterior assets must beat tiny hardware on a large sign host');
-assert.ok(dense.tasks[0].semanticVisualImpact > dense.tasks.find(task => task.semanticOpportunityRole === 'wall-mounted-prop-zone')?.semanticVisualImpact, 'selected identity asset should carry more visual impact than generic wall hardware');
-assert.ok(dense.tasks.some(task => task.semanticLayer === 'mid'), 'selected wall assets must reach mid facade bands');
+const denseDisabled = compileSemanticContextMultiplier({ chunk: { key: '4,1' }, payload: densePayload, assets });
+assert.equal(denseDisabled.tasks.length, 0, '28 hardware anchors are opportunities, not 28 population requests');
+const denseRequested = compileSemanticContextMultiplier({
+    chunk: { key: '4,1' }, payload: densePayload, assets,
+    requests: denseWallOpportunities.slice(0, 2).map(opportunity => ({ opportunity, semanticFamily: 'security-hardware', desiredScaleClass: 'medium', priorityTier: 'medium' })),
+});
+assert.ok(denseRequested.tasks.length <= 2, 'explicit planner quantity must bound dense lattice realization');
 
-console.log('[semantic-context-multiplier-selftest] PASS', { representative: a.stats, dense: dense.stats });
+const direct = selectSemanticContextAsset({ chunk, payload, assets, opportunity: opportunities[4], request: requests[4] });
+assert.equal(direct?.assetId, 'wall-duct-riser');
+console.log('[semantic-context-multiplier-selftest] PASS', { requested: a.stats, denseRequested: denseRequested.tasks.length });

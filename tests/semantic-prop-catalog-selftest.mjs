@@ -2,11 +2,11 @@ import assert from 'node:assert/strict';
 import { compileSemanticContextMultiplier } from '../world/semantic-context-multiplier.js';
 
 const assets = [
-  { id:'wall-camera',file:'a.glb',mount:'wall',collision:'none',dimensionsXYZ:[0.4,0.4,0.2],programs:['office'],semanticGraph:{roles:['semantic-prop']} },
-  { id:'weird-floor-object',file:'b.glb',mount:'ground',collision:'none',dimensionsXYZ:[0.8,0.9,0.7],programs:[],semanticGraph:{roles:['semantic-prop']} },
-  { id:'another-strange-object',file:'c.glb',mount:'ground',collision:'none',dimensionsXYZ:[0.5,1.1,0.5],programs:[],semanticGraph:{roles:['semantic-prop']} },
-  { id:'rooftop/odd_machine',file:'d.glb',mount:'ground',collision:'none',dimensionsXYZ:[1.2,1.0,1.1],programs:[],semanticGraph:{roles:['semantic-prop']} },
-  { id:'colliding-machine',file:'e.glb',mount:'ground',collision:'box',dimensionsXYZ:[1,1,1],programs:[],semanticGraph:{roles:['semantic-prop']} },
+  { id:'wall-camera',file:'a.glb',mount:'wall',kind:'security_camera',collision:'none',dimensionsXYZ:[0.4,0.4,0.2],programs:['office'],semanticGraph:{roles:['semantic-prop']} },
+  { id:'weird-floor-object',file:'b.glb',mount:'ground',kind:'weird_floor_object',collision:'none',dimensionsXYZ:[0.8,0.9,0.7],programs:[],semanticGraph:{roles:['semantic-prop']} },
+  { id:'another-strange-object',file:'c.glb',mount:'ground',kind:'another_strange_object',collision:'none',dimensionsXYZ:[0.5,1.1,0.5],programs:[],semanticGraph:{roles:['semantic-prop']} },
+  { id:'rooftop/odd_machine',file:'d.glb',mount:'ground',kind:'rooftop_vent_machine',collision:'none',dimensionsXYZ:[1.2,1.0,1.1],programs:[],semanticGraph:{roles:['semantic-prop']} },
+  { id:'colliding-machine',file:'e.glb',mount:'ground',kind:'vending_machine',collision:'box',dimensionsXYZ:[1,1,1],programs:[],semanticGraph:{roles:['semantic-prop']} },
 ];
 const opportunities=[
   {id:'wall',role:'wall-mounted-prop-zone',entityId:'b',hostId:'b',contextId:'ctx',transform:{x:0,y:2,z:0,rotY:0},clearanceBudget:{width:1,height:1.4}},
@@ -15,11 +15,16 @@ const opportunities=[
   {id:'roof',role:'roof-utility-zone',entityId:'b',hostId:'b',contextId:'ctx',transform:{x:0,y:8,z:0,rotY:0},clearanceBudget:{width:2,depth:2}},
 ];
 const payload={semanticContext:{entities:[{id:'ctx',entityId:'b',program:'mixed'}],spaces:[],surfaces:[{id:'s',entityId:'b',half:4,yMin:0,yMax:8}],opportunities}};
-const result=compileSemanticContextMultiplier({chunk:{key:'0,0'},payload,assets,maxTasks:12});
-assert.ok(result.stats.contextualEligible>=4,'ordinary ground assets should no longer need a name-regex blessing to join the corpus');
-assert.ok(result.stats.precommitOnlyBecauseCollider>=1,'colliding assets remain explicitly staged for the future precommit switch');
-assert.equal(result.stats.catalogSearchDepth,512,'catalog scan should rotate through a broad slice of the 3000+ runtime corpus');
-assert.ok(result.stats.coverageRatio>=0.6,'placement metadata should expose most representative semantic assets to exterior role pools');
-assert.ok(result.tasks.some(t=>t.assetId==='weird-floor-object'||t.assetId==='another-strange-object'),'generic eligible ground corpus must actually participate');
-assert.ok(result.tasks.every(t=>t.semanticOpportunityId),'catalog output must still be opportunity bound');
-console.log('PASS semantic prop catalog coverage',result.stats);
+const chunk={key:'0,0'};
+const disabled=compileSemanticContextMultiplier({chunk,payload,assets});
+assert.equal(disabled.tasks.length,0);
+assert.ok(disabled.stats.contextualEligible>=4,'ordinary ground assets should remain exposed to selection without a name-regex blessing');
+assert.ok(disabled.stats.precommitOnlyBecauseCollider>=1,'colliding assets remain explicitly staged for precommit handling');
+assert.equal(disabled.stats.catalogSearchDepth,undefined,'no selection scan is needed until a planner request exists');
+assert.ok(disabled.stats.coverageRatio>=0.6);
+const requests=opportunities.map(opportunity=>({opportunity,semanticFamily:'any',desiredScaleClass:'medium',priorityTier:'medium'}));
+const result=compileSemanticContextMultiplier({chunk,payload,assets,requests});
+assert.equal(result.stats.catalogSearchDepth,768,'requested selection should inspect a broad rotating corpus slice');
+assert.ok(result.tasks.some(t=>t.assetId==='weird-floor-object'||t.assetId==='another-strange-object'),'generic eligible ground corpus must actually participate when requested');
+assert.ok(result.tasks.every(t=>t.semanticOpportunityId));
+console.log('PASS semantic prop catalog request coverage',result.stats);

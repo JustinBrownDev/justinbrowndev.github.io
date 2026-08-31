@@ -82,6 +82,7 @@ function placementBase(opportunity, domain, primitiveIndex) {
         semanticAuthority: true,
         semanticOpportunityId: opportunity.id,
         semanticHostId: opportunity.surfaceId ?? opportunity.hostId ?? opportunity.entityId ?? null,
+        semanticContextId: opportunity.contextId ?? null,
         spatialTopologyHostId: opportunity.spatialTopologyHostId ?? opportunity.connectorId ?? opportunity.surfaceId ?? null,
         connectorId: opportunity.connectorId ?? null,
         apertureId: opportunity.apertureId ?? null,
@@ -259,6 +260,109 @@ function emitFacade(opportunity, placements) {
     }
 }
 
+function emitFacadeMechanicalMacro(opportunity, placements, request = {}) {
+    const budget = opportunity.clearanceBudget ?? {};
+    const width = clamp(finite(budget.width, finite(opportunity.availableWidth, 2.6)), 1.0, 8.0);
+    const height = clamp(finite(budget.height, finite(opportunity.availableHeight, 4.5)), 1.4, 8.5);
+    if (width < 1.0 || height < 1.4) return false;
+    const rng = rngFor(`facade-macro-mechanical:${opportunity.id}:${request.semanticFamily ?? 'mechanical'}`);
+    const assemblyId = `${opportunity.id}:macro-mechanical`;
+    const family = String(request.semanticFamily ?? 'mechanical-service');
+    const vertical = family.includes('vertical') || height >= width * 1.15;
+    const p = surfacePoint(opportunity, 0, 0, 0.15);
+    if (vertical) {
+        const pipeCount = width >= 3.2 ? 3 : 2;
+        const spread = Math.min(width * 0.56, 2.2);
+        for (let i = 0; i < pipeCount; i++) {
+            const du = pipeCount === 1 ? 0 : -spread * 0.5 + spread * (i / (pipeCount - 1));
+            const q = surfacePoint(opportunity, du, 0, 0.14 + i * 0.018);
+            pushPrimitive(placements, opportunity, {
+                ...q, shape: 'cylinder', sx: 0.22 + rng() * 0.12,
+                sy: clamp(height * (0.72 + rng() * 0.18), 1.8, 7.2), sz: 0.22 + rng() * 0.12,
+                assemblyId, assemblyKind: 'facade-vertical-mechanical', visualTier: 'macro', color: 0x4d5655,
+            }, 'facade-macro', i);
+        }
+        const cross = surfacePoint(opportunity, 0, -height * 0.28, 0.17);
+        pushPrimitive(placements, opportunity, {
+            ...cross, shape: 'box', sx: clamp(width * 0.66, 1.15, 4.8), sy: 0.34, sz: 0.36,
+            assemblyId, assemblyKind: 'facade-vertical-mechanical', visualTier: 'macro', color: 0x626c6b,
+        }, 'facade-macro', pipeCount);
+    } else {
+        const unitW = clamp(width * 0.66, 1.4, 4.8);
+        const unitH = clamp(height * 0.38, 0.8, 2.5);
+        pushPrimitive(placements, opportunity, {
+            ...p, shape: 'box', sx: unitW, sy: unitH, sz: clamp(unitW * 0.24, 0.38, 1.05),
+            assemblyId, assemblyKind: 'facade-hvac-bank', visualTier: 'macro', color: 0x626c6b,
+        }, 'facade-macro', 0);
+        for (const [index, du] of [-unitW * 0.28, unitW * 0.28].entries()) {
+            const q = surfacePoint(opportunity, du, unitH * 0.02, 0.18);
+            pushPrimitive(placements, opportunity, {
+                ...q, shape: 'cylinder', sx: unitH * 0.30, sy: unitH * 0.16, sz: unitH * 0.30,
+                assemblyId, assemblyKind: 'facade-hvac-bank', visualTier: 'macro', color: 0x343b3d,
+            }, 'facade-macro', index + 1);
+        }
+    }
+    return true;
+}
+
+function emitRoofMechanicalMacro(opportunity, placements, request = {}) {
+    const bounds = opportunity.bounds;
+    if (!bounds) return false;
+    const widthX = Math.max(0, finite(bounds.halfX) * 2);
+    const widthZ = Math.max(0, finite(bounds.halfZ) * 2);
+    if (widthX < 1.2 || widthZ < 1.2) return false;
+    const rng = rngFor(`roof-macro-mechanical:${opportunity.id}:${request.semanticFamily ?? 'mechanical'}`);
+    const family = String(request.semanticFamily ?? 'roof-mechanical');
+    const baseY = finite(bounds.y) + 0.04;
+    if (family === 'roof-antenna') {
+        const assemblyId = `${opportunity.id}:roof-antenna`;
+        const mastH = clamp(Math.max(widthX, widthZ) * 0.78, 2.4, 6.2);
+        const mastRadius = clamp(Math.min(widthX, widthZ) * 0.045, 0.12, 0.26);
+        pushPrimitive(placements, opportunity, {
+            x: bounds.x, y: baseY, z: bounds.z, rotY: 0,
+            shape: 'cylinder', sx: mastRadius, sy: mastH, sz: mastRadius,
+            assemblyId, assemblyKind: 'roof-antenna-mast', visualTier: 'macro', color: 0x3d4547,
+        }, 'roof-antenna-macro', 0);
+        pushPrimitive(placements, opportunity, {
+            x: bounds.x, y: baseY + mastH * 0.62, z: bounds.z, rotY: rng() * Math.PI,
+            shape: 'box', sx: clamp(widthX * 0.44, 1.2, 3.6), sy: 0.12, sz: 0.12,
+            assemblyId, assemblyKind: 'roof-antenna-mast', visualTier: 'macro', color: 0x515b5c,
+        }, 'roof-antenna-macro', 1);
+        pushPrimitive(placements, opportunity, {
+            x: bounds.x + clamp(widthX * 0.24, 0.55, 1.8), y: baseY + mastH * 0.42, z: bounds.z, rotY: Math.PI * 0.5,
+            shape: 'cone', sx: clamp(Math.min(widthX, widthZ) * 0.18, 0.38, 1.05), sy: 0.22, sz: clamp(Math.min(widthX, widthZ) * 0.18, 0.38, 1.05),
+            assemblyId, assemblyKind: 'roof-antenna-dish', visualTier: 'macro', color: 0x707979,
+        }, 'roof-antenna-macro', 2);
+        return true;
+    }
+    const assemblyId = `${opportunity.id}:roof-hvac-cluster`;
+    const bankW = clamp(widthX * 0.58, 1.2, 5.6);
+    const bankD = clamp(widthZ * 0.52, 1.1, 4.6);
+    const bankH = clamp(Math.min(bankW, bankD) * (0.44 + rng() * 0.18), 0.72, 2.2);
+    pushPrimitive(placements, opportunity, {
+        x: bounds.x, y: baseY, z: bounds.z, rotY: rng() < 0.5 ? 0 : Math.PI * 0.5,
+        shape: 'box', sx: bankW, sy: bankH, sz: bankD,
+        assemblyId, assemblyKind: 'roof-hvac-cluster', visualTier: 'macro', color: 0x626c6b,
+    }, 'roof-mechanical-macro', 0);
+    const fanRadius = clamp(Math.min(bankW, bankD) * 0.18, 0.24, 0.72);
+    for (const [index, dx] of [-bankW * 0.23, bankW * 0.23].entries()) {
+        pushPrimitive(placements, opportunity, {
+            x: bounds.x + dx, y: baseY + bankH, z: bounds.z, rotY: 0,
+            shape: 'cylinder', sx: fanRadius, sy: 0.18, sz: fanRadius,
+            assemblyId, assemblyKind: 'roof-hvac-cluster', visualTier: 'macro', color: 0x3f4748,
+        }, 'roof-mechanical-macro', index + 1);
+    }
+    if (Math.max(widthX, widthZ) >= 4.5) {
+        const mastH = clamp(Math.max(widthX, widthZ) * 0.58, 1.8, 4.8);
+        pushPrimitive(placements, opportunity, {
+            x: bounds.x + bankW * 0.34, y: baseY + bankH, z: bounds.z + bankD * 0.34, rotY: 0,
+            shape: 'cylinder', sx: 0.18, sy: mastH, sz: 0.18,
+            assemblyId, assemblyKind: 'roof-hvac-cluster', visualTier: 'macro', color: 0x353b3c,
+        }, 'roof-mechanical-macro', 3);
+    }
+    return true;
+}
+
 function emitGround(opportunity, placements) {
     const rng = rngFor(`ground:${opportunity.id}`);
     const budget = opportunity.clearanceBudget ?? {};
@@ -312,71 +416,91 @@ function emitRoof(opportunity, placements) {
     }
 }
 
-export function planExteriorPropField({ chunk, payload } = {}) {
-    if (!chunk || !payload) throw new Error('planExteriorPropField requires chunk and payload');
-    const opportunities = (payload.semanticContext?.opportunities ?? [])
-        .filter(isEligible)
-        .sort((a, b) => (EXTERIOR_OPPORTUNITY_PRIORITY[a.role] ?? 99) - (EXTERIOR_OPPORTUNITY_PRIORITY[b.role] ?? 99)
-            || String(a.id).localeCompare(String(b.id)));
+export function planExteriorPropFieldRequest({ chunk, payload, opportunity, request = {} } = {}) {
+    if (!chunk || !payload || !opportunity) throw new Error('planExteriorPropFieldRequest requires chunk, payload, and opportunity');
+    if (!isEligible(opportunity) || opportunity.spectacleReserved === true) return null;
     const placements = [];
-    const claimed = new Set();
-    const spectacleSurfaceIds = new Set();
-    const spectacleRoofEntities = new Set();
-    for (const opportunity of opportunities) {
-        if (claimed.has(opportunity.id) || opportunity.spectacleReserved === true) continue;
-        claimed.add(opportunity.id);
-        if (opportunity.role === 'facade-spectacle-span' || opportunity.role === 'corner-media-band') {
-            if (emitFacadeSpectacle(opportunity, placements)) {
-                for (const segment of opportunity.segments ?? []) if (segment.surfaceId) spectacleSurfaceIds.add(segment.surfaceId);
-                if (opportunity.surfaceId) spectacleSurfaceIds.add(opportunity.surfaceId);
-            }
-        } else if (opportunity.role === 'roof-spectacle-envelope') {
-            if (emitRoofSpectacle(opportunity, placements)) spectacleRoofEntities.add(opportunity.entityId);
-        } else if (spectacleSurfaceIds.has(opportunity.surfaceId)
-            && ['facade-sign-zone', 'facade-service-band', 'wall-mounted-prop-zone'].includes(opportunity.role)) {
-            continue;
-        } else if (opportunity.role === 'roof-utility-zone' && spectacleRoofEntities.has(opportunity.entityId)) {
-            continue;
-        } else if (opportunity.role === 'roof-utility-zone') emitRoof(opportunity, placements);
-        else if (opportunity.role === 'ground-open-zone') emitOpenGround(opportunity, placements);
-        else if (['ground-edge-zone', 'portal-flank-ground-zone', 'connector-service-zone'].includes(opportunity.role)) emitGround(opportunity, placements);
-        else emitFacade(opportunity, placements);
+    const desired = request.desiredScaleClass ?? 'medium';
+    const tier = request.priorityTier ?? (desired === 'spectacle' ? 'spectacle' : desired === 'large' ? 'macro' : desired);
+
+    if (opportunity.role === 'facade-spectacle-span' || opportunity.role === 'corner-media-band') {
+        emitFacadeSpectacle(opportunity, placements);
+    } else if (opportunity.role === 'roof-spectacle-envelope') {
+        emitRoofSpectacle(opportunity, placements);
+    } else if (opportunity.role === 'roof-utility-zone' && (desired === 'large' || desired === 'macro')) {
+        emitRoofMechanicalMacro(opportunity, placements, request);
+    } else if ((opportunity.role === 'facade-service-band' || opportunity.role === 'wall-mounted-prop-zone')
+        && (desired === 'large' || desired === 'macro')) {
+        emitFacadeMechanicalMacro(opportunity, placements, request);
+    } else if (opportunity.role === 'roof-utility-zone') {
+        // A refinement request gets one compact roof assembly; area never turns into
+        // an implicit density multiplier.
+        const bounds = opportunity.bounds;
+        if (bounds) {
+            const p = {
+                x: bounds.x, y: finite(bounds.y) + 0.03, z: bounds.z, rotY: finite(opportunity.transform?.rotY),
+                shape: 'box', sx: clamp(finite(bounds.halfX, 1) * 0.70, 0.55, 1.8), sy: 0.58,
+                sz: clamp(finite(bounds.halfZ, 1) * 0.70, 0.55, 1.8),
+                assemblyId: `${opportunity.id}:roof-utility-single`, assemblyKind: 'roof-utility-single', visualTier: tier,
+            };
+            pushPrimitive(placements, opportunity, p, 'roof-mechanical-detail', 0);
+        }
+    } else if (opportunity.role === 'ground-open-zone') {
+        emitGround(opportunity, placements);
+    } else if (['ground-edge-zone', 'portal-flank-ground-zone', 'connector-service-zone'].includes(opportunity.role)) {
+        emitGround(opportunity, placements);
+    } else {
+        emitFacade(opportunity, placements);
     }
 
     const reservations = payload.semanticContext?.spatialTopology?.reservations ?? [];
     const safePlacements = reservations.length
         ? placements.filter(item => !reservations.some(reservation => placementIntersectsReservation(item, reservation)))
         : placements;
-    const facade = safePlacements.filter(item => item.domain === 'facade-infrastructure' || item.domain === 'facade-macro' || item.domain === 'portal-hardware' || item.domain === 'facade-spectacle');
-    const macro = safePlacements.filter(item => item.domain === 'facade-macro');
-    const spectacle = safePlacements.filter(item => item.visualTier === 'spectacle');
-    const ground = safePlacements.filter(item => item.domain === 'ground-edge-micro' || item.domain === 'connector-service' || item.domain === 'ground-open');
-    const roof = safePlacements.filter(item => item.domain === 'roof-mechanical-detail');
-    const facadeMeters = (payload.semanticContext?.surfaces ?? []).reduce((sum, surface) => sum + Math.max(0, finite(surface.half) * 2), 0);
-    const stats = {
-        schema: 'jweb.semantic-exterior-field.v1',
-        semanticAuthority: true,
-        generated: safePlacements.length,
-        opportunitiesConsumed: claimed.size,
-        facadeInfrastructure: facade.length,
-        spectacleAssemblies: new Set(spectacle.map(item => item.assemblyId).filter(Boolean)).size,
-        spectaclePrimitives: spectacle.length,
-        cornerMegascreens: new Set(spectacle.filter(item => item.assemblyKind === 'corner-megascreen').map(item => item.assemblyId)).size,
-        roofSpectacles: new Set(spectacle.filter(item => item.domain === 'roof-spectacle').map(item => item.assemblyId)).size,
-        facadeMacroAssemblies: new Set(macro.map(item => item.assemblyId).filter(Boolean)).size,
-        macroAssemblies: new Set(placements.map(item => item.assemblyId).filter(Boolean)).size,
-        macroPrimitives: macro.length + roof.length,
-        microClutter: ground.length,
-        groundEdge: ground.length,
-        roofEdge: roof.length,
-        roofMechanicalAssemblies: new Set(roof.map(item => item.assemblyId).filter(Boolean)).size,
-        facadeCategoryCount: new Set(facade.map(item => item.domain)).size,
-        drawBuckets: new Set(safePlacements.map(item => item.shape)).size,
-        physicalDensityNormalized: true,
-        groundPerFacadeMeter: facadeMeters > 0 ? ground.length / facadeMeters : 0,
-        visibleFacadePerFacadeMeter: facadeMeters > 0 ? facade.length / facadeMeters : 0,
+    if (!safePlacements.length) return null;
+    for (const placement of safePlacements) {
+        placement.visualTier = tier;
+        placement.exteriorPlanOwner = request.planOwner ?? 'exterior-composition-authority';
+        placement.exteriorReservationOwner = request.reservationOwner ?? request.planRequestId ?? opportunity.id;
+    }
+    const visualImpact = safePlacements.reduce((max, item) => Math.max(max, item.visualImpact || 0), 0);
+    return {
+        schema: 'jweb.semantic-exterior-field.v2',
+        placements: safePlacements,
+        stats: {
+            schema: 'jweb.semantic-exterior-field.v2', semanticAuthority: true, plannerRequestOnly: true,
+            requests: 1, opportunitiesConsumed: 1, generated: safePlacements.length,
+            macroAssemblies: new Set(safePlacements.map(item => item.assemblyId).filter(Boolean)).size,
+            drawBuckets: new Set(safePlacements.map(item => item.shape)).size, visualTier: tier, visualImpact,
+        },
     };
-    return { schema: stats.schema, placements: safePlacements, stats };
+}
+
+// Compatibility batch wrapper: only explicit planner requests are accepted.
+// Calling this with no requests cannot populate a facade or hardware lattice.
+export function planExteriorPropField({ chunk, payload, requests = [] } = {}) {
+    if (!chunk || !payload) throw new Error('planExteriorPropField requires chunk and payload');
+    if (!Array.isArray(requests) || !requests.length) {
+        return {
+            schema: 'jweb.semantic-exterior-field.v2', placements: [],
+            stats: { schema: 'jweb.semantic-exterior-field.v2', semanticAuthority: true, plannerRequestOnly: true, automaticPopulationDisabled: true, generated: 0, opportunitiesConsumed: 0, requests: 0, drawBuckets: 0 },
+        };
+    }
+    const byId = new Map((payload.semanticContext?.opportunities ?? []).map(item => [item.id, item]));
+    const placements = [];
+    let consumed = 0;
+    for (const request of requests) {
+        const opportunity = request?.opportunity ?? byId.get(request?.opportunityId);
+        if (!opportunity) continue;
+        const planned = planExteriorPropFieldRequest({ chunk, payload, opportunity, request });
+        if (!planned) continue;
+        consumed++;
+        placements.push(...planned.placements);
+    }
+    return {
+        schema: 'jweb.semantic-exterior-field.v2', placements,
+        stats: { schema: 'jweb.semantic-exterior-field.v2', semanticAuthority: true, plannerRequestOnly: true, automaticPopulationDisabled: true, requests: requests.length, opportunitiesConsumed: consumed, generated: placements.length, drawBuckets: new Set(placements.map(item => item.shape)).size },
+    };
 }
 
 export function createExteriorPropFieldSystem({ THREE, worldSeed = 0 } = {}) {
@@ -399,11 +523,11 @@ export function createExteriorPropFieldSystem({ THREE, worldSeed = 0 } = {}) {
     function createMediaTexture(media) {
         if (typeof document === 'undefined' || !media) return null;
         const canvas = document.createElement('canvas');
-        canvas.width = 1024;
+        canvas.width = 1280;
         canvas.height = 512;
         const ctx = canvas.getContext('2d');
         if (!ctx) return null;
-        const seed = Number(media.seed) >>> 0;
+        const seed = Number(media.contentSeed ?? media.campaignSeed ?? media.seed) >>> 0;
         const backgrounds = ['#07131b', '#210b1b', '#17120a', '#071b16', '#150c24'];
         const inks = ['#82f7ff', '#ff79cf', '#ffe36c', '#8dff9a', '#d4b2ff'];
         ctx.fillStyle = backgrounds[seed % backgrounds.length];
@@ -412,7 +536,7 @@ export function createExteriorPropFieldSystem({ THREE, worldSeed = 0 } = {}) {
         ctx.lineWidth = 18;
         ctx.strokeRect(18, 18, canvas.width - 36, canvas.height - 36);
         ctx.fillStyle = ctx.strokeStyle;
-        ctx.textAlign = 'center';
+        ctx.textAlign = 'left';
         ctx.textBaseline = 'middle';
         const clean = value => String(value ?? '').replace(/\s+/g, ' ').trim();
         const fit = (text, maxWidth, startPx, minPx) => {
@@ -428,13 +552,29 @@ export function createExteriorPropFieldSystem({ THREE, worldSeed = 0 } = {}) {
             while (clipped.length > 5 && ctx.measureText(clipped + '...').width > maxWidth) clipped = clipped.slice(0, -1);
             return { value: clipped + (clipped === value ? '' : '...'), px: minPx };
         };
-        const title = fit(media.title, 900, 112, 48);
+        const family = clean(media.family || 'semantic-media').replace(/[-_]+/g, ' ').toUpperCase();
+        ctx.globalAlpha = 0.78;
+        ctx.font = '700 25px monospace';
+        ctx.fillText(family, 58, 68);
+        ctx.globalAlpha = 1;
+        const title = fit(media.title, 1160, 122, 52);
         ctx.font = '800 ' + title.px + 'px monospace';
-        ctx.fillText(title.value, 512, 205);
-        const subtitle = fit(media.subtitle, 900, 46, 24);
+        ctx.fillText(title.value, 58, 210);
+        const subtitle = fit(media.subtitle, 880, 46, 24);
         ctx.globalAlpha = 0.90;
         ctx.font = '700 ' + subtitle.px + 'px monospace';
-        ctx.fillText(subtitle.value, 512, 345);
+        ctx.fillText(subtitle.value, 58, 338);
+        const value = fit(media.value?.label ?? '', 420, 56, 28);
+        if (value.value) {
+            ctx.textAlign = 'right';
+            ctx.globalAlpha = 1;
+            ctx.font = '800 ' + value.px + 'px monospace';
+            ctx.fillText(value.value, canvas.width - 58, 424);
+        }
+        ctx.textAlign = 'left';
+        ctx.globalAlpha = 0.52;
+        ctx.font = '600 18px monospace';
+        ctx.fillText('SEMANTIC MEDIA / ' + clean(media.assemblyKind || 'SCREEN').toUpperCase(), 58, 446);
         ctx.globalAlpha = 1;
         const texture = new THREE.CanvasTexture(canvas);
         texture.colorSpace = THREE.SRGBColorSpace;
@@ -442,7 +582,7 @@ export function createExteriorPropFieldSystem({ THREE, worldSeed = 0 } = {}) {
         return texture;
     }
 
-    function makeTask(chunk, plan, placements, tier, entityId, ordinal) {
+    function makeTask(chunk, plan, placements, tier, entityId, ordinal, request = {}) {
         const visualImpact = placements.reduce((max, item) => Math.max(max, item.visualImpact || 0), 0);
         return {
             kind: 'exterior-prop-field', entityId: entityId || 'exterior-field:' + chunk.key,
@@ -462,34 +602,44 @@ export function createExteriorPropFieldSystem({ THREE, worldSeed = 0 } = {}) {
                 },
             },
             topologySolved: true, topologyAccepted: true, topologyDescriptors: [],
+            exteriorPlanOwner: request.planOwner ?? 'exterior-composition-authority',
+            exteriorReservationOwner: request.reservationOwner ?? request.planRequestId ?? placements[0]?.semanticOpportunityId ?? null,
+            exteriorRequest: {
+                semanticFamily: request.semanticFamily ?? 'primitive-fallback',
+                desiredScaleClass: request.desiredScaleClass ?? tier,
+                targetSurface: placements[0]?.role ?? null,
+                priorityTier: request.priorityTier ?? tier,
+                planRequestId: request.planRequestId ?? null,
+            },
+            semanticOpportunityId: placements[0]?.semanticOpportunityId ?? null,
+            semanticHostId: placements[0]?.semanticHostId ?? null,
+            semanticOpportunityRole: placements[0]?.role ?? null,
+            semanticPlacement: placements[0] ? {
+                x: placements[0].x, y: placements[0].y, z: placements[0].z, rotY: placements[0].rotY,
+                mode: `field-opportunity:${placements[0].role}`,
+                role: placements[0].role,
+                opportunityId: placements[0].semanticOpportunityId,
+                surfaceId: placements[0].surfaceId ?? null,
+                connectorId: placements[0].connectorId ?? null,
+                apertureId: placements[0].apertureId ?? null,
+                reservationIds: [...(placements[0].reservationIds ?? [])],
+            } : null,
             contextualCosmetic: true, exteriorPropField: true, semanticExteriorAuthority: true,
         };
     }
 
-    function planTasks(chunk, payload) {
-        const plan = planExteriorPropField({ chunk, payload });
-        if (!plan.placements.length) return [];
-        const groups = new Map();
-        for (const placement of plan.placements) {
-            const tier = placement.visualTier ?? exteriorOpportunityVisualTier(placement.role);
-            const entityId = placement.entityId ?? 'exterior-field:' + chunk.key;
-            const key = tier + ':' + entityId;
-            const group = groups.get(key) ?? { tier, entityId, placements: [] };
-            group.placements.push(placement);
-            groups.set(key, group);
-        }
-        return [...groups.values()]
-            .map((group, index) => makeTask(chunk, plan, group.placements, group.tier, group.entityId, index))
-            .sort((a, b) => (EXTERIOR_VISUAL_TIER[a.exteriorVisualTier] ?? 9) - (EXTERIOR_VISUAL_TIER[b.exteriorVisualTier] ?? 9)
-                || b.exteriorVisualImpact - a.exteriorVisualImpact
-                || String(a.entityId).localeCompare(String(b.entityId)));
+    function planRequestTask(chunk, payload, opportunity, request = {}) {
+        const plan = planExteriorPropFieldRequest({ chunk, payload, opportunity, request });
+        if (!plan?.placements?.length) return null;
+        const tier = request.priorityTier ?? plan.placements[0]?.visualTier ?? exteriorOpportunityVisualTier(opportunity.role);
+        const entityId = opportunity.entityId ?? opportunity.hostId ?? `exterior-field:${chunk.key}`;
+        return makeTask(chunk, plan, plan.placements, tier, entityId, 0, request);
     }
 
-    function planTask(chunk, payload) {
-        const plan = planExteriorPropField({ chunk, payload });
-        if (!plan.placements.length) return null;
-        return makeTask(chunk, plan, plan.placements, 'medium', 'exterior-field:' + chunk.key, 0);
-    }
+    // Legacy population entry points are deliberately inert. Callers must submit
+    // an explicit planner request + reserved opportunity through planRequestTask.
+    function planTasks() { return []; }
+    function planTask() { return null; }
 
     function realize(payload, task) {
         const placements = task?.fieldPlan?.placements ?? [];
@@ -532,26 +682,39 @@ export function createExteriorPropFieldSystem({ THREE, worldSeed = 0 } = {}) {
         }
 
         const mediaPlacements = placements.filter(item => item?.media && item.shape === 'box' && /megascreen/i.test(String(item.assemblyKind ?? '')));
-        group.userData.mediaSurfaceCount = mediaPlacements.length;
+        const mediaGroups = new Map();
         for (const item of mediaPlacements) {
-            const texture = createMediaTexture(item.media);
+            const mediaId = String(item.media?.id ?? item.assemblyId ?? item.semanticOpportunityId ?? 'screen');
+            const assembly = mediaGroups.get(mediaId) ?? [];
+            assembly.push(item);
+            mediaGroups.set(mediaId, assembly);
+        }
+        group.userData.mediaSurfaceCount = mediaPlacements.length;
+        group.userData.mediaAssemblyCount = mediaGroups.size;
+        group.userData.mediaDescriptorIds = [...mediaGroups.keys()];
+        for (const [mediaId, assemblyPlacements] of mediaGroups) {
+            const media = assemblyPlacements[0]?.media;
+            const texture = createMediaTexture(media);
             if (!texture) continue;
             const material = new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide, toneMapped: false });
-            const panel = new THREE.Mesh(mediaPlaneGeometry, material);
-            panel.name = group.name + ':media:' + String(item.assemblyId ?? item.semanticOpportunityId ?? 'screen');
-            const outwardX = -Math.sin(item.rotY);
-            const outwardZ = -Math.cos(item.rotY);
-            const offset = Math.max(0.015, item.sz * 0.5 + 0.012);
-            panel.position.set(item.x + outwardX * offset, item.y + item.sy * 0.5, item.z + outwardZ * offset);
-            panel.rotation.y = item.rotY + Math.PI;
-            panel.scale.set(item.sx * 0.94, item.sy * 0.90, 1);
-            panel.userData.chunkCosmetic = true;
-            panel.userData.detailKind = 'megascreen-media';
-            panel.userData.semanticExteriorAuthority = true;
-            panel.userData.media = item.media;
-            group.add(panel);
             payload?.detailResources?.textures?.add?.(texture);
             payload?.detailResources?.materials?.add?.(material);
+            for (const item of assemblyPlacements) {
+                const panel = new THREE.Mesh(mediaPlaneGeometry, material);
+                panel.name = group.name + ':media:' + mediaId + ':' + String(item.mediaSegment?.index ?? 0);
+                const outwardX = -Math.sin(item.rotY);
+                const outwardZ = -Math.cos(item.rotY);
+                const offset = Math.max(0.015, item.sz * 0.5 + 0.012);
+                panel.position.set(item.x + outwardX * offset, item.y + item.sy * 0.5, item.z + outwardZ * offset);
+                panel.rotation.y = item.rotY + Math.PI;
+                panel.scale.set(item.sx * 0.94, item.sy * 0.90, 1);
+                panel.userData.chunkCosmetic = true;
+                panel.userData.detailKind = 'megascreen-media';
+                panel.userData.semanticExteriorAuthority = true;
+                panel.userData.media = media;
+                panel.userData.mediaSegment = item.mediaSegment ?? null;
+                group.add(panel);
+            }
         }
         return group;
     }
@@ -563,5 +726,5 @@ export function createExteriorPropFieldSystem({ THREE, worldSeed = 0 } = {}) {
         geometries.clear(); materials.clear();
     }
 
-    return Object.freeze({ planTask, planTasks, realize, disposeShared });
+    return Object.freeze({ planTask, planTasks, planRequestTask, realize, disposeShared });
 }

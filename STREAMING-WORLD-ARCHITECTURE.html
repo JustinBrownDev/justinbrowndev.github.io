@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="en-US">
+  <head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+
+<!-- Begin Jekyll SEO tag v2.8.0 -->
+<title>Streaming World Architecture | Justin Brown</title>
+<meta name="generator" content="Jekyll v3.10.0" />
+<meta property="og:title" content="Streaming World Architecture" />
+<meta property="og:locale" content="en_US" />
+<link rel="canonical" href="http://jweb.dev/STREAMING-WORLD-ARCHITECTURE.html" />
+<meta property="og:url" content="http://jweb.dev/STREAMING-WORLD-ARCHITECTURE.html" />
+<meta property="og:site_name" content="Justin Brown" />
+<meta property="og:type" content="website" />
+<meta name="twitter:card" content="summary" />
+<meta property="twitter:title" content="Streaming World Architecture" />
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"WebPage","headline":"Streaming World Architecture","url":"http://jweb.dev/STREAMING-WORLD-ARCHITECTURE.html"}</script>
+<!-- End Jekyll SEO tag -->
+
+    <link rel="stylesheet" href="/assets/css/style.css?v=fdaf85959e00d745be2461584069d4300f8fcf24">
+    <!-- start custom head snippets, customize with your own _includes/head-custom.html file -->
+
+<!-- Setup Google Analytics -->
+
+
+
+<!-- You can set your favicon here -->
+<!-- link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" -->
+
+<!-- end custom head snippets -->
+
+  </head>
+  <body>
+    <div class="container-lg px-3 my-5 markdown-body">
+      
+      <h1><a href="http://jweb.dev/">Justin Brown</a></h1>
+      
+
+      <h1 id="streaming-world-architecture">Streaming World Architecture</h1>
+
+<p>This file records the contracts that should survive the next major pickup of the project.
+The shipping implementation is intentionally a single-player browser runtime. It contains no
+speculative networking framework, but deterministic world identity and explicit ownership stay
+separate from rendering so a later authoritative server does not require a world rewrite.</p>
+
+<h2 id="primary-invariant">Primary invariant</h2>
+
+<p>The world is never a boot phase.</p>
+
+<p>Startup may block on exactly one logical unit: authored spawn chunk <code class="language-plaintext highlighter-rouge">0,0</code>. That chunk must be
+complete enough for the normal runtime before the startup overlay leaves: visuals, collision,
+interaction registrations, local optimization, and every regular control. Everything outside
+<code class="language-plaintext highlighter-rouge">0,0</code> is permanent runtime streaming work selected around the current player.</p>
+
+<p>There is one interactive runtime route: <code class="language-plaintext highlighter-rouge">/</code>. <code class="language-plaintext highlighter-rouge">/old/</code> is the regular portfolio/escape target.
+There is deliberately no <code class="language-plaintext highlighter-rouge">/test/</code> or <code class="language-plaintext highlighter-rouge">/synchronous/</code> runtime to drift out of date.</p>
+
+<h2 id="world-identity">World identity</h2>
+
+<p><code class="language-plaintext highlighter-rouge">world-contract.js</code> is renderer-independent and is the durable identity seam.</p>
+
+<ul>
+  <li><code class="language-plaintext highlighter-rouge">WORLD_FORMAT_VERSION</code> versions deterministic world identity.</li>
+  <li>Chunk identity is integer-coordinate based and avoids 32-bit coordinate coercion.</li>
+  <li>Stable IDs exist for chunks, chunk owners, ordinary entities, and singular entities.</li>
+  <li>Scheduling order is not part of world identity.</li>
+  <li>A chunk may be unloaded completely and regenerated later from the same seed/coordinate contract.</li>
+</ul>
+
+<p>If procedural rules change incompatibly, bump the world format version rather than silently
+changing the meaning of existing IDs.</p>
+
+<h2 id="singular-authored-world">Singular authored world</h2>
+
+<p>World-singular content is confined to the authored spawn neighborhood around <code class="language-plaintext highlighter-rouge">(0,0)</code>:</p>
+
+<ul>
+  <li>Art Gallery</li>
+  <li>AS/400 Archive</li>
+  <li>Justin Index</li>
+  <li>Systems Workshop</li>
+  <li>Lore Shrine</li>
+  <li>one reserved <code class="language-plaintext highlighter-rouge">futurePlaceholder</code> area</li>
+</ul>
+
+<p><code class="language-plaintext highlighter-rouge">createSpawnSingularManifest()</code> records their stable identities. Chunk <code class="language-plaintext highlighter-rouge">0,0</code> is pinned while
+the runtime is active, so the authored district stays resident while procedural chunks churn.
+No generic chunk may manufacture another copy of a singular.</p>
+
+<h2 id="repeatable-district-landmarks">Repeatable district landmarks</h2>
+
+<p>The infinite city also has disposable district landmarks. They are <strong>not</strong> singulars. Exactly one
+landmark chunk is chosen deterministically per small macrocell (currently 3x3 chunks), yielding
+recurring spires/stacks/gatehouses/archives/beacons without crowding every block. They unload,
+regenerate, and retain the same stable identity like ordinary chunk content.</p>
+
+<p>This is the correct place to add future non-unique visual anchors. Do not expand the singular
+manifest merely because something is large or visually important.</p>
+
+<h2 id="chunk-lifecycle">Chunk lifecycle</h2>
+
+<p>The streaming lifecycle is:</p>
+
+<p><code class="language-plaintext highlighter-rouge">PLANNED -&gt; QUEUED -&gt; BUILDING -&gt; COMMITTING -&gt; READY -&gt; UNLOADING -&gt; deleted</code></p>
+
+<p>Generic chunk construction happens off-scene. Commit is the atomic publication boundary: render
+objects and owned physics become authoritative together. Unloading removes owned scene and physics
+state, then the scheduler record itself is deleted. Queue/planned/failed metadata outside retention
+is also pruned. Resident memory therefore depends on local retention distance, not distance traveled.</p>
+
+<h2 id="runtime-loading-policy">Runtime loading policy</h2>
+
+<p>Control handoff does <strong>not</strong> reduce loader intensity. Once spawn is READY, the runtime continuously
+maintains a local READY neighborhood:</p>
+
+<ul>
+  <li>5x5 render ring (<code class="language-plaintext highlighter-rouge">renderRadiusChunks = 2</code>);</li>
+  <li>7x7 warm prefetch ring (<code class="language-plaintext highlighter-rouge">prefetchRadiusChunks = 3</code>);</li>
+  <li>larger retention ring only to prevent churn while crossing boundaries.</li>
+</ul>
+
+<p>The browser keeps one cooperative multi-chunk pump in flight. Missing render-ring chunks get the
+highest work budget, then prefetch chunks. Generation yields when the main-thread frame/input budget
+requires it; there is no fixed 120 ms gap between chunks. Queue selection refreshes between chunks,
+so a moving player pulls the stream with them. Current view/movement heading is a priority bias among
+similarly-near chunks, never part of deterministic world identity.</p>
+
+<p>Do not replace this with a whole-world loading phase.</p>
+
+<h2 id="ownership">Ownership</h2>
+
+<p>A chunk owns what it creates. Chunk-owned render and physics data must be removable by owner ID.
+Do not add future procedural features that can only be found by traversing the entire scene on
+unload. If a new subsystem creates per-chunk state (audio, interactions, AI, particles, saves),
+give it the same explicit owner lifecycle.</p>
+
+<h2 id="boundary-contract">Boundary contract</h2>
+
+<p>Adjacent procedural chunks independently derive matching road portals from shared boundary keys.
+The four boundaries touching authored spawn are centered to line up with the spawn district’s
+cardinal gateways. New cross-chunk systems should follow the same rule: derive a shared contract
+from coordinates, then let each chunk realize its own side.</p>
+
+<p>Do not make one chunk’s deterministic plan depend on which neighboring chunk happened to build first.</p>
+
+<h2 id="weirdness-gradient">Weirdness gradient</h2>
+
+<p><code class="language-plaintext highlighter-rouge">worldWeirdnessAt()</code> is a permanent extension seam. It exposes a deterministic distance-from-spawn
+trend from conventional near spawn toward increasingly strange far-world generation, plus a small
+coordinate-stable local grain. Future architecture, signage, topology, props, physics oddities,
+lore density, etc. can consume the same value without changing chunk identity or save addressing.</p>
+
+<h2 id="startup-performance-contract">Startup performance contract</h2>
+
+<p>The large archival noise corpora are not static startup imports. Spawn uses the compact bootstrap
+corpus. Full noise data hydrates only after the normal runtime is already live and should affect only
+future/unloaded work where practical.</p>
+
+<p>Traversal audits and other QA checks are not startup gates. There is no whole-world static
+optimization phase: procedural chunks optimize locally before READY; authored spawn is optimized
+as its own startup chunk.</p>
+
+<p>The startup GUI is observation + escape, not another gate: one unified fast terminal with stream
+filters and one <code class="language-plaintext highlighter-rouge">Escape to regular website</code> link. Do not reintroduce a redundant “load/continue” button.</p>
+
+<h2 id="future-multiplayer-seam-deliberately-minimal">Future multiplayer seam (deliberately minimal)</h2>
+
+<p>No multiplayer framework is implemented. Useful preparation already present is:</p>
+
+<ul>
+  <li>deterministic/versioned world identity separate from render scheduling;</li>
+  <li>stable chunk/entity/owner IDs;</li>
+  <li>off-scene build separated from atomic client commit;</li>
+  <li>explicit removable ownership;</li>
+  <li>singular identity in a small manifest.</li>
+</ul>
+
+<p>A future server can therefore become authoritative for descriptors/state/deltas without making
+Three.js object identity the network protocol. Do not prematurely turn the current client into an
+ECS or add network abstractions until there is an actual multiplayer design.</p>
+
+<h2 id="deliberately-not-implemented-yet">Deliberately not implemented yet</h2>
+
+<ul>
+  <li>floating-origin/render-origin rebasing (identity is safe; renderer rebasing seam remains reserved);</li>
+  <li>persistence of player-modified chunk deltas;</li>
+  <li>server authority/network replication;</li>
+  <li>infinite authored singular placement outside spawn.</li>
+</ul>
+
+<p>These are extensions, not prerequisites for the shipping client.</p>
+
+<h2 id="post-handoff-cpu-policy">Post-handoff CPU policy</h2>
+
+<p>Generic infinite chunks are intentionally atomic off-scene builds. Do not add
+<code class="language-plaintext highlighter-rouge">requestAnimationFrame</code>/idle sleeps inside the generic chunk factory merely to
+make it “cooperative”: a normal generic chunk is millisecond-scale work and
+nested yielding can cost orders of magnitude more wall-clock time than the work
+itself. The live world streamer owns the single scheduling budget and yields
+only between complete chunks.</p>
+
+<p>Current runtime policy keeps the local render ring urgent, then fills the
+prefetch ring. A pump is bounded by both a chunk cap and a millisecond budget;
+a fast client therefore builds several chunks per rendered frame while a slow
+client naturally completes fewer. Visual and physics publication remain one
+atomic commit per chunk.</p>
+
+<h2 id="render-authority-one-owner-no-nesting">Render authority: one owner, no nesting</h2>
+
+<p>Infinite streamed roots carry <code class="language-plaintext highlighter-rouge">userData.worldChunkRoot = true</code> and
+<code class="language-plaintext highlighter-rouge">userData.renderAuthority = 'WorldChunkStreamer'</code>. They are committed with the raw scene add
+function, bypassing the authored-spawn <code class="language-plaintext highlighter-rouge">scene.add()</code> interception entirely. Both legacy static
+optimizer variants also explicitly reject these roots as a defensive invariant.</p>
+
+<p>For an infinite chunk, <code class="language-plaintext highlighter-rouge">READY</code> is published only after all of the following are true:</p>
+
+<ul>
+  <li>the chunk root is attached directly to the real scene;</li>
+  <li>world matrices have been updated after attachment;</li>
+  <li>chunk-owned physics is registered;</li>
+  <li><code class="language-plaintext highlighter-rouge">WorldChunkStreamer</code> has applied the current render-ring visibility state;</li>
+  <li>the READY verifier confirms no legacy <code class="language-plaintext highlighter-rouge">perf-chunk:*</code> group owns the root.</li>
+</ul>
+
+<p>The streamer is therefore the sole visibility authority for infinite chunks. The legacy optimizer
+remains a compatibility/performance system for authored spawn content only. Do not route streamed
+roots back through it, even if a future feature uses ordinary <code class="language-plaintext highlighter-rouge">scene.add()</code> for other content.</p>
+
+<h2 id="non-structural-networkadornment-policy">Non-structural network/adornment policy</h2>
+
+<p>Structural infinite chunks contain no <code class="language-plaintext highlighter-rouge">fetch</code>, <code class="language-plaintext highlighter-rouge">Image</code>, or GLTF dependency. Roads, ground,
+buildings, walls, floors, stairs, ramps, collision, basic props, and repeatable district landmarks
+are built entirely from resident geometry/materials and can reach READY offline.</p>
+
+<p>All decorative model/photo loading is routed through one bounded priority queue. The queue starts
+paused while spawn and the nearby structural world are being prepared. It is released only after
+the current 7x7 structural prefetch neighborhood is READY, then uses a small concurrency cap and
+re-evaluates spatial priority against the current camera before starting queued work. Failed assets
+are marked failed after one attempt so they cannot create retry storms; structural world state is
+unaffected.</p>
+
+<p>Live Wikipedia poster enrichment is also deferred until the structural prefetch neighborhood is
+warm. It is optional decoration, never a world-generation dependency.</p>
+
+<h2 id="scheduler-api-rule">Scheduler API rule</h2>
+
+<p>There is one shipping chunk scheduler API: <code class="language-plaintext highlighter-rouge">createWorldChunkStreamer()</code>. The obsolete finite
+<code class="language-plaintext highlighter-rouge">createWorldChunkScheduler()</code> compatibility wrapper was removed. Do not reintroduce a second
+scheduler abstraction for streamed terrain; specialized producers should feed descriptors/payloads
+into the streamer ownership lifecycle instead.</p>
+
+
+      
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/anchor-js/4.1.0/anchor.min.js" integrity="sha256-lZaRhKri35AyJSypXXs4o6OPFTbTmUoltBbDCbdzegg=" crossorigin="anonymous"></script>
+    <script>anchors.add();</script>
+  </body>
+</html>

@@ -111,10 +111,24 @@ function apertureFor(connector, endpoint, surface, index) {
 function normalizeSpace(space) {
     return {
         id: space.id, kind: 'space', chunkKey: space.chunkKey ?? null, entityId: space.entityId ?? null,
-        moduleKey: space.moduleKey ?? null, floor: finite(space.floor), yBase: finite(space.yBase),
+        moduleKey: space.moduleKey ?? null, moduleKeys: [...(space.moduleKeys ?? (space.moduleKey ? [space.moduleKey] : []))],
+        floor: finite(space.floor), yBase: finite(space.yBase),
         floorH: finite(space.floorH, 3.15), bounds: space.bounds ? { ...space.bounds } : null,
-        connectorIds: [], instanceIds: [], destinationId: null,
+        buildingPlanId: space.buildingPlanId ?? null,
+        buildingPlanFingerprint: space.buildingPlanFingerprint ?? null,
+        role: space.role ?? null,
+        spaceType: space.spaceType ?? null,
+        semanticProgram: space.semanticProgram ?? space.program ?? null,
+        privacy: space.privacy ?? null,
+        daylight: space.daylight ?? null,
+        centroid: space.centroid ? { ...space.centroid } : null,
+        regions: (space.regions ?? []).map(region => ({ ...region })),
+        structuralReservationIds: [...(space.structuralReservationIds ?? [])],
+        adjacentSpaceIds: [...(space.adjacentSpaceIds ?? [])],
+        connectorIds: [...(space.connectorIds ?? [])], instanceIds: [...(space.instanceIds ?? [])], destinationId: space.destinationId ?? null,
         sourceSchema: space.schema ?? space.spacePlanSchema ?? null,
+        source: space.source ?? null,
+        architecturalAuthority: space.architecturalAuthority ?? (space.buildingPlanId ? 'building-plan' : null),
     };
 }
 
@@ -187,6 +201,22 @@ export function compileSpatialTopologyGraph({ chunk, payload } = {}) {
 
     for (const space of spaces) {
         if (space.entityId) edges.push(edge(`edge:entity-space:${space.entityId}:${space.id}`, 'contains-space', space.entityId, space.id));
+    }
+    // Planned adjacency is semantic truth, not something to rediscover by testing
+    // already-rendered wall boxes.  Publish one undirected graph relationship per
+    // authored room pair while retaining connector ownership separately below.
+    const plannedAdjacencyPairs = new Set();
+    for (const space of spaces) {
+        for (const adjacentId of space.adjacentSpaceIds ?? []) {
+            if (!spaceById.has(adjacentId) || adjacentId === space.id) continue;
+            const pair = [space.id, adjacentId].sort();
+            const pairId = pair.join('|');
+            if (plannedAdjacencyPairs.has(pairId)) continue;
+            plannedAdjacencyPairs.add(pairId);
+            edges.push(edge(`edge:space-adjacency:${pair[0]}:${pair[1]}`, 'adjacent-space', pair[0], pair[1], {
+                authority: 'building-plan',
+            }));
+        }
     }
     for (const surface of surfaces) {
         edges.push(edge(`edge:entity-surface:${surface.entityId}:${surface.id}`, 'has-surface', surface.entityId, surface.id));

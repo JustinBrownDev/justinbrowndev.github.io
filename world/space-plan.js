@@ -192,6 +192,57 @@ function topologySpace({ chunkKey, entity, module, floor }) {
     };
 }
 
+function authoredTopologySpace({ chunkKey, entity, space }) {
+    const floorH = Math.max(2.2, finiteOr(space?.floorH, finiteOr(entity.floorH, 3.15)));
+    const floor = Math.max(0, Math.floor(finiteOr(space?.floor, 0)));
+    const yBase = finiteOr(space?.yBase, floor * floorH);
+    const sourceBounds = space?.bounds ?? {};
+    const minX = finiteOr(sourceBounds.minX, finiteOr(space?.centroid?.x, entity.x ?? 0) - 0.5);
+    const maxX = finiteOr(sourceBounds.maxX, finiteOr(space?.centroid?.x, entity.x ?? 0) + 0.5);
+    const minZ = finiteOr(sourceBounds.minZ, finiteOr(space?.centroid?.z, entity.z ?? 0) - 0.5);
+    const maxZ = finiteOr(sourceBounds.maxZ, finiteOr(space?.centroid?.z, entity.z ?? 0) + 0.5);
+    const moduleKeys = [...new Set([...(space?.moduleKeys ?? []), space?.moduleKey].filter(Boolean))];
+    const moduleKey = space?.moduleKey ?? moduleKeys[0] ?? null;
+    return {
+        ...space,
+        schema: 'jweb.space-plan-topology.v2',
+        chunkKey,
+        entityId: entity.id,
+        moduleKey,
+        moduleKeys,
+        floor,
+        floorH,
+        yBase,
+        module: {
+            key: moduleKey ?? `${space.id}:room-bounds`,
+            cx: (minX + maxX) * 0.5,
+            cz: (minZ + maxZ) * 0.5,
+            halfX: Math.max(0.05, (maxX - minX) * 0.5),
+            halfZ: Math.max(0.05, (maxZ - minZ) * 0.5),
+        },
+        bounds: {
+            minX, maxX, minZ, maxZ,
+            yMin: finiteOr(sourceBounds.yMin, yBase),
+            yMax: finiteOr(sourceBounds.yMax, yBase + floorH),
+        },
+        regions: (space?.regions ?? []).map(region => ({ ...region })),
+        architecturalAuthority: 'building-plan',
+    };
+}
+
+function pointInsidePlanShape(plan, x, z, pad = 0) {
+    const regions = plan?.regions ?? [];
+    if (!regions.length) {
+        return x >= plan.bounds.minX - pad && x <= plan.bounds.maxX + pad
+            && z >= plan.bounds.minZ - pad && z <= plan.bounds.maxZ + pad;
+    }
+    return regions.some(region =>
+        x >= finiteOr(region.minX, plan.bounds.minX) - pad
+        && x <= finiteOr(region.maxX, plan.bounds.maxX) + pad
+        && z >= finiteOr(region.minZ, plan.bounds.minZ) - pad
+        && z <= finiteOr(region.maxZ, plan.bounds.maxZ) + pad);
+}
+
 function buildPlan({ topology, physics, targetCellSize = 0.30 }) {
     const { module, floor, floorH, yBase, bounds } = topology;
     const { minX, maxX, minZ, maxZ } = bounds;
@@ -216,11 +267,12 @@ function buildPlan({ topology, physics, targetCellSize = 0.30 }) {
                 minZ: z - cellD * 0.44, maxZ: z + cellD * 0.44,
                 yMin: yBase + 0.03, yMax: yBase + Math.min(1.9, floorH - 0.04),
             };
-            const supported = floor === 0 || platforms.some(platform => platformSupports(platform, x, z, yBase));
-            const wallBlocked = walls.some(wall => wallIntersectsBox(wall, cellBox));
-            const propBlocked = structuralOccupancy.some(prop => propIntersectsBox(prop, cellBox));
-            const circulation = circulationReservations.some(reservation => reservationIntersectsBox(reservation, cellBox));
-            cells.push({ col, row, x, z, supported, wallBlocked, propBlocked, circulation, usable: supported && !wallBlocked && !propBlocked, regionId: null });
+            const insideSpace = pointInsidePlanShape(topology, x, z);
+            const supported = insideSpace && (floor === 0 || platforms.some(platform => platformSupports(platform, x, z, yBase)));
+            const wallBlocked = insideSpace && walls.some(wall => wallIntersectsBox(wall, cellBox));
+            const propBlocked = insideSpace && structuralOccupancy.some(prop => propIntersectsBox(prop, cellBox));
+            const circulation = insideSpace && circulationReservations.some(reservation => reservationIntersectsBox(reservation, cellBox));
+            cells.push({ col, row, x, z, insideSpace, supported, wallBlocked, propBlocked, circulation, usable: insideSpace && supported && !wallBlocked && !propBlocked, regionId: null });
         }
     }
     const regions = buildRegions(cells, cols, rows);
@@ -247,6 +299,17 @@ export function compileSpacePlans({ chunk, payload, targetCellSize = 0.30, activ
     const topologySpaces = [];
     const plans = [];
     for (const entity of payload.entities ?? []) {
+        const authoredSpaces = Array.isArray(entity?.buildingPlan?.topologySpaces)
+            ? entity.buildingPlan.topologySpaces
+            : [];
+        if (authoredSpaces.length) {
+            for (const space of authoredSpaces) {
+                const topology = authoredTopologySpace({ chunkKey: chunk.key, entity, space });
+                topologySpaces.push(topology);
+                if (!active || active.has(topology.id)) plans.push(buildPlan({ topology, physics: payload.physics, targetCellSize }));
+            }
+            continue;
+        }
         for (const module of entity.footprintModules ?? []) {
             const floors = Math.max(0, Math.floor(finiteOr(module.floors, 0)));
             for (let floor = 0; floor < floors; floor++) {
@@ -294,6 +357,7 @@ export function spacePlanAcceptsBox(plan, input, { allowCirculation = false, req
         [box.minX, box.minZ], [box.minX, box.maxZ], [box.maxX, box.minZ], [box.maxX, box.maxZ],
         [(box.minX + box.maxX) * 0.5, (box.minZ + box.maxZ) * 0.5],
     ];
+    if (points.some(([x, z]) => !pointInsidePlanShape(plan, x, z, 0.01))) return false;
     const cells = points.map(([x, z]) => planPointCell(plan, x, z));
     if (cells.some(cell => !cell?.usable)) return false;
     if (requireSameRegion) {
@@ -340,13 +404,15 @@ export function spacePlanWallSegments(plan, minLength = 0.7) {
         const length = Math.hypot(wall.x2 - wall.x1, wall.z2 - wall.z1);
         if (length >= minLength) result.push(wall);
     }
-    const b = plan.bounds;
-    result.push(
-        { x1: b.minX, z1: b.minZ, x2: b.maxX, z2: b.minZ, yMin: b.yMin, yMax: b.yMax, syntheticBoundary: true },
-        { x1: b.minX, z1: b.maxZ, x2: b.maxX, z2: b.maxZ, yMin: b.yMin, yMax: b.yMax, syntheticBoundary: true },
-        { x1: b.minX, z1: b.minZ, x2: b.minX, z2: b.maxZ, yMin: b.yMin, yMax: b.yMax, syntheticBoundary: true },
-        { x1: b.maxX, z1: b.minZ, x2: b.maxX, z2: b.maxZ, yMin: b.yMin, yMax: b.yMax, syntheticBoundary: true },
-    );
+    if (plan.architecturalAuthority !== 'building-plan') {
+        const b = plan.bounds;
+        result.push(
+            { x1: b.minX, z1: b.minZ, x2: b.maxX, z2: b.minZ, yMin: b.yMin, yMax: b.yMax, syntheticBoundary: true },
+            { x1: b.minX, z1: b.maxZ, x2: b.maxX, z2: b.maxZ, yMin: b.yMin, yMax: b.yMax, syntheticBoundary: true },
+            { x1: b.minX, z1: b.minZ, x2: b.minX, z2: b.maxZ, yMin: b.yMin, yMax: b.yMax, syntheticBoundary: true },
+            { x1: b.maxX, z1: b.minZ, x2: b.maxX, z2: b.maxZ, yMin: b.yMin, yMax: b.yMax, syntheticBoundary: true },
+        );
+    }
     return result;
 }
 
@@ -354,11 +420,15 @@ export function spacePlanTouchesPoint(plan, point, pad = 0.75) {
     if (!plan || !point) return false;
     const y = finiteOr(point.y, plan.yBase);
     if (y < plan.yBase - 0.25 || y > plan.yBase + plan.floorH + 0.25) return false;
-    return point.x >= plan.bounds.minX - pad && point.x <= plan.bounds.maxX + pad
-        && point.z >= plan.bounds.minZ - pad && point.z <= plan.bounds.maxZ + pad;
+    return pointInsidePlanShape(plan, point.x, point.z, pad);
 }
 
 export function spacePlanTouchesReservation(plan, reservation) {
     if (!plan || !reservation) return false;
-    return reservationIntersectsBox(reservation, plan.bounds);
+    if (!plan.regions?.length) return reservationIntersectsBox(reservation, plan.bounds);
+    return plan.regions.some(region => reservationIntersectsBox(reservation, {
+        minX: region.minX, maxX: region.maxX,
+        minZ: region.minZ, maxZ: region.maxZ,
+        yMin: plan.bounds.yMin, yMax: plan.bounds.yMax,
+    }));
 }

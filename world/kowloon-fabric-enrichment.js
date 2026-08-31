@@ -7,6 +7,7 @@ import { SEMANTIC_ROOM_RECIPES } from '../vendor/city-pack/semantic-megapack/roo
 import { anyReservationIntersectsBox } from './circulation-reservations.js';
 import { solveSemanticLayout } from './semantic-layout.js';
 import { compileSemanticContextMultiplier } from './semantic-context-multiplier.js';
+import { createExteriorPropFieldSystem } from './exterior-prop-field.js';
 
 function mulberry32(seed) {
     let a = seed >>> 0;
@@ -222,6 +223,7 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
     const topperMat = new THREE.MeshStandardMaterial({ color: 0x4c5558, roughness: 0.62, metalness: 0.38 });
     const textExciter = createProceduralTextExciter({ worldSeed });
     console.log('[world-text] deterministic full curated corpus exciter ready', textExciter.stats);
+    const exteriorPropField = createExteriorPropFieldSystem({ THREE, worldSeed });
 
     const semanticRecipeById = new Map(SEMANTIC_ROOM_RECIPES.map(recipe => [recipe.id, recipe]));
     const semanticVariantFamilies = new Map();
@@ -1514,6 +1516,7 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
         else if (task.kind === 'security') object = createSecurity(payload, task);
         else if (task.kind === 'elevator-hardware') object = createElevatorHardware(payload, task);
         else if (task.kind === 'street-fixture') object = createStreetFixture(payload, task);
+        else if (task.kind === 'exterior-prop-field') object = exteriorPropField.realize(payload, task);
         else if (task.kind === 'semantic-context-prop') object = createSemanticContextProp(payload, task);
         else if (String(task.kind).startsWith('semantic-')) object = createSemanticInterior(payload, task);
         else if (task.kind === 'overhead-cable') object = createOverheadCable(payload, task);
@@ -1649,6 +1652,13 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
         state.tasks.push(...semanticContextMultiplier.tasks);
         state.semanticContextMultiplier = semanticContextMultiplier.stats;
         state.topologyPrecommit = solveBlockingTopology(chunk, payload, state.tasks);
+        const exteriorPropFieldTask = exteriorPropField.planTask(chunk, payload);
+        if (exteriorPropFieldTask) {
+            state.tasks.unshift(exteriorPropFieldTask);
+            state.exteriorPropField = exteriorPropFieldTask.fieldPlan.stats;
+        } else {
+            state.exteriorPropField = { generated: 0 };
+        }
         payload.refinement = state;
         return state;
     }
@@ -1665,6 +1675,7 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
     }
 
     function disposeShared() {
+        exteriorPropField.disposeShared();
         unitBox.dispose();
         unitPlane.dispose();
         pipeGeo.dispose();

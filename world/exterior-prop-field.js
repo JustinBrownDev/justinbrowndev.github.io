@@ -217,6 +217,75 @@ function placement(surface, descriptor, rng, u, outward, baseY, scale = 1) {
     };
 }
 
+const FACADE_INFRA_COLORS = Object.freeze({
+    pipe: [0x5d625f, 0x77766d, 0x454b4b],
+    electrical: [0x66695f, 0x807d6d, 0x4d5450],
+    hvac: [0x888b83, 0x6d756f, 0x9a9687],
+    vent: [0x4e5553, 0x747a75, 0x3f4544],
+    cable: [0x252827, 0x3a3531, 0x171918],
+    light: [0xb5aa86, 0x8a846d, 0xd0c6a2],
+});
+
+function facadeBox(surface, u, y, width, height, depth, color, category, extraOutward = 0) {
+    const tangent = surfaceTangent(surface);
+    const outward = depth * 0.5 + 0.055 + extraOutward;
+    return { shape: 'box', color,
+        x: finite(surface.x) + tangent.x * u + finite(surface.normalX) * outward,
+        y, z: finite(surface.z) + tangent.z * u + finite(surface.normalZ) * outward,
+        rotY: finite(surface.rotY), sx: width, sy: height, sz: depth, surfaceId: surface.id, entityId: surface.entityId,
+        domain: 'facade-infrastructure', category };
+}
+
+function facadePipe(surface, u, y, height, radius, color) {
+    const tangent = surfaceTangent(surface);
+    const outward = radius + 0.065;
+    return { shape: 'cylinder', color,
+        x: finite(surface.x) + tangent.x * u + finite(surface.normalX) * outward,
+        y, z: finite(surface.z) + tangent.z * u + finite(surface.normalZ) * outward,
+        rotY: finite(surface.rotY), sx: radius * 2, sy: height, sz: radius * 2, surfaceId: surface.id, entityId: surface.entityId,
+        domain: 'facade-infrastructure', category: 'pipe' };
+}
+
+function facadeCandidateFits(reservations, candidate, padding = 0.08) {
+    return !anyReservationIntersectsBox(reservations, { x: candidate.x, z: candidate.z, halfX: Math.max(0.025, candidate.sx * 0.5), halfZ: Math.max(0.025, candidate.sz * 0.5), yMin: candidate.y, yMax: candidate.y + candidate.sy }, padding);
+}
+function pushFacadePrimitive(placements, stats, reservations, candidate) {
+    if (!facadeCandidateFits(reservations, candidate)) { stats.rejected++; return false; }
+    placements.push(candidate); stats.facadeInfrastructure++; stats.facadeCategories[candidate.category]=(stats.facadeCategories[candidate.category]??0)+1; return true;
+}
+function addFacadeInfrastructure({ chunk, payload, placements, stats, reservations, contextByEntity }) {
+    const semantic=payload?.semanticContext; const apertures=semantic?.apertures??[];
+    for (const surface of semantic?.surfaces??[]) {
+        const yMin=finite(surface.yMin), yMax=finite(surface.yMax,yMin+2.8), facadeHeight=Math.max(0,yMax-yMin);
+        if (facadeHeight<2.2 || finite(surface.half)<0.45) continue;
+        const rng=mulberry32(hash32(`${chunk.seed ?? chunk.key}:${chunk.key}:facade-infra:${surface.id}`));
+        const context=String(contextByEntity.get(surface.entityId)?.program??contextByEntity.get(surface.entityId)?.physicalUseFamily??'mixed');
+        for (const [lo,hi] of freeIntervals(surface,apertures,0.48)) {
+            const width=hi-lo; if(width<0.75) continue; const area=width*facadeHeight;
+            const n=clamp(Math.round(area/(surface.exposure==='street'?11:9)),1,6), cellWidth=width/n;
+            for(let i=0;i<n;i++){
+                const cellLo=lo+i*cellWidth, cellHi=cellLo+cellWidth;
+                const u=clamp((cellLo+cellHi)*0.5+range(rng,-cellWidth*0.18,cellWidth*0.18),cellLo+0.18,cellHi-0.18);
+                const band=i%Math.max(1,Math.min(4,Math.ceil(facadeHeight/2.7)));
+                const y=clamp(yMin+1+band*2.35+range(rng,-0.24,0.34),yMin+0.45,yMax-0.75); const r=rng();
+                if(r<0.26 || (/industrial|service|mechanical/i.test(context)&&r<0.38)){
+                    const ph=clamp(Math.min(Math.max(0.2,facadeHeight-1),range(rng,2,4.6)),1.3,Math.max(1.3,facadeHeight-0.35));
+                    const py=clamp(y-ph*0.35,yMin+0.08,yMax-ph-0.08);
+                    pushFacadePrimitive(placements,stats,reservations,facadePipe(surface,u,py,ph,range(rng,0.055,0.105),pick(rng,FACADE_INFRA_COLORS.pipe)));
+                    if(cellWidth>1.25) pushFacadePrimitive(placements,stats,reservations,facadeBox(surface,u+Math.min(0.42,cellWidth*0.24),clamp(py+0.55,yMin+0.4,yMax-0.9),0.46,0.62,0.16,pick(rng,FACADE_INFRA_COLORS.electrical),'electrical'));
+                } else if(r<0.52){
+                    const w=clamp(cellWidth*range(rng,0.42,0.68),0.62,1.35), h=range(rng,0.48,0.88);
+                    if(pushFacadePrimitive(placements,stats,reservations,facadeBox(surface,u,y,w,h,0.34,pick(rng,FACADE_INFRA_COLORS.hvac),'hvac'))) pushFacadePrimitive(placements,stats,reservations,facadeBox(surface,u,y+h*0.20,w*0.58,h*0.50,0.045,pick(rng,FACADE_INFRA_COLORS.vent),'vent',0.19));
+                } else if(r<0.72){
+                    const w=clamp(cellWidth*range(rng,0.30,0.52),0.42,0.95); pushFacadePrimitive(placements,stats,reservations,facadeBox(surface,u,y,w,range(rng,0.52,1.05),0.16,pick(rng,FACADE_INFRA_COLORS.electrical),'electrical'));
+                    if(cellWidth>1.1) pushFacadePrimitive(placements,stats,reservations,facadeBox(surface,u+Math.min(0.48,cellWidth*0.26),y+0.12,0.055,clamp(range(rng,0.8,1.7),0.8,yMax-y-0.1),0.07,pick(rng,FACADE_INFRA_COLORS.cable),'cable'));
+                } else if(r<0.90) pushFacadePrimitive(placements,stats,reservations,facadeBox(surface,u,y,clamp(cellWidth*0.48,0.52,1.15),range(rng,0.34,0.62),0.13,pick(rng,FACADE_INFRA_COLORS.vent),'vent'));
+                else pushFacadePrimitive(placements,stats,reservations,facadeBox(surface,u,y,clamp(cellWidth*0.38,0.38,0.82),0.16,0.20,pick(rng,FACADE_INFRA_COLORS.light),'light'));
+            }
+        }
+    }
+}
+
 function addWallField({ chunk, payload, placements, stats, reservations, modules, contextByEntity }) {
     const semantic = payload?.semanticContext;
     const surfaces = semantic?.surfaces ?? [];
@@ -354,11 +423,12 @@ export function planExteriorPropField({ chunk, payload } = {}) {
         return { schema: EXTERIOR_PROP_FIELD_SCHEMA, placements: [], stats: { generated: 0, reason: 'no-exterior-topology' } };
     }
     const placements = [];
-    const stats = { generated: 0, groundEdge: 0, wallBand: 0, courtyardEdge: 0, roofEdge: 0, rejected: 0, drawBuckets: 0 };
+    const stats = { generated: 0, groundEdge: 0, wallBand: 0, facadeInfrastructure: 0, facadeCategories: {}, courtyardEdge: 0, roofEdge: 0, rejected: 0, drawBuckets: 0 };
     const reservations = reservationList(payload);
     const modules = footprintModules(payload);
     const contextByEntity = new Map((semantic?.entities ?? []).map(context => [context.entityId, context]));
 
+    addFacadeInfrastructure({ chunk, payload, placements, stats, reservations, contextByEntity });
     addWallField({ chunk, payload, placements, stats, reservations, modules, contextByEntity });
     addPlazaField({ chunk, payload, placements, stats, reservations, modules });
     addRoofField({ chunk, payload, placements, stats, reservations });
@@ -371,7 +441,9 @@ export function planExteriorPropField({ chunk, payload } = {}) {
         .filter(opportunity => opportunity?.role === 'roof-utility-zone' && opportunity.bounds)
         .reduce((sum, opportunity) => sum + Math.max(0, (finite(opportunity.bounds.halfX) + finite(opportunity.bounds.halfZ)) * 4), 0);
     stats.generated = placements.length;
-    stats.wallBand = stats.groundEdge; // compatibility: this field is now explicitly ground micro-clutter.
+    stats.wallBand = stats.facadeInfrastructure;
+    stats.facadeCategoryCount = Object.keys(stats.facadeCategories).length;
+    stats.visibleFacadePerFacadeMeter = facadeMeters > 0 ? stats.facadeInfrastructure / facadeMeters : 0;
     stats.microClutter = stats.groundEdge + stats.courtyardEdge + stats.roofEdge;
     stats.drawBuckets = usedShapes.size;
     stats.reservations = reservations.length;

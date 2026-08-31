@@ -1,6 +1,7 @@
 import { ensureSemanticConnectorAuthority } from './semantic-connectors.js';
 import { createSemanticPlacementRecord, resolveSemanticPlacement } from './semantic-placement.js';
 import { compileSpacePlans, spacePlanAcceptsBox } from './space-plan.js';
+import { chooseCompatibleProgram, programCompatibleWithPhysicalUse, programsForPhysicalUse } from './physical-use.js';
 
 function semanticTask(task) {
     return String(task?.kind ?? '').startsWith('semantic-');
@@ -101,8 +102,112 @@ function findModule(entity, key) {
     return entity?.footprintModules?.find(module => module.key === key) ?? null;
 }
 
+function semanticPhase(task) {
+    if (task?.kind === 'semantic-identity') return 'identity';
+    if (task?.kind === 'semantic-life') return 'life';
+    return 'functional';
+}
+
+function assetPhase(def) {
+    if (def?.importance === 'identity') return 'identity';
+    if (def?.importance === 'narrative') return 'life';
+    return 'functional';
+}
+
+function assetValues(assetById) {
+    if (assetById?.values) return [...assetById.values()];
+    return Object.values(assetById ?? {});
+}
+
+function destinationTaskGroupKey(chunk, payload, task) {
+    const entity = findEntity(payload, task.entityId);
+    const module = findModule(entity, task.moduleKey);
+    if (!entity || !module) return `missing:${task.entityId}:${task.moduleKey}:${task.floor ?? 0}`;
+    const floor = Math.max(0, Math.min((module.floors || 1) - 1, task.floor || 0));
+    const siteKey = entity.semanticSiteKey ?? entity.siteId ?? entity.id;
+    return semanticSpaceId(chunk.key, siteKey, module.key, floor);
+}
+
+function compileDestinationCompatibility({ chunk, payload, tasks, assetById }) {
+    const raw = tasks.filter(semanticTask);
+    const groups = new Map();
+    for (const task of raw) {
+        const key = destinationTaskGroupKey(chunk, payload, task);
+        const group = groups.get(key) ?? [];
+        group.push(task);
+        groups.set(key, group);
+    }
+
+    const allAssets = assetValues(assetById).filter(def => def?.id);
+    const poolCache = new Map();
+    const poolFor = (program, phase) => {
+        const key = `${program}:${phase}`;
+        if (poolCache.has(key)) return poolCache.get(key);
+        const pool = allAssets
+            .filter(def => (def.programs ?? []).includes(program) && assetPhase(def) === phase)
+            .sort((a, b) => String(a.id).localeCompare(String(b.id)));
+        poolCache.set(key, pool);
+        return pool;
+    };
+
+    const compiled = [];
+    let remappedSpaces = 0;
+    let remappedTasks = 0;
+    let rejectedTasks = 0;
+
+    for (const [spaceKey, group] of groups) {
+        const entity = findEntity(payload, group[0]?.entityId);
+        const physicalUse = entity?.physicalUse ?? null;
+        const requestedProgram = group[0]?.program ?? null;
+        if (!physicalUse || !requestedProgram || programCompatibleWithPhysicalUse(requestedProgram, physicalUse)) {
+            for (const task of group) {
+                task.physicalUseFamily = physicalUse?.family ?? null;
+                compiled.push(task);
+            }
+            continue;
+        }
+
+        const availablePrograms = programsForPhysicalUse(physicalUse).filter(program =>
+            allAssets.some(def => (def.programs ?? []).includes(program)));
+        const program = chooseCompatibleProgram({
+            programs: availablePrograms,
+            physicalUse,
+            stableKey: `${spaceKey}:destination`,
+        });
+        if (!program) {
+            for (const task of group) {
+                task.destinationRejectedReason = 'no-program-compatible-with-physical-use';
+                rejectedTasks++;
+            }
+            continue;
+        }
+
+        remappedSpaces++;
+        for (const task of group) {
+            const phase = semanticPhase(task);
+            const pool = poolFor(program, phase);
+            if (!pool.length) {
+                task.destinationRejectedReason = `no-${phase}-assets-for-compatible-program`;
+                rejectedTasks++;
+                continue;
+            }
+            const replacement = pool[(task.seed >>> 0) % pool.length];
+            task.requestedProgram = task.program;
+            task.program = program;
+            task.assetId = replacement.id;
+            task.physicalUseFamily = physicalUse.family;
+            task.destinationCompatibility = 'remapped-before-realization';
+            compiled.push(task);
+            remappedTasks++;
+        }
+    }
+
+    return { tasks: compiled, remappedSpaces, remappedTasks, rejectedTasks };
+}
+
 function publishSpace(payload, spaceById, plan, task) {
     if (spaceById.has(plan.id)) return spaceById.get(plan.id);
+    const entity = findEntity(payload, plan.entityId);
     const space = {
         id: plan.id,
         kind: 'destination-space',
@@ -115,6 +220,9 @@ function publishSpace(payload, spaceById, plan, task) {
         floorH: plan.floorH,
         yBase: plan.yBase,
         program: task.program,
+        requestedProgram: task.requestedProgram ?? task.program,
+        physicalUse: entity?.physicalUse ?? null,
+        physicalTruth: entity?.physicalTruth ?? null,
         bounds: { ...plan.bounds },
         regionCount: plan.regions.length,
         usableCellCount: plan.usableCells.length,
@@ -123,7 +231,6 @@ function publishSpace(payload, spaceById, plan, task) {
     const spaces = payload.semanticSpaces ?? (payload.semanticSpaces = []);
     spaces.push(space);
     spaceById.set(space.id, space);
-    const entity = findEntity(payload, plan.entityId);
     const entitySpaces = entity?.semanticSpaceIds ?? (entity ? (entity.semanticSpaceIds = []) : null);
     if (entitySpaces && !entitySpaces.includes(space.id)) entitySpaces.push(space.id);
     return space;
@@ -137,7 +244,8 @@ export function solveSemanticLayout({ chunk, payload, tasks, assetById } = {}) {
     const spaces = payload.semanticSpaces ?? (payload.semanticSpaces = []);
     const spaceById = new Map(spaces.map(space => [space.id, space]));
 
-    const semanticTasks = tasks.filter(semanticTask);
+    const destinationCompatibility = compileDestinationCompatibility({ chunk, payload, tasks, assetById });
+    const semanticTasks = destinationCompatibility.tasks;
     const activeSpaceIds = new Set();
     for (const task of semanticTasks) {
         const entity = findEntity(payload, task.entityId);
@@ -255,6 +363,11 @@ export function solveSemanticLayout({ chunk, payload, tasks, assetById } = {}) {
         spacePlans: spacePlans.length,
         topologySpaces: payload.semanticTopologySpaces?.length ?? spacePlans.length,
         placements: placements.length,
+        destinationCompatibility: {
+            remappedSpaces: destinationCompatibility.remappedSpaces,
+            remappedTasks: destinationCompatibility.remappedTasks,
+            rejectedTasks: destinationCompatibility.rejectedTasks,
+        },
         connectorAuthority,
     };
 }

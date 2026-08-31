@@ -2,6 +2,8 @@ import { hashString32 } from './world-chunk-streamer.js';
 import { WORLD_FORMAT_VERSION, worldChunkOwnerId, worldEntityId } from './world-contract.js';
 import { createKowloonFabricEnrichment } from './world/kowloon-fabric-enrichment.js';
 import { createKowloonMazeTopology } from './world/kowloon-district-plan.js';
+import { classifyPhysicalUse } from './world/physical-use.js';
+import { deriveStairFlight, resolvePhysicalTruth } from './world/physical-truth.js';
 import {
     anyReservationIntersectsBox,
     createBoxCirculationReservation,
@@ -66,6 +68,12 @@ function oppositeSide(side) {
     if (side === 'south') return 'north';
     if (side === 'west') return 'east';
     return 'west';
+}
+
+function primaryPhysicalRole(family) {
+    if (family === 'residential-lodging') return 'dwelling-entry';
+    if (family === 'mercantile-public' || family === 'business' || family === 'assembly-institutional') return 'accessible-public-entry';
+    return 'maintenance-access';
 }
 
 function pushWallSegments(out, cx, cz, halfX, halfZ, yMin, yMax, doorSide = null, doorWidth = 1.5) {
@@ -342,18 +350,19 @@ export function createKowloonFabricEngine({
         }
     }
 
-    function addExteriorScaffold({ physics, transforms, fp, floors, floorH, side, seed }) {
+    function addExteriorScaffold({ physics, transforms, fp, floors, floorH, side, seed, physicalTruth }) {
         if (floors < 2) return 0;
         const rng = mulberry32(seed);
         const horizontalFace = side === 'north' || side === 'south';
-        const depth = 1.0;
         const tangentSpan = Math.max(3.2, Math.min(6.4, (horizontalFace ? fp.halfX : fp.halfZ) * 1.7));
+        const nominalFlight = deriveStairFlight({ rise: floorH, truth: physicalTruth, stableKey: `scaffold:${seed}:nominal` });
+        const landingDepth = Math.max(0.82, physicalTruth?.stair?.landingDepthSI || 0, (physicalTruth?.stair?.widthSI || 0) + 0.12);
+        const landingWidth = Math.min(tangentSpan, Math.max(2.4, nominalFlight.requiredRun / 0.80 + 0.18));
+        const depth = landingDepth + 0.18;
         const outward = side === 'north' || side === 'west' ? -1 : 1;
         const face = horizontalFace ? fp.cz : fp.cx;
         const halfFace = horizontalFace ? fp.halfZ : fp.halfX;
         const fixed = face + outward * (halfFace + depth * 0.62);
-        const landingDepth = 0.82;
-        const landingWidth = Math.min(tangentSpan, Math.max(2.4, tangentSpan * 0.72));
         const slabT = 0.12;
         const postH = floors * floorH + 0.75;
         let landings = 0;
@@ -395,21 +404,31 @@ export function createKowloonFabricEngine({
                 source: 'exterior-scaffold',
                 visualRole: 'fire-escape-landing',
                 reservationKind: 'scaffold-landing',
-                metadata: { level, side },
+                physicalTruth,
+                metadata: { level, side, physicalUse: physicalTruth?.physicalUse ?? null },
             }));
             landings++;
             if (level >= floors) continue;
 
             const direction = ((level + (seed & 1)) & 1) ? -1 : 1;
-            const from = direction < 0 ? landingWidth * 0.38 : -landingWidth * 0.38;
-            const to = -from;
+            const availableRun = Math.min(nominalFlight.requiredRun, Math.max(0.8, landingWidth * 0.80));
+            const localFrom = direction < 0 ? availableRun * 0.5 : -availableRun * 0.5;
+            const localTo = -localFrom;
             const axis = horizontalFace ? 'x' : 'z';
+            const center = horizontalFace ? fp.cx : fp.cz;
+            const flight = deriveStairFlight({
+                rise: floorH,
+                truth: physicalTruth,
+                stableKey: `scaffold:${seed}:flight:${level}`,
+                availableRun,
+            });
+            const clearWidth = Math.min(physicalTruth?.stair?.widthSI || landingDepth * 0.72, Math.max(0.52, landingDepth - 0.12));
             const scaffoldRamp = {
                 axis,
-                from: (horizontalFace ? fp.cx : fp.cz) + from,
-                to: (horizontalFace ? fp.cx : fp.cz) + to,
+                from: center + localFrom,
+                to: center + localTo,
                 fixedCoord: fixed,
-                halfWidth: landingDepth * 0.34,
+                halfWidth: clearWidth * 0.5,
                 y0: y,
                 y1: y + floorH,
                 supportKind: 'scaffold',
@@ -425,18 +444,22 @@ export function createKowloonFabricEngine({
                 halfWidth: scaffoldRamp.halfWidth,
                 y0: scaffoldRamp.y0,
                 y1: scaffoldRamp.y1,
+                headroom: physicalTruth?.stair?.headroomSI,
                 source: 'exterior-scaffold',
                 visualRole: 'fire-escape-flight',
                 reservationKind: 'scaffold-ramp',
-                metadata: { level, side },
+                physicalTruth,
+                stairFlight: flight,
+                metadata: { level, side, fitClassification: flight.fitClassification, physicalUse: physicalTruth?.physicalUse ?? null },
             }));
-            const steps = 12;
+            const steps = flight.stepCount;
+            const stepThickness = Math.min(0.14, Math.max(0.075, flight.riserHeight * 0.62));
             for (let i = 0; i < steps; i++) {
                 const t = (i + 0.5) / steps;
-                const along = (horizontalFace ? fp.cx : fp.cz) + from + (to - from) * t;
-                const stepY = y + floorH * (i + 1) / steps - 0.07;
-                if (horizontalFace) transforms.steps.push({ x: along, y: stepY, z: fixed, sx: Math.abs(to - from) / steps * 1.08, sy: 0.14, sz: landingDepth * 0.72 });
-                else transforms.steps.push({ x: fixed, y: stepY, z: along, sx: landingDepth * 0.72, sy: 0.14, sz: Math.abs(to - from) / steps * 1.08 });
+                const along = scaffoldRamp.from + (scaffoldRamp.to - scaffoldRamp.from) * t;
+                const stepY = y + flight.riserHeight * (i + 1) - stepThickness * 0.5;
+                if (horizontalFace) transforms.steps.push({ x: along, y: stepY, z: fixed, sx: Math.abs(scaffoldRamp.to - scaffoldRamp.from) / steps * 1.08, sy: stepThickness, sz: clearWidth });
+                else transforms.steps.push({ x: fixed, y: stepY, z: along, sx: clearWidth, sy: stepThickness, sz: Math.abs(scaffoldRamp.to - scaffoldRamp.from) / steps * 1.08 });
             }
         }
         return landings;
@@ -555,11 +578,36 @@ export function createKowloonFabricEngine({
                 ? 1 + Math.floor(rng() * (2 + intensity.verticalVariance))
                 : 0;
         }
+        const physicalUse = classifyPhysicalUse({
+            morphology: archetype,
+            stableKey: `${chunk.key}:${siteSignature}`,
+            districtContext: 'kowloon',
+            override: structureProfile?.physicalUse ?? null,
+        });
+        const entryRole = primaryPhysicalRole(physicalUse.family);
+        const physicalTruth = resolvePhysicalTruth({
+            physicalUse,
+            role: entryRole,
+            weirdness: weird,
+            stableKey: `${chunk.key}:${siteSignature}:primary`,
+        });
+        const servicePhysicalTruth = resolvePhysicalTruth({
+            physicalUse,
+            role: 'maintenance-access',
+            weirdness: weird,
+            stableKey: `${chunk.key}:${siteSignature}:service`,
+        });
+        const stairPhysicalTruth = resolvePhysicalTruth({
+            physicalUse,
+            role: 'primary-circulation',
+            weirdness: weird,
+            stableKey: `${chunk.key}:${siteSignature}:stair`,
+        });
         let primaryFloors = Math.min(12, baseFloors + verticalBurst + (site.cells.length >= 4 && archetype !== 'workshop-warehouse' ? 1 : 0));
         if (Number.isFinite(structureProfile?.primaryFloors)) primaryFloors = Math.max(1, Math.min(12, Math.floor(structureProfile.primaryFloors)));
         const floorH = Number.isFinite(structureProfile?.floorHeight)
-            ? Math.max(2.4, Math.min(5.0, structureProfile.floorHeight))
-            : archetype === 'workshop-warehouse' ? 3.55 : 3.15;
+            ? Math.max(2.4, Math.min(5.8, structureProfile.floorHeight))
+            : Math.max(2.4, Math.min(5.8, physicalTruth.floorHeight.realizedSI));
         const modulePlans = [];
 
         for (const cell of activeCells) {
@@ -647,9 +695,7 @@ export function createKowloonFabricEngine({
                 side: face.dir.side,
                 floor: 0,
                 floorH,
-                width: 1.55,
-                height: 2.2,
-                depth: 1.2,
+                physicalTruth,
                 source: 'compound-entrance',
                 fromSpaceId: `${chunk.key}:${siteSignature}:${face.module.key}:floor:0`,
                 toSpaceId: `${chunk.key}:street`,
@@ -661,7 +707,8 @@ export function createKowloonFabricEngine({
                 kind: 'door',
                 source: 'compound-entrance',
                 visualRole: 'street-entrance',
-                metadata: { moduleKey: face.module.key, dirKey: face.dir.key, floor: 0 },
+                physicalTruth,
+                metadata: { moduleKey: face.module.key, dirKey: face.dir.key, floor: 0, physicalUse: physicalUse.family },
             });
             registerSemanticConnector(physics, connector);
             entranceConnectorByKey.set(openingKey, connector);
@@ -715,15 +762,32 @@ export function createKowloonFabricEngine({
 
         for (const module of modulePlans) {
             const wallList = transforms.wallGroups[materialIndex];
-            const stairGapW = Math.min(2.65, module.rect.halfX * 2 * 0.42);
-            const stairGapD = Math.min(4.9, module.rect.halfZ * 2 * 0.64);
-            const stairCx = module.rect.cx + (rng() - 0.5) * module.rect.halfX * 0.26;
-            const stairCz = module.rect.cz + (rng() - 0.5) * module.rect.halfZ * 0.26;
+            const stairCx = module.rect.cx + (rng() - 0.5) * module.rect.halfX * 0.18;
+            const stairCz = module.rect.cz + (rng() - 0.5) * module.rect.halfZ * 0.18;
             const isSpine = module === primaryModule;
-            const stairRunAxis = stairGapD >= stairGapW ? 'z' : 'x';
-            const stairFrom = stairRunAxis === 'z' ? stairCz - stairGapD * 0.42 : stairCx - stairGapW * 0.42;
-            const stairTo = stairRunAxis === 'z' ? stairCz + stairGapD * 0.42 : stairCx + stairGapW * 0.42;
-            const stairHalfWidth = Math.min(stairGapW, stairGapD) * 0.35;
+            const stairRunAxis = module.rect.halfZ >= module.rect.halfX ? 'z' : 'x';
+            const runInterior = Math.max(1.2, (stairRunAxis === 'z' ? module.rect.halfZ : module.rect.halfX) * 2 - 0.44);
+            const crossInterior = Math.max(0.8, (stairRunAxis === 'z' ? module.rect.halfX : module.rect.halfZ) * 2 - 0.38);
+            const nominalStairFlight = deriveStairFlight({
+                rise: floorH,
+                truth: stairPhysicalTruth,
+                stableKey: `${chunk.key}:${siteSignature}:${module.key}:flight:nominal`,
+            });
+            const stairAvailableRun = Math.min(nominalStairFlight.requiredRun, runInterior);
+            const stairFlight = deriveStairFlight({
+                rise: floorH,
+                truth: stairPhysicalTruth,
+                stableKey: `${chunk.key}:${siteSignature}:${module.key}:flight`,
+                availableRun: stairAvailableRun,
+            });
+            const actualStairClearWidth = Math.min(stairPhysicalTruth.stair.widthSI, Math.max(0.56, crossInterior - 0.14));
+            const stairCrossOpening = Math.min(crossInterior, Math.max(actualStairClearWidth + 0.16, actualStairClearWidth * 1.08));
+            const stairRunOpening = Math.min(runInterior + 0.18, Math.max(stairAvailableRun + 0.18, 1.35));
+            const stairGapW = stairRunAxis === 'z' ? stairCrossOpening : stairRunOpening;
+            const stairGapD = stairRunAxis === 'z' ? stairRunOpening : stairCrossOpening;
+            const stairFrom = stairRunAxis === 'z' ? stairCz - stairAvailableRun * 0.5 : stairCx - stairAvailableRun * 0.5;
+            const stairTo = stairRunAxis === 'z' ? stairCz + stairAvailableRun * 0.5 : stairCx + stairAvailableRun * 0.5;
+            const stairHalfWidth = actualStairClearWidth * 0.5;
             // Match the exact arithmetic used by the final stair flight arrival.
             // JS can represent floors * floorH and (floors - 1) * floorH + floorH
             // a few ulps apart, which breaks the circulation contract's exact roof key.
@@ -735,7 +799,7 @@ export function createKowloonFabricEngine({
                 openingDepth: stairGapD,
                 baseY: 0,
                 roofY: moduleRoofY,
-                exitHeadroom: 2.1,
+                exitHeadroom: stairPhysicalTruth.stair.headroomSI,
                 rampAxis: stairRunAxis,
                 rampFrom: stairFrom,
                 rampTo: stairTo,
@@ -744,7 +808,15 @@ export function createKowloonFabricEngine({
                 visualRole: 'vertical-spine',
                 fromSpaceId: `${chunk.key}:${siteSignature}:${module.key}:ground`,
                 toSpaceId: `${chunk.key}:${siteSignature}:${module.key}:roof`,
-                metadata: { moduleKey: module.key, floors: module.floors, floorH },
+                physicalTruth: stairPhysicalTruth,
+                stairFlight,
+                metadata: {
+                    moduleKey: module.key, floors: module.floors, floorH,
+                    physicalUse: physicalUse.family,
+                    clearWidthRealizedSI: actualStairClearWidth,
+                    widthFitClassification: actualStairClearWidth + 1e-9 < stairPhysicalTruth.stair.widthSI ? 'geometry-fit-outside-truth' : 'fits-resolved-truth',
+                    runFitClassification: stairFlight.fitClassification,
+                },
             }) : null;
             const stairReservation = stairConnector?.primaryReservation ?? null;
             if (stairConnector) {
@@ -786,13 +858,13 @@ export function createKowloonFabricEngine({
                     }
                     if (!shouldWall) continue;
                     let opening = 0;
-                    if (bridgeOpeningKeys.has(`${module.key}:${dir.key}:${floor}`)) opening = 1.20;
-                    else if (cantileverOpeningKeys.has(`${module.key}:${dir.key}:${floor}`)) opening = 1.12;
-                    else if (serviceCageOpeningKeys.has(`${module.key}:${dir.key}:${floor}`)) opening = 1.08;
+                    if (bridgeOpeningKeys.has(`${module.key}:${dir.key}:${floor}`)) opening = servicePhysicalTruth.door.clearWidth.realizedSI;
+                    else if (cantileverOpeningKeys.has(`${module.key}:${dir.key}:${floor}`)) opening = servicePhysicalTruth.door.clearWidth.realizedSI;
+                    else if (serviceCageOpeningKeys.has(`${module.key}:${dir.key}:${floor}`)) opening = servicePhysicalTruth.door.clearWidth.realizedSI;
                     else if (entranceConnectorByKey.has(`${module.key}:${dir.key}:${floor}`)) {
-                        opening = connectorOpeningWidth(entranceConnectorByKey.get(`${module.key}:${dir.key}:${floor}`), 1.55);
+                        opening = connectorOpeningWidth(entranceConnectorByKey.get(`${module.key}:${dir.key}:${floor}`), physicalTruth.door.clearWidth.realizedSI);
                     }
-                    else if (floor === 0 && kind === 'courtyard' && rng() < 0.44) opening = 1.18;
+                    else if (floor === 0 && kind === 'courtyard' && rng() < 0.44) opening = servicePhysicalTruth.door.clearWidth.realizedSI;
                     addCompoundSideWall({ physics, wallList, rect: module.rect, floorH, floor, side: dir.side, opening });
                     if (kind === 'street' || kind === 'courtyard') facades.push({
                         moduleKey: module.key, side: dir.side, exposure: kind, x: module.rect.cx, z: module.rect.cz,
@@ -835,14 +907,15 @@ export function createKowloonFabricEngine({
                         halfWidth: stairHalfWidth,
                         y0, y1, supportKind: 'compound-stair',
                     });
-                    const steps = 12;
+                    const steps = stairFlight.stepCount;
+                    const stepThickness = Math.min(0.14, Math.max(0.075, stairFlight.riserHeight * 0.62));
                     for (let i = 0; i < steps; i++) {
                         const t = (i + 0.5) / steps;
                         const along = stairFrom + (stairTo - stairFrom) * t;
-                        const stepY = y0 + floorH * (i + 1) / steps - 0.08;
+                        const stepY = y0 + stairFlight.riserHeight * (i + 1) - stepThickness * 0.5;
                         transforms.steps.push(stairRunAxis === 'z'
-                            ? { x: stairCx, y: stepY, z: along, sx: stairGapW * 0.62, sy: 0.16, sz: Math.abs(stairTo - stairFrom) / steps * 1.06 }
-                            : { x: along, y: stepY, z: stairCz, sx: Math.abs(stairTo - stairFrom) / steps * 1.06, sy: 0.16, sz: stairGapD * 0.62 });
+                            ? { x: stairCx, y: stepY, z: along, sx: actualStairClearWidth, sy: stepThickness, sz: Math.abs(stairTo - stairFrom) / steps * 1.06 }
+                            : { x: along, y: stepY, z: stairCz, sx: Math.abs(stairTo - stairFrom) / steps * 1.06, sy: stepThickness, sz: actualStairClearWidth });
                     }
                 }
             }
@@ -896,10 +969,13 @@ export function createKowloonFabricEngine({
         for (const entranceFace of entranceFaces) {
             const rect = entranceFace.module.rect;
             const side = entranceFace.dir.side;
+            const connector = entranceConnectorByKey.get(`${entranceFace.module.key}:${entranceFace.dir.key}:0`);
+            const width = connector?.aperture?.width ?? physicalTruth.door.clearWidth.realizedSI;
+            const height = connector?.aperture?.height ?? physicalTruth.door.clearHeight.realizedSI;
             if (side === 'north' || side === 'south') {
-                transforms.doors.push({ x: rect.cx, y: 1.1, z: rect.cz + (side === 'north' ? -rect.halfZ - 0.018 : rect.halfZ + 0.018), sx: 1.35, sy: 2.2, sz: 0.05 });
+                transforms.doors.push({ x: rect.cx, y: height * 0.5, z: rect.cz + (side === 'north' ? -rect.halfZ - 0.018 : rect.halfZ + 0.018), sx: width, sy: height, sz: 0.05 });
             } else {
-                transforms.doors.push({ x: rect.cx + (side === 'west' ? -rect.halfX - 0.018 : rect.halfX + 0.018), y: 1.1, z: rect.cz, sx: 0.05, sy: 2.2, sz: 1.35 });
+                transforms.doors.push({ x: rect.cx + (side === 'west' ? -rect.halfX - 0.018 : rect.halfX + 0.018), y: height * 0.5, z: rect.cz, sx: 0.05, sy: height, sz: width });
             }
         }
 
@@ -914,6 +990,7 @@ export function createKowloonFabricEngine({
                 physics, transforms, fp: scaffoldFace.module.rect,
                 floors: scaffoldFace.module.floors, floorH, side: scaffoldSide,
                 seed: hashString32(`${siteSeed}:scaffold`),
+                physicalTruth: servicePhysicalTruth,
             });
         }
 
@@ -1023,6 +1100,12 @@ export function createKowloonFabricEngine({
                 const to = axis === 'x' ? rect.cx + side * run * 0.45 : rect.cz + side * run * 0.45;
                 const fixedCoord = axis === 'x' ? mz : mx;
                 const mezzanineRamp = { axis, from, to, fixedCoord, halfWidth: rampWidth * 0.5, y0: 0, y1: y, supportKind: 'mezzanine-stair' };
+                const mezzanineFlight = deriveStairFlight({
+                    rise: y,
+                    truth: servicePhysicalTruth,
+                    stableKey: `${chunk.key}:${siteSignature}:${module.key}:mezzanine:${mezzanines}`,
+                    availableRun: Math.abs(to - from),
+                });
                 const mezzanineConnector = createRampConnector({
                     id: `${chunk.key}:${siteSignature}:${module.key}:mezzanine:${mezzanines}`,
                     kind: 'mezzanine-ramp',
@@ -1033,10 +1116,13 @@ export function createKowloonFabricEngine({
                     halfWidth: mezzanineRamp.halfWidth,
                     y0: mezzanineRamp.y0,
                     y1: mezzanineRamp.y1,
+                    headroom: servicePhysicalTruth.route.headroomSI,
                     source: 'mezzanine-stair',
                     visualRole: 'mezzanine-access',
                     reservationKind: 'mezzanine-ramp',
-                    metadata: { moduleKey: module.key, index: mezzanines },
+                    physicalTruth: servicePhysicalTruth,
+                    stairFlight: mezzanineFlight,
+                    metadata: { moduleKey: module.key, index: mezzanines, fitClassification: mezzanineFlight.fitClassification, physicalUse: physicalUse.family },
                 });
                 const mezzanineReservation = mezzanineConnector.primaryReservation;
                 const moduleReservations = circulationByModule.get(module.key);
@@ -1049,14 +1135,15 @@ export function createKowloonFabricEngine({
                     physics.ramps.push(mezzanineRamp);
                     registerSemanticConnector(physics, mezzanineConnector);
                     moduleReservations.push(mezzanineReservation);
-                    const stepCount = 7;
+                    const stepCount = mezzanineFlight.stepCount;
+                    const stepThickness = Math.min(0.11, Math.max(0.065, mezzanineFlight.riserHeight * 0.58));
                     for (let i = 0; i < stepCount; i++) {
                         const t = (i + 0.5) / stepCount;
                         const along = from + (to - from) * t;
-                        const stepY = y * (i + 1) / stepCount - 0.055;
+                        const stepY = mezzanineFlight.riserHeight * (i + 1) - stepThickness * 0.5;
                         transforms.steps.push(axis === 'x'
-                            ? { x: along, y: stepY, z: fixedCoord, sx: Math.abs(to - from) / stepCount * 1.06, sy: 0.11, sz: rampWidth }
-                            : { x: fixedCoord, y: stepY, z: along, sx: rampWidth, sy: 0.11, sz: Math.abs(to - from) / stepCount * 1.06 });
+                            ? { x: along, y: stepY, z: fixedCoord, sx: Math.abs(to - from) / stepCount * 1.06, sy: stepThickness, sz: rampWidth }
+                            : { x: fixedCoord, y: stepY, z: along, sx: rampWidth, sy: stepThickness, sz: Math.abs(to - from) / stepCount * 1.06 });
                     }
                     mezzanines++;
                 }
@@ -1155,6 +1242,14 @@ export function createKowloonFabricEngine({
             floorH,
             floors: Math.max(...floorCounts),
             archetype,
+            physicalUse,
+            physicalTruth,
+            servicePhysicalTruth,
+            physicalTruthDecision: {
+                schema: 'jweb.physical-truth-decision.v1',
+                floorHeightSource: Number.isFinite(structureProfile?.floorHeight) ? 'explicit-structure-profile' : 'resolved-physical-truth',
+                topologyPhase: 'precommit',
+            },
             semanticSiteKey: siteSignature,
             semanticChunkKey: chunk.key,
             doorSide: doorFace?.dir.side ?? scaffoldSide ?? 'north',
@@ -1229,7 +1324,9 @@ export function createKowloonFabricEngine({
         const floorH = Math.min(aEntity.floorH || 3.15, bEntity.floorH || 3.15);
         const y = bridge.floor * floorH;
         const hanging = bridge.variant === 'hanging-bridge';
-        const width = hanging ? 0.86 : 1.05;
+        const bridgeTruth = aEntity.servicePhysicalTruth ?? aEntity.physicalTruth ?? bEntity.servicePhysicalTruth ?? bEntity.physicalTruth ?? null;
+        const truthWidth = bridgeTruth?.stair?.widthSI ?? 0.86;
+        const width = hanging ? Math.max(0.72, Math.min(0.96, truthWidth * 0.90)) : Math.max(0.90, Math.min(1.22, truthWidth));
         const railH = hanging ? 0.70 : 0.86;
         const railT = hanging ? 0.065 : 0.10;
         if (bridge.axis === 'x') {
@@ -1245,7 +1342,8 @@ export function createKowloonFabricEngine({
                 source: 'skybridge', visualRole: bridge.variant || 'skybridge',
                 fromSpaceId: semanticSpaceIdForEntity(aEntity, bridge.aModuleKey, bridge.floor),
                 toSpaceId: semanticSpaceIdForEntity(bEntity, bridge.bModuleKey, bridge.floor),
-                metadata: { bridgeId: bridge.id, variant: bridge.variant || 'skybridge', floor: bridge.floor },
+                physicalTruth: bridgeTruth,
+                metadata: { bridgeId: bridge.id, variant: bridge.variant || 'skybridge', floor: bridge.floor, physicalUse: bridgeTruth?.physicalUse ?? null },
             }));
             transforms.slabs.push({ x, y: y - 0.06, z, sx: span, sy: 0.12, sz: width });
             addRectPlatform(physics.platforms, x, z, span, width, y, bridge.variant || 'skybridge');
@@ -1275,7 +1373,8 @@ export function createKowloonFabricEngine({
                 source: 'skybridge', visualRole: bridge.variant || 'skybridge',
                 fromSpaceId: semanticSpaceIdForEntity(aEntity, bridge.aModuleKey, bridge.floor),
                 toSpaceId: semanticSpaceIdForEntity(bEntity, bridge.bModuleKey, bridge.floor),
-                metadata: { bridgeId: bridge.id, variant: bridge.variant || 'skybridge', floor: bridge.floor },
+                physicalTruth: bridgeTruth,
+                metadata: { bridgeId: bridge.id, variant: bridge.variant || 'skybridge', floor: bridge.floor, physicalUse: bridgeTruth?.physicalUse ?? null },
             }));
             transforms.slabs.push({ x, y: y - 0.06, z, sx: width, sy: 0.12, sz: span });
             addRectPlatform(physics.platforms, x, z, width, span, y, bridge.variant || 'skybridge');
@@ -2113,4 +2212,3 @@ export function createKowloonFabricEngine({
 
     return { build, buildAuthoredOriginChunk, buildAuthoredSite, buildAuthoredPlaza, buildAuthoredSurfacePatch, buildAuthoredBridge, planAuthoredBridgeNetwork, commit, setVisible, verifyReady, unload, refine, hasPendingRefinement, planChunk, districtLandmarkFor, disposeShared };
 }
-

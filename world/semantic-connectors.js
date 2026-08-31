@@ -35,31 +35,52 @@ function reservationList(physics) {
     return physics.circulationReservations ?? (physics.circulationReservations = []);
 }
 
+function unresolvedPhysicalTruth(kind, values) {
+    return Object.freeze({
+        schema: 'jweb.physical-truth-unresolved.v1',
+        kind,
+        status: 'legacy-fallback-explicitly-unresolved',
+        architecturalAuthority: false,
+        values: Object.freeze({ ...values }),
+    });
+}
+
+function physicalTruthOrFallback(physicalTruth, kind, values) {
+    return physicalTruth?.schema === 'jweb.physical-truth.v1'
+        ? physicalTruth
+        : unresolvedPhysicalTruth(kind, values);
+}
+
 export function semanticPortalForRect({
     id,
     rect,
     side,
     floor = 0,
-    floorH = 3.15,
-    width = 1.20,
-    height = 2.20,
-    depth = 1.20,
+    floorH = null,
+    width = null,
+    height = null,
+    depth = null,
+    physicalTruth = null,
     source = 'compound-portal',
     fromSpaceId = null,
     toSpaceId = null,
     metadata = null,
 } = {}) {
     if (!id || !rect || !SIDE_VECTOR[side]) throw new Error('semantic portal requires id, rect, and cardinal side');
-    positive('width', width); positive('height', height); positive('depth', depth); positive('floorH', floorH);
+    const resolvedWidth = positive('width', Number(width) || Number(physicalTruth?.door?.clearWidth?.realizedSI) || 1.20);
+    const resolvedHeight = positive('height', Number(height) || Number(physicalTruth?.door?.clearHeight?.realizedSI) || 2.20);
+    const resolvedDepth = positive('depth', Number(depth) || Number(physicalTruth?.door?.approachDepthSI) || 1.20);
+    const resolvedFloorH = positive('floorH', Number(floorH) || Number(physicalTruth?.floorHeight?.realizedSI) || 3.15);
+    const truth = physicalTruthOrFallback(physicalTruth, 'portal', { width: resolvedWidth, height: resolvedHeight, depth: resolvedDepth, floorH: resolvedFloorH });
     const v = SIDE_VECTOR[side];
-    const y = floor * floorH;
+    const y = floor * resolvedFloorH;
     const x = rect.cx + v.x * (side === 'west' || side === 'east' ? rect.halfX : 0);
     const z = rect.cz + v.z * (side === 'north' || side === 'south' ? rect.halfZ : 0);
     return {
         id,
         kind: 'portal-endpoint',
         x, y, z,
-        width, height, depth,
+        width: resolvedWidth, height: resolvedHeight, depth: resolvedDepth, floorH: resolvedFloorH,
         side,
         normalX: v.x,
         normalZ: v.z,
@@ -68,6 +89,8 @@ export function semanticPortalForRect({
         fromSpaceId,
         toSpaceId,
         ...(metadata || {}),
+        physicalTruth: truth,
+        dimensionAuthority: truth.architecturalAuthority === false ? 'explicit-legacy-fallback' : 'resolved-physical-truth',
     };
 }
 
@@ -78,13 +101,16 @@ export function createPortalConnector({
     source = portal?.source ?? 'portal',
     visualRole = 'doorway',
     approachDepth = null,
+    physicalTruth = portal?.physicalTruth ?? null,
     metadata = null,
 } = {}) {
     if (!id || !portal) throw new Error('portal connector requires id and portal');
     const depth = positive('portal.depth', portal.depth);
     const width = positive('portal.width', portal.width);
     const height = positive('portal.height', portal.height);
-    const approach = Math.max(depth, Number(approachDepth) || depth, 0.85);
+    const truth = physicalTruthOrFallback(physicalTruth, 'portal-connector', { width, height, depth });
+    const solverMinimumApproach = 0.85; // collision/interaction solver floor, not architectural authority
+    const approach = Math.max(depth, Number(approachDepth) || Number(truth?.door?.approachDepthSI) || depth, solverMinimumApproach);
     const horizontal = portal.side === 'north' || portal.side === 'south';
     const reservation = createBoxCirculationReservation({
         id: `${id}:sweep`,
@@ -114,10 +140,11 @@ export function createPortalConnector({
             width, depth: approach, side: portal.side,
         },
         reservations: [reservation],
+        physicalTruth: truth,
+        solverEnvelope: { minimumApproach: solverMinimumApproach, authority: 'solver-clearance-not-architecture' },
         metadata: metadata || null,
     };
 }
-
 export function createStairConnector({
     id,
     x,
@@ -126,7 +153,7 @@ export function createStairConnector({
     openingDepth,
     baseY = 0,
     roofY,
-    exitHeadroom = 2.1,
+    exitHeadroom = null,
     rampAxis,
     rampFrom,
     rampTo,
@@ -135,11 +162,16 @@ export function createStairConnector({
     visualRole = 'stair',
     fromSpaceId = null,
     toSpaceId = null,
+    physicalTruth = null,
+    stairFlight = null,
     metadata = null,
 } = {}) {
+    const truth = physicalTruthOrFallback(physicalTruth, 'stair', { exitHeadroom: 2.1, endpointHeight: 2.0 });
+    const resolvedHeadroom = positive('exitHeadroom', Number(exitHeadroom) || Number(truth?.stair?.headroomSI) || 2.1);
+    const endpointHeight = Math.max(1.6, Number(truth?.route?.headroomSI) || 2.0);
     const shaft = createStairShaftReservation({
         id: `${id}:shaft`,
-        x, z, openingWidth, openingDepth, baseY, roofY, exitHeadroom,
+        x, z, openingWidth, openingDepth, baseY, roofY, exitHeadroom: resolvedHeadroom,
         rampAxis, rampFrom, rampTo, rampHalfWidth, source,
     });
     return {
@@ -151,10 +183,10 @@ export function createStairConnector({
         fromSpaceId,
         toSpaceId,
         endpoints: [
-            { id: `${id}:bottom`, kind: 'portal-endpoint', x, y: baseY, z, width: openingWidth, height: 2.0, depth: openingDepth, side: null },
-            { id: `${id}:top`, kind: 'portal-endpoint', x, y: roofY, z, width: openingWidth, height: exitHeadroom, depth: openingDepth, side: null },
+            { id: `${id}:bottom`, kind: 'portal-endpoint', x, y: baseY, z, width: openingWidth, height: endpointHeight, depth: openingDepth, side: null },
+            { id: `${id}:top`, kind: 'portal-endpoint', x, y: roofY, z, width: openingWidth, height: resolvedHeadroom, depth: openingDepth, side: null },
         ],
-        aperture: { width: openingWidth, height: roofY - baseY + exitHeadroom, depth: openingDepth },
+        aperture: { width: openingWidth, height: roofY - baseY + resolvedHeadroom, depth: openingDepth },
         sweep: {
             type: 'stair', axis: rampAxis, from: rampFrom, to: rampTo,
             fixedCoord: rampAxis === 'x' ? z : x,
@@ -162,6 +194,8 @@ export function createStairConnector({
         },
         reservations: [shaft],
         primaryReservation: shaft,
+        physicalTruth: truth,
+        stairFlight,
         metadata: metadata || null,
     };
 }
@@ -178,16 +212,20 @@ export function createRampConnector({
     y0,
     y1,
     capsuleRadius = 0.28,
-    headroom = 1.95,
+    headroom = null,
     source = null,
     visualRole = 'ramp',
     fromSpaceId = null,
     toSpaceId = null,
+    physicalTruth = null,
+    stairFlight = null,
     metadata = null,
 } = {}) {
+    const truth = physicalTruthOrFallback(physicalTruth, kind, { headroom: 1.95 });
+    const resolvedHeadroom = positive('headroom', Number(headroom) || Number(truth?.route?.headroomSI) || 1.95);
     const reservation = createRampCirculationReservation({
         id: `${id}:sweep`, kind: reservationKind || `${kind}-sweep`, axis, from, to, fixedCoord, halfWidth,
-        y0, y1, capsuleRadius, headroom, source,
+        y0, y1, capsuleRadius, headroom: resolvedHeadroom, source,
     });
     return {
         schema: SEMANTIC_CONNECTOR_SCHEMA,
@@ -197,9 +235,12 @@ export function createRampConnector({
             axis === 'x' ? { id: `${id}:a`, x: from, y: y0, z: fixedCoord } : { id: `${id}:a`, x: fixedCoord, y: y0, z: from },
             axis === 'x' ? { id: `${id}:b`, x: to, y: y1, z: fixedCoord } : { id: `${id}:b`, x: fixedCoord, y: y1, z: to },
         ],
-        sweep: { type: kind, axis, from, to, fixedCoord, halfWidth, y0, y1 },
+        sweep: { type: kind, axis, from, to, fixedCoord, halfWidth, y0, y1, headroom: resolvedHeadroom },
         reservations: [reservation],
         primaryReservation: reservation,
+        physicalTruth: truth,
+        stairFlight,
+        solverEnvelope: { capsuleRadius, authority: 'gameplay-clearance-not-architecture' },
         metadata: metadata || null,
     };
 }
@@ -211,17 +252,20 @@ export function createLandingConnector({
     halfX,
     halfZ,
     y,
-    headroom = 1.96,
+    headroom = null,
     source = null,
     visualRole = 'landing',
     reservationKind = 'landing-sweep',
     fromSpaceId = null,
     toSpaceId = null,
+    physicalTruth = null,
     metadata = null,
 } = {}) {
+    const truth = physicalTruthOrFallback(physicalTruth, 'landing', { headroom: 1.96 });
+    const resolvedHeadroom = positive('headroom', Number(headroom) || Number(truth?.route?.headroomSI) || 1.96);
     const reservation = createBoxCirculationReservation({
         id: `${id}:sweep`, kind: reservationKind, x, z, halfX, halfZ,
-        yMin: y + 0.01, yMax: y + headroom, source,
+        yMin: y + 0.01, yMax: y + resolvedHeadroom, source,
         metadata: { connectorId: id, ...(metadata || {}) },
     });
     return {
@@ -229,9 +273,10 @@ export function createLandingConnector({
         id, kind: 'landing', source, visualRole,
         fromSpaceId, toSpaceId,
         endpoints: [{ id: `${id}:surface`, x, y, z }],
-        sweep: { type: 'landing', x, z, halfX, halfZ, y0: y, y1: y + headroom },
+        sweep: { type: 'landing', x, z, halfX, halfZ, y0: y, y1: y + resolvedHeadroom },
         reservations: [reservation],
         primaryReservation: reservation,
+        physicalTruth: truth,
         metadata: metadata || null,
     };
 }
@@ -248,12 +293,13 @@ export function createBridgeConnector({
     visualRole = 'bridge',
     fromSpaceId = null,
     toSpaceId = null,
+    physicalTruth = null,
     metadata = null,
 } = {}) {
     return createRampConnector({
         id, kind: 'bridge', axis, from, to, fixedCoord, halfWidth,
-        y0: y, y1: y, capsuleRadius: 0.18, headroom: 1.95,
-        source, visualRole, fromSpaceId, toSpaceId, metadata,
+        y0: y, y1: y, capsuleRadius: 0.18, headroom: null,
+        source, visualRole, fromSpaceId, toSpaceId, physicalTruth, metadata,
     });
 }
 
@@ -268,11 +314,14 @@ export function createFireEscapeConnector({
     source = 'exterior-scaffold',
     fromSpaceId = null,
     toSpaceId = null,
+    physicalTruth = null,
     metadata = null,
 } = {}) {
+    const truth = physicalTruthOrFallback(physicalTruth, 'fire-escape', { headroom: 1.95 });
+    const resolvedHeadroom = positive('headroom', Number(truth?.route?.headroomSI) || 1.95);
     const reservation = createBoxCirculationReservation({
         id: `${id}:sweep`, kind: 'fire-escape-sweep', x, z, halfX, halfZ,
-        yMin: baseY, yMax: topY + 1.95, source,
+        yMin: baseY, yMax: topY + resolvedHeadroom, source,
         metadata: { connectorId: id, ...(metadata || {}) },
     });
     return {
@@ -282,6 +331,7 @@ export function createFireEscapeConnector({
         endpoints: [{ id: `${id}:bottom`, x, y: baseY, z }, { id: `${id}:top`, x, y: topY, z }],
         sweep: { type: 'fire-escape', x, z, halfX, halfZ, y0: baseY, y1: topY },
         reservations: [reservation],
+        physicalTruth: truth,
         metadata: metadata || null,
     };
 }
@@ -373,6 +423,7 @@ function wrapOrphanReservation(reservation) {
         sweep: { type: kind, derivedFromReservationId: reservation.id },
         reservations: [reservation],
         primaryReservation: reservation,
+        physicalTruth: unresolvedPhysicalTruth(kind, { derivedFromReservationId: reservation.id }),
         metadata: { derivedFromReservation: true, originalKind: reservation.kind ?? null },
     };
 }

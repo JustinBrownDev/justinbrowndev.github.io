@@ -401,10 +401,191 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
         catch (error) { console.warn?.('[world] late detail collision publication failed', error); return false; }
     }
 
-    function publishObjectPhysics(payload, object) {
+        function publishObjectPhysics(payload, object) {
         const entries = object?.userData?.detailPhysics;
-        if (!Array.isArray(entries)) return;
-        for (const entry of entries) publishPhysics(payload, entry.kind, entry.item);
+        if (Array.isArray(entries) && entries.length) {
+            throw new Error('[topology-precommit] visual realization attempted to publish collision');
+        }
+    }
+
+    function topologyDescriptorId(chunk, task, index = 0) {
+        return `${chunk.key}:${task.entityId ?? "world"}:${task.kind}:${task.seed >>> 0}:${index}`;
+    }
+
+    function topologyDescriptor(chunk, task, item, index = 0, relationship = null) {
+        const id = topologyDescriptorId(chunk, task, index);
+        return {
+            id, kind: 'props', taskKind: task.kind, entityId: task.entityId ?? null,
+            relationship,
+            item: { ...item, topologyDescriptorId: id, topologyTaskKind: task.kind, topologyOwnerId: task.entityId ?? null },
+        };
+    }
+
+    function reserveTopologyDescriptor(payload, descriptor, margin = 0.10) {
+        const item = descriptor?.item;
+        if (!item) return false;
+        const yMin = Number.isFinite(item.yMin) ? item.yMin : 0;
+        const yMax = Number.isFinite(item.height) ? item.height : yMin + 2;
+        const radius = Math.max(0.04, Number(item.radius) || 0.12);
+        return reserveDetailBox(payload, item.x, item.z, radius, radius, yMin, yMax, margin);
+    }
+
+    function acceptTopologyDescriptors(payload, task, descriptors, { reserve = true, margin = 0.10 } = {}) {
+        if (!descriptors.length) { task.topologyDescriptors = []; task.topologySolved = true; task.topologyAccepted = true; return true; }
+        const accepted = [];
+        for (const descriptor of descriptors) {
+            if (reserve && !reserveTopologyDescriptor(payload, descriptor, margin)) continue;
+            payload.physics?.[descriptor.kind]?.push?.(descriptor.item);
+            accepted.push(descriptor);
+        }
+        task.topologyDescriptors = accepted;
+        task.topologySolved = true;
+        task.topologyRejected = descriptors.length - accepted.length;
+        task.topologyAccepted = accepted.length > 0;
+        return task.topologyAccepted;
+    }
+
+    function streetFixtureCollider(task) {
+        const table = {
+            'trash-can': [0.28, 0.76, 0.34], crate: [0.34, 0.58, 0.42],
+            'utility-box': [0.31, 0.98, 0.38], planter: [0.27, 0.38, 0.34],
+            'vending-machine': [0.38, 1.86, 0.48], bollard: [0.16, 0.92, 0.24],
+            'street-lamp': [0.13, 2.95, 0.25], 'news-box': [0.30, 1.16, 0.38],
+            bench: [0.52, 0.52, 0.66], lantern: [0.10, 2.20, 0.22],
+        };
+        return table[task.variant] ?? (task.variant === 'manhole' || task.variant === 'weeds' ? null : table.lantern);
+    }
+
+    function solveStreetFixtureTopology(chunk, payload, task) {
+        const entity = getEntity(payload, task.entityId);
+        if (!entity) return false;
+        const point = facadePoint(entity, task.side, task.along, 0, task.facadeIndex);
+        const localZ = -0.34;
+        const center = { x: point.x + Math.sin(point.ry) * localZ, z: point.z + Math.cos(point.ry) * localZ };
+        const collider = streetFixtureCollider(task);
+        task.topologyPlacement = { point, localZ, center, collider };
+        if (!collider) { task.topologyDescriptors = []; task.topologySolved = true; task.topologyAccepted = true; return true; }
+        const descriptor = topologyDescriptor(chunk, task, { x: center.x, z: center.z, radius: collider[0], height: collider[1] }, 0, { entityId: task.entityId, facadeIndex: task.facadeIndex, side: task.side });
+        if (!reserveDetailBox(payload, center.x, center.z, collider[2], collider[2], 0, collider[1], 0.10)) {
+            task.topologyDescriptors = []; task.topologySolved = true; task.topologyRejected = 1; task.topologyAccepted = false;
+            return false;
+        }
+        payload.physics?.props?.push?.(descriptor.item);
+        task.topologyDescriptors = [descriptor]; task.topologySolved = true; task.topologyRejected = 0; task.topologyAccepted = true;
+        return true;
+    }
+
+    function solveRoofClutterTopology(chunk, payload, task) {
+        const entity = getEntity(payload, task.entityId);
+        if (!entity) return false;
+        const roof = primaryRoofSpec(entity);
+        const rng = mulberry32(task.seed);
+        const specs = [];
+        const descriptors = [];
+        const count = Math.max(2, task.count || 3);
+        for (let i = 0; i < count; i++) {
+            const w = 0.22 + rng() * 0.62, d = 0.22 + rng() * 0.58, h = 0.18 + rng() * 0.75;
+            const spec = {
+                x: roof.x + (rng() - 0.5) * Math.max(0.2, roof.halfX * 1.35 - w),
+                y: roof.y + h * 0.5 + 0.03,
+                z: roof.z + (rng() - 0.5) * Math.max(0.2, roof.halfZ * 1.35 - d),
+                w, d, h, ry: rng() * Math.PI,
+            };
+            const descriptor = topologyDescriptor(chunk, task, { x: spec.x, z: spec.z, radius: Math.max(0.14, Math.min(w, d) * 0.42), yMin: roof.y, height: roof.y + h }, i, { entityId: task.entityId, roof: true });
+            if (!reserveDetailBox(payload, spec.x, spec.z, w * 0.5, d * 0.5, roof.y, roof.y + h, 0.08)) continue;
+            payload.physics?.props?.push?.(descriptor.item);
+            specs.push(spec); descriptors.push(descriptor);
+        }
+        let mast = null;
+        if (rng() < 0.62) {
+            const h = 1.0 + rng() * 2.7;
+            mast = { h, x: roof.x + (rng() - 0.5) * roof.halfX, y: roof.y + h * 0.5, z: roof.z + (rng() - 0.5) * roof.halfZ };
+        }
+        task.topologyPlacement = { roof, boxes: specs, mast };
+        task.topologyDescriptors = descriptors; task.topologySolved = true; task.topologyRejected = count - descriptors.length; task.topologyAccepted = true;
+        return true;
+    }
+
+    function solveRoofTopperTopology(chunk, payload, task) {
+        const entity = getEntity(payload, task.entityId);
+        if (!entity) return false;
+        const roof = primaryRoofSpec(entity);
+        let spec, item;
+        if (task.topper === 'dome') {
+            const radius = Math.max(0.55, Math.min(1.75, Math.min(roof.halfX, roof.halfZ) * 0.48));
+            spec = { topper: 'dome', radius, x: roof.x, y: roof.y + 0.02, z: roof.z };
+            item = { x: roof.x, z: roof.z, radius: radius * 0.72, yMin: roof.y, height: roof.y + radius * 0.62 };
+        } else {
+            const h = 1.8 + (task.seed % 260) / 100;
+            const r = 0.32 + ((task.seed >>> 8) % 36) / 100;
+            spec = { topper: task.topper, h, r, x: roof.x, y: roof.y + h * 0.5, z: roof.z };
+            item = { x: roof.x, z: roof.z, radius: Math.max(0.16, r * 0.72), yMin: roof.y, height: roof.y + h };
+        }
+        task.topologyPlacement = spec;
+        return acceptTopologyDescriptors(payload, task, [topologyDescriptor(chunk, task, item, 0, { entityId: task.entityId, roof: true })], { reserve: true, margin: 0.08 });
+    }
+
+    function plazaPhysicsFromTask(chunk, task) {
+        const rng = mulberry32(task.seed);
+        const descriptors = [];
+        if (task.kind === 'plaza-park') {
+            const trees = [];
+            for (let i = 0; i < 3; i++) {
+                const x = (rng()-0.5)*1.8, z = (rng()-0.5)*1.8;
+                trees.push({ x, z });
+                rng();
+            }
+            const rotation = (rng() - 0.5) * 0.32;
+            const rotateOffset = (x, z) => ({ x: task.x + Math.cos(rotation) * x + Math.sin(rotation) * z, z: task.z - Math.sin(rotation) * x + Math.cos(rotation) * z });
+            for (let i = 0; i < trees.length; i++) {
+                const p = rotateOffset(trees[i].x, trees[i].z);
+                descriptors.push(topologyDescriptor(chunk, task, { x: p.x, z: p.z, radius: 0.14, height: 1.10 }, i, { entityId: task.entityId, plaza: true }));
+            }
+            const p = rotateOffset(0, -0.85);
+            descriptors.push(topologyDescriptor(chunk, task, { x: p.x, z: p.z, radius: 0.58, height: 0.36 }, 3, { entityId: task.entityId, plaza: true }));
+            return { rotation, trees, descriptors };
+        }
+        const rotation = (rng() - 0.5) * 0.32;
+        const collider = task.kind === 'plaza-newsstand' ? [0.78, 1.86]
+            : task.kind === 'plaza-phone-booth' ? [0.48, 2.20]
+            : task.kind === 'plaza-atm-kiosk' ? [0.52, 1.86] : null;
+        if (collider) descriptors.push(topologyDescriptor(chunk, task, { x: task.x, z: task.z, radius: collider[0], height: collider[1] }, 0, { entityId: task.entityId, plaza: true }));
+        return { rotation, trees: null, descriptors };
+    }
+
+    function solvePlazaTopology(chunk, payload, task) {
+        const spec = plazaPhysicsFromTask(chunk, task);
+        task.topologyPlacement = spec;
+        const reservationStart = detailReservations(payload).length;
+        for (const descriptor of spec.descriptors) {
+            if (!reserveTopologyDescriptor(payload, descriptor, 0.12)) {
+                detailReservations(payload).splice(reservationStart);
+                task.topologyDescriptors = []; task.topologySolved = true; task.topologyRejected = spec.descriptors.length; task.topologyAccepted = false;
+                return false;
+            }
+        }
+        task.topologyDescriptors = spec.descriptors; task.topologySolved = true; task.topologyRejected = 0; task.topologyAccepted = true;
+        for (const descriptor of spec.descriptors) payload.physics?.props?.push?.(descriptor.item);
+        return true;
+    }
+
+    function solveBlockingTopology(chunk, payload, tasks) {
+        let planned = 0, solved = 0, descriptors = 0, rejected = 0;
+        for (const task of tasks) {
+            if (String(task.kind).startsWith('semantic-')) {
+                if (task.topologySolved) { solved++; descriptors += task.topologyDescriptors?.length ?? 0; }
+                continue;
+            }
+            let handled = false, ok = false;
+            if (task.kind === 'street-fixture') { handled = true; ok = solveStreetFixtureTopology(chunk, payload, task); }
+            else if (task.kind === 'roof-clutter') { handled = true; ok = solveRoofClutterTopology(chunk, payload, task); }
+            else if (task.kind === 'roof-topper') { handled = true; ok = solveRoofTopperTopology(chunk, payload, task); }
+            else if (String(task.kind).startsWith('plaza-')) { handled = true; ok = solvePlazaTopology(chunk, payload, task); }
+            if (!handled) continue;
+            planned++; if (ok) solved++; descriptors += task.topologyDescriptors?.length ?? 0; rejected += task.topologyRejected ?? 0;
+        }
+        payload.topologyPrecommit = { schema: 'jweb.topology-precommit.v1', planned, solved, descriptors, rejected };
+        return payload.topologyPrecommit;
     }
 
     function taskSeed(chunk, entityId, kind, index = 0) {
@@ -955,33 +1136,23 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
         return { x: module.cx, z: module.cz, halfX: module.halfX, halfZ: module.halfZ, y: module.floors * (entity.floorH || 3.15) };
     }
 
-    function createRoofClutter(payload, task) {
+        function createRoofClutter(payload, task) {
         const entity = getEntity(payload, task.entityId);
-        if (!entity) return null;
-        const roof = primaryRoofSpec(entity);
-        const rng = mulberry32(task.seed);
+        const placement = task.topologyPlacement;
+        if (!entity || !placement) return null;
         const group = new THREE.Group();
         group.name = `chunk-roof-clutter:${task.entityId}`;
-        group.userData.detailPhysics = [];
-        const count = Math.max(2, task.count || 3);
-        for (let i = 0; i < count; i++) {
+        for (const spec of placement.boxes ?? []) {
             const box = new THREE.Mesh(unitBox, roofHardwareMat);
-            const w = 0.22 + rng() * 0.62, d = 0.22 + rng() * 0.58, h = 0.18 + rng() * 0.75;
-            box.scale.set(w, h, d);
-            box.position.set(
-                roof.x + (rng() - 0.5) * Math.max(0.2, roof.halfX * 1.35 - w),
-                roof.y + h * 0.5 + 0.03,
-                roof.z + (rng() - 0.5) * Math.max(0.2, roof.halfZ * 1.35 - d)
-            );
-            box.rotation.y = rng() * Math.PI;
+            box.scale.set(spec.w, spec.h, spec.d);
+            box.position.set(spec.x, spec.y, spec.z);
+            box.rotation.y = spec.ry;
             group.add(box);
-            group.userData.detailPhysics.push({ kind: 'props', item: { x: box.position.x, z: box.position.z, radius: Math.max(0.14, Math.min(w, d) * 0.42), yMin: roof.y, height: roof.y + h } });
         }
-        if (rng() < 0.62) {
+        if (placement.mast) {
             const mast = new THREE.Mesh(pipeGeo, roofHardwareMat);
-            const h = 1.0 + rng() * 2.7;
-            mast.scale.set(1.15, h, 1.15);
-            mast.position.set(roof.x + (rng() - 0.5) * roof.halfX, roof.y + h * 0.5, roof.z + (rng() - 0.5) * roof.halfZ);
+            mast.scale.set(1.15, placement.mast.h, 1.15);
+            mast.position.set(placement.mast.x, placement.mast.y, placement.mast.z);
             group.add(mast);
         }
         group.userData.chunkCosmetic = true;
@@ -1031,56 +1202,49 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
         return group;
     }
 
-    function createStreetFixture(payload, task) {
+        function createStreetFixture(payload, task) {
         const entity = getEntity(payload, task.entityId);
         if (!entity) return null;
-        const point = facadePoint(entity, task.side, task.along, 0, task.facadeIndex);
+        const point = task.topologyPlacement?.point ?? facadePoint(entity, task.side, task.along, 0, task.facadeIndex);
         const rng = mulberry32(task.seed);
         const group = new THREE.Group();
         group.name = `chunk-street-fixture:${task.variant}:${task.entityId}`;
         group.position.set(point.x, 0, point.z);
         group.rotation.y = point.ry;
-        const z = -0.34;
-        const worldCenter = localZ => ({ x: point.x + Math.sin(point.ry) * localZ, z: point.z + Math.cos(point.ry) * localZ });
+        const z = task.topologyPlacement?.localZ ?? -0.34;
         const box = (material, x, y, localZ, sx, sy, sz) => {
             const mesh = new THREE.Mesh(unitBox, material);
             mesh.position.set(x, y, localZ); mesh.scale.set(sx, sy, sz); group.add(mesh); return mesh;
         };
-        let collider = null;
-        let reserveRadius = 0.32;
         if (task.variant === 'trash-can') {
             const body = new THREE.Mesh(fixtureCylinderGeo, roofHardwareMat); body.position.set(0, 0.36, z); body.scale.set(0.86, 1, 0.86); group.add(body);
-            box(securityMat, 0, 0.72, z, 0.34, 0.07, 0.34); collider = { radius: 0.28, height: 0.76 }; reserveRadius = 0.34;
+            box(securityMat, 0, 0.72, z, 0.34, 0.07, 0.34);
         } else if (task.variant === 'crate') {
             box(interiorWoodMat, -0.13, 0.28, z, 0.48, 0.56, 0.46).rotation.y = (rng() - 0.5) * 0.20;
-            box(interiorWoodMat, 0.20, 0.18, z - 0.08, 0.34, 0.36, 0.34).rotation.y = (rng() - 0.5) * 0.28; collider = { radius: 0.34, height: 0.58 }; reserveRadius = 0.42;
+            box(interiorWoodMat, 0.20, 0.18, z - 0.08, 0.34, 0.36, 0.34).rotation.y = (rng() - 0.5) * 0.28;
         } else if (task.variant === 'utility-box') {
-            box(elevatorMat, 0, 0.48, z, 0.58, 0.96, 0.30); box(elevatorDoorMat, 0, 0.52, z - 0.17, 0.32, 0.34, 0.035); collider = { radius: 0.31, height: 0.98 }; reserveRadius = 0.38;
+            box(elevatorMat, 0, 0.48, z, 0.58, 0.96, 0.30); box(elevatorDoorMat, 0, 0.52, z - 0.17, 0.32, 0.34, 0.035);
         } else if (task.variant === 'planter') {
             const pot = new THREE.Mesh(fixtureCylinderGeo, plazaConcreteMat); pot.position.set(0, 0.18, z); pot.scale.set(0.78, 0.50, 0.78); group.add(pot);
             for (let i = 0; i < 3; i++) { const leaf = new THREE.Mesh(leafGeo, ivyMaterials[(task.seed + i) % ivyMaterials.length]); leaf.position.set((i - 1) * 0.12, 0.58 + i * 0.08, z); leaf.rotation.y = i * Math.PI / 3 + rng() * 0.25; leaf.scale.set(0.72, 0.92 + rng() * 0.30, 1); group.add(leaf); }
-            collider = { radius: 0.27, height: 0.38 }; reserveRadius = 0.34;
         } else if (task.variant === 'vending-machine') {
-            box(elevatorMat, 0, 0.92, z, 0.72, 1.84, 0.48); box(awningMaterials[task.seed % awningMaterials.length], 0, 1.13, z - 0.26, 0.52, 0.78, 0.04); collider = { radius: 0.38, height: 1.86 }; reserveRadius = 0.48;
+            box(elevatorMat, 0, 0.92, z, 0.72, 1.84, 0.48); box(awningMaterials[task.seed % awningMaterials.length], 0, 1.13, z - 0.26, 0.52, 0.78, 0.04);
         } else if (task.variant === 'bollard') {
-            const post = new THREE.Mesh(fixtureCylinderGeo, roofHardwareMat); post.position.set(0, 0.46, z); post.scale.set(0.38, 1.18, 0.38); group.add(post); collider = { radius: 0.16, height: 0.92 }; reserveRadius = 0.24;
+            const post = new THREE.Mesh(fixtureCylinderGeo, roofHardwareMat); post.position.set(0, 0.46, z); post.scale.set(0.38, 1.18, 0.38); group.add(post);
         } else if (task.variant === 'manhole') {
-            const lid = new THREE.Mesh(fixtureCylinderGeo, roofHardwareMat); lid.position.set(0, 0.025, z - 0.40); lid.scale.set(1.05, 0.07, 1.05); group.add(lid); reserveRadius = 0.36;
+            const lid = new THREE.Mesh(fixtureCylinderGeo, roofHardwareMat); lid.position.set(0, 0.025, z - 0.40); lid.scale.set(1.05, 0.07, 1.05); group.add(lid);
         } else if (task.variant === 'weeds') {
-            for (let i = 0; i < 5; i++) { const leaf = new THREE.Mesh(leafGeo, ivyMaterials[(task.seed + i) % ivyMaterials.length]); leaf.position.set((rng()-0.5)*0.34, 0.20 + rng()*0.22, z + (rng()-0.5)*0.24); leaf.rotation.y = rng()*Math.PI; leaf.rotation.z = (rng()-0.5)*0.5; leaf.scale.set(0.42, 0.64 + rng()*0.55, 1); group.add(leaf); } reserveRadius = 0.26;
+            for (let i = 0; i < 5; i++) { const leaf = new THREE.Mesh(leafGeo, ivyMaterials[(task.seed + i) % ivyMaterials.length]); leaf.position.set((rng()-0.5)*0.34, 0.20 + rng()*0.22, z + (rng()-0.5)*0.24); leaf.rotation.y = rng()*Math.PI; leaf.rotation.z = (rng()-0.5)*0.5; leaf.scale.set(0.42, 0.64 + rng()*0.55, 1); group.add(leaf); }
         } else if (task.variant === 'street-lamp') {
-            const post = new THREE.Mesh(pipeGeo, securityMat); post.position.set(0, 1.45, z); post.scale.set(1.55, 2.9, 1.55); group.add(post); box(awningMaterials[task.seed % awningMaterials.length], 0, 2.82, z - 0.10, 0.46, 0.24, 0.42); collider = { radius: 0.13, height: 2.95 }; reserveRadius = 0.25;
+            const post = new THREE.Mesh(pipeGeo, securityMat); post.position.set(0, 1.45, z); post.scale.set(1.55, 2.9, 1.55); group.add(post); box(awningMaterials[task.seed % awningMaterials.length], 0, 2.82, z - 0.10, 0.46, 0.24, 0.42);
         } else if (task.variant === 'news-box') {
-            box(awningMaterials[task.seed % awningMaterials.length], 0, 0.62, z, 0.54, 1.08, 0.42); box(securityMat, 0, 1.02, z - 0.23, 0.40, 0.18, 0.04); collider = { radius: 0.30, height: 1.16 }; reserveRadius = 0.38;
+            box(awningMaterials[task.seed % awningMaterials.length], 0, 0.62, z, 0.54, 1.08, 0.42); box(securityMat, 0, 1.02, z - 0.23, 0.40, 0.18, 0.04);
         } else if (task.variant === 'bench') {
             box(interiorWoodMat, 0, 0.46, z, 1.25, 0.12, 0.40); box(interiorWoodMat, 0, 0.83, z + 0.16, 1.25, 0.68, 0.10);
-            for (const x of [-0.48, 0.48]) box(securityMat, x, 0.23, z, 0.08, 0.46, 0.08); collider = { radius: 0.52, height: 0.52 }; reserveRadius = 0.66;
+            for (const x of [-0.48, 0.48]) box(securityMat, x, 0.23, z, 0.08, 0.46, 0.08);
         } else {
-            const post = new THREE.Mesh(pipeGeo, securityMat); post.position.set(0, 1.05, z); post.scale.set(1.20, 2.10, 1.20); group.add(post); box(awningMaterials[task.seed % awningMaterials.length], 0, 2.02, z, 0.34, 0.38, 0.34); collider = { radius: 0.10, height: 2.20 }; reserveRadius = 0.22;
+            const post = new THREE.Mesh(pipeGeo, securityMat); post.position.set(0, 1.05, z); post.scale.set(1.20, 2.10, 1.20); group.add(post); box(awningMaterials[task.seed % awningMaterials.length], 0, 2.02, z, 0.34, 0.38, 0.34);
         }
-        const center = worldCenter(z);
-        if (!reserveDetailBox(payload, center.x, center.z, reserveRadius, reserveRadius, 0, collider?.height ?? 0.6, 0.10)) return null;
-        if (collider) group.userData.detailPhysics = [{ kind: 'props', item: { x: center.x, z: center.z, radius: collider.radius, height: collider.height } }];
         group.userData.chunkCosmetic = true; group.userData.detailKind = task.kind; group.userData.semanticClass = task.variant;
         return group;
     }
@@ -1189,31 +1353,17 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
         return group;
     }
 
-    function createRoofTopper(payload, task) {
+        function createRoofTopper(payload, task) {
         const entity = getEntity(payload, task.entityId);
-        if (!entity) return null;
-        const roof = primaryRoofSpec(entity);
+        const spec = task.topologyPlacement;
+        if (!entity || !spec) return null;
         const mesh = new THREE.Mesh(task.topper === 'dome' ? topperDomeGeo : topperSpireGeo, topperMat);
         mesh.name = `chunk-roof-topper:${task.topper}:${task.entityId}`;
-        if (task.topper === 'dome') {
-            const radius = Math.max(0.55, Math.min(1.75, Math.min(roof.halfX, roof.halfZ) * 0.48));
-            mesh.scale.set(radius, radius * 0.62, radius);
-            mesh.position.set(roof.x, roof.y + 0.02, roof.z);
-        } else {
-            const h = 1.8 + (task.seed % 260) / 100;
-            const r = 0.32 + ((task.seed >>> 8) % 36) / 100;
-            mesh.scale.set(r, h, r);
-            mesh.position.set(roof.x, roof.y + h * 0.5, roof.z);
-        }
+        if (task.topper === 'dome') mesh.scale.set(spec.radius, spec.radius * 0.62, spec.radius);
+        else mesh.scale.set(spec.r, spec.h, spec.r);
+        mesh.position.set(spec.x, spec.y, spec.z);
         mesh.userData.chunkCosmetic = true;
         mesh.userData.detailKind = task.kind;
-        if (task.topper === 'dome') {
-            const radius = Math.max(0.55, Math.min(1.75, Math.min(roof.halfX, roof.halfZ) * 0.48));
-            mesh.userData.detailPhysics = [{ kind: 'props', item: { x: roof.x, z: roof.z, radius: radius * 0.72, yMin: roof.y, height: roof.y + radius * 0.62 } }];
-        } else {
-            const h = mesh.scale.y;
-            mesh.userData.detailPhysics = [{ kind: 'props', item: { x: roof.x, z: roof.z, radius: Math.max(0.16, mesh.scale.x * 0.72), yMin: roof.y, height: roof.y + h } }];
-        }
         return mesh;
     }
 
@@ -1258,7 +1408,8 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
             }
             case 'plaza-park': {
                 for (let i = 0; i < 3; i++) {
-                    const x = (rng()-0.5)*1.8, z = (rng()-0.5)*1.8;
+                    const solvedTree = task.topologyPlacement?.trees?.[i];
+                    const x = solvedTree?.x ?? (rng()-0.5)*1.8, z = solvedTree?.z ?? (rng()-0.5)*1.8;
                     addBox(roofHardwareMat, x, 0.55, z, 0.16, 1.10, 0.16);
                     (group.userData.localDetailPhysics ??= []).push({ x, z, radius: 0.14, height: 1.10 });
                     const crown = new THREE.Mesh(new THREE.SphereGeometry(0.46 + rng()*0.18, 7, 5), plazaGreenMat);
@@ -1269,27 +1420,19 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
             }
                         default: return null;
         }
-        group.rotation.y = (rng() - 0.5) * 0.32;
-        const rotateOffset = (x, z) => ({ x: task.x + Math.cos(group.rotation.y) * x + Math.sin(group.rotation.y) * z, z: task.z - Math.sin(group.rotation.y) * x + Math.cos(group.rotation.y) * z });
-        const physics = [];
-        for (const local of group.userData.localDetailPhysics ?? []) {
-            const p = rotateOffset(local.x, local.z);
-            physics.push({ kind: 'props', item: { ...local, x: p.x, z: p.z } });
-        }
+        group.rotation.y = task.topologyPlacement?.rotation ?? ((rng() - 0.5) * 0.32);
         delete group.userData.localDetailPhysics;
-        if (task.kind === 'plaza-newsstand') physics.push({ kind: 'props', item: { x: task.x, z: task.z, radius: 0.78, height: 1.86 } });
-        else if (task.kind === 'plaza-phone-booth') physics.push({ kind: 'props', item: { x: task.x, z: task.z, radius: 0.48, height: 2.20 } });
-        else if (task.kind === 'plaza-atm-kiosk') physics.push({ kind: 'props', item: { x: task.x, z: task.z, radius: 0.52, height: 1.86 } });
-        else if (task.kind === 'plaza-park') { const p = rotateOffset(0, -0.85); physics.push({ kind: 'props', item: { x: p.x, z: p.z, radius: 0.58, height: 0.36 } }); }
-        group.userData.chunkCosmetic = true;
-        group.userData.detailKind = task.kind;
-        group.userData.detailPhysics = physics;
+
         return group;
     }
 
 
-    function applyTask(chunk, payload, task) {
+        function applyTask(chunk, payload, task) {
         if (!payload?.detailRoot || payload.disposed) return false;
+        if ((task.kind === 'street-fixture' || task.kind === 'roof-clutter' || task.kind === 'roof-topper' || String(task.kind).startsWith('plaza-')) && !task.topologySolved) {
+            throw new Error(`[topology-precommit] realization reached unsolved blocker ${task.kind}`);
+        }
+        if (task.topologyAccepted === false) return false;
         let object = null;
         if (task.kind === 'sign') object = createPanel(payload, task, false);
         else if (task.kind === 'graffiti') object = createPanel(payload, task, true);
@@ -1308,9 +1451,9 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
         else if (task.kind === 'roof-topper') object = createRoofTopper(payload, task);
         else if (task.kind.startsWith('plaza-')) object = createPlazaFeature(payload, task);
         if (!object) return false;
-        if (!objectClearsStructuralReservations(payload, object)) return false;
+        if (!task.topologySolved && !objectClearsStructuralReservations(payload, object)) return false;
+        if (task.topologyDescriptors?.length) object.userData.topologyDescriptorIds = task.topologyDescriptors.map(descriptor => descriptor.id);
         payload.detailRoot.add(object);
-        publishObjectPhysics(payload, object);
         object.traverse?.(freezeObject);
         freezeObject(object);
         payload.detailRoot.updateMatrixWorld(true);
@@ -1400,7 +1543,7 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
         };
     }
 
-    function initializePayload(chunk, payload) {
+        function initializePayload(chunk, payload) {
         const detailRoot = new THREE.Group();
         detailRoot.name = `world-chunk-details:${chunk.key}`;
         detailRoot.userData.worldChunkDetailRoot = true;
@@ -1422,6 +1565,7 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
         state.semanticTasksSolved = state.semanticLayout.solved;
         state.semanticTasksUnresolved = state.semanticLayout.unresolved;
         state.tasks = state.tasks.filter(task => !String(task.kind).startsWith('semantic-') || !!task.semanticPlacement);
+        state.topologyPrecommit = solveBlockingTopology(chunk, payload, state.tasks);
         payload.refinement = state;
         return state;
     }

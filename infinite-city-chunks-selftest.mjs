@@ -129,11 +129,22 @@ const detailKinds = new Set(payloadA.refinement.tasks.map(task => task.kind));
 for (const kind of ['sign', 'graffiti', 'pipe', 'awning', 'ivy']) assert.ok(detailKinds.has(kind), `chunk refinement must include ${kind} work`);
 const stableTaskContract = payloadA.refinement.tasks.map(({ kind, entityId, seed }) => ({ kind, entityId, seed }));
 const pendingBefore = payloadA.refinement.tasks.length - payloadA.refinement.cursor;
+const detailChildrenBeforeSample = payloadA.detailRoot.children.length;
+let samplePublished = 0;
+let sampleNoOp = 0;
+let sampleFailed = 0;
 for (let i = 0; i < 8; i++) {
   const step = factory.refine(a, payloadA, { maxSteps: 1, maxMillis: 10 });
-  assert.equal(step.steps, 1, 'one chunk refinement turn must execute one semantic task');
+  assert.equal(step.steps, 1, 'one chunk refinement turn must execute one deterministic detail task');
+  samplePublished += step.published ?? 0;
+  sampleNoOp += step.noOp ?? 0;
+  sampleFailed += step.failed ?? 0;
 }
-assert.equal(payloadA.detailRoot.children.length, 8, 'chunk must reveal details incrementally rather than all at once');
+assert.equal(sampleFailed, 0, 'sample refinement must not hide realization failures');
+assert.equal(samplePublished + sampleNoOp, 8, 'every sampled refinement task must resolve as publication or deterministic no-op');
+assert.equal(payloadA.detailRoot.children.length - detailChildrenBeforeSample, samplePublished, 'each successful refinement publication must add exactly one progressive detail child');
+assert.ok(samplePublished > 0, 'sample refinement must reveal at least one detail progressively');
+assert.ok(payloadA.detailRoot.children.length < payloadA.refinement.tasks.length, 'sample refinement must not realize the whole detail queue at once');
 assert.equal(payloadA.refinement.tasks.length - payloadA.refinement.cursor, pendingBefore - 8);
 
 await factory.unload(a, payloadA);

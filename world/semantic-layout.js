@@ -227,7 +227,17 @@ export function solveSemanticLayout({ chunk, payload, tasks, assetById } = {}) {
                 program: task.program,
             });
             placements.push(record);
-            for (const item of collisionItems(def, task.semanticPlacement)) payload.physics?.props?.push?.(item);
+            const semanticCollision = collisionItems(def, task.semanticPlacement);
+            task.topologyDescriptors = semanticCollision.map((item, index) => {
+                const id = `${instanceId}:collider:${index}`;
+                return {
+                    id, kind: 'props', taskKind: task.kind, entityId: task.entityId,
+                    spaceId, moduleKey: module.key, floor,
+                    item: { ...item, topologyDescriptorId: id, topologyTaskKind: task.kind, topologyOwnerId: instanceId },
+                };
+            });
+            task.topologySolved = true;
+            for (const descriptor of task.topologyDescriptors) payload.physics?.props?.push?.(descriptor.item);
             pending.splice(i, 1);
             solved++;
             progress++;

@@ -127,11 +127,11 @@ export function createKowloonFabricEngine({
         worldSeed,
         publishDetailPhysics(payload, kind, item) {
             if (!payload?.physics || !item) return false;
-            if (!payload.committed) {
-                payload.physics[kind]?.push?.(item);
-                return true;
+            if (payload.committed) {
+                throw new Error(`[topology-precommit] late Kowloon collision publication forbidden for ${payload.ownerId}:${kind}`);
             }
-            return playerPhysics.appendOwnedWorldItem?.(payload.ownerId, kind, item) ?? false;
+            payload.physics[kind]?.push?.(item);
+            return true;
         },
     });
     const committedOwners = new Set();

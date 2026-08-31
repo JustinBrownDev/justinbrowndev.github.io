@@ -5,6 +5,7 @@ import { assertBuildingFootprintsDoNotOverlap } from './world/building-footprint
 import { createKowloonMazeTopology } from './world/kowloon-district-plan.js';
 import { classifyPhysicalUse } from './world/physical-use.js';
 import { deriveStairFlight, resolvePhysicalTruth } from './world/physical-truth.js';
+import { planExteriorScaffoldRoute } from './world/scaffold-circulation-plan.js';
 import {
     anyReservationIntersectsBox,
     createBoxCirculationReservation,
@@ -351,126 +352,157 @@ export function createKowloonFabricEngine({
         }
     }
 
-    function addExteriorScaffold({ physics, transforms, fp, floors, floorH, side, seed, physicalTruth }) {
-        if (floors < 2) return 0;
-        const rng = mulberry32(seed);
-        const visualFamilies = [
-            { id: 'switchback-mesh', span: 1.00, depth: 1.00, run: 0.80 },
-            { id: 'tight-service', span: 0.86, depth: 0.90, run: 0.70 },
-            { id: 'heavy-landing', span: 1.08, depth: 1.12, run: 0.76 },
-            { id: 'long-industrial', span: 1.16, depth: 0.96, run: 0.92 },
-        ];
-        const visualFamily = visualFamilies[hashString32(`${seed}:semantic-scaffold-family`) % visualFamilies.length];
-        const horizontalFace = side === 'north' || side === 'south';
-        const tangentSpan = Math.max(3.2, Math.min(6.8, (horizontalFace ? fp.halfX : fp.halfZ) * 1.7 * visualFamily.span));
-        const nominalFlight = deriveStairFlight({ rise: floorH, truth: physicalTruth, stableKey: `scaffold:${seed}:nominal` });
-        const landingDepth = Math.max(0.82, physicalTruth?.stair?.landingDepthSI || 0, (physicalTruth?.stair?.widthSI || 0) + 0.12);
-        const landingWidth = Math.min(tangentSpan, Math.max(2.4, nominalFlight.requiredRun / 0.80 + 0.18));
-        const depth = (landingDepth + 0.18) * visualFamily.depth;
-        const outward = side === 'north' || side === 'west' ? -1 : 1;
-        const face = horizontalFace ? fp.cz : fp.cx;
-        const halfFace = horizontalFace ? fp.halfZ : fp.halfX;
-        const fixed = face + outward * (halfFace + depth * 0.62);
+    function realizeExteriorScaffold({ physics, transforms, plan }) {
+        if (!plan || plan.fitStatus !== 'fits-resolved-truth') return 0;
+        if (plan.flights.some(flight => flight.fitClassification !== 'fits-resolved-truth')) {
+            throw new Error(`invalid scaffold route escaped planner: ${plan.id}`);
+        }
+        const routes = physics.scaffoldCirculationRoutes ?? (physics.scaffoldCirculationRoutes = []);
+        if (!routes.some(route => route.id === plan.id)) routes.push(plan);
         const slabT = 0.12;
-        const postH = floors * floorH + 0.75;
-        let landings = 0;
+        const railH = 0.82;
+        const railT = 0.08;
+        const horizontalFace = plan.side === 'north' || plan.side === 'south';
+        const outward = plan.side === 'north' || plan.side === 'west' ? -1 : 1;
 
-        // Four skinny posts turn the stair into a recognizable exterior scaffold,
-        // not merely an invisible physics ramp.
-        for (const tangent of [-landingWidth * 0.5, landingWidth * 0.5]) {
-            for (const depthOffset of [-landingDepth * 0.38, landingDepth * 0.38]) {
-                const x = horizontalFace ? fp.cx + tangent : fixed + depthOffset;
-                const z = horizontalFace ? fixed + depthOffset : fp.cz + tangent;
-                transforms.props.push({ x, y: postH * 0.5, z, sx: 0.10, sy: postH, sz: 0.10 });
+        // Visual support cage is derived from the accepted route envelope. It has
+        // no independent layout authority and cannot create an alternate stair.
+        const minX = Math.min(...plan.landings.map(landing => landing.x - landing.sx * 0.5));
+        const maxX = Math.max(...plan.landings.map(landing => landing.x + landing.sx * 0.5));
+        const minZ = Math.min(...plan.landings.map(landing => landing.z - landing.sz * 0.5));
+        const maxZ = Math.max(...plan.landings.map(landing => landing.z + landing.sz * 0.5));
+        const postH = plan.floors * plan.floorH + 0.75;
+        for (const x of [minX, maxX]) {
+            for (const z of [minZ, maxZ]) {
+                transforms.props.push({ x, y: postH * 0.5, z, sx: 0.10, sy: postH, sz: 0.10, routeId: plan.id });
             }
         }
 
-        for (let level = 0; level <= floors; level++) {
-            const y = level * floorH;
-            const x = horizontalFace ? fp.cx : fixed;
-            const z = horizontalFace ? fixed : fp.cz;
+        for (const landing of plan.landings) {
             transforms.slabs.push({
-                x, y: y - slabT * 0.5, z,
-                sx: horizontalFace ? landingWidth : landingDepth,
-                sy: slabT,
-                sz: horizontalFace ? landingDepth : landingWidth,
+                x: landing.x, y: landing.y - slabT * 0.5, z: landing.z,
+                sx: landing.sx, sy: slabT, sz: landing.sz,
+                routeId: plan.id, landingId: landing.id,
             });
-            addRectPlatform(
-                physics.platforms,
-                x, z,
-                horizontalFace ? landingWidth : landingDepth,
-                horizontalFace ? landingDepth : landingWidth,
-                y,
-                'scaffold',
-            );
-            registerSemanticConnector(physics, createLandingConnector({
-                id: `scaffold:${seed}:landing:${level}`,
-                x, z,
-                halfX: (horizontalFace ? landingWidth : landingDepth) * 0.5,
-                halfZ: (horizontalFace ? landingDepth : landingWidth) * 0.5,
-                y,
-                source: 'exterior-scaffold',
-                visualRole: 'fire-escape-landing',
-                reservationKind: 'scaffold-landing',
-                physicalTruth,
-                metadata: { level, side, visualFamily: visualFamily.id, physicalUse: physicalTruth?.physicalUse ?? null },
-            }));
-            landings++;
-            if (level >= floors) continue;
+            addRectPlatform(physics.platforms, landing.x, landing.z, landing.sx, landing.sz, landing.y, 'scaffold');
+            const platform = physics.platforms[physics.platforms.length - 1];
+            platform.routeId = plan.id;
+            platform.landingId = landing.id;
 
-            const direction = ((level + (seed & 1)) & 1) ? -1 : 1;
-            const availableRun = Math.min(nominalFlight.requiredRun, Math.max(0.8, landingWidth * visualFamily.run));
-            const localFrom = direction < 0 ? availableRun * 0.5 : -availableRun * 0.5;
-            const localTo = -localFrom;
-            const axis = horizontalFace ? 'x' : 'z';
-            const center = horizontalFace ? fp.cx : fp.cz;
-            const flight = deriveStairFlight({
-                rise: floorH,
-                truth: physicalTruth,
-                stableKey: `scaffold:${seed}:flight:${level}`,
-                availableRun,
+            // Guard only the exposed edge; facade-side and flight-entry edges remain
+            // open. The rail position is a direct function of the route landing.
+            if (horizontalFace) {
+                const outerZ = landing.z + outward * landing.sz * 0.5;
+                wallTransform(transforms.wallGroups[0], landing.x, landing.y + railH * 0.5, outerZ, landing.sx, railH, railT);
+                physics.mazeWalls.push({
+                    x1: landing.x - landing.sx * 0.5, z1: outerZ,
+                    x2: landing.x + landing.sx * 0.5, z2: outerZ,
+                    yMin: landing.y, yMax: landing.y + railH, thickness: railT,
+                    supportKind: 'scaffold-rail', routeId: plan.id, landingId: landing.id,
+                });
+            } else {
+                const outerX = landing.x + outward * landing.sx * 0.5;
+                wallTransform(transforms.wallGroups[0], outerX, landing.y + railH * 0.5, landing.z, railT, railH, landing.sz);
+                physics.mazeWalls.push({
+                    x1: outerX, z1: landing.z - landing.sz * 0.5,
+                    x2: outerX, z2: landing.z + landing.sz * 0.5,
+                    yMin: landing.y, yMax: landing.y + railH, thickness: railT,
+                    supportKind: 'scaffold-rail', routeId: plan.id, landingId: landing.id,
+                });
+            }
+
+            const openingIds = plan.openings.filter(opening => opening.landingId === landing.id).map(opening => opening.id);
+            const connector = createLandingConnector({
+                id: `${landing.id}:connector`,
+                x: landing.x, z: landing.z,
+                halfX: landing.sx * 0.5, halfZ: landing.sz * 0.5,
+                y: landing.y,
+                source: 'exterior-scaffold',
+                visualRole: landing.kind === 'switchback-landing' ? 'fire-escape-turn-landing' : 'fire-escape-landing',
+                reservationKind: 'scaffold-landing',
+                physicalTruth: plan.physicalTruth,
+                metadata: {
+                    routeId: plan.id,
+                    landingId: landing.id,
+                    nodeIds: landing.nodeIds,
+                    openingIds,
+                    level: landing.level,
+                    topology: plan.topology,
+                    fitClassification: plan.fitStatus,
+                    physicalUse: plan.physicalTruth?.physicalUse ?? null,
+                },
             });
-            const clearWidth = Math.min(physicalTruth?.stair?.widthSI || landingDepth * 0.72, Math.max(0.52, landingDepth - 0.12));
-            const scaffoldRamp = {
-                axis,
-                from: center + localFrom,
-                to: center + localTo,
-                fixedCoord: fixed,
-                halfWidth: clearWidth * 0.5,
-                y0: y,
-                y1: y + floorH,
+            connector.routeId = plan.id;
+            connector.landingId = landing.id;
+            connector.routeNodeIds = [...landing.nodeIds];
+            connector.openingIds = openingIds;
+            registerSemanticConnector(physics, connector);
+        }
+
+        for (const flight of plan.flights) {
+            const ramp = {
+                axis: flight.axis,
+                from: flight.from,
+                to: flight.to,
+                fixedCoord: flight.fixedCoord,
+                halfWidth: flight.halfWidth,
+                y0: flight.y0,
+                y1: flight.y1,
                 supportKind: 'scaffold',
+                routeId: plan.id,
+                flightId: flight.id,
             };
-            physics.ramps.push(scaffoldRamp);
-            registerSemanticConnector(physics, createRampConnector({
-                id: `scaffold:${seed}:ramp:${level}`,
+            physics.ramps.push(ramp);
+            const connector = createRampConnector({
+                id: `${flight.id}:connector`,
                 kind: 'fire-escape',
-                axis: scaffoldRamp.axis,
-                from: scaffoldRamp.from,
-                to: scaffoldRamp.to,
-                fixedCoord: scaffoldRamp.fixedCoord,
-                halfWidth: scaffoldRamp.halfWidth,
-                y0: scaffoldRamp.y0,
-                y1: scaffoldRamp.y1,
-                headroom: physicalTruth?.stair?.headroomSI,
+                axis: flight.axis,
+                from: flight.from,
+                to: flight.to,
+                fixedCoord: flight.fixedCoord,
+                halfWidth: flight.halfWidth,
+                y0: flight.y0,
+                y1: flight.y1,
+                headroom: flight.headroom,
                 source: 'exterior-scaffold',
                 visualRole: 'fire-escape-flight',
                 reservationKind: 'scaffold-ramp',
-                physicalTruth,
-                stairFlight: flight,
-                metadata: { level, side, visualFamily: visualFamily.id, fitClassification: flight.fitClassification, physicalUse: physicalTruth?.physicalUse ?? null },
-            }));
-            const steps = flight.stepCount;
-            const stepThickness = Math.min(0.14, Math.max(0.075, flight.riserHeight * 0.62));
+                physicalTruth: plan.physicalTruth,
+                stairFlight: flight.stairFlight,
+                metadata: {
+                    routeId: plan.id,
+                    flightId: flight.id,
+                    fromNodeId: flight.fromNodeId,
+                    toNodeId: flight.toNodeId,
+                    fromLandingId: flight.fromLandingId,
+                    toLandingId: flight.toLandingId,
+                    level: flight.level,
+                    segment: flight.segment,
+                    topology: plan.topology,
+                    fitClassification: flight.fitClassification,
+                    physicalUse: plan.physicalTruth?.physicalUse ?? null,
+                },
+            });
+            connector.routeId = plan.id;
+            connector.flightId = flight.id;
+            connector.fromNodeId = flight.fromNodeId;
+            connector.toNodeId = flight.toNodeId;
+            connector.fromLandingId = flight.fromLandingId;
+            connector.toLandingId = flight.toLandingId;
+            registerSemanticConnector(physics, connector);
+
+            const steps = flight.stairFlight.stepCount;
+            const stepThickness = Math.min(0.14, Math.max(0.075, flight.stairFlight.riserHeight * 0.62));
             for (let i = 0; i < steps; i++) {
                 const t = (i + 0.5) / steps;
-                const along = scaffoldRamp.from + (scaffoldRamp.to - scaffoldRamp.from) * t;
-                const stepY = y + flight.riserHeight * (i + 1) - stepThickness * 0.5;
-                if (horizontalFace) transforms.steps.push({ x: along, y: stepY, z: fixed, sx: Math.abs(scaffoldRamp.to - scaffoldRamp.from) / steps * 1.08, sy: stepThickness, sz: clearWidth });
-                else transforms.steps.push({ x: fixed, y: stepY, z: along, sx: clearWidth, sy: stepThickness, sz: Math.abs(scaffoldRamp.to - scaffoldRamp.from) / steps * 1.08 });
+                const along = flight.from + (flight.to - flight.from) * t;
+                const stepY = flight.y0 + flight.stairFlight.riserHeight * (i + 1) - stepThickness * 0.5;
+                transforms.steps.push(flight.axis === 'x'
+                    ? { x: along, y: stepY, z: flight.fixedCoord, sx: flight.run / steps * 1.08, sy: stepThickness, sz: flight.clearWidth, routeId: plan.id, flightId: flight.id }
+                    : { x: flight.fixedCoord, y: stepY, z: along, sx: flight.clearWidth, sy: stepThickness, sz: flight.run / steps * 1.08, routeId: plan.id, flightId: flight.id });
             }
         }
-        return landings;
+        return plan.landings.length;
     }
 
     function addCompoundSideWall({ physics, wallList, rect, floorH, floor, side, opening = 0 }) {
@@ -485,7 +517,8 @@ export function createKowloonFabricEngine({
         const lo = horizontal ? rect.cx - rect.halfX : rect.cz - rect.halfZ;
         const hi = horizontal ? rect.cx + rect.halfX : rect.cz + rect.halfZ;
         const span = hi - lo;
-        const gap = Math.max(0, Math.min(span - 0.12, opening || 0));
+        const openingWidth = typeof opening === 'object' ? Number(opening?.width) || 0 : Number(opening) || 0;
+        const gap = Math.max(0, Math.min(span - 0.12, openingWidth));
         const addSegment = (a, b) => {
             if (b - a <= 0.04) return;
             const mid = (a + b) * 0.5;
@@ -501,9 +534,25 @@ export function createKowloonFabricEngine({
             addSegment(lo, hi);
             return;
         }
-        const mid = (lo + hi) * 0.5;
+        const defaultMid = (lo + hi) * 0.5;
+        const requestedMid = typeof opening === 'object' && Number.isFinite(opening?.center) ? opening.center : defaultMid;
+        const mid = clamp(requestedMid, lo + gap * 0.5, hi - gap * 0.5);
         addSegment(lo, mid - gap * 0.5);
         addSegment(mid + gap * 0.5, hi);
+        const requestedHeight = typeof opening === 'object' ? Number(opening?.height) || 0 : 0;
+        if (requestedHeight > 0) {
+            const openingTop = Math.min(y1, y0 + requestedHeight);
+            const lintelH = y1 - openingTop;
+            if (lintelH > 0.04) {
+                if (horizontal) {
+                    wallTransform(wallList, mid, openingTop + lintelH * 0.5, fixed, gap, lintelH, wallT);
+                    physics.mazeWalls.push({ x1: mid - gap * 0.5, z1: fixed, x2: mid + gap * 0.5, z2: fixed, yMin: openingTop, yMax: y1, thickness: wallT });
+                } else {
+                    wallTransform(wallList, fixed, openingTop + lintelH * 0.5, mid, wallT, lintelH, gap);
+                    physics.mazeWalls.push({ x1: fixed, z1: mid - gap * 0.5, x2: fixed, z2: mid + gap * 0.5, yMin: openingTop, yMax: y1, thickness: wallT });
+                }
+            }
+        }
     }
 
     function addCompoundRoofParapetSide({ physics, wallList, rect, roofY, side }) {
@@ -760,6 +809,119 @@ export function createKowloonFabricEngine({
             }
         }
 
+        // Scaffold circulation is solved before wall publication so facade apertures,
+        // connector reservations and later realization all consume the same valid route.
+        // The primary stair center is still chosen later by the legacy shared RNG, so
+        // preflight against the complete range that center may occupy. Primary interior
+        // circulation wins before a scaffold can publish either geometry or an aperture.
+        const primaryStairAxis = primaryModule.rect.halfZ >= primaryModule.rect.halfX ? 'z' : 'x';
+        const primaryRunInterior = Math.max(1.2, (primaryStairAxis === 'z' ? primaryModule.rect.halfZ : primaryModule.rect.halfX) * 2 - 0.44);
+        const primaryCrossInterior = Math.max(0.8, (primaryStairAxis === 'z' ? primaryModule.rect.halfX : primaryModule.rect.halfZ) * 2 - 0.38);
+        const primaryNominalStairFlight = deriveStairFlight({
+            rise: floorH,
+            truth: stairPhysicalTruth,
+            stableKey: `${chunk.key}:${siteSignature}:${primaryModule.key}:flight:nominal`,
+        });
+        const primaryStairAvailableRun = Math.min(primaryNominalStairFlight.requiredRun, primaryRunInterior);
+        const primaryActualStairClearWidth = Math.min(stairPhysicalTruth.stair.widthSI, Math.max(0.56, primaryCrossInterior - 0.14));
+        const primaryStairCrossOpening = Math.min(primaryCrossInterior, Math.max(primaryActualStairClearWidth + 0.16, primaryActualStairClearWidth * 1.08));
+        const primaryStairRunOpening = Math.min(primaryRunInterior + 0.18, Math.max(primaryStairAvailableRun + 0.18, 1.35));
+        const primaryStairGapW = primaryStairAxis === 'z' ? primaryStairCrossOpening : primaryStairRunOpening;
+        const primaryStairGapD = primaryStairAxis === 'z' ? primaryStairRunOpening : primaryStairCrossOpening;
+        const primaryStairEnvelope = createBoxCirculationReservation({
+            id: `${chunk.key}:${siteSignature}:${primaryModule.key}:stair:preflight-envelope`,
+            kind: 'stair-preflight-envelope',
+            x: primaryModule.rect.cx,
+            z: primaryModule.rect.cz,
+            // stairCx/Cz later vary by +/- 0.09 module half-extent. Fold that exact
+            // legacy range into this immutable pre-wall keep-clear envelope.
+            halfX: primaryStairGapW * 0.5 + primaryModule.rect.halfX * 0.09 + KOWLOON_EXTERIOR_WALL_THICKNESS,
+            halfZ: primaryStairGapD * 0.5 + primaryModule.rect.halfZ * 0.09 + KOWLOON_EXTERIOR_WALL_THICKNESS,
+            yMin: 0,
+            yMax: primaryModule.floors * floorH + stairPhysicalTruth.stair.headroomSI,
+            source: 'compound-stair-preflight',
+        });
+        const scaffoldCandidates = streetFaces.filter(face => !face.courtyard && face.module.floors >= 2);
+        const scaffoldOpeningByKey = new Map();
+        let scaffoldPlan = null;
+        let scaffoldSide = null;
+        if (scaffoldCandidates.length) {
+            const scaffoldPresenceRng = mulberry32(hashString32(`${siteSeed}:scaffold-presence`));
+            if (scaffoldPresenceRng() < intensity.scaffoldChance) {
+                const scaffoldEnvelopeDepth = Math.max(1.2, Math.min(2.4, cellSize * 0.34));
+                const validScaffolds = scaffoldCandidates.map(face => {
+                    const seed = hashString32(`${siteSeed}:scaffold:${face.module.key}:${face.dir.side}`);
+                    const plan = planExteriorScaffoldRoute({
+                        fp: face.module.rect,
+                        moduleKey: face.module.key,
+                        floors: face.module.floors,
+                        floorH,
+                        side: face.dir.side,
+                        seed,
+                        physicalTruth: servicePhysicalTruth,
+                        maxExteriorDepth: scaffoldEnvelopeDepth,
+                        routeId: `${chunk.key}:${siteSignature}:${face.module.key}:scaffold:${face.dir.side}`,
+                    });
+                    if (!plan) return null;
+                    const primaryCirculationConflict = plan.landings.some(landing =>
+                        reservationIntersectsBox(primaryStairEnvelope, {
+                            x: landing.x, z: landing.z, sx: landing.sx, sz: landing.sz,
+                            yMin: landing.y - 0.02, yMax: landing.y + 0.02,
+                        })
+                    ) || plan.flights.some(flight => {
+                        const corridor = createRampCirculationReservation({
+                            id: `${plan.id}:${flight.id}:preflight`,
+                            kind: 'scaffold-preflight-ramp',
+                            axis: flight.axis,
+                            from: flight.from,
+                            to: flight.to,
+                            fixedCoord: flight.fixedCoord,
+                            halfWidth: flight.halfWidth,
+                            y0: flight.y0,
+                            y1: flight.y1,
+                            capsuleRadius: 0.28,
+                            headroom: flight.headroom,
+                            source: 'exterior-scaffold-preflight',
+                        });
+                        return reservationIntersectsBox(primaryStairEnvelope, {
+                            x: corridor.x, z: corridor.z, hx: corridor.halfX, hz: corridor.halfZ,
+                            yMin: corridor.yMin, yMax: corridor.yMax,
+                        });
+                    });
+                    if (primaryCirculationConflict) return null;
+                    const openingConflict = plan.openings.some(opening => {
+                        const openingKey = `${face.module.key}:${face.dir.key}:${opening.level}`;
+                        return bridgeOpeningKeys.has(openingKey)
+                            || cantileverOpeningKeys.has(openingKey)
+                            || serviceCageOpeningKeys.has(openingKey)
+                            || entranceConnectorByKey.has(openingKey);
+                    });
+                    return openingConflict ? null : { face, plan };
+                }).filter(Boolean);
+                validScaffolds.sort((a, b) => {
+                    const heightRank = b.face.module.floors - a.face.module.floors;
+                    if (heightRank) return heightRank;
+                    const topologyRank = (a.plan.topology === 'alternating-straight' ? 0 : 1) - (b.plan.topology === 'alternating-straight' ? 0 : 1);
+                    if (topologyRank) return topologyRank;
+                    const aMargin = a.plan.facadeTangentAvailable - a.plan.tangentSpan;
+                    const bMargin = b.plan.facadeTangentAvailable - b.plan.tangentSpan;
+                    if (Math.abs(aMargin - bMargin) > 1e-9) return bMargin - aMargin;
+                    return `${a.face.module.key}:${a.face.dir.side}`.localeCompare(`${b.face.module.key}:${b.face.dir.side}`);
+                });
+                const accepted = validScaffolds[0] ?? null;
+                if (accepted) {
+                    scaffoldPlan = accepted.plan;
+                    scaffoldSide = accepted.face.dir.side;
+                    for (const opening of scaffoldPlan.openings) {
+                        scaffoldOpeningByKey.set(
+                            `${accepted.face.module.key}:${accepted.face.dir.key}:${opening.level}`,
+                            { width: opening.width, height: opening.height, center: opening.tangent, routeId: scaffoldPlan.id, openingId: opening.id },
+                        );
+                    }
+                }
+            }
+        }
+
         let partitionSegments = 0;
         let exposedSetbackFaces = 0;
         let internalOpenFaces = 0;
@@ -834,6 +996,23 @@ export function createKowloonFabricEngine({
                 circulationByModule.set(module.key, []);
             }
 
+            // Existing interior circulation authority wins over an otherwise valid
+            // exterior scaffold plan. This happens before this module's walls publish,
+            // so rejection cannot leave orphan facade apertures.
+            if (scaffoldPlan?.moduleKey === module.key && stairReservation) {
+                const blocksPrimaryStair = scaffoldPlan.landings.some(landing =>
+                    reservationIntersectsBox(stairReservation, {
+                        x: landing.x, z: landing.z, sx: landing.sx, sz: landing.sz,
+                        yMin: landing.y - 0.02, yMax: landing.y + 0.02,
+                    })
+                );
+                if (blocksPrimaryStair) {
+                    scaffoldPlan = null;
+                    scaffoldSide = null;
+                    scaffoldOpeningByKey.clear();
+                }
+            }
+
             // CIRCULATION SANITY HANDOFF: topology reserves the whole player-sized
             // stair volume before slabs, partitions, or optional weirdness publish.
             // Render and collision are both authored around this same reservation.
@@ -868,6 +1047,7 @@ export function createKowloonFabricEngine({
                     let opening = 0;
                     if (bridgeOpeningKeys.has(`${module.key}:${dir.key}:${floor}`)) opening = servicePhysicalTruth.door.clearWidth.realizedSI;
                     else if (cantileverOpeningKeys.has(`${module.key}:${dir.key}:${floor}`)) opening = servicePhysicalTruth.door.clearWidth.realizedSI;
+                    else if (scaffoldOpeningByKey.has(`${module.key}:${dir.key}:${floor}`)) opening = scaffoldOpeningByKey.get(`${module.key}:${dir.key}:${floor}`);
                     else if (serviceCageOpeningKeys.has(`${module.key}:${dir.key}:${floor}`)) opening = servicePhysicalTruth.door.clearWidth.realizedSI;
                     else if (entranceConnectorByKey.has(`${module.key}:${dir.key}:${floor}`)) {
                         opening = connectorOpeningWidth(entranceConnectorByKey.get(`${module.key}:${dir.key}:${floor}`), physicalTruth.door.clearWidth.realizedSI);
@@ -987,19 +1167,12 @@ export function createKowloonFabricEngine({
             }
         }
 
-        const scaffoldCandidates = streetFaces.filter(face => !face.courtyard && face.module.floors >= 2);
-        let scaffoldSide = null;
+        // Preserve the legacy shared RNG stream position so unrelated balcony and
+        // feature choices do not drift merely because scaffold feasibility moved pre-wall.
+        if (scaffoldCandidates.length) rng();
         let scaffoldLandings = 0;
-        if (scaffoldCandidates.length && rng() < intensity.scaffoldChance) {
-            scaffoldCandidates.sort((a, b) => b.module.floors - a.module.floors || a.module.key.localeCompare(b.module.key));
-            const scaffoldFace = scaffoldCandidates[0];
-            scaffoldSide = scaffoldFace.dir.side;
-            scaffoldLandings = addExteriorScaffold({
-                physics, transforms, fp: scaffoldFace.module.rect,
-                floors: scaffoldFace.module.floors, floorH, side: scaffoldSide,
-                seed: hashString32(`${siteSeed}:scaffold`),
-                physicalTruth: servicePhysicalTruth,
-            });
+        if (scaffoldPlan) {
+            scaffoldLandings = realizeExteriorScaffold({ physics, transforms, plan: scaffoldPlan });
         }
 
         let balconySide = null;

@@ -25,7 +25,14 @@ for (const family of assets.families) {
 }
 const spawn=read('locations/spawn-rooftop-reality-leak.json');
 for (const slot of spawn.compositionSlots) for (const id of slot.families) if (!familyIds.has(id)) throw new Error(`spawn slot references unknown family ${id}`);
-if (spawn.hardInvariants.length < 8) throw new Error('spawn emotional grammar is under-specified');
+if (spawn.hardInvariants.length < 12) throw new Error('spawn emotional/spatial grammar is under-specified');
+if (typeof spawn.identity !== 'string' || !spawn.identity.trim()) throw new Error('spawn lacks explicit location identity');
+if (spawn.binding?.authority !== 'fabric-space') throw new Error('spawn must bind to fabric-space authority');
+if (spawn.binding?.geometryOwnership !== 'external-fabric-and-connectors') throw new Error('spawn must not own geometry');
+if (spawn.binding?.placementGuarantee !== 'exactly-one-player-spawn') throw new Error('spawn lacks exactly-one player-spawn guarantee');
+if (spawn.locationClass !== 'elevated-roof-enclave') throw new Error('spawn location class must be elevated-roof-enclave');
+if ((spawn.binding?.selection?.minNavigableHeadings ?? 0) < 3) throw new Error('spawn navigation policy is too weak');
+if (!(spawn.spatialFingerprint?.stronglyRejected ?? []).some(value => /highest isolated roof/i.test(value))) throw new Error('spawn must reject isolated roof peaks');
 if (!spawn.progressiveRealization.some(p=>p.id==='structural-safe'&&p.mustExistBeforePlay)) throw new Error('spawn lacks structural-safe phase');
 const reg=read('locations/location-registry.json');
 if (!reg.singular.includes(spawn.id)) throw new Error('spawn missing from registry');

@@ -31,7 +31,7 @@
   "hardInvariants": [
     {
       "beat": "safe-arrival",
-      "rule": "Spawn stands on structurally safe roof fabric with a clear capsule and an immediately legible path away."
+      "rule": "Spawn stands on structurally safe elevated fabric with a clear capsule, generous edge margin, and immediate controller-proven movement."
     },
     {
       "beat": "social-media-focus",
@@ -60,6 +60,26 @@
     {
       "beat": "city-exit",
       "rule": "A connector toward stairs, fire escape, hatch, door, bridge, or equivalent city circulation remains visually and physically unobstructed."
+    },
+    {
+      "beat": "not-a-local-peak",
+      "rule": "Prefer an elevated enclave with taller or comparable city mass nearby; strongly penalize isolated local maxima and exposed summit roofs."
+    },
+    {
+      "beat": "navigational-branching",
+      "rule": "The arrival space offers at least three controller-valid movement headings before the player is forced into a single corridor."
+    },
+    {
+      "beat": "vertical-and-lateral-choice",
+      "rule": "The location should reveal or plausibly connect to both descent and lateral continuation: stairs, fire escape, bridge, hatch, door, landing, or adjacent roof fabric."
+    },
+    {
+      "beat": "embedded-city-reading",
+      "rule": "Nearby taller masses, parapets, machinery, and layered sightlines make the player feel inside the city rather than above it."
+    },
+    {
+      "beat": "protected-but-open",
+      "rule": "The refuge is partially sheltered and compressed while retaining enough open sky and skyline visibility to read unmistakably as elevated exterior space."
     }
   ],
   "zones": [
@@ -70,6 +90,16 @@
         "clear capsule",
         "first glance sees either TV glow or vacuum-tube silhouette",
         "never spawn inside furniture"
+      ]
+    },
+    {
+      "id": "route-fan",
+      "role": "first navigation decision field",
+      "rules": [
+        "at least three physically valid headings from the arrival neighborhood",
+        "one route reads as descent into the city",
+        "one route can continue laterally or remain elevated when fabric permits",
+        "furniture and utilities never collapse the route fan into a single-file exit"
       ]
     },
     {
@@ -405,11 +435,78 @@
     "networkFailureIsFatal": false
   },
   "semanticRequirements": [
-    "fabric-published rooftop space",
-    "connector-owned descent aperture",
+    "fabric-published elevated exterior roof space",
+    "stable location id independent of the chosen host building/entity",
+    "host entity and space ids recorded as binding context, not identity",
+    "connector-owned descent aperture and circulation",
     "circulation reservations authoritative",
-    "stable location/space/entity ids",
+    "controller-proven spawn capsule and route fan before play",
+    "local-peak rejection and nested-city context scoring",
     "external media lifecycle separate from world identity"
   ],
-  "successTest": "Across seeds, screenshots should not match object-for-object, but a player should identify the place as the same rooftop memory without being told its name."
+  "successTest": "Across seeds, the player should wake in visibly different elevated enclaves that still read as the same remembered refuge. The spawn must feel embedded in the city, not displayed on its summit: nearby mass, protected footing, television/refuge identity, and several meaningful navigation choices survive even when exact host roof, furniture, utilities, and routes change.",
+  "identity": "A singular player-spawn location: a lived-in elevated roof-level enclave embedded inside the city mass, not perched on the city's highest exposed roof. It is a private late-night refuge with television glow, recent human presence, improvised comfort, working roof infrastructure, and several legible ways to move laterally, vertically, and down into the maze.",
+  "locationClass": "elevated-roof-enclave",
+  "placementGuarantee": {
+    "occurrence": "exactly-one-per-world",
+    "role": "player-spawn",
+    "binding": "fabric-space",
+    "identityIsStable": true,
+    "geometryIsNotGuaranteed": true,
+    "rule": "Singularity guarantees this location identity and spawn role, not a special building, prefab, or fixed coordinate."
+  },
+  "binding": {
+    "authority": "fabric-space",
+    "placementGuarantee": "exactly-one-player-spawn",
+    "geometryOwnership": "external-fabric-and-connectors",
+    "spaceType": "elevated-exterior-roof-space",
+    "surfaceClass": "roof-level-enclave",
+    "selection": {
+      "searchRadiusM": 20,
+      "radialStepM": 2,
+      "spokes": 16,
+      "verticalProbeAboveOriginM": 64,
+      "minElevationAboveOriginM": 3,
+      "preferredElevationAboveOriginM": 7,
+      "edgeProbeRadiusM": 0.8,
+      "edgeProbeDirections": 8,
+      "minEdgeSupportedDirections": 6,
+      "edgeDropToleranceM": 0.65,
+      "contextProbeRadiusM": 5.5,
+      "contextProbeDirections": 12,
+      "higherContextDeltaM": 1.8,
+      "sameLevelToleranceM": 0.75,
+      "preferredHigherContextDirections": 2,
+      "localPeakPenalty": 18,
+      "maxNavigationCandidates": 10,
+      "navigationDirections": 8,
+      "navigationSeconds": 1.35,
+      "navigationDistanceM": 2.2,
+      "minNavigableHeadings": 3,
+      "verticalRouteDeltaM": 0.7
+    }
+  },
+  "spatialFingerprint": {
+    "preferred": [
+      "roof-level or elevated exterior fabric above the immediate street layer",
+      "nested among taller or comparable neighboring masses rather than crowning the skyline",
+      "protected arrival zone with meaningful standing surface around the player capsule",
+      "multiple independent movement headings before the player commits to a route",
+      "at least one legible descent toward the street maze",
+      "lateral continuation potential through roof, bridge, fire-escape, stair, hatch, door, or landing systems",
+      "several sightlines into different city layers so orientation begins immediately",
+      "partial shelter and visual compression from nearby walls, machinery, parapets, or taller buildings",
+      "enough open sky to read as elevated without feeling exposed on a summit"
+    ],
+    "stronglyRejected": [
+      "highest isolated roof in the local neighborhood",
+      "flat exposed peak with empty horizon on every side",
+      "single-exit roof trap",
+      "spawn capsule close to an unprotected drop",
+      "street-level plaza masquerading as the authored spawn",
+      "sealed interior room",
+      "special spawn-only geometry that bypasses normal fabric authority"
+    ],
+    "selectionDoctrine": "Choose the best existing fabric space. Do not distort the city to make the spawn fit."
+  }
 }

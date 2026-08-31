@@ -976,7 +976,13 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
         return tasks;
     }
 
-    function firstPassClass(kind) {
+    function firstPassClass(taskOrKind) {
+        const task = typeof taskOrKind === 'object' && taskOrKind ? taskOrKind : null;
+        const kind = task?.kind ?? taskOrKind;
+        if (kind === 'semantic-context-prop') {
+            const tier = task?.exteriorVisualTier;
+            return tier === 'spectacle' || tier === 'identity' || tier === 'macro' ? 'macro-exterior' : 'hidden';
+        }
         if (kind === 'sign' || kind === 'awning' || kind === 'graffiti' || kind === 'flyer') return 'facade';
         if (kind === 'pipe' || kind === 'ivy' || kind === 'security' || kind === 'elevator-hardware' || kind === 'spray-cans' || kind === 'street-fixture') return 'fixture';
         if (kind === 'interior-prop' || String(kind).startsWith('semantic-') || kind === 'overhead-cable') return 'hidden';
@@ -984,21 +990,27 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
         return 'other';
     }
 
-    function detailPriority(kind) {
+    function detailPriority(taskOrKind) {
+        const task = typeof taskOrKind === 'object' && taskOrKind ? taskOrKind : null;
+        const kind = task?.kind ?? taskOrKind;
+        if (kind === 'semantic-context-prop') {
+            const tier = task?.exteriorVisualTier;
+            if (tier === 'spectacle' || tier === 'identity' || tier === 'macro') return 0;
+        }
         if (String(kind).startsWith('plaza-')) return 2;
         return EXTERIOR_TASK_KIND_PRIORITY[kind] ?? 3;
     }
 
     function sortedEntityTasks(queue) {
         return queue.sort((a, b) =>
-            detailPriority(a.kind) - detailPriority(b.kind)
+            detailPriority(a) - detailPriority(b)
             || exteriorTaskVisualImpact(b) - exteriorTaskVisualImpact(a)
             || a.kind.localeCompare(b.kind)
             || (a.seed >>> 0) - (b.seed >>> 0));
     }
 
     function chooseFirstPassBundle(queue) {
-        const visibleCandidates = queue.filter(task => firstPassClass(task.kind) !== 'hidden');
+        const visibleCandidates = queue.filter(task => firstPassClass(task) !== 'hidden');
         if (!visibleCandidates.length) return [];
 
         // One obvious birth per visible entity is enough to leave first-pass mode.
@@ -1030,7 +1042,7 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
                 firstPass.forEach((task, index) => {
                     task.firstPassBundle = true;
                     task.firstPassBundleIndex = index;
-                    task.firstPassClass = firstPassClass(task.kind);
+                    task.firstPassClass = firstPassClass(task);
                 });
                 return { id, firstPass, deep, firstPassTarget: firstPass.length };
             });

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import {
+    EXTERIOR_FIRST_PASS_KIND_ORDER,
     EXTERIOR_OPPORTUNITY_PRIORITY,
     EXTERIOR_VISUAL_TIER,
     compareExteriorPriorityKeys,
@@ -11,6 +12,14 @@ assert.ok(EXTERIOR_OPPORTUNITY_PRIORITY['corner-media-band'] < EXTERIOR_OPPORTUN
 assert.ok(EXTERIOR_OPPORTUNITY_PRIORITY['facade-spectacle-span'] < EXTERIOR_OPPORTUNITY_PRIORITY['facade-poster-zone']);
 assert.equal(EXTERIOR_VISUAL_TIER.spectacle, 0);
 assert.ok(EXTERIOR_VISUAL_TIER.micro > EXTERIOR_VISUAL_TIER.macro);
+assert.ok(
+    EXTERIOR_FIRST_PASS_KIND_ORDER.indexOf('semantic-context-prop') < EXTERIOR_FIRST_PASS_KIND_ORDER.indexOf('graffiti'),
+    'macro contextual corpus props must be eligible before graffiti in the visible birth pass',
+);
+assert.ok(
+    EXTERIOR_FIRST_PASS_KIND_ORDER.indexOf('semantic-context-prop') < EXTERIOR_FIRST_PASS_KIND_ORDER.indexOf('flyer'),
+    'macro contextual corpus props must be eligible before flyers in the visible birth pass',
+);
 
 const large = { dimensionsXYZ: [4.8, 2.8, 0.25] };
 const small = { dimensionsXYZ: [0.45, 0.35, 0.18] };
@@ -50,5 +59,21 @@ const deep = exteriorTaskPriorityKey(
     { playerPosition: player, taskPosition: { x: 2, z: 0 }, firstPassIncomplete: true },
 );
 assert.ok(compareExteriorPriorityKeys(firstPass, deep) < 0, 'coverage-floor first-pass work must beat deepening while entities remain deprived');
+
+const macroContextBirth = exteriorTaskPriorityKey(
+    {
+        kind: 'semantic-context-prop', firstPassBundle: true, exteriorVisualTier: 'macro',
+        semanticVisualImpact: 24, entityId: 'machine-host', seed: 7,
+    },
+    { playerPosition: player, taskPosition: { x: 4.2, z: 0 }, firstPassIncomplete: true },
+);
+const flyerBirth = exteriorTaskPriorityKey(
+    { kind: 'flyer', firstPassBundle: true, entityId: 'paper-host', seed: 8 },
+    { playerPosition: player, taskPosition: { x: 3.5, z: 0 }, firstPassIncomplete: true },
+);
+assert.ok(
+    compareExteriorPriorityKeys(macroContextBirth, flyerBirth) < 0,
+    'once both are legitimate visible births in the same street pocket, a macro corpus prop must beat a flyer',
+);
 
 console.log('[exterior-spectacle-priority-selftest] PASS');

@@ -65,20 +65,27 @@ export const CONFIG = {
          
          
         urgentPumpChunks: 24,
-        prefetchPumpChunks: 16,
+        prefetchPumpChunks: 1,
         warmPumpChunks: 6,
         urgentBuildBudgetMs: 12,
         prefetchBuildBudgetMs: 8,
         warmBuildBudgetMs: 4,
         warmCooldownMs: 0,
 
+        // Distant prefetch is surplus work. It only resumes after the player has
+        // been effectively stationary and recent frames have stayed healthy.
+        prefetchHealthyFrameMs: 22,
+        prefetchMotionThreshold: 0.035,
+        prefetchPressureCooldownMs: 1800,
+        prefetchPostBuildCooldownMs: 650,
+
         // Live handoff uses explicit gears instead of letting every background
         // subsystem compete at once. Desktop gets a short, bounded sprint; weak
         // devices keep the same ordering with smaller slices.
         sprintBuildBudgetMsDesktop: 18,
         sprintBuildBudgetMsWeak: 10,
-        prefetchSprintBudgetMsDesktop: 14,
-        prefetchSprintBudgetMsWeak: 8,
+        prefetchSprintBudgetMsDesktop: 4,
+        prefetchSprintBudgetMsWeak: 2,
         visibleDetailBudgetMsDesktop: 6,
         visibleDetailBudgetMsWeak: 3,
         visibleDetailFloorDesktop: 8,

@@ -1,7 +1,7 @@
 import { cityAssetPlacementMetadata } from '../vendor/city-pack/placement-metadata.js';
 import { exteriorAssetVisualImpact } from './exterior-spectacle-priority.js';
 
-export const SEMANTIC_CONTEXT_MULTIPLIER_SCHEMA = 'jweb.semantic-context-multiplier.v2';
+export const SEMANTIC_CONTEXT_MULTIPLIER_SCHEMA = 'jweb.semantic-context-multiplier.v3';
 
 // This module is now a corpus-selection service, not a population authority.
 // The Exterior Composition Authority supplies one explicit request + one reserved
@@ -84,7 +84,6 @@ function isSemanticRuntimeProp(def) {
 
 function contextualRole(def) {
     if (!isSemanticRuntimeProp(def)) return null;
-    if ((def.collision ?? 'none') !== 'none') return null;
     const text = assetText(def);
     const placement = cityAssetPlacementMetadata(def);
     const mount = def?.placement?.mount ?? placement.mount ?? def.mount ?? 'ground';
@@ -102,16 +101,14 @@ function buildCatalog(assets) {
     if (catalogCache.has(assets)) return catalogCache.get(assets);
     const byRole = { wall: [], ground: [], roof: [] };
     let semanticProps = 0;
-    let rejectedCollider = 0;
+    let colliderBearingContextual = 0;
     for (const def of assets ?? []) {
         if (!isSemanticRuntimeProp(def)) continue;
         semanticProps++;
-        if ((def.collision ?? 'none') !== 'none') {
-            rejectedCollider++;
-            continue;
-        }
         const role = contextualRole(def);
-        if (role) byRole[role].push(def);
+        if (!role) continue;
+        byRole[role].push(def);
+        if ((def.collision ?? 'none') !== 'none') colliderBearingContextual++;
     }
     for (const pool of Object.values(byRole)) pool.sort((a, b) => String(a.id).localeCompare(String(b.id)));
     const contextualEligible = byRole.wall.length + byRole.ground.length + byRole.roof.length;
@@ -126,7 +123,11 @@ function buildCatalog(assets) {
             wallOutdoorBiased: byRole.wall.filter(def => WALL_OUTDOOR_RE.test(assetText(def))).length,
             ground: byRole.ground.length,
             roof: byRole.roof.length,
-            precommitOnlyBecauseCollider: rejectedCollider,
+            colliderBearingContextual,
+            // Compatibility counter retained for diagnostics: collider metadata no
+            // longer globally removes an asset from visual contextual planning.
+            precommitOnlyBecauseCollider: 0,
+            visualColliderPolicy: 'macro-only-deferred-proxy',
             plannerRequestOnly: true,
         },
     };
@@ -221,6 +222,11 @@ function scaleClassScore(def, scale, role, desiredScaleClass) {
     return 0;
 }
 
+function macroVisualRequest(request = {}) {
+    const scaleClass = String(request?.desiredScaleClass ?? '');
+    return scaleClass === 'large' || scaleClass === 'macro' || scaleClass === 'spectacle';
+}
+
 function chooseAsset(pool, context, opportunity, seed, request = {}, usedAssetIds = null) {
     if (!pool?.length) return null;
     const role = ROLE_BY_OPPORTUNITY[opportunity.role];
@@ -231,6 +237,10 @@ function chooseAsset(pool, context, opportunity, seed, request = {}, usedAssetId
     let bestFamilyMatch = null;
     for (let i = 0; i < Math.min(pool.length, CATALOG_SEARCH_DEPTH); i++) {
         const def = pool[(start + i * 17) % pool.length];
+        // Collision is architectural truth, not a reason to hide a high-value
+        // machine. Only explicit macro visual requests may defer activation;
+        // medium/micro decoration still requires collision-free candidates.
+        if ((def.collision ?? 'none') !== 'none' && !macroVisualRequest(request)) continue;
         const scale = fitScale(def, budget);
         if (scale < MIN_CONTEXT_PROP_SCALE) continue;
         const novelty = usedAssetIds?.has(def.id) ? -7 : 0;
@@ -275,6 +285,18 @@ export function selectSemanticContextAsset({ chunk, payload, assets, opportunity
     const chosen = chooseAsset(catalog.byRole[role], context, opportunity, seed, request, usedAssetIds);
     if (!chosen) return null;
     const { def, scale, visualImpact, budget } = chosen;
+    const collisionMode = def.collision ?? 'none';
+    const collisionDeferred = collisionMode !== 'none';
+    const [nativeWidth, nativeHeight, nativeDepth] = dimensions(def);
+    const collisionProxy = collisionDeferred ? {
+        shape: 'box',
+        width: nativeWidth * scale,
+        height: nativeHeight * scale,
+        depth: nativeDepth * scale,
+        anchor: budget.anchor,
+        sourceMode: collisionMode,
+        activation: 'deferred',
+    } : null;
     const placement = opportunity.transform;
     if (![placement?.x, placement?.y, placement?.z].every(Number.isFinite)) return null;
     const instanceId = `${chunk.key}:context-prop:${hash32(`${opportunity.id}:${def.id}:${request.planRequestId ?? ''}`)}`;
@@ -312,6 +334,10 @@ export function selectSemanticContextAsset({ chunk, payload, assets, opportunity
             instanceId,
         },
         semanticFit: { ...budget, scale, minScale: MIN_CONTEXT_PROP_SCALE, maxScale: 1 },
+        semanticCollisionMode: collisionMode,
+        semanticCollisionDeferred: collisionDeferred,
+        semanticCollisionPolicy: collisionDeferred ? 'topology-precommit-deferred-proxy' : 'none',
+        semanticCollisionProxy: collisionProxy,
         exteriorVisualTier: priorityTier,
         exteriorPlanOwner: request.planOwner ?? 'exterior-composition-authority',
         exteriorReservationOwner: request.reservationOwner ?? request.planRequestId ?? opportunity.id,
@@ -359,6 +385,9 @@ export function compileSemanticContextMultiplier({ chunk, payload, assets, reque
             ...catalog.stats,
             requests: requests.length,
             generated: tasks.length,
+            macroRequests: requests.filter(request => macroVisualRequest(request)).length,
+            macroGenerated: tasks.filter(task => macroVisualRequest(task.exteriorRequest)).length,
+            colliderDeferredVisuals: tasks.filter(task => task.semanticCollisionDeferred).length,
             uniqueAssets: usedAssetIds.size,
             roles,
             minScale: MIN_CONTEXT_PROP_SCALE,

@@ -57,9 +57,14 @@ export const EXTERIOR_TASK_KIND_PRIORITY = Object.freeze({
     'semantic-life': 6,
 });
 
+// Large real-corpus contextual geometry is allowed to satisfy the one-obvious-
+// birth pass before tiny flavor work. The runtime filters this kind to macro /
+// identity / spectacle tiers, so medium contextual hardware does not crowd out
+// the ordinary breadth contract.
 export const EXTERIOR_FIRST_PASS_KIND_ORDER = Object.freeze([
-    'roof-topper', 'sign', 'awning', 'roof-clutter', 'pipe', 'elevator-hardware',
-    'street-fixture', 'security', 'ivy', 'graffiti', 'spray-cans', 'flyer',
+    'semantic-context-prop', 'roof-topper', 'sign', 'awning', 'roof-clutter', 'pipe',
+    'elevator-hardware', 'street-fixture', 'security', 'ivy', 'graffiti',
+    'spray-cans', 'flyer',
 ]);
 
 function finite(value, fallback = 0) {

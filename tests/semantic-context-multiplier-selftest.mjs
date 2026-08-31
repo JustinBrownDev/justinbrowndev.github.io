@@ -43,6 +43,8 @@ const chunk = { key: '2,-3', seed: 123456 };
 const disabled = compileSemanticContextMultiplier({ chunk, payload, assets });
 assert.equal(disabled.tasks.length, 0, 'the corpus selector must never derive population from opportunity count');
 assert.equal(disabled.stats.automaticPopulationDisabled, true);
+assert.ok(disabled.stats.colliderBearingContextual >= 1, 'collider-bearing semantic props remain visible to the macro selector');
+assert.equal(disabled.stats.precommitOnlyBecauseCollider, 0, 'collision metadata no longer globally removes visual corpus candidates');
 
 const requests = [
     { opportunityId: 'wall-1', semanticFamily: 'security-hardware', desiredScaleClass: 'medium', priorityTier: 'medium' },
@@ -56,11 +58,14 @@ const b = compileSemanticContextMultiplier({ chunk, payload, assets, requests })
 assert.deepEqual(a, b, 'planner-requested corpus selection must remain deterministic');
 assert.equal(a.tasks.length, requests.length);
 assert.ok(a.tasks.every(task => task.kind === 'semantic-context-prop' && task.semanticOpportunityId && task.semanticPlacement));
-assert.ok(a.tasks.every(task => task.assetId !== 'needs-collider' && task.assetId !== 'not-semantic'));
+assert.ok(a.tasks.every(task => task.assetId !== 'not-semantic'));
+assert.ok(a.tasks.find(task => task.semanticOpportunityId === 'door-1')?.assetId !== 'needs-collider', 'medium contextual work must not opportunistically acquire deferred collision');
 assert.equal(a.tasks.find(task => task.semanticOpportunityId === 'sign-1')?.assetId, 'wall-megascreen', 'large sign host should receive the large fitting sign asset');
 assert.equal(a.tasks.find(task => task.semanticOpportunityId === 'service-1')?.assetId, 'wall-duct-riser', 'large vertical mechanical request should deliberately reach the duct-riser corpus');
 assert.equal(a.tasks.find(task => task.semanticOpportunityId === 'roof-1')?.assetId, 'roof-vent', 'roof macro request should deliberately reach roof mechanical corpus');
 assert.ok(a.tasks.every(task => task.exteriorPlanOwner && task.exteriorReservationOwner));
+assert.equal(a.stats.macroRequests, 3);
+assert.equal(a.stats.macroGenerated, 3);
 
 const denseWallOpportunities = Array.from({ length: 28 }, (_, i) => ({
     id: `dense-wall-${i}`, role: 'wall-mounted-prop-zone', entityId: 'dense', hostId: 'dense', surfaceId: 'dense:north',
@@ -81,4 +86,34 @@ assert.ok(denseRequested.tasks.length <= 2, 'explicit planner quantity must boun
 
 const direct = selectSemanticContextAsset({ chunk, payload, assets, opportunity: opportunities[4], request: requests[4] });
 assert.equal(direct?.assetId, 'wall-duct-riser');
+
+// Collider truth must no longer erase a high-value visual asset. Only an explicit
+// macro/large request may use it, and the returned task keeps a deferred proxy
+// descriptor instead of pretending collision was activated during visual detail.
+const macroCollider = def('macro-collider-machine', 'ground', 'industrial_machine', [2.4, 2.1, 1.8], ['industrial'], 'box');
+const macroOpportunity = {
+    id: 'macro-machine-op', role: 'ground-open-zone', entityId: 'b4', hostId: 'b4', contextId: 'ctx-b4',
+    transform: { x: 12, y: 0, z: 3, rotY: 0 }, clearanceBudget: { width: 3.0, height: 2.6, depth: 2.5 },
+};
+const macroPayload = {
+    entities: [{ id: 'b4', kind: 'building' }],
+    semanticContext: { entities: [{ id: 'ctx-b4', entityId: 'b4', program: 'industrial' }], spaces: [], opportunities: [macroOpportunity] },
+};
+const macroTask = selectSemanticContextAsset({
+    chunk, payload: macroPayload, assets: [macroCollider], opportunity: macroOpportunity,
+    request: { semanticFamily: 'any', desiredScaleClass: 'large', priorityTier: 'macro', planRequestId: 'macro-machine-request' },
+});
+assert.equal(macroTask?.assetId, 'macro-collider-machine');
+assert.equal(macroTask?.semanticCollisionMode, 'box');
+assert.equal(macroTask?.semanticCollisionDeferred, true);
+assert.equal(macroTask?.semanticCollisionProxy?.shape, 'box');
+assert.equal(macroTask?.semanticCollisionProxy?.activation, 'deferred');
+assert.ok(macroTask?.semanticCollisionProxy?.width > 0 && macroTask?.semanticCollisionProxy?.height > 0 && macroTask?.semanticCollisionProxy?.depth > 0);
+
+const mediumColliderTask = selectSemanticContextAsset({
+    chunk, payload: macroPayload, assets: [macroCollider], opportunity: macroOpportunity,
+    request: { semanticFamily: 'any', desiredScaleClass: 'medium', priorityTier: 'medium', planRequestId: 'medium-machine-request' },
+});
+assert.equal(mediumColliderTask, null, 'medium/micro contextual selection must not quietly create deferred collision debt');
+
 console.log('[semantic-context-multiplier-selftest] PASS', { requested: a.stats, denseRequested: denseRequested.tasks.length });

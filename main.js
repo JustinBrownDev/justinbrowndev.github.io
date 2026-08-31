@@ -40,7 +40,7 @@ import { createAuthoredContentHelpers } from './world/authored-content-helpers.j
 import { createSpawnMazePlan, createSpawnBuildingSitePlan } from './world/spawn-district-plan.js';
 import { provePlayableSpawn } from './world/spawn-proof.js';
 import { realizeSpawnLocation } from './world/spawn-location-realizer.js';
-import { WORLD_STREAMING_GEAR, choosePlayerCenteredStreamingGear, pointNearRegion, shouldRunAuthoredLocalWork } from './world/player-centered-streaming.js';
+import { WORLD_STREAMING_GEAR, choosePlayerCenteredStreamingGear, createPrefetchPressureGate, pointNearRegion, shouldRunAuthoredLocalWork } from './world/player-centered-streaming.js';
 import { createDynamicLightPool } from './systems/dynamic-light-pool.js';
 import { createRuntimeLatencyTelemetry } from './systems/runtime-latency.js';
 import { createMaterialRefinementController } from './systems/material-refinement.js';
@@ -3191,6 +3191,11 @@ let elapsedTime = QP[5340];
 let footstepTimer = QP[5341];
 let worldChunkPumpPromise = null;
 let worldChunkNextKickAt = 0;
+const worldPrefetchPressureGate = createPrefetchPressureGate({
+    frameBudgetMs: CONFIG.streaming.prefetchHealthyFrameMs,
+    motionDistance: CONFIG.streaming.prefetchMotionThreshold,
+    cooldownMs: CONFIG.streaming.prefetchPressureCooldownMs,
+});
 let authoredOptimizerNextAt = 0;
 let backgroundEnrichmentReleased = false;
 let authoredAssetLaneOpened = false;
@@ -3426,9 +3431,15 @@ function updateWorldStreamingGear(stats = worldChunkStreamer?.stats()) {
 }
 
 function pumpWorldChunksAggressively() {
-    if (!worldChunkStreamer || worldChunkPumpPromise || performance.now() < worldChunkNextKickAt) return;
+    const pumpNow = performance.now();
+    const prefetchPressure = worldPrefetchPressureGate.observe({ now: pumpNow, position: camera.position });
+    if (!worldChunkStreamer || worldChunkPumpPromise || pumpNow < worldChunkNextKickAt) return;
     const before = worldChunkStreamer.stats();
     const gear = updateWorldStreamingGear(before);
+    if (gear === WORLD_STREAMING_GEAR.PREFETCH_STRUCTURE && prefetchPressure.pressured) {
+        worldChunkNextKickAt = Math.max(worldChunkNextKickAt, prefetchPressure.pressureUntil);
+        return;
+    }
     const desktop = QUALITY === CONFIG.quality.desktop;
     const structureIncomplete = gear === WORLD_STREAMING_GEAR.VISIBLE_STRUCTURE;
     const maxChunks = structureIncomplete
@@ -3466,7 +3477,11 @@ function pumpWorldChunksAggressively() {
             : gear === WORLD_STREAMING_GEAR.PREFETCH_STRUCTURE
                 ? (desktop ? Math.min(1.25, CONFIG.streaming.visibleDetailBudgetMsDesktop) : Math.min(0.75, CONFIG.streaming.visibleDetailBudgetMsWeak))
                 : gear === WORLD_STREAMING_GEAR.LOCAL_DEEPEN ? CONFIG.streaming.warmBuildBudgetMs : Infinity;
-    const warmCooldownMs = gear === WORLD_STREAMING_GEAR.LOCAL_DEEPEN ? CONFIG.streaming.warmCooldownMs : 0;
+    const pumpCooldownMs = gear === WORLD_STREAMING_GEAR.LOCAL_DEEPEN
+        ? CONFIG.streaming.warmCooldownMs
+        : gear === WORLD_STREAMING_GEAR.PREFETCH_STRUCTURE
+            ? CONFIG.streaming.prefetchPostBuildCooldownMs
+            : 0;
     worldChunkPumpPromise = worldChunkStreamer.pump({
         maxChunks, maxMillis, maxRefinements, refineFirst, refinementBudgetMs,
     })
@@ -3479,7 +3494,7 @@ function pumpWorldChunksAggressively() {
         .catch(error => console.error('[world-error] chunk-pump | ' + diagnosticErrorText(error)))
         .finally(() => {
             worldChunkPumpPromise = null;
-            worldChunkNextKickAt = performance.now() + warmCooldownMs;
+            worldChunkNextKickAt = performance.now() + pumpCooldownMs;
         });
 }
 

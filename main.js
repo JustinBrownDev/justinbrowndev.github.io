@@ -2979,6 +2979,7 @@ const spawnRealization = spawnProof.location?.spatialPlan?.ready
     ? realizeSpawnLocation({
         THREE,
         scene,
+        camera,
         boundLocation: spawnProof.location,
         fabricPayloads: unifiedSpawnFabricPayloads,
         propColliders,

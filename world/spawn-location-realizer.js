@@ -1,3 +1,5 @@
+import { attachScreenMedia } from './screen-media-runtime.js';
+
 function finite(value, fallback = 0) {
     return Number.isFinite(value) ? value : fallback;
 }
@@ -159,6 +161,7 @@ function colliderFromPlacement(placement, surfaceY) {
 export function realizeSpawnLocation({
     THREE,
     scene,
+    camera = null,
     boundLocation,
     fabricPayloads,
     propColliders = null,
@@ -209,12 +212,20 @@ export function realizeSpawnLocation({
     if (Array.isArray(propColliders)) propColliders.push(...colliders);
     freezeObject(root);
 
+    const mediaController = attachScreenMedia({
+        THREE,
+        camera,
+        sockets: screenSockets,
+        mediaIntent: boundLocation?.composition?.media ?? null,
+    });
+
     const realization = {
         schema: 'jweb.spawn-location-realization.v1',
         locationId: boundLocation.locationId,
         hostSpaceId: hostSpace.spaceId,
         root,
         screenSockets,
+        mediaController,
         reservationsInstalled,
         colliders,
         colliderCount: colliders.length,

@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jweb.dev/schema/building-plan-sidecar.v1.json",
+  "title": "jweb Building Plan Sidecar v1",
+  "type": "object",
+  "required": ["schema", "deterministicKey", "architecturalField", "grammar", "envelope", "floors", "diagnostics"],
+  "properties": {
+    "schema": { "const": "jweb.building-plan-sidecar.v1" },
+    "deterministicKey": { "type": "string" },
+    "fingerprint": { "type": "string" },
+    "architecturalField": {
+      "type": "object",
+      "required": ["fidelity", "inversion", "entropy", "phase"],
+      "properties": {
+        "fidelity": { "type": "number", "minimum": 0, "maximum": 1 },
+        "inversion": { "type": "number", "minimum": 0, "maximum": 1 },
+        "entropy": { "type": "number", "minimum": 0, "maximum": 1 },
+        "phase": { "type": "string" }
+      }
+    },
+    "grammar": {
+      "type": "object",
+      "required": ["id", "physicalUseFamily", "semanticProgram"]
+    },
+    "envelope": {
+      "type": "object",
+      "required": ["modules", "authority"],
+      "properties": {
+        "authority": { "const": "existing-kowloon-envelope" },
+        "modules": { "type": "array", "minItems": 1 }
+      }
+    },
+    "floors": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["floor", "spaces", "edges", "openings", "facadeIntents", "diagnostics"]
+      }
+    },
+    "diagnostics": {
+      "type": "object",
+      "required": ["topologyHealthy", "physicalTruthPreserved", "inversionOperations"]
+    }
+  }
+}

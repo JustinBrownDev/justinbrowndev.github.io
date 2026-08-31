@@ -1,0 +1,99 @@
+{
+  "schema": "jweb.architecture-corpus-priors.seed.v1",
+  "status": "seeded-from-literature-and-observed-plan-regularities-not-a-statistical-export",
+  "warning": "These are intentionally conservative seed priors. They are not claimed to be measured frequencies from restricted datasets. Replace/augment them with licensed offline corpus-compiler output.",
+  "sourcesThatMotivatedRepresentation": [
+    "LIFULL HOME'S floor-plan corpus",
+    "RPLAN / Graph2Plan",
+    "House-GAN plan graphs",
+    "Swiss Dwellings",
+    "HouseExpo",
+    "FloorPlanCAD",
+    "3D-FRONT",
+    "CubiCasa5K",
+    "Structured3D",
+    "Zillow Indoor Dataset (ZInD)",
+    "HABS / HAER / HALS",
+    "GlobalBuildingAtlas",
+    "Google Open Buildings"
+  ],
+  "invariants": {
+    "graphBeforePartitions": true,
+    "circulationBeforeDecoration": true,
+    "programMaySpanStructuralModules": true,
+    "roomsMaySplitStructuralModules": true,
+    "facadeMustDeriveFromSpaceExposure": true,
+    "verticalConnectorsRemainPhysicalTruth": true,
+    "farFieldReversalMustPreserveReachability": true,
+    "kowloonOrganismIsPrimaryIdentity": true,
+    "yokochoEuljiroFrontageCadenceIsPrimaryStreetGrammar": true
+  },
+  "seedRanges": {
+    "circulationAreaFraction": [
+      0.08,
+      0.24
+    ],
+    "serviceAreaFraction": [
+      0.06,
+      0.24
+    ],
+    "dominantPublicOrWorkFraction": [
+      0.32,
+      0.68
+    ],
+    "repeatedCellDesiredAreaM2": [
+      12,
+      28
+    ],
+    "ordinaryFacadeBayWidthM": [
+      1.1,
+      2.6
+    ],
+    "publicFacadeOpeningRatio": [
+      0.42,
+      0.68
+    ],
+    "serviceFacadeOpeningRatio": [
+      0.04,
+      0.18
+    ],
+    "microFrontageBayWidthM": [
+      1.4,
+      3.6
+    ],
+    "alleyClearWidthTargetM": [
+      1.4,
+      2.8
+    ],
+    "tinyStreetRoomAreaM2": [
+      5,
+      18
+    ]
+  },
+  "compilerTargets": [
+    "space adjacency motif frequency",
+    "room area fraction by building/program family",
+    "room aspect ratio distribution",
+    "circulation depth and area fraction",
+    "doorway graph degree",
+    "exterior/daylight dependence by room role",
+    "repeated bay spacing",
+    "core position and vertical persistence",
+    "dominant-space ratio",
+    "graph depth and loop count",
+    "courtyard/lightwell frequency",
+    "frontage-to-depth ratio",
+    "mixed-use vertical transitions",
+    "footprint irregularity and room non-orthogonality"
+  ],
+  "designAuthority": {
+    "primary": "Kowloon Walled City as three-dimensional accreted organism",
+    "streetLayer": [
+      "Japanese yokocho micro-frontage alleys",
+      "Korean Euljiro service/workshop alleys"
+    ],
+    "corpusRole": "constraint and distribution library only; corpus may refine dimensions/topologies but may not average away the north star",
+    "spawn": "forensically plausible use hierarchy, frontage cadence, circulation, and service depth",
+    "farField": "same dense organism and frontage cadence with public/service/core/perimeter causality reversed while reachability stays authoritative"
+  }
+}

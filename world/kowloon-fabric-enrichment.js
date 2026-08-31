@@ -1649,12 +1649,51 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
             assets: SEMANTIC_INTERIOR_ASSETS,
             existingTasks: state.tasks,
         });
-        state.tasks.push(...semanticContextMultiplier.tasks);
-        state.semanticContextMultiplier = semanticContextMultiplier.stats;
+        // FACADE-SHELL FIRST PASS: preserve the existing visible identity birth
+        // for every entity, then require a small, broad wall-mounted sample before
+        // the neighborhood may leave first-pass mode. This makes nearby chunks ask
+        // for facade richness early without letting any one site monopolize depth.
+        const authoredFirstPassEntities = state.firstPassEntityTarget;
+        const earlyWallByEntity = new Map();
+        const shellContextTasks = [];
+        const deferredContextTasks = [];
+        for (const task of semanticContextMultiplier.tasks) {
+            const entityId = String(task.entityId ?? '');
+            const earlyCount = earlyWallByEntity.get(entityId) ?? 0;
+            if (task.semanticContextRole === 'wall' && earlyCount < 2) {
+                shellContextTasks.push(task);
+                earlyWallByEntity.set(entityId, earlyCount + 1);
+            } else {
+                deferredContextTasks.push(task);
+            }
+        }
+        const shellInsertAt = Math.min(state.tasks.length, authoredFirstPassEntities);
+        state.tasks = [
+            ...state.tasks.slice(0, shellInsertAt),
+            ...shellContextTasks,
+            ...state.tasks.slice(shellInsertAt),
+            ...deferredContextTasks,
+        ];
+        for (const [entityId, count] of earlyWallByEntity) {
+            if (!(count > 0)) continue;
+            const beforeTarget = Number(state.firstPassTargetByEntity?.[entityId]) || 0;
+            if (beforeTarget === 0) state.firstPassEntityTarget++;
+            state.firstPassTargetByEntity[entityId] = beforeTarget + count;
+            state.firstPassPublicationTarget += count;
+        }
+        state.firstPassTaskCount = state.firstPassPublicationTarget;
+        state.firstPassComplete = state.firstPassEntityTarget === 0;
+        state.semanticContextMultiplier = {
+            ...semanticContextMultiplier.stats,
+            shellFirstTasks: shellContextTasks.length,
+            deferredContextTasks: deferredContextTasks.length,
+        };
         state.topologyPrecommit = solveBlockingTopology(chunk, payload, state.tasks);
         const exteriorPropFieldTask = exteriorPropField.planTask(chunk, payload);
         if (exteriorPropFieldTask) {
-            state.tasks.unshift(exteriorPropFieldTask);
+            // Cheap primitive debris is seasoning. It must never preempt the
+            // facade shell or become the visual first impression of a new chunk.
+            state.tasks.push(exteriorPropFieldTask);
             state.exteriorPropField = exteriorPropFieldTask.fieldPlan.stats;
         } else {
             state.exteriorPropField = { generated: 0 };

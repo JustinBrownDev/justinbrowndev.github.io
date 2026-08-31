@@ -130,10 +130,16 @@ function buildCatalog() {
             }
         }
     }
+    const microExclude = /(shopping cart|wheelbarrow|broken table|broken chair|mattress|rolled carpet|utility box|bike rack|sawhorse|wooden pallet|tarp-covered pile|abandoned bike)/i;
+    const micro = descriptors.filter(descriptor => descriptor.sizeClass !== 'large' && !descriptor.largeAnchor && !microExclude.test(descriptor.baseName));
     const byContext = new Map();
-    for (const context of BULK_CONTEXTS) byContext.set(context, descriptors.filter(descriptor => descriptor.contexts.includes(context)));
-    const roof = descriptors.filter(descriptor => ROOF_FRIENDLY_RE.test(descriptor.baseName) && descriptor.sizeClass !== 'large');
-    return Object.freeze({ descriptors, byContext, roof });
+    const byContextMicro = new Map();
+    for (const context of BULK_CONTEXTS) {
+        byContext.set(context, descriptors.filter(descriptor => descriptor.contexts.includes(context)));
+        byContextMicro.set(context, micro.filter(descriptor => descriptor.contexts.includes(context)));
+    }
+    const roof = micro.filter(descriptor => ROOF_FRIENDLY_RE.test(descriptor.baseName));
+    return Object.freeze({ descriptors, micro, byContext, byContextMicro, roof });
 }
 
 const CATALOG = buildCatalog();
@@ -194,20 +200,20 @@ function candidateFits(payload, reservations, modules, candidate, padding = 0.16
     return true;
 }
 
-function placement(surface, descriptor, rng, u, outward, baseY, stackY = 0, scale = 1) {
+function placement(surface, descriptor, rng, u, outward, baseY, scale = 1) {
     const tangent = surfaceTangent(surface);
     const dims = dimensionsForDescriptor(descriptor, rng, scale);
-    const sideJitter = range(rng, -0.12, 0.12);
+    const sideJitter = range(rng, -0.08, 0.08);
     const x = finite(surface.x) + tangent.x * (u + sideJitter) + finite(surface.normalX) * outward;
     const z = finite(surface.z) + tangent.z * (u + sideJitter) + finite(surface.normalZ) * outward;
-    const rotY = finite(surface.rotY) + range(rng, -0.48, 0.48) + (rng() < 0.12 ? Math.PI * 0.5 : 0);
+    const rotY = finite(surface.rotY) + range(rng, -0.42, 0.42) + (rng() < 0.08 ? Math.PI * 0.5 : 0);
     return {
         shape: descriptor.shape,
         color: pick(rng, descriptor.colors),
-        x, y: baseY + stackY, z, rotY,
+        x, y: baseY, z, rotY,
         sx: dims.sx, sy: dims.sy, sz: dims.sz,
         surfaceId: surface.id,
-        domain: baseY > 0.4 ? 'roof-edge' : surface.exposure === 'street' ? 'street-wall-band' : 'alley-wall-band',
+        domain: 'ground-edge-micro',
     };
 }
 
@@ -215,43 +221,33 @@ function addWallField({ chunk, payload, placements, stats, reservations, modules
     const semantic = payload?.semanticContext;
     const surfaces = semantic?.surfaces ?? [];
     const apertures = semantic?.apertures ?? [];
-    const hardCap = 760;
     for (const surface of surfaces) {
-        if (placements.length >= hardCap) break;
         if (finite(surface.yMin) > 0.35) continue;
-        const surfaceRng = mulberry32(hash32(`${chunk.seed ?? chunk.key}:${chunk.key}:exterior-field:${surface.id}`));
+        const surfaceRng = mulberry32(hash32(`${chunk.seed ?? chunk.key}:${chunk.key}:exterior-micro:${surface.id}`));
         const context = contextForSurface(surface, contextByEntity, surfaceRng);
-        const pool = CATALOG.byContext.get(context) ?? CATALOG.byContext.get('alley') ?? CATALOG.descriptors;
+        const pool = CATALOG.byContextMicro.get(context) ?? CATALOG.byContextMicro.get('alley') ?? CATALOG.micro;
         if (!pool.length) continue;
         for (const [lo, hi] of freeIntervals(surface, apertures)) {
-            let cursor = lo + range(surfaceRng, 0.12, 0.55);
-            while (cursor < hi - 0.12 && placements.length < hardCap) {
-                if (surfaceRng() < 0.20) cursor += range(surfaceRng, 0.65, 1.75);
-                if (cursor >= hi - 0.12) break;
-                const intensity = surface.exposure === 'street' ? 1 : 1.18;
-                const clusterCount = Math.max(2, Math.floor((2 + surfaceRng() * 5) * intensity));
-                let stackTop = 0;
-                for (let i = 0; i < clusterCount && placements.length < hardCap; i++) {
-                    let descriptor = pick(surfaceRng, pool);
-                    if (descriptor.largeAnchor && surfaceRng() > 0.11) {
-                        const compact = pool.filter(candidate => !candidate.largeAnchor);
-                        if (compact.length) descriptor = pick(surfaceRng, compact);
-                    }
-                    const u = clamp(cursor + range(surfaceRng, -0.42, 0.42), lo + 0.06, hi - 0.06);
-                    const secondBand = surfaceRng() < 0.23;
-                    const outward = secondBand ? range(surfaceRng, 0.58, 0.94) : range(surfaceRng, 0.23, 0.58);
-                    const stacked = i > 1 && surfaceRng() < 0.22;
-                    const scale = stacked ? range(surfaceRng, 0.64, 0.90) : 1;
-                    const candidate = placement(surface, descriptor, surfaceRng, u, outward, Math.max(0, finite(surface.yMin)), stacked ? stackTop : 0, scale);
-                    if (!candidateFits(payload, reservations, modules, candidate, stacked ? 0.08 : 0.16)) {
-                        stats.rejected++;
-                        continue;
-                    }
-                    placements.push(candidate);
-                    stats.wallBand++;
-                    if (!stacked && surfaceRng() < 0.30) stackTop = Math.min(candidate.sy * range(surfaceRng, 0.45, 0.78), 0.72);
+            const width = hi - lo;
+            if (width < 0.7) continue;
+            const spacing = surface.exposure === 'street' ? 3.9 : 3.25;
+            const cells = Math.max(1, Math.floor(width / spacing));
+            const cellWidth = width / cells;
+            const chance = surface.exposure === 'street' ? 0.50 : 0.66;
+            for (let cell = 0; cell < cells; cell++) {
+                if (surfaceRng() > chance) continue;
+                const descriptor = pick(surfaceRng, pool);
+                const cellCenter = lo + cellWidth * (cell + 0.5);
+                const u = clamp(cellCenter + range(surfaceRng, -cellWidth * 0.25, cellWidth * 0.25), lo + 0.08, hi - 0.08);
+                const outward = range(surfaceRng, 0.23, 0.48);
+                const scale = range(surfaceRng, 0.62, 0.92);
+                const candidate = placement(surface, descriptor, surfaceRng, u, outward, Math.max(0, finite(surface.yMin)), scale);
+                if (!candidateFits(payload, reservations, modules, candidate, 0.14)) {
+                    stats.rejected++;
+                    continue;
                 }
-                cursor += range(surfaceRng, 0.48, 1.18);
+                placements.push(candidate);
+                stats.groundEdge++;
             }
         }
     }
@@ -268,31 +264,28 @@ function addRoofField({ chunk, payload, placements, stats, reservations }) {
     const opportunities = (payload?.semanticContext?.opportunities ?? []).filter(opportunity => opportunity?.role === 'roof-utility-zone' && opportunity.bounds);
     const roofPool = CATALOG.roof;
     if (!roofPool.length) return;
-    let roofCount = 0;
-    const roofCap = 128;
     for (const opportunity of opportunities) {
-        if (roofCount >= roofCap) break;
         const bounds = opportunity.bounds;
         if (!(finite(bounds.halfX) > 0.35) || !(finite(bounds.halfZ) > 0.35)) continue;
-        const rng = mulberry32(hash32(`${chunk.seed ?? chunk.key}:${chunk.key}:roof-field:${opportunity.id}`));
+        const rng = mulberry32(hash32(`${chunk.seed ?? chunk.key}:${chunk.key}:roof-micro:${opportunity.id}`));
         const perimeter = (bounds.halfX + bounds.halfZ) * 4;
-        const count = clamp(Math.floor(perimeter * range(rng, 0.34, 0.62)), 3, 13);
-        for (let i = 0; i < count && roofCount < roofCap; i++) {
+        const count = clamp(Math.floor(perimeter * 0.16 + rng() * 1.5), 1, 5);
+        for (let i = 0; i < count; i++) {
             const descriptor = pick(rng, roofPool);
             const edge = Math.floor(rng() * 4) % 4;
             const along = range(rng, -0.82, 0.82);
-            const inward = range(rng, 0.20, 0.54);
+            const inward = range(rng, 0.22, 0.50);
             const point = roofEdgePoint(bounds, rng, edge, along, inward);
-            const dims = dimensionsForDescriptor(descriptor, rng, range(rng, 0.68, 0.96));
+            const dims = dimensionsForDescriptor(descriptor, rng, range(rng, 0.58, 0.84));
             const candidate = {
                 shape: descriptor.shape,
                 color: pick(rng, descriptor.colors),
                 x: point.x,
                 y: finite(bounds.y) + 0.015,
                 z: point.z,
-                rotY: point.rotY + range(rng, -0.55, 0.55),
+                rotY: point.rotY + range(rng, -0.48, 0.48),
                 ...dims,
-                domain: 'roof-edge',
+                domain: 'roof-edge-micro',
                 opportunityId: opportunity.id,
             };
             if (anyReservationIntersectsBox(reservations, {
@@ -304,7 +297,6 @@ function addRoofField({ chunk, payload, placements, stats, reservations }) {
                 continue;
             }
             placements.push(candidate);
-            roofCount++;
             stats.roofEdge++;
         }
     }
@@ -323,35 +315,32 @@ function plazaEdges(entity) {
 }
 
 function addPlazaField({ chunk, payload, placements, stats, reservations, modules }) {
-    const pool = CATALOG.byContext.get('plaza')?.length ? CATALOG.byContext.get('plaza') : CATALOG.byContext.get('street');
+    const pool = CATALOG.byContextMicro.get('plaza')?.length ? CATALOG.byContextMicro.get('plaza') : CATALOG.byContextMicro.get('street');
     if (!pool?.length) return;
-    let emitted = 0;
-    const cap = 96;
     for (const entity of payload?.entities ?? []) {
-        if (emitted >= cap) break;
         if (entity?.kind !== 'plaza' && entity?.kind !== 'courtyard') continue;
-        const rng = mulberry32(hash32(`${chunk.seed ?? chunk.key}:${chunk.key}:plaza-field:${entity.id}`));
+        const rng = mulberry32(hash32(`${chunk.seed ?? chunk.key}:${chunk.key}:plaza-micro:${entity.id}`));
         for (const edge of plazaEdges(entity)) {
-            const target = clamp(Math.floor(edge.half * 2 * range(rng, 0.58, 1.05)), 2, 12);
-            for (let i = 0; i < target && emitted < cap; i++) {
+            const edgeMeters = edge.half * 2;
+            const target = clamp(Math.floor(edgeMeters * 0.14 + rng() * 0.9), 0, 3);
+            for (let i = 0; i < target; i++) {
                 const descriptor = pick(rng, pool);
-                const along = range(rng, -edge.half * 0.82, edge.half * 0.82);
-                const inward = range(rng, 0.28, 0.72);
-                const dims = dimensionsForDescriptor(descriptor, rng, range(rng, 0.78, 1.02));
+                const along = range(rng, -edge.half * 0.80, edge.half * 0.80);
+                const inward = range(rng, 0.30, 0.66);
+                const dims = dimensionsForDescriptor(descriptor, rng, range(rng, 0.62, 0.90));
                 const candidate = {
                     shape: descriptor.shape,
                     color: pick(rng, descriptor.colors),
                     x: edge.x + edge.tx * along + edge.nx * inward,
                     y: 0,
                     z: edge.z + edge.tz * along + edge.nz * inward,
-                    rotY: edge.ry + range(rng, -0.48, 0.48),
+                    rotY: edge.ry + range(rng, -0.42, 0.42),
                     ...dims,
-                    domain: 'courtyard-edge',
+                    domain: 'courtyard-edge-micro',
                     entityId: entity.id,
                 };
                 if (!candidateFits(payload, reservations, modules, candidate, 0.18)) { stats.rejected++; continue; }
                 placements.push(candidate);
-                emitted++;
                 stats.courtyardEdge++;
             }
         }
@@ -365,7 +354,7 @@ export function planExteriorPropField({ chunk, payload } = {}) {
         return { schema: EXTERIOR_PROP_FIELD_SCHEMA, placements: [], stats: { generated: 0, reason: 'no-exterior-topology' } };
     }
     const placements = [];
-    const stats = { generated: 0, wallBand: 0, courtyardEdge: 0, roofEdge: 0, rejected: 0, drawBuckets: 0 };
+    const stats = { generated: 0, groundEdge: 0, wallBand: 0, courtyardEdge: 0, roofEdge: 0, rejected: 0, drawBuckets: 0 };
     const reservations = reservationList(payload);
     const modules = footprintModules(payload);
     const contextByEntity = new Map((semantic?.entities ?? []).map(context => [context.entityId, context]));
@@ -375,11 +364,23 @@ export function planExteriorPropField({ chunk, payload } = {}) {
     addRoofField({ chunk, payload, placements, stats, reservations });
 
     const usedShapes = new Set(placements.map(item => item.shape));
+    const facadeMeters = (semantic?.surfaces ?? [])
+        .filter(surface => finite(surface.yMin) <= 0.35)
+        .reduce((sum, surface) => sum + Math.max(0, finite(surface.half) * 2), 0);
+    const roofPerimeterMeters = (semantic?.opportunities ?? [])
+        .filter(opportunity => opportunity?.role === 'roof-utility-zone' && opportunity.bounds)
+        .reduce((sum, opportunity) => sum + Math.max(0, (finite(opportunity.bounds.halfX) + finite(opportunity.bounds.halfZ)) * 4), 0);
     stats.generated = placements.length;
+    stats.wallBand = stats.groundEdge; // compatibility: this field is now explicitly ground micro-clutter.
+    stats.microClutter = stats.groundEdge + stats.courtyardEdge + stats.roofEdge;
     stats.drawBuckets = usedShapes.size;
     stats.reservations = reservations.length;
     stats.surfaces = semantic?.surfaces?.length ?? 0;
+    stats.facadeMeters = facadeMeters;
+    stats.roofPerimeterMeters = roofPerimeterMeters;
+    stats.groundPerFacadeMeter = facadeMeters > 0 ? stats.groundEdge / facadeMeters : 0;
     stats.instancesPerDrawBucket = usedShapes.size ? placements.length / usedShapes.size : 0;
+    stats.physicalDensityNormalized = true;
     return { schema: EXTERIOR_PROP_FIELD_SCHEMA, placements, stats };
 }
 

@@ -202,6 +202,57 @@ function pointForSurface(surface, u, y, outward = 0.03) {
     };
 }
 
+function facadeHardwareSlots(surface, lo, hi, intervalIndex) {
+    const width = Math.max(0, hi - lo);
+    const yMin = finite(surface.yMin);
+    const yMax = finite(surface.yMax, yMin + 2.6);
+    const low = Math.min(yMax - 0.35, yMin + 2.05);
+    const high = yMax - 0.45;
+    if (width < 0.55 || high < low) return [];
+
+    // Facades are two-dimensional decoration surfaces. Density is derived from
+    // physical width/height, not from how many payload objects happen to own the
+    // same neighborhood. This keeps authored spawn and ordinary streamed chunks
+    // on the same visual law.
+    const columns = clamp(Math.ceil(width / 2.65), 1, 4);
+    const rows = clamp(Math.floor((high - low) / 2.55) + 1, 1, 7);
+    const slots = [];
+    for (let row = 0; row < rows; row++) {
+        const y = rows === 1 ? low : low + (high - low) * (row / Math.max(1, rows - 1));
+        const floor = Math.max(0, Math.floor((y - yMin) / 3.15));
+        for (let col = 0; col < columns; col++) {
+            const cellLo = lo + width * (col / columns);
+            const cellHi = lo + width * ((col + 1) / columns);
+            const u = (cellLo + cellHi) * 0.5;
+            slots.push({
+                id: `${surface.id}:hardware-grid:${intervalIndex}:${row}:${col}`,
+                role: 'wall-mounted-prop-zone',
+                surfaceId: surface.id,
+                hostId: surface.entityId,
+                entityId: surface.entityId,
+                moduleKey: surface.moduleKey,
+                facadeIndex: surface.facadeIndex,
+                side: surface.side,
+                exposure: surface.exposure,
+                u,
+                along: surface.half > 0 ? clamp(u / surface.half, -0.94, 0.94) : 0,
+                availableWidth: cellHi - cellLo,
+                contextId: null,
+                spatialTopologyHostId: surface.id,
+                transform: pointForSurface(surface, u, y, 0.045),
+                clearanceBudget: {
+                    width: Math.max(0.48, Math.min(1.75, (cellHi - cellLo) * 0.82)),
+                    height: Math.max(0.58, Math.min(1.65, rows > 1 ? 1.45 : high - low + 0.45)),
+                },
+                layer: verticalLayer(y, floor),
+                facadeBand: row === 0 ? 'street' : y >= 18 ? 'upper' : y >= 7 ? 'mid' : 'lower',
+                shellPriority: row < 2 ? 'first-pass' : 'deepen',
+            });
+        }
+    }
+    return slots;
+}
+
 function facadeOpportunities(surfaces, apertures, contextByEntity) {
     const opportunities = [];
     for (const surface of surfaces) {
@@ -223,17 +274,18 @@ function facadeOpportunities(surfaces, apertures, contextByEntity) {
                 id: `${surface.id}:sign:${index}`, role: 'facade-sign-zone', ...base,
                 transform: pointForSurface(surface, u, signY, 0.035),
                 clearanceBudget: { width, height: Math.max(0.5, surface.yMax - signY) },
+                layer: verticalLayer(signY), shellPriority: 'first-pass',
             });
             opportunities.push({
                 id: `${surface.id}:poster:${index}`, role: 'facade-poster-zone', ...base,
                 transform: pointForSurface(surface, u, clamp(surface.yMin + 1.45, surface.yMin + 1, surface.yMax - 0.4), 0.025),
                 clearanceBudget: { width, height: 1.2 },
+                layer: 'street', shellPriority: 'deepen',
             });
-            opportunities.push({
-                id: `${surface.id}:hardware:${index}`, role: 'wall-mounted-prop-zone', ...base,
-                transform: pointForSurface(surface, u, clamp(surface.yMin + 2.05, surface.yMin + 1.2, surface.yMax - 0.35), 0.04),
-                clearanceBudget: { width, height: 1.4 },
-            });
+            for (const slot of facadeHardwareSlots(surface, lo, hi, index)) {
+                slot.contextId = context?.id ?? null;
+                opportunities.push(slot);
+            }
         });
 
         for (const aperture of apertures.filter(item => item.surfaceId === surface.id && item.traversable)) {
@@ -250,6 +302,7 @@ function facadeOpportunities(surfaces, apertures, contextByEntity) {
                     spatialTopologyHostId: surface.id,
                     transform: pointForSurface(surface, u, surface.yMin, 0.16),
                     clearanceBudget: { width: 0.55, depth: 0.65 },
+                    layer: 'street', shellPriority: 'deepen',
                 });
             }
         }

@@ -8,6 +8,14 @@ const ROLE_BY_OPPORTUNITY = Object.freeze({
     'roof-utility-zone': 'roof',
 });
 
+const OPPORTUNITY_PRIORITY = Object.freeze({
+    'wall-mounted-prop-zone': 0,
+    'facade-sign-zone': 1,
+    'facade-poster-zone': 2,
+    'roof-utility-zone': 3,
+    'beside-door-zone': 4,
+});
+
 const PROGRAM_ALIASES = Object.freeze({
     commercial: ['bar', 'barber', 'cafe', 'convenience', 'diner', 'florist', 'grocery', 'hardware_store', 'pharmacy', 'shop', 'store', 'workshop'],
     office: ['office', '1980s_office', 'bank', 'archive', 'library', 'post_office', 'radio_station', 'server_room', 'mainframe_room'],
@@ -19,9 +27,11 @@ const PROGRAM_ALIASES = Object.freeze({
 
 const GROUND_CONTEXT_RE = /(bench|chair|stool|crate|box|cabinet|locker|cart|bin|trash|planter|vending|machine|rack|cone|barrel|bucket|case|tool|pump|trolley|bicycle|fan|lamp|light|table|stand|canister|tank|compressor|generator|washer|dryer|refrigerator|freezer|newspaper|phone|atm|kiosk|spool)/i;
 const ROOF_CONTEXT_RE = /(vent|fan|duct|hvac|antenna|tank|pump|generator|transformer|compressor|satellite|air.?condition|condenser|exhaust|boiler|electrical|utility|radio|mast|dish|cooling|blower)/i;
-const MAX_CONTEXT_PROPS_PER_ENTITY = 8;
+const WALL_OUTDOOR_RE = /(camera|cctv|security|light|lamp|sconce|fan|vent|duct|hvac|air.?condition|condenser|meter|panel|electrical|utility|junction|alarm|speaker|antenna|dish|cable|conduit|pipe|hose|fire|sign|notice|intercom|transformer|service)/i;
+const WALL_INDOOR_RE = /(painting|portrait|picture|mirror|clock|whiteboard|blackboard|chalkboard|bookshelf|bedroom|bathroom|kitchen|classroom)/i;
 const MIN_CONTEXT_PROP_SCALE = 0.16;
-const CATALOG_SEARCH_DEPTH = 160;
+const CATALOG_SEARCH_DEPTH = 192;
+const MAX_CONTEXT_TASKS = 320;
 
 const catalogCache = new WeakMap();
 
@@ -86,6 +96,7 @@ function buildCatalog(assets) {
             semanticProps,
             contextualEligible: byRole.wall.length + byRole.ground.length + byRole.roof.length,
             wall: byRole.wall.length,
+            wallOutdoorBiased: byRole.wall.filter(def => WALL_OUTDOOR_RE.test(assetText(def))).length,
             ground: byRole.ground.length,
             roof: byRole.roof.length,
             precommitOnlyBecauseCollider: rejectedCollider,
@@ -134,20 +145,34 @@ function fitScale(def, budget) {
     return Math.min(1, budget.width / width, budget.height / height, budget.depth / depth);
 }
 
+function contextualAssetScore(def, context, role) {
+    let score = programScore(def, context) * 3;
+    if (role === 'wall') {
+        const text = assetText(def);
+        if (WALL_OUTDOOR_RE.test(text)) score += 6;
+        if (WALL_INDOOR_RE.test(text)) score -= 4;
+        const [, , depth] = dimensions(def);
+        if (depth <= 0.55) score += 1;
+    } else if (role === 'roof' && ROOF_CONTEXT_RE.test(assetText(def))) {
+        score += 3;
+    }
+    return score;
+}
+
 function chooseAsset(pool, context, opportunity, seed) {
     if (!pool?.length) return null;
-    const budget = fitBudget(opportunity, ROLE_BY_OPPORTUNITY[opportunity.role]);
+    const role = ROLE_BY_OPPORTUNITY[opportunity.role];
+    const budget = fitBudget(opportunity, role);
     const start = seed % pool.length;
-    let fallback = null;
+    let best = null;
     for (let i = 0; i < Math.min(pool.length, CATALOG_SEARCH_DEPTH); i++) {
         const def = pool[(start + i * 17) % pool.length];
         const scale = fitScale(def, budget);
         if (scale < MIN_CONTEXT_PROP_SCALE) continue;
-        const candidate = { def, scale, score: programScore(def, context) };
-        if (candidate.score) return candidate;
-        if (!fallback) fallback = candidate;
+        const candidate = { def, scale, score: contextualAssetScore(def, context, role), ordinal: i };
+        if (!best || candidate.score > best.score || (candidate.score === best.score && candidate.ordinal < best.ordinal)) best = candidate;
     }
-    return fallback;
+    return best;
 }
 
 function contextMap(semanticContext) {
@@ -157,14 +182,78 @@ function contextMap(semanticContext) {
     return map;
 }
 
+function opportunityRoleCounts(semanticContext, entityId) {
+    const counts = { wall: 0, ground: 0, roof: 0 };
+    for (const opportunity of semanticContext?.opportunities ?? []) {
+        const id = opportunity.entityId ?? opportunity.hostId ?? null;
+        if (id !== entityId) continue;
+        const role = ROLE_BY_OPPORTUNITY[opportunity.role];
+        if (role) counts[role]++;
+    }
+    return counts;
+}
+
+function entityPhysicalBudget(semanticContext, entityId) {
+    const surfaces = (semanticContext?.surfaces ?? []).filter(surface => surface?.entityId === entityId);
+    let wallArea = 0;
+    let facadeMeters = 0;
+    for (const surface of surfaces) {
+        const width = Math.max(0, finite(surface.half) * 2);
+        const height = Math.max(0, finite(surface.yMax) - finite(surface.yMin));
+        facadeMeters += width;
+        wallArea += width * height;
+    }
+    const available = opportunityRoleCounts(semanticContext, entityId);
+    const wallNatural = surfaces.length ? clamp(Math.round(wallArea / 8.5 + facadeMeters / 16), 6, 30) : clamp(available.wall, 0, 12);
+    const roofNatural = clamp(Math.ceil(available.roof * 0.75), 0, 4);
+    const groundNatural = clamp(Math.ceil(available.ground * 0.50), 0, 3);
+    const budget = {
+        wall: Math.min(available.wall, wallNatural),
+        roof: Math.min(available.roof, roofNatural),
+        ground: Math.min(available.ground, groundNatural),
+        wallArea,
+        facadeMeters,
+    };
+    budget.total = budget.wall + budget.roof + budget.ground;
+    return budget;
+}
+
 function rankedOpportunities(chunk, semanticContext, occupied) {
-    return (semanticContext?.opportunities ?? [])
-        .filter(opportunity => ROLE_BY_OPPORTUNITY[opportunity?.role])
-        .filter(opportunity => opportunity?.decorationMayIntrude !== false)
-        .filter(opportunity => !occupied.has(opportunity.id))
-        .filter(opportunity => Number.isFinite(opportunity?.transform?.x) && Number.isFinite(opportunity?.transform?.y) && Number.isFinite(opportunity?.transform?.z))
-        .map(opportunity => ({ opportunity, rank: hash32(`${chunk?.key ?? 'world'}:semantic-context-multiplier:${opportunity.id}`) }))
-        .sort((a, b) => a.rank - b.rank || String(a.opportunity.id).localeCompare(String(b.opportunity.id)));
+    const grouped = new Map();
+    for (const opportunity of semanticContext?.opportunities ?? []) {
+        const role = ROLE_BY_OPPORTUNITY[opportunity?.role];
+        if (!role || opportunity?.decorationMayIntrude === false || occupied.has(opportunity.id)) continue;
+        if (!Number.isFinite(opportunity?.transform?.x) || !Number.isFinite(opportunity?.transform?.y) || !Number.isFinite(opportunity?.transform?.z)) continue;
+        const entityId = opportunity.entityId ?? opportunity.hostId ?? '__world__';
+        const entry = {
+            opportunity,
+            entityId,
+            role,
+            priority: OPPORTUNITY_PRIORITY[opportunity.role] ?? 9,
+            rank: hash32(`${chunk?.key ?? 'world'}:semantic-context-multiplier:${opportunity.id}`),
+        };
+        const list = grouped.get(entityId) ?? [];
+        list.push(entry);
+        grouped.set(entityId, list);
+    }
+
+    const queues = [...grouped.entries()].sort((a, b) => String(a[0]).localeCompare(String(b[0])));
+    for (const [, queue] of queues) queue.sort((a, b) => a.priority - b.priority || a.rank - b.rank || String(a.opportunity.id).localeCompare(String(b.opportunity.id)));
+
+    // Round-robin across entities so the visible shell gets broader before any
+    // single authored site or procedural building gets to deepen. This removes
+    // payload-count amplification at spawn while keeping wall hardware dominant.
+    const ranked = [];
+    for (let layer = 0; ; layer++) {
+        let emitted = 0;
+        for (const [, queue] of queues) {
+            if (!queue[layer]) continue;
+            ranked.push(queue[layer]);
+            emitted++;
+        }
+        if (!emitted) break;
+    }
+    return ranked;
 }
 
 export function compileSemanticContextMultiplier({ chunk, payload, assets, existingTasks = [], maxTasks = null } = {}) {
@@ -178,23 +267,24 @@ export function compileSemanticContextMultiplier({ chunk, payload, assets, exist
     const contexts = contextMap(semanticContext);
     const occupied = new Set(existingTasks.map(task => task?.semanticOpportunityId).filter(Boolean));
     const opportunities = rankedOpportunities(chunk, semanticContext, occupied);
-    const buildingCount = (payload.entities ?? []).filter(entity => entity?.kind === 'building').length;
-    const limit = Math.max(0, Math.floor(maxTasks ?? clamp(24 + Math.ceil(buildingCount * 5.5), 36, 128)));
-    const perEntity = new Map();
+    const entityIds = [...new Set(opportunities.map(entry => entry.entityId))];
+    const budgetByEntity = new Map(entityIds.map(entityId => [entityId, entityPhysicalBudget(semanticContext, entityId)]));
+    const naturalLimit = [...budgetByEntity.values()].reduce((sum, budget) => sum + budget.total, 0);
+    const limit = Math.max(0, Math.floor(maxTasks ?? clamp(naturalLimit, 0, MAX_CONTEXT_TASKS)));
+    const perEntityRole = new Map();
     const tasks = [];
     const usedAssetIds = new Set();
     const roleCounts = { wall: 0, ground: 0, roof: 0 };
 
-    for (const { opportunity } of opportunities) {
+    for (const { opportunity, entityId, role } of opportunities) {
         if (tasks.length >= limit) break;
-        const role = ROLE_BY_OPPORTUNITY[opportunity.role];
         const pool = catalog.byRole[role];
         if (!pool?.length) continue;
-        const entityId = opportunity.entityId ?? opportunity.hostId ?? null;
-        const entityUses = perEntity.get(entityId) ?? 0;
-        if (entityUses >= MAX_CONTEXT_PROPS_PER_ENTITY) continue;
+        const entityBudget = budgetByEntity.get(entityId) ?? { wall: 0, ground: 0, roof: 0, total: 0 };
+        const usage = perEntityRole.get(entityId) ?? { wall: 0, ground: 0, roof: 0 };
+        if ((usage[role] ?? 0) >= (entityBudget[role] ?? 0)) continue;
         const context = contexts.get(opportunity.contextId) ?? null;
-        const seed = hash32(`${chunk.key}:${opportunity.id}:${context?.program ?? 'mixed'}:${tasks.length}`);
+        const seed = hash32(`${chunk.key}:${opportunity.id}:${context?.program ?? 'mixed'}:${usage[role] ?? 0}`);
         const chosen = chooseAsset(pool, context, opportunity, seed);
         if (!chosen) continue;
         const { def, scale } = chosen;
@@ -214,6 +304,7 @@ export function compileSemanticContextMultiplier({ chunk, payload, assets, exist
             spatialTopologyHostId: opportunity.spatialTopologyHostId ?? null,
             semanticContextRole: role,
             semanticLayer: opportunity.layer ?? context?.layer ?? null,
+            semanticShellPriority: opportunity.shellPriority ?? (role === 'wall' ? 'deepen' : 'ambient'),
             semanticPlacement: {
                 x: placement.x,
                 y: placement.y,
@@ -226,11 +317,13 @@ export function compileSemanticContextMultiplier({ chunk, payload, assets, exist
             semanticFit: { ...budget, scale, minScale: MIN_CONTEXT_PROP_SCALE, maxScale: 1 },
             contextualCosmetic: true,
         });
-        perEntity.set(entityId, entityUses + 1);
+        usage[role] = (usage[role] ?? 0) + 1;
+        perEntityRole.set(entityId, usage);
         usedAssetIds.add(def.id);
         roleCounts[role]++;
     }
 
+    const entityBudgets = Object.fromEntries([...budgetByEntity.entries()].map(([entityId, budget]) => [entityId, budget]));
     return {
         schema: SEMANTIC_CONTEXT_MULTIPLIER_SCHEMA,
         tasks,
@@ -242,7 +335,8 @@ export function compileSemanticContextMultiplier({ chunk, payload, assets, exist
             uniqueAssets: usedAssetIds.size,
             roles: roleCounts,
             maxTasks: limit,
-            maxPerEntity: MAX_CONTEXT_PROPS_PER_ENTITY,
+            naturalTaskBudget: naturalLimit,
+            entityBudgets,
             minScale: MIN_CONTEXT_PROP_SCALE,
             catalogSearchDepth: CATALOG_SEARCH_DEPTH,
         },

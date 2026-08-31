@@ -1,3 +1,4 @@
+import { CUT_AUTHORED_SPAWN_DECORATION } from '../config/performance-isolation.js';
 import * as THREE from '../vendor/three/three.module.js';
 import { QP } from '../runtime/main-quantitative-literals.js';
 import { PHOTO_BY_TITLE } from '../content/photo-catalog.js';
@@ -208,6 +209,7 @@ export function createSignageSystem(deps) {
      
      
     function addSecurityCamera(x, z, rotY, buildingHeight) {
+        if (CUT_AUTHORED_SPAWN_DECORATION) return 0;
         const y = randRange(QP[2981], Math.min(buildingHeight - QP[2982], QP[2983]));
         const g = new THREE.Group();
         const bracket = new THREE.Mesh(
@@ -244,6 +246,7 @@ export function createSignageSystem(deps) {
      
      
     function addRooftopClutter(x, z, footprint, height, maintenance = QP[3025]) {
+        if (CUT_AUTHORED_SPAWN_DECORATION) return 0;
         const metalMat = new THREE.MeshStandardMaterial({ color: QP[3026], roughness: QP[3027], metalness: QP[3028] });
          
          

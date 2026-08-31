@@ -1,3 +1,4 @@
+import { CUT_AUTHORED_SPAWN_DECORATION } from '../config/performance-isolation.js';
 import * as THREE from '../vendor/three/three.module.js';
 import { QP } from '../runtime/main-quantitative-literals.js';
 import { SpatialHash2D } from '../city-performance.js';
@@ -20,6 +21,7 @@ export function createStreetPropsSystem(deps) {
     }
 
     function addPottedPlant(x, z) {
+        if (CUT_AUTHORED_SPAWN_DECORATION) return 0;
         const thriving = rng() < QP[3775];
         const pot = new THREE.Mesh(
             jitterGeometry(new THREE.CylinderGeometry(QP[3776], QP[3777], QP[3778], QP[3779]), QP[3780]),
@@ -189,6 +191,7 @@ export function createStreetPropsSystem(deps) {
      
      
     function scatterJunk(context, x, z, count, spread, axis = null) {
+        if (CUT_AUTHORED_SPAWN_DECORATION) return;
         const pool = JUNK_BY_CONTEXT.get(context) || [];
         if (!pool.length) return;
         for (let i = QP[4378]; i < count; i++) {
@@ -221,6 +224,7 @@ export function createStreetPropsSystem(deps) {
     PILE_JUNK_BY_CONTEXT.set('rooftop', JUNK_DESCRIPTORS.filter(d => pileFriendly.test(d.name) && !/large\)/i.test(d.name)));
 
     function pileJunkCluster(context, x, z, opts = {}) {
+        if (CUT_AUTHORED_SPAWN_DECORATION) return null;
         const pool = PILE_JUNK_BY_CONTEXT.get(context) || PILE_JUNK_BY_CONTEXT.get('alley') || [];
         if (!pool.length) return null;
         const baseY = opts.baseY ?? QP[4384];

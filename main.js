@@ -1,3 +1,4 @@
+import { CUT_AUTHORED_SPAWN_DECORATION } from './config/performance-isolation.js';
 import * as THREE from 'three';
 import { PointerLockControls } from './vendor/three/addons/controls/PointerLockControls.js';
 import { EffectComposer } from './vendor/three/addons/postprocessing/EffectComposer.js';
@@ -2759,6 +2760,7 @@ function maybeMarkSpawnDistrictStructuresComplete() {
 }
 
 function addBench(x, z, rotY) {
+        if (CUT_AUTHORED_SPAWN_DECORATION) return 0;
     const g = new THREE.Group();
     const seat = new THREE.Mesh(skirtBoxGeo, sharedBenchMaterial);
     seat.scale.set(QP[4911], QP[4912], QP[4913]);

@@ -1,3 +1,4 @@
+import { CUT_COMMON_KOWLOON_ENRICHMENT } from '../config/performance-isolation.js';
 import { hashString32 } from '../world-chunk-streamer.js';
 import { pickMassiveNoisePair, pickPoetryTag } from '../noise-data-bootstrap.js';
 import { BASE_GRAFFITI_TAGS } from '../content/graffiti-content.js';
@@ -220,6 +221,22 @@ function freezeObject(object) {
     object.updateMatrixWorld?.(true);
     object.matrixAutoUpdate = false;
     if ('matrixWorldAutoUpdate' in object) object.matrixWorldAutoUpdate = false;
+}
+
+
+const DIAGNOSTIC_SIGNAGE_RE = /(?:^|[-_ ])(?:sign|signage|billboard|megascreen|screen|marquee|poster|flyer|graffiti|plaque|terminal)(?:$|[-_ ])/i;
+const DIAGNOSTIC_SMALL_PROP_RE = /(?:pipe|duct|hvac|vent|fixture|clutter|ivy|security|spray|awning|interior|semantic-prop|street-fixture|furniture|crate|trash|plant|bench|bollard|overhead-cable|elevator-hardware)/i;
+const DIAGNOSTIC_ARCHITECTURE_RE = /(?:^|[-_ ])(?:roof-topper)(?:$|[-_ ])/i;
+function keepTaskUnderCommonDiagnosticCut(task) {
+    if (!CUT_COMMON_KOWLOON_ENRICHMENT) return true;
+    const label = [
+        task?.kind, task?.semanticFamily, task?.exteriorSemanticFamily,
+        task?.request?.kind, task?.request?.semanticFamily, task?.assetId,
+    ].filter(Boolean).join(' ');
+    if (DIAGNOSTIC_SIGNAGE_RE.test(label) || DIAGNOSTIC_ARCHITECTURE_RE.test(label)) return true;
+    const tier = String(task?.exteriorVisualTier ?? task?.priorityTier ?? '').toLowerCase();
+    if ((tier === 'spectacle' || tier === 'macro' || tier === 'identity') && !DIAGNOSTIC_SMALL_PROP_RE.test(label)) return true;
+    return false;
 }
 
 export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDetailPhysics = null } = {}) {
@@ -949,7 +966,7 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
             kind: 'roof-topper', entityId: entity.id, topper: entity.roofTopper,
             seed: taskSeed(chunk, entity.id, 'roof-topper'),
         });
-        return tasks;
+        return CUT_COMMON_KOWLOON_ENRICHMENT ? tasks.filter(keepTaskUnderCommonDiagnosticCut) : tasks;
     }
 
     function planPlazaTasks(chunk, entity) {
@@ -973,7 +990,7 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
             z: entity.z + (rng() - 0.5) * Math.max(1.1, (entity.halfZ || 2) * 0.72),
             title, subtitle, seed,
         });
-        return tasks;
+        return CUT_COMMON_KOWLOON_ENRICHMENT ? tasks.filter(keepTaskUnderCommonDiagnosticCut) : tasks;
     }
 
     function firstPassClass(taskOrKind) {
@@ -1090,7 +1107,7 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
                 tasks.push({ kind: 'overhead-cable', entityId: a.id, otherEntityId: b.id, axis, seed: hashString32(`${worldSeed}:cable-task:${chunk.key}:${identity}`) });
             }
         }
-        return tasks;
+        return CUT_COMMON_KOWLOON_ENRICHMENT ? tasks.filter(keepTaskUnderCommonDiagnosticCut) : tasks;
     }
 
     function plan(chunk, entities) {
@@ -1870,7 +1887,7 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
                 };
             },
         });
-        state.tasks = exteriorComposition.tasks;
+        state.tasks = CUT_COMMON_KOWLOON_ENRICHMENT ? exteriorComposition.tasks.filter(keepTaskUnderCommonDiagnosticCut) : exteriorComposition.tasks;
         state.exteriorComposition = { ...exteriorComposition.stats, media: mediaStats };
         state.exteriorCoverage = createExteriorCoverageRuntime(exteriorComposition);
         if (semanticPlanning) state.semanticPlanning = semanticPlanning;

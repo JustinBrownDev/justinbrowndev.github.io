@@ -1,3 +1,4 @@
+import { CUT_AUTHORED_SPAWN_DECORATION } from '../config/performance-isolation.js';
 import * as THREE from '../vendor/three/three.module.js';
 import { GLTFLoader } from '../vendor/three/addons/loaders/GLTFLoader.js';
 import { CLAUDE_CITY_ASSETS } from '../vendor/city-pack/asset-catalog.js';
@@ -138,6 +139,7 @@ export function createAdornmentSystem({ CONFIG, camera, scene, pick, randRange, 
     }
 
     function placeRealModel(name, x, z, rotY, opts = {}) {
+        if (CUT_AUTHORED_SPAWN_DECORATION) return false;
         // Normal world generation intentionally has no wrought-iron gate placement.
         if (name === 'ironGate') return false;
         if (!REAL_MODEL_DEFS[name] || failedRealModelLoads.has(name)) return false;
@@ -277,6 +279,7 @@ export function createAdornmentSystem({ CONFIG, camera, scene, pick, randRange, 
      
      
     function placeCityAsset(id, x, z, rotY = QP[406], opts = {}) {
+        if (CUT_AUTHORED_SPAWN_DECORATION) return false;
         const def = CITY_ASSET_BY_ID.get(id);
         if (!def) { console.warn(`[testing] unknown city-pack asset "${id}"`); return false; }
         if (failedCityAssetLoads.has(id)) return false;
@@ -426,6 +429,7 @@ export function createAdornmentSystem({ CONFIG, camera, scene, pick, randRange, 
         return state.supports[state.supportCursor++ % state.supports.length];
     }
     function placeSemanticCityAsset(rect, id, yLevel = QP[474], opts = {}) {
+        if (CUT_AUTHORED_SPAWN_DECORATION) return null;
         const def = CITY_ASSET_BY_ID.get(id);
         if (!rect || !def) return null;
         const { min, max } = semanticAssetBounds(def);

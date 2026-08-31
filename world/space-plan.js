@@ -1,3 +1,9 @@
+import {
+    spatialBoxGeometry,
+    spatialClaimFromCirculationReservation,
+    spatialGeometryIntersects,
+} from './spatial-claims.js';
+
 export const SPACE_PLAN_SCHEMA = 'jweb.space-plan.v1';
 
 function finiteOr(value, fallback) {
@@ -78,10 +84,18 @@ function platformSupports(platform, x, z, yBase, pad = 0.02) {
 }
 
 function reservationIntersectsBox(reservation, box) {
-    const normalized = normalizeBox(reservation);
+    const normalized = normalizeBox(box);
     if (!normalized) return false;
-    if (!verticalOverlap(normalized.yMin, normalized.yMax, box.yMin, box.yMax)) return false;
-    return boxesOverlapXZ(normalized, box);
+    const claim = spatialClaimFromCirculationReservation(reservation);
+    const query = spatialBoxGeometry({
+        minX: normalized.minX,
+        maxX: normalized.maxX,
+        minY: normalized.yMin,
+        maxY: normalized.yMax,
+        minZ: normalized.minZ,
+        maxZ: normalized.maxZ,
+    });
+    return spatialGeometryIntersects(claim.geometry, query, { epsilon: 0 });
 }
 
 function moduleSpaceId(chunkKey, entity, module, floor) {

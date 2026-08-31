@@ -12,6 +12,7 @@ const buildings = read('world/building-construction.js');
 const facade = read('world/facade-layout.js');
 const chunks = read('kowloon-fabric-engine.js');
 const streamer = read('world-chunk-streamer.js');
+const playerCentered = read('world/player-centered-streaming.js');
 const chunkEnrichment = read('world/kowloon-fabric-enrichment.js');
 const kowloon = read('world/kowloon-structure.js');
 const failures = [];
@@ -50,13 +51,17 @@ ok(chunks.includes('const refine = (chunk, payload, budget) => enrichment.pump(c
 ok(!chunks.includes('requestAnimationFrame('), 'generic structural factory must not contain inner requestAnimationFrame sleeps');
 ok(streamer.includes('priority < bestPriority') && streamer.includes('serial < bestSerial'), 'outer streamer must converge nearest visible detail before fairness among equally-prioritized peers');
 ok(main.includes('refineAfterPrefetchReady: false'), 'live runtime must allow visible chunk detail before the full prefetch ring is warm');
-ok(streamer.includes('const canRefineBeforePrefetch = !refineAfterPrefetchReady') && streamer.includes('renderReadyAtPumpStart'), 'streamer must reserve a visible detail turn while farther structural prefetch continues');
-ok(streamer.includes('visibleOnly: !prefetchReadyForRefinement'), 'unfinished prefetch must not spend detail budget on invisible chunks');
+ok(streamer.includes('const canRefineBeforePrefetch = !refineAfterPrefetchReady') && streamer.includes('visibleRefinementAtStart') && streamer.includes('prefetchReadyAtPumpStart'), 'streamer must reserve a visible detail turn while farther structural prefetch continues');
+ok(streamer.includes('visibleOnly: !renderCompleteForRefinement || !prefetchReadyForRefinement'), 'unfinished render/prefetch work must not spend detail budget on invisible chunks');
 ok(streamer.includes('minimumVisibleRefinementTurns') && streamer.includes('floorPendingChunks'), 'visible chunks must receive a minimum richness layer before deep nearest-chunk convergence');
 ok(streamer.includes('refineFirst = false') && streamer.includes('refinementBudgetMs = Infinity'), 'streamer pump must support a bounded refinement-first sprint slice');
-ok(main.includes("return 'visible-structure-sprint'") && main.includes("return 'authored-structure-sprint'") && main.includes("return 'visible-detail-sprint'") && main.includes("return 'prefetch-sprint'"), 'live runtime must expose explicit worldgen sprint gears');
-ok(main.includes('structuralOnly: true') && main.includes("streamingGear === 'authored-structure-sprint'"), 'authored sprint must stop jobs at structural-ready instead of consuming content recipes');
-ok(main.includes('_worldStreamPriorityLock') && main.includes('visible world rich + structural prefetch warm'), 'shader/content background work must stay locked out until worldgen sprint reaches steady state');
+ok(playerCentered.includes("VISIBLE_STRUCTURE: 'visible-structure-sprint'")
+    && playerCentered.includes("VISIBLE_FIRST_PASS: 'visible-first-pass-sprint'")
+    && playerCentered.includes("PREFETCH_STRUCTURE: 'prefetch-structure-sprint'")
+    && playerCentered.includes("LOCAL_DEEPEN: 'local-deepen'"), 'live runtime must expose explicit player-centered worldgen gears');
+ok(main.includes('const structuralOnly = authoredStructuralReadySiteIds.size < buildingSites.length;')
+    && main.includes('structuralOnly,'), 'authored local work must stop jobs at structural-ready until every authored site has structure');
+ok(main.includes('_worldStreamPriorityLock') && main.includes('player neighborhood first-pass populated + structural prefetch warm'), 'shader/content background work must stay locked out until player-centered worldgen reaches steady state');
 ok(chunkEnrichment.includes("kind: 'sign'") && chunkEnrichment.includes("kind: 'graffiti'") && chunkEnrichment.includes("kind: 'pipe'") && chunkEnrichment.includes("kind: 'awning'") && chunkEnrichment.includes("kind: 'ivy'"), 'infinite chunk enrichment must carry the authored-world facade vocabulary');
 ok(chunkEnrichment.includes('pickMassiveNoisePair') && chunkEnrichment.includes('pickPoetryTag'), 'infinite signage/graffiti must use the packaged text corpus instead of placeholder labels');
 

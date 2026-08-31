@@ -1,17 +1,12 @@
 import { compileSpatialTopologyGraph } from './spatial-topology.js';
 import { bindSemanticExteriorPlacement, chooseSemanticExteriorOpportunity } from './semantic-exterior-authority.js';
 import { isManagedBuildingExteriorTask } from './exterior-composition-authority.js';
+import { attachDistrictBlockComposition, compileDistrictBlockComposition } from './district-block-composition.js';
+import { bindFrontageSemanticTruth } from './frontage-semantic-binding.js';
 
 export const SEMANTIC_CONTEXT_SCHEMA = 'jweb.semantic-context.v1';
 
 const SIDES = Object.freeze(['north', 'east', 'south', 'west']);
-const NORMAL = Object.freeze({
-    north: Object.freeze({ x: 0, z: -1, ry: 0 }),
-    east: Object.freeze({ x: 1, z: 0, ry: -Math.PI * 0.5 }),
-    south: Object.freeze({ x: 0, z: 1, ry: Math.PI }),
-    west: Object.freeze({ x: -1, z: 0, ry: Math.PI * 0.5 }),
-});
-
 function hash32(value) {
     let h = 2166136261 >>> 0;
     const text = String(value ?? '');
@@ -25,7 +20,6 @@ function hash32(value) {
 function clamp(value, lo, hi) { return Math.max(lo, Math.min(hi, value)); }
 function finite(value, fallback = 0) { return Number.isFinite(value) ? value : fallback; }
 function entityById(payload, id) { return payload?.entities?.find(entity => entity.id === id) ?? null; }
-function moduleByKey(entity, key) { return entity?.footprintModules?.find(module => module.key === key) ?? null; }
 
 function verticalLayer(y, floor = 0) {
     if (y >= 18 || floor >= 5) return 'upper';
@@ -34,75 +28,16 @@ function verticalLayer(y, floor = 0) {
     return 'street';
 }
 
-function districtFamily(chunk) {
-    const families = ['network', 'market', 'service', 'industrial', 'residential', 'transit', 'mechanical', 'archive'];
-    return families[hash32(`district:${chunk?.key ?? 'world'}`) % families.length];
-}
-
 function programForEntity(entity) {
-    const family = entity?.physicalUse?.family;
-    if (family === 'residential-lodging') return 'residential';
-    if (family === 'mercantile-public') return 'commercial';
-    if (family === 'business') return 'office';
-    if (family === 'assembly-institutional') return 'public';
-    if (family === 'industrial-service') return 'industrial';
-    return entity?.archetype ?? 'mixed';
-}
-
-function facadeFromExisting(entity, facade, index) {
-    const side = SIDES.includes(facade?.side) ? facade.side : entity?.doorSide ?? 'north';
-    const horizontal = side === 'north' || side === 'south';
-    const halfX = finite(facade?.halfX, finite(entity?.halfX, 2));
-    const halfZ = finite(facade?.halfZ, finite(entity?.halfZ, 2));
-    const half = finite(facade?.half, horizontal ? halfX : halfZ);
-    return {
-        id: `${entity.id}:surface:facade:${index}`,
-        kind: 'facade',
-        entityId: entity.id,
-        moduleKey: facade?.moduleKey ?? null,
-        facadeIndex: index,
-        side,
-        x: finite(facade?.x, finite(facade?.cx, finite(entity?.x, 0))),
-        z: finite(facade?.z, finite(facade?.cz, finite(entity?.z, 0))),
-        normalX: finite(facade?.normalX, NORMAL[side].x),
-        normalZ: finite(facade?.normalZ, NORMAL[side].z),
-        rotY: finite(facade?.rotY, NORMAL[side].ry),
-        half,
-        yMin: finite(facade?.yMin, 0),
-        yMax: finite(facade?.yMax, Math.max(2.6, finite(entity?.height, finite(entity?.floorH, 3.15)))),
-        exposure: facade?.exposure ?? (side === entity?.doorSide ? 'street' : 'exterior'),
-    };
-}
-
-function facadeFromModule(entity, module, side, index) {
-    const v = NORMAL[side];
-    const horizontal = side === 'north' || side === 'south';
-    return {
-        id: `${entity.id}:surface:${module.key}:${side}`,
-        kind: 'facade', entityId: entity.id, moduleKey: module.key, facadeIndex: index, side,
-        x: module.cx + v.x * (horizontal ? 0 : module.halfX),
-        z: module.cz + v.z * (horizontal ? module.halfZ : 0),
-        normalX: v.x, normalZ: v.z, rotY: v.ry,
-        half: horizontal ? module.halfX : module.halfZ,
-        yMin: 0,
-        yMax: Math.max(2.6, finite(module.floors, 1) * finite(entity.floorH, 3.15)),
-        exposure: side === entity?.doorSide ? 'street' : 'exterior',
-    };
-}
-
-function compileSurfaces(payload) {
-    const surfaces = [];
-    for (const entity of payload?.entities ?? []) {
-        if (entity.kind !== 'building' && entity.kind !== 'district-landmark') continue;
-        if (Array.isArray(entity.facades) && entity.facades.length) {
-            entity.facades.forEach((facade, index) => surfaces.push(facadeFromExisting(entity, facade, index)));
-            continue;
-        }
-        for (const module of entity.footprintModules ?? []) {
-            for (const side of SIDES) surfaces.push(facadeFromModule(entity, module, side, null));
-        }
-    }
-    return surfaces;
+    // Semantic context publishes existing building identity; it does not perform
+    // a second physical-family -> program interpretation.
+    return entity?.buildingSemanticTruth?.program
+        ?? entity?.buildingPlan?.buildingSemanticTruth?.program
+        ?? entity?.buildingPlan?.grammar?.semanticProgram
+        ?? entity?.semanticProgram
+        ?? entity?.program
+        ?? entity?.archetype
+        ?? 'mixed';
 }
 
 function surfaceTangent(surface) {
@@ -119,64 +54,6 @@ function bestSurfaceForEndpoint(surfaces, endpoint, entityId = null) {
     const pool = candidates.length ? candidates : surfaces.filter(surface => !entityId || surface.entityId === entityId);
     pool.sort((a, b) => surfaceDistance(a, endpoint) - surfaceDistance(b, endpoint) || a.id.localeCompare(b.id));
     return pool[0] ?? null;
-}
-
-function apertureForEndpoint(connector, endpoint, surface, index) {
-    if (!surface || !endpoint) return null;
-    const tangent = surfaceTangent(surface);
-    const u = (finite(endpoint.x) - surface.x) * tangent.x + (finite(endpoint.z) - surface.z) * tangent.z;
-    const width = Math.max(0.5, finite(endpoint.width, finite(connector?.aperture?.width, 1.2)));
-    const yMin = finite(endpoint.y, surface.yMin);
-    const height = Math.max(1.2, finite(endpoint.height, finite(connector?.aperture?.height, 2.2)));
-    return {
-        id: `${connector.id}:aperture:${index}`,
-        kind: connector.kind === 'stair' ? 'stair-opening' : connector.kind === 'bridge' ? 'bridge-entry' : 'connector-opening',
-        connectorId: connector.id,
-        surfaceId: surface.id,
-        entityId: surface.entityId,
-        moduleKey: surface.moduleKey,
-        traversable: connector.kind !== 'window',
-        uMin: clamp(u - width * 0.5, -surface.half, surface.half),
-        uMax: clamp(u + width * 0.5, -surface.half, surface.half),
-        vMin: yMin,
-        vMax: yMin + height,
-        clearance: connector.reservations?.map(item => item.id) ?? [],
-    };
-}
-
-function compileApertures(payload, surfaces) {
-    const apertures = [];
-    const seen = new Set();
-    for (const connector of payload?.physics?.semanticConnectors ?? []) {
-        const entityId = connector.metadata?.entityId ?? null;
-        (connector.endpoints ?? []).forEach((endpoint, index) => {
-            if (!endpoint?.side) return;
-            const surface = bestSurfaceForEndpoint(surfaces, endpoint, entityId);
-            const aperture = apertureForEndpoint(connector, endpoint, surface, index);
-            if (aperture && aperture.uMax > aperture.uMin && !seen.has(aperture.id)) {
-                apertures.push(aperture); seen.add(aperture.id);
-            }
-        });
-    }
-    for (const entity of payload?.entities ?? []) {
-        for (const face of entity.entranceFaces ?? []) {
-            const surface = surfaces.find(item => item.entityId === entity.id && item.moduleKey === face.moduleKey && item.side === face.side)
-                ?? surfaces.find(item => item.entityId === entity.id && item.side === face.side);
-            if (!surface) continue;
-            const width = Math.max(0.7, finite(entity?.physicalTruth?.door?.clearWidth?.realizedSI, 1.2));
-            const id = `${entity.id}:entrance:${face.moduleKey}:${face.side}`;
-            if (seen.has(id)) continue;
-            apertures.push({
-                id, kind: 'entrance', connectorId: null, surfaceId: surface.id, entityId: entity.id,
-                moduleKey: face.moduleKey, traversable: true,
-                uMin: -width * 0.5, uMax: width * 0.5,
-                vMin: surface.yMin, vMax: surface.yMin + Math.max(2, finite(entity?.physicalTruth?.door?.clearHeight?.realizedSI, 2.2)),
-                clearance: [],
-            });
-            seen.add(id);
-        }
-    }
-    return apertures;
 }
 
 function freeIntervals(surface, apertures, padding = 0.22) {
@@ -654,11 +531,23 @@ function chooseOpportunity(task, opportunities, claimedOpportunityIds = null) {
 
 function compactContext({ chunk, entity, program = null, floor = 0, y = 0, district }) {
     const resolvedProgram = program ?? programForEntity(entity);
+    const districtBuilding = entity?.districtComposition ?? null;
     return {
         id: `${chunk.key}:${entity?.id ?? 'world'}:context:${floor}:${resolvedProgram}`,
         chunkKey: chunk.key,
-        districtId: `district:${chunk.key}`,
+        districtId: districtBuilding?.districtId ?? district.id ?? `district:${chunk.key}`,
         districtFamily: district.family,
+        districtCompositionId: districtBuilding?.compositionId ?? district.compositionId ?? null,
+        districtBlockId: districtBuilding?.blockId ?? district.blockId ?? null,
+        blockRole: districtBuilding?.blockRole ?? null,
+        frontageCharacter: districtBuilding?.frontageCharacter ?? null,
+        visualIntensity: districtBuilding?.visualIntensity ?? null,
+        spectaclePriority: districtBuilding?.spectaclePriority ?? null,
+        servicePressure: districtBuilding?.servicePressure ?? null,
+        commercialPressure: districtBuilding?.commercialPressure ?? null,
+        quietPressure: districtBuilding?.quietPressure ?? null,
+        mechanicalPressure: districtBuilding?.mechanicalPressure ?? null,
+        bridgePressure: districtBuilding?.bridgePressure ?? null,
         entityId: entity?.id ?? null,
         structureId: entity?.id ?? null,
         program: resolvedProgram,
@@ -680,7 +569,16 @@ function debugLabel(context, opportunity) {
 
 export function compileSemanticContext({ chunk, payload, tasks = [], debugWeight = 0.18 } = {}) {
     if (!chunk || !payload || !Array.isArray(tasks)) throw new Error('compileSemanticContext requires chunk, payload, and tasks');
-    const district = { id: `district:${chunk.key}`, family: districtFamily(chunk), chunkKey: chunk.key, seed: chunk.seed >>> 0 };
+    const districtComposition = attachDistrictBlockComposition(payload, payload.districtBlockComposition ?? compileDistrictBlockComposition({ chunk, payload }));
+    const district = {
+        id: districtComposition.district.id,
+        family: districtComposition.district.family,
+        chunkKey: chunk.key,
+        seed: districtComposition.district.seed,
+        compositionId: districtComposition.id,
+        blockId: districtComposition.block.id,
+        subCharacter: districtComposition.district.subCharacter,
+    };
     const entityContexts = [];
     const contextByEntity = new Map();
     for (const entity of payload.entities ?? []) {
@@ -728,6 +626,19 @@ export function compileSemanticContext({ chunk, payload, tasks = [], debugWeight
         space.semanticContext = context;
         space.semanticContextId = context.id;
     }
+
+    // Binding only: interior/topology truth already exists, and opportunity discovery
+    // already happened. Attach the room immediately behind each facade/opportunity so
+    // downstream exterior selection/content can consume one stable semantic context.
+    // This pass does not create opportunities, reservations, topology, or quantity.
+    const frontageBinding = bindFrontageSemanticTruth({
+        payload,
+        district,
+        surfaces,
+        apertures,
+        opportunities,
+        destinations,
+    });
 
     let integrated = 0;
     let exteriorPlacementDeferred = 0;
@@ -821,6 +732,7 @@ export function compileSemanticContext({ chunk, payload, tasks = [], debugWeight
         ownerId: payload.ownerId ?? null,
         chunk: { key: chunk.key, x: chunk.x ?? null, z: chunk.z ?? null, seed: chunk.seed >>> 0 },
         district,
+        districtComposition,
         entities: entityContexts,
         spaces: [...contextBySpace.values()],
         surfaces,
@@ -829,6 +741,8 @@ export function compileSemanticContext({ chunk, payload, tasks = [], debugWeight
         reservations,
         destinations,
         opportunities,
+        frontages: frontageBinding.bindings,
+        frontageBinding: frontageBinding.stats,
         instances,
         spatialTopology,
         stats: { integratedTasks: integrated, exteriorPlacementDeferred, debugSigns, surfaces: surfaces.length, apertures: apertures.length, opportunities: opportunities.length, destinations: destinations.length, instances: instances.length, topologyEdges: spatialTopology.edges.length, topologyOrphans: spatialTopology.stats.orphanReservations + spatialTopology.stats.orphanApertures + spatialTopology.stats.unboundEntranceFaces },

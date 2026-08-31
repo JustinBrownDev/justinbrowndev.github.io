@@ -4,6 +4,11 @@ import {
     createStairShaftReservation,
 } from './circulation-reservations.js';
 import { spacePlanTouchesPoint, spacePlanTouchesReservation } from './space-plan.js';
+import {
+    accessPortalFromConnector,
+    normalizeAccessPortalSet,
+    portalCollisionOpeningWidth,
+} from './access-portals.js';
 
 export const SEMANTIC_CONNECTOR_SCHEMA = 'jweb.semantic-connector.v1';
 
@@ -49,6 +54,19 @@ function physicalTruthOrFallback(physicalTruth, kind, values) {
     return physicalTruth?.schema === 'jweb.physical-truth.v1'
         ? physicalTruth
         : unresolvedPhysicalTruth(kind, values);
+}
+
+function publishConnectorAccessPortal(physics, connector, spaces = []) {
+    const portals = physics.accessPortals ?? (physics.accessPortals = []);
+    const raw = accessPortalFromConnector(connector, { spaces });
+    const existingIndex = portals.findIndex(portal => portal?.id === raw.id);
+    if (existingIndex >= 0) portals[existingIndex] = raw;
+    else portals.push(raw);
+    const normalized = normalizeAccessPortalSet(portals);
+    physics.accessPortals = normalized;
+    const portalById = new Map(normalized.map(portal => [portal.id, portal]));
+    for (const structural of connectorList(physics)) structural.accessPortal = portalById.get(String(structural.id)) ?? null;
+    return portalById.get(String(connector.id)) ?? null;
 }
 
 export function semanticPortalForRect({
@@ -145,6 +163,7 @@ export function createPortalConnector({
         metadata: metadata || null,
     };
 }
+
 export function createStairConnector({
     id,
     x,
@@ -339,18 +358,32 @@ export function createFireEscapeConnector({
 export function registerSemanticConnector(physics, connector, { publishReservations = true } = {}) {
     if (!connector?.id || connector.schema !== SEMANTIC_CONNECTOR_SCHEMA) throw new Error('invalid semantic connector');
     const connectors = connectorList(physics);
-    if (connectors.some(existing => existing.id === connector.id)) return connector;
+    const existing = connectors.find(item => item.id === connector.id);
+    if (existing) {
+        publishConnectorAccessPortal(physics, existing);
+        connector.accessPortal = existing.accessPortal ?? null;
+        return connector;
+    }
     connectors.push(connector);
     if (publishReservations) {
         const reservations = reservationList(physics);
         for (const reservation of connector.reservations ?? []) {
-            if (!reservations.some(existing => existing.id === reservation.id)) reservations.push(reservation);
+            if (!reservations.some(existingReservation => existingReservation.id === reservation.id)) reservations.push(reservation);
         }
     }
+    publishConnectorAccessPortal(physics, connector);
     return connector;
 }
 
 export function connectorOpeningWidth(connector, fallback = 0) {
+    if (connector?.accessPortal) {
+        const portalWidth = portalCollisionOpeningWidth(connector.accessPortal, NaN);
+        if (Number.isFinite(portalWidth) && portalWidth > 0) return portalWidth;
+    }
+    if (connector?.id) {
+        const portalWidth = portalCollisionOpeningWidth(accessPortalFromConnector(connector), NaN);
+        if (Number.isFinite(portalWidth) && portalWidth > 0) return portalWidth;
+    }
     const width = Number(connector?.aperture?.width);
     return Number.isFinite(width) && width > 0 ? width : fallback;
 }
@@ -457,8 +490,14 @@ export function ensureSemanticConnectorAuthority(physics, spacePlans = []) {
         if (connector.fromSpaceId && connector.toSpaceId) resolvedEdges++;
     }
 
+    const portals = normalizeAccessPortalSet(connectors.map(connector => accessPortalFromConnector(connector, { spaces: spacePlans })));
+    physics.accessPortals = portals;
+    const portalById = new Map(portals.map(portal => [portal.id, portal]));
+    for (const connector of connectors) connector.accessPortal = portalById.get(String(connector.id)) ?? null;
+
     return {
         connectors: connectors.length,
+        portals: portals.length,
         reservations: reservations.length,
         synthesized,
         resolvedEdges,

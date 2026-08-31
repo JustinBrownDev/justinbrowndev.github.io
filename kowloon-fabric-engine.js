@@ -7,6 +7,9 @@ import { classifyPhysicalUse } from './world/physical-use.js';
 import { deriveStairFlight, resolvePhysicalTruth } from './world/physical-truth.js';
 import { planBuildingSidecar } from './world/architecture/building-plan-sidecar.js';
 import { assertBuildingPlanAuthority, promoteBuildingPlanAuthority } from './world/architecture/building-plan-authority.js';
+import { createSemanticPlanCache, semanticPlanCacheKey } from './world/architecture/semantic-plan-runtime.js';
+import { accessAnchorsForBuildingPortals, compileAccessPortals } from './world/access-portals.js';
+import { compileDistrictBlockComposition, districtBuildingPolicyForEntity, districtContextForEntity } from './world/district-block-composition.js';
 import { planExteriorScaffoldRoute } from './world/scaffold-circulation-plan.js';
 import {
     anyReservationIntersectsBox,
@@ -260,6 +263,7 @@ export function createKowloonFabricEngine({
         },
     });
     const committedOwners = new Set();
+    const buildingPlanCache = createSemanticPlanCache({ maxEntries: 1024 });
     let authoredOriginChunkPayload = null;
     if (microCells < 5 || microCells % 2 === 0) throw new Error('microCells must be an odd integer >= 5');
 
@@ -756,7 +760,7 @@ export function createKowloonFabricEngine({
     function buildKowloonCompound({
         chunk, site, siteIdOf, roadPlan, openSiteIds, bridgePortalsBySite, physics, transforms,
         cx0, cz0, half, cellSize, materialIndex, geometryAdapter = null,
-        streetCellOverride = null, courtyardCellOverride = undefined, structureProfile = null,
+        streetCellOverride = null, courtyardCellOverride = undefined, structureProfile = null, districtBuildingContext = null,
     }) {
         const weird = chunk.weirdness.sampled;
         const intensity = kowloonIntensity(weird);
@@ -834,6 +838,10 @@ export function createKowloonFabricEngine({
             stableKey: `${chunk.key}:${siteSignature}`,
             districtContext: 'kowloon',
             override: structureProfile?.physicalUse ?? null,
+        });
+        const districtBuildingPolicy = districtBuildingPolicyForEntity({
+            physicalUse,
+            districtComposition: districtBuildingContext,
         });
         const entryRole = primaryPhysicalRole(physicalUse.family);
         const physicalTruth = resolvePhysicalTruth({
@@ -1184,19 +1192,18 @@ export function createKowloonFabricEngine({
         });
         registerSemanticConnector(physics, primaryStairConnector);
         const primaryStairReservation = primaryStairConnector.primaryReservation;
-        const accessAnchors = [...entranceConnectorByKey.values()].map((connector, index) => {
-            const endpoint = connector.endpoints?.[0];
-            return {
-                id: connector.id,
-                kind: index ? 'secondary-entry' : 'main-entry',
-                x: endpoint?.x ?? primaryModule.rect.cx,
-                z: endpoint?.z ?? primaryModule.rect.cz,
-                side: endpoint?.side ?? null,
-                floor: 0,
-                connectorId: connector.id,
-            };
+        // Access identity comes from canonical Portals, not connector publication
+        // order or an independent interior entrance roll. Structural connector IDs
+        // remain the physical identity carried by each Portal.
+        const accessPortals = compileAccessPortals({ connectors: [...entranceConnectorByKey.values()] });
+        const accessAnchors = accessAnchorsForBuildingPortals(accessPortals);
+        const buildingPlanKey = semanticPlanCacheKey({
+            worldSeed,
+            chunkKey: chunk.key,
+            entityId: buildingPlanEntityId,
+            planKind: 'building-plan-authority',
         });
-        const buildingPlan = promoteBuildingPlanAuthority(planBuildingSidecar({
+        const buildingPlan = buildingPlanCache.getOrCreate(buildingPlanKey, () => promoteBuildingPlanAuthority(planBuildingSidecar({
             worldSeed,
             chunkKey: chunk.key,
             chunkX: chunk.x,
@@ -1206,7 +1213,10 @@ export function createKowloonFabricEngine({
             isSpawn: chunk.key === spawnChunkKey || String(chunk.key).startsWith('spawn-'),
             entityId: buildingPlanEntityId,
             signatureType: structureProfile?.signatureType ?? null,
-            programHint: structureProfile?.semanticProgram ?? structureProfile?.programHint ?? null,
+            programHint: structureProfile?.semanticProgram ?? structureProfile?.programHint ?? districtBuildingPolicy.programHint ?? null,
+            exteriorMacroPreference: structureProfile?.exteriorMacroPreference ?? null,
+            districtCompositionId: districtBuildingPolicy.compositionId ?? null,
+            districtComposition: districtBuildingContext ?? districtBuildingPolicy,
             physicalUse,
             physicalTruth,
             floorHeight: floorH,
@@ -1228,7 +1238,7 @@ export function createKowloonFabricEngine({
             coreReservation: primaryStairReservation,
             chunkKey: chunk.key,
             entityId: buildingPlanEntityId,
-        });
+        }));
         assertBuildingPlanAuthority(buildingPlan);
 
         const groundFloorPlan = buildingPlan.floors.find(floor => floor.floor === 0) ?? buildingPlan.floors[0];
@@ -1968,7 +1978,7 @@ export function createKowloonFabricEngine({
         return best;
     }
 
-    function buildDistrictLandmark({ chunk, spec, cell, physics, transforms, cellCx, cellCz, cellSize }) {
+    function buildDistrictLandmark({ chunk, spec, cell, physics, transforms, cellCx, cellCz, cellSize, districtBuildingContext = null }) {
         // A district landmark is a Kowloon compound with a landmark profile, not a
         // second tower builder.  The recurring identity only controls recipe data
         // (height/footprint/entrance/crown); wall, floor, stair, facade and collision
@@ -2003,6 +2013,7 @@ export function createKowloonFabricEngine({
                 rectForCell: () => ({ cx: cellCx, cz: cellCz, halfX, halfZ }),
             },
             streetCellOverride: () => true,
+            districtBuildingContext,
             structureProfile: {
                 archetype: 'vertical-stack',
                 primaryFloors: floors,
@@ -2039,6 +2050,8 @@ export function createKowloonFabricEngine({
             materialIndex,
             ...structural,
             landmarkProfile: spec.type,
+            districtCompositionId: districtBuildingContext?.compositionId ?? null,
+            districtComposition: districtBuildingContext,
         };
     }
 
@@ -2385,6 +2398,15 @@ export function createKowloonFabricEngine({
         // fabric no longer has a separate one-cell grammar. Reserve the landmark
         // cell, then partition every other solid cell through the same compound
         // algorithm used by authored spawn.
+        const preliminaryDistrictComposition = compileDistrictBlockComposition({
+            chunk,
+            entities: districtLandmarkCell && districtLandmarkSpec ? [{
+                id: districtLandmarkSpec.id,
+                kind: 'district-landmark',
+                x: districtLandmarkCell.c,
+                z: districtLandmarkCell.r,
+            }] : [],
+        });
         if (districtLandmarkCell) {
             const cellCx = cx0 - half + (districtLandmarkCell.c + 0.5) * cellSize;
             const cellCz = cz0 - half + (districtLandmarkCell.r + 0.5) * cellSize;
@@ -2392,6 +2414,7 @@ export function createKowloonFabricEngine({
                 chunk,
                 spec: districtLandmarkSpec,
                 cell: districtLandmarkCell,
+                districtBuildingContext: districtContextForEntity(preliminaryDistrictComposition, districtLandmarkSpec.id),
                 physics,
                 transforms,
                 cellCx,
@@ -2440,6 +2463,31 @@ export function createKowloonFabricEngine({
             sitePlans.sort((a, b) => b.site.cells.length - a.site.cells.length || a.signature.localeCompare(b.signature));
             sitePlans[0].isPlaza = false;
         }
+        const districtCompositionCandidates = sitePlans.filter(plan => !plan.isPlaza).map(plan => {
+            const cols = plan.site.cells.map(cell => cell.col);
+            const rows = plan.site.cells.map(cell => cell.row);
+            const minCol = Math.min(...cols), maxCol = Math.max(...cols);
+            const minRow = Math.min(...rows), maxRow = Math.max(...rows);
+            return {
+                id: worldEntityId(worldSeed, chunk.x, chunk.z, 'building', plan.signature),
+                kind: 'building',
+                x: (minCol + maxCol) * 0.5,
+                z: (minRow + maxRow) * 0.5,
+                halfX: Math.max(0.5, (maxCol - minCol + 1) * 0.5),
+                halfZ: Math.max(0.5, (maxRow - minRow + 1) * 0.5),
+                floors: 1,
+            };
+        });
+        if (districtLandmarkCell && districtLandmarkSpec) districtCompositionCandidates.push({
+            id: districtLandmarkSpec.id,
+            kind: 'district-landmark',
+            x: districtLandmarkCell.c,
+            z: districtLandmarkCell.r,
+            halfX: 0.5,
+            halfZ: 0.5,
+            floors: 1,
+        });
+        const districtComposition = compileDistrictBlockComposition({ chunk, entities: districtCompositionCandidates });
         const openSiteIds = new Set(sitePlans.filter(plan => plan.isPlaza).map(plan => plan.site.id));
         const buildingSiteIds = new Set(sitePlans.filter(plan => !plan.isPlaza).map(plan => plan.site.id));
 
@@ -2541,9 +2589,10 @@ export function createKowloonFabricEngine({
                 });
             } else {
                 const materialIndex = hashString32(`${chunk.seed}:compound-facade:${signature}`) % wallMats.length;
+                const districtBuildingContext = districtContextForEntity(districtComposition, siteEntityId);
                 const structural = buildKowloonCompound({
                     chunk, site, siteIdOf, roadPlan, openSiteIds, bridgePortalsBySite,
-                    physics, transforms, cx0, cz0, half, cellSize, materialIndex,
+                    physics, transforms, cx0, cz0, half, cellSize, materialIndex, districtBuildingContext,
                 });
                 if (!structural) continue;
                 entities.push({
@@ -2551,6 +2600,8 @@ export function createKowloonFabricEngine({
                     kind: 'building',
                     siteId: site.id,
                     materialIndex,
+                    districtCompositionId: districtComposition.id,
+                    districtComposition: districtBuildingContext,
                     ...structural,
                 });
                 buildings++;
@@ -2579,6 +2630,7 @@ export function createKowloonFabricEngine({
             ownerId,
             root,
             physics,
+            districtBlockComposition: districtComposition,
             entities,
             buildings,
             plazas,
@@ -2594,7 +2646,7 @@ export function createKowloonFabricEngine({
             committed: false,
             disposed: false,
         };
-        enrichment.initializePayload(chunk, payload);
+        await enrichment.initializePayloadCooperative(chunk, payload, { yieldControl, maxUnitsPerSlice: 1 });
         payload.drawBatches = root.children.length;
         freezeChunkRoot(root);
         return payload;
@@ -2722,11 +2774,13 @@ export function createKowloonFabricEngine({
         doorMat.dispose();
         windowMat.dispose();
         for (const mat of wallMats) mat.dispose();
+        buildingPlanCache.clear();
         enrichment.disposeShared();
     }
 
     const hasPendingRefinement = (_chunk, payload) => enrichment.hasPending(payload);
     const refine = (chunk, payload, budget) => enrichment.pump(chunk, payload, budget);
+    const planningCacheStats = () => buildingPlanCache.stats();
 
-    return { build, buildAuthoredOriginChunk, buildAuthoredSite, buildAuthoredPlaza, buildAuthoredSurfacePatch, buildAuthoredBridge, planAuthoredBridgeNetwork, commit, setVisible, verifyReady, unload, refine, hasPendingRefinement, planChunk, districtLandmarkFor, disposeShared };
+    return { build, buildAuthoredOriginChunk, buildAuthoredSite, buildAuthoredPlaza, buildAuthoredSurfacePatch, buildAuthoredBridge, planAuthoredBridgeNetwork, commit, setVisible, verifyReady, unload, refine, hasPendingRefinement, planChunk, districtLandmarkFor, planningCacheStats, disposeShared };
 }

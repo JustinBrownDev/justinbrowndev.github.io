@@ -1,28 +1,13 @@
 import { planBuildingSidecar } from './building-plan-sidecar.js';
+import {
+  accessAnchorsForBuildingPortals,
+  compileAccessPortals,
+} from '../access-portals.js';
+import { districtBuildingPolicyForEntity } from '../district-block-composition.js';
 
 function entranceAnchorsForEntity(entity, physics) {
-  const connectors = physics?.semanticConnectors ?? [];
-  const siteKey = entity?.semanticSiteKey;
-  const result = [];
-  for (const connector of connectors) {
-    if (connector?.kind !== 'door') continue;
-    const metadata = connector.metadata ?? {};
-    const belongsByModule = entity?.footprintModules?.some(module => module.key === metadata.moduleKey);
-    const belongsById = siteKey && String(connector.id ?? '').includes(String(siteKey));
-    if (!belongsByModule && !belongsById) continue;
-    const endpoint = connector.endpoints?.[0];
-    if (!endpoint) continue;
-    result.push({
-      id: connector.id,
-      kind: result.length ? 'secondary-entry' : 'main-entry',
-      x: endpoint.x,
-      z: endpoint.z,
-      side: endpoint.side ?? metadata.side ?? null,
-      floor: metadata.floor ?? Math.max(0, Math.round((endpoint.y || 0) / Math.max(0.01, entity.floorH || 3.15))),
-      connectorId: connector.id,
-    });
-  }
-  return result;
+  const portals = compileAccessPortals({ physics, entities: [entity] });
+  return accessAnchorsForBuildingPortals(portals, entity?.id ?? null);
 }
 
 function signatureAnchors(signatureInstance) {
@@ -62,8 +47,9 @@ export function sidecarInputFromKowloon({
   programHint = null,
 } = {}) {
   if (!chunk || !entity) throw new Error('sidecarInputFromKowloon requires chunk and entity');
-  const connectorAnchors = entranceAnchorsForEntity(entity, physics);
+  const portalAnchors = entranceAnchorsForEntity(entity, physics);
   const authoredAnchors = signatureAnchors(signatureInstance);
+  const districtPolicy = districtBuildingPolicyForEntity(entity);
   return {
     worldSeed,
     chunkKey: chunk.key,
@@ -74,12 +60,17 @@ export function sidecarInputFromKowloon({
     isSpawn: !!chunk.isSpawn,
     entityId: entity.id ?? `${chunk.key}:${entity.semanticSiteKey ?? 'building'}`,
     signatureType: signatureInstance?.type ?? entity.signatureType ?? null,
-    programHint,
+    programHint: programHint ?? districtPolicy.programHint,
+    districtCompositionId: districtPolicy.compositionId ?? null,
+    districtComposition: entity.districtComposition ?? districtPolicy,
     physicalUse: entity.physicalUse,
     physicalTruth: entity.physicalTruth,
     floorHeight: entity.floorH,
     modules: entity.footprintModules ?? [],
-    accessAnchors: authoredAnchors.length ? authoredAnchors : connectorAnchors,
+    // The physical connector/Portal wins when it exists. Signature entrance
+    // descriptors remain a compatibility fallback for authored envelopes that
+    // have not yet published a physical access connector.
+    accessAnchors: portalAnchors.length ? portalAnchors : authoredAnchors,
     circulationReservations: physics?.circulationReservations ?? [],
   };
 }
@@ -101,6 +92,7 @@ export function integrationPhase() {
     after: Object.freeze([
       'compound envelope/module planning',
       'physical-use classification',
+      'district/block composition context',
       'resolved physical truth',
       'entrance/stair/bridge connector reservation',
     ]),

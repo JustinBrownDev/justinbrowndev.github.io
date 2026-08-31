@@ -1,3 +1,11 @@
+import {
+    circulationReservationFromSpatialClaim,
+    spatialBoxGeometry,
+    spatialClaimFromCirculationReservation,
+    spatialCylinderGeometry,
+    spatialGeometryIntersects,
+} from './spatial-claims.js';
+
 const EPS = 1e-5;
 
 function finite(name, value) {
@@ -29,13 +37,15 @@ export function createBoxCirculationReservation({
     finite('x', x); finite('z', z); finite('halfX', halfX); finite('halfZ', halfZ);
     finite('yMin', yMin); finite('yMax', yMax);
     if (!(halfX > 0) || !(halfZ > 0) || !(yMax > yMin)) throw new Error('circulation reservation requires positive volume');
-    return {
+    const legacy = {
         id, kind, x, z, halfX, halfZ, yMin, yMax,
         minX: x - halfX, maxX: x + halfX,
         minZ: z - halfZ, maxZ: z + halfZ,
         source,
         ...(metadata || {}),
     };
+    const spatialClaim = spatialClaimFromCirculationReservation(legacy);
+    return circulationReservationFromSpatialClaim(spatialClaim, legacy);
 }
 
 export function createStairShaftReservation({
@@ -121,21 +131,59 @@ export function reservationIntersectsBox(reservation, { x, z, sx, sz, hx, hz, ha
     const halfX = Number.isFinite(hx) ? hx : Number.isFinite(suppliedHalfX) ? suppliedHalfX : sx * 0.5;
     const halfZ = Number.isFinite(hz) ? hz : Number.isFinite(suppliedHalfZ) ? suppliedHalfZ : sz * 0.5;
     if (![x, z, halfX, halfZ].every(Number.isFinite)) throw new Error('box intersection requires finite center and half extents');
-    if (!verticalOverlap(yMin, yMax, reservation.yMin, reservation.yMax)) return false;
-    return x + halfX > reservation.minX - padding + EPS
-        && x - halfX < reservation.maxX + padding - EPS
-        && z + halfZ > reservation.minZ - padding + EPS
-        && z - halfZ < reservation.maxZ + padding - EPS;
+    if (halfX < 0 || halfZ < 0) throw new Error('box intersection requires non-negative half extents');
+    // Native circulation producers publish canonical claims. Older Building Plan
+    // dialect objects without attached claims retain their historical helper
+    // behavior here; their migration happens through the explicit adapter in
+    // space-plan rather than silently broadening this legacy helper's reach.
+    if (!reservation?.spatialClaim || ![reservation.minX, reservation.maxX, reservation.minZ, reservation.maxZ].every(Number.isFinite)) {
+        if (!verticalOverlap(yMin, yMax, reservation.yMin, reservation.yMax)) return false;
+        return x + halfX > reservation.minX - padding + EPS
+            && x - halfX < reservation.maxX + padding - EPS
+            && z + halfZ > reservation.minZ - padding + EPS
+            && z - halfZ < reservation.maxZ + padding - EPS;
+    }
+    const claim = spatialClaimFromCirculationReservation(reservation);
+    // Render-detail bounds can legitimately be planar (flyers, decals, signs).
+    // Claims remain positive-volume authorities, but an intersection *query* may
+    // be degenerate. Give that query an infinitesimal thickness so canonical
+    // claim checking preserves the historical point/plane AABB semantics.
+    const queryYMin = Number.isFinite(yMin) && Number.isFinite(yMax) && yMax <= yMin
+        ? yMin - EPS
+        : yMin;
+    const queryYMax = Number.isFinite(yMin) && Number.isFinite(yMax) && yMax <= yMin
+        ? yMax + EPS
+        : yMax;
+    const query = spatialBoxGeometry({
+        x, z,
+        halfX: Math.max(halfX, EPS),
+        halfZ: Math.max(halfZ, EPS),
+        minY: queryYMin,
+        maxY: queryYMax,
+    });
+    return spatialGeometryIntersects(claim.geometry, query, { padding, verticalPadding: 0 });
 }
 
 export function reservationIntersectsCylinder(reservation, { x, z, radius, yMin = -Infinity, yMax = Infinity }, padding = 0) {
     if (![x, z, radius].every(Number.isFinite)) throw new Error('cylinder intersection requires finite center and radius');
-    if (!verticalOverlap(yMin, yMax, reservation.yMin, reservation.yMax)) return false;
-    const nearestX = Math.max(reservation.minX - padding, Math.min(x, reservation.maxX + padding));
-    const nearestZ = Math.max(reservation.minZ - padding, Math.min(z, reservation.maxZ + padding));
-    const dx = x - nearestX;
-    const dz = z - nearestZ;
-    return dx * dx + dz * dz < (radius + padding) * (radius + padding) - EPS;
+    if (radius < 0) throw new Error('cylinder intersection requires non-negative radius');
+    if (!reservation?.spatialClaim || ![reservation.minX, reservation.maxX, reservation.minZ, reservation.maxZ].every(Number.isFinite)) {
+        if (!verticalOverlap(yMin, yMax, reservation.yMin, reservation.yMax)) return false;
+        const nearestX = Math.max(reservation.minX - padding, Math.min(x, reservation.maxX + padding));
+        const nearestZ = Math.max(reservation.minZ - padding, Math.min(z, reservation.maxZ + padding));
+        const dx = x - nearestX;
+        const dz = z - nearestZ;
+        return dx * dx + dz * dz < (radius + padding) * (radius + padding) - EPS;
+    }
+    const claim = spatialClaimFromCirculationReservation(reservation);
+    const queryYMin = Number.isFinite(yMin) && Number.isFinite(yMax) && yMax <= yMin
+        ? yMin - EPS
+        : yMin;
+    const queryYMax = Number.isFinite(yMin) && Number.isFinite(yMax) && yMax <= yMin
+        ? yMax + EPS
+        : yMax;
+    const query = spatialCylinderGeometry({ x, z, radius: Math.max(radius, EPS), minY: queryYMin, maxY: queryYMax });
+    return spatialGeometryIntersects(claim.geometry, query, { padding, verticalPadding: 0 });
 }
 
 export function reservationCutForAxisSegment(reservation, { axis, fixedCoord, from, to, yMin, yMax }, padding = 0) {

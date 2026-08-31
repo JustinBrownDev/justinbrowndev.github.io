@@ -19,6 +19,11 @@ const contract = createStairShaftReservation({
 });
 assert.equal(reservationIntersectsBox(contract, { x: 0, z: 0, sx: 0.5, sz: 0.5, yMin: 1, yMax: 2 }), true);
 assert.equal(reservationIntersectsBox(contract, { x: 4, z: 0, sx: 0.5, sz: 0.5, yMin: 1, yMax: 2 }), false);
+assert.equal(
+  reservationIntersectsBox(contract, { x: 0, z: 0, halfX: 0.5, halfZ: 0, yMin: 1, yMax: 2 }),
+  true,
+  'planar render/detail bounds must remain valid spatial-claim intersection queries',
+);
 assert.deepEqual(
   reservationCutForAxisSegment(contract, { axis: 'x', fixedCoord: 0, from: -4, to: 4, yMin: 0, yMax: 3 }),
   { from: -1.2, to: 1.2 },

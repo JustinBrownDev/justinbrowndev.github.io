@@ -8,6 +8,20 @@ import {
     bindSemanticExteriorPlacement,
     chooseSemanticExteriorOpportunity,
 } from './semantic-exterior-authority.js';
+import {
+    buildingSemanticCompositionStyles,
+    ensureBuildingSemanticTruth,
+} from './building-semantic-truth.js';
+import {
+    createSpatialClaim,
+    legacyExteriorReservationsFromSpatialClaim,
+    SPATIAL_CLAIM_TYPES,
+    SpatialClaimAuthority,
+    spatialClaimFromCirculationReservation,
+    spatialClaimFromFacadeAperture,
+} from './spatial-claims.js';
+import { districtExteriorPolicyForEntity } from './district-block-composition.js';
+import { frontageContentContextFromBinding } from './frontage-semantic-binding.js';
 
 export const EXTERIOR_COMPOSITION_SCHEMA = 'jweb.exterior-composition-authority.v2';
 export const EXTERIOR_COMPOSITION_RUNTIME_SCHEMA = 'jweb.exterior-composition-runtime.v1';
@@ -140,11 +154,13 @@ export function attachSpectacleMedia({ chunk, tasks = [], pairFor = null } = {})
             const assemblyKind = members[0]?.placement?.assemblyKind ?? 'megascreen';
             const planId = task.exteriorPlanId ?? task.exteriorComposition?.planId ?? task.exteriorCompositionPlanId ?? null;
             const ownerKey = planId ?? `unowned-exterior:${chunkKey}`;
-            const seed = hash32(`${chunkKey}:${ownerKey}:${entityIdOf(task)}:${assemblyId}:semantic-media`);
+            const semanticContentContext = task.semanticContentContext ?? frontageContentContextFromBinding(task.frontageBinding);
+            const campaignKey = semanticContentContext?.campaignKey ?? `${entityIdOf(task)}:generic-frontage`;
+            const seed = hash32(`${chunkKey}:${ownerKey}:${entityIdOf(task)}:${assemblyId}:${campaignKey}:semantic-media`);
             const contentRng = rngForSeed(hash32(`${seed}:content`));
             const metadataRng = rngForSeed(hash32(`${seed}:metadata`));
             const requested = typeof pairFor === 'function'
-                ? pairFor({ task, assemblyId, assemblyKind, seed, rng: contentRng, placements: members.map(item => item.placement) })
+                ? pairFor({ task, assemblyId, assemblyKind, seed, rng: contentRng, placements: members.map(item => item.placement), semanticContentContext })
                 : null;
             const title = cleanMediaText(requested?.[0] ?? requested?.title, 'PUBLIC SIGNAL');
             const subtitle = cleanMediaText(requested?.[1] ?? requested?.subtitle, 'INDEX TRANSMISSION');
@@ -169,11 +185,21 @@ export function attachSpectacleMedia({ chunk, tasks = [], pairFor = null } = {})
                 value: { amount, currency, label: `${amount} ${currency}` },
                 campaignSeed: seed,
                 contentSeed: seed,
+                campaignKey,
                 chunkKey,
                 entityId: entityIdOf(task),
                 hostBuildingId: entityIdOf(task),
-                semanticProgram: task.program ?? task.semanticProgram ?? null,
-                districtId: task.districtId ?? chunk?.districtId ?? null,
+                buildingSemanticTruthId: task.buildingSemanticTruthId ?? task.exteriorComposition?.buildingSemanticTruthId ?? null,
+                buildingPlanId: semanticContentContext?.buildingPlanId ?? null,
+                buildingPlanFingerprint: semanticContentContext?.buildingPlanFingerprint ?? null,
+                semanticProgram: semanticContentContext?.program ?? task.buildingSemanticProgram ?? task.program ?? task.semanticProgram ?? null,
+                semanticDestinationId: semanticContentContext?.destinationId ?? null,
+                districtId: semanticContentContext?.districtId ?? task.districtId ?? chunk?.districtId ?? null,
+                districtFamily: semanticContentContext?.districtFamily ?? null,
+                frontageBindingKey: semanticContentContext?.bindingKey ?? null,
+                frontageRole: semanticContentContext?.frontageRole ?? null,
+                publicRole: semanticContentContext?.publicRole ?? null,
+                landmark: !!semanticContentContext?.landmark,
                 exteriorPlanId: planId,
                 exteriorRequestId: task.exteriorRequestId ?? task.exteriorComposition?.requestId ?? null,
                 exteriorReservationIds: [...(task.exteriorReservationIds ?? task.exteriorComposition?.reservationIds ?? [])],
@@ -299,16 +325,6 @@ function taskConflictSurfaceKeys(task) {
     return keys;
 }
 
-function intersectsClaimedSurface(task, claimedSurfaceIds) {
-    if (!claimedSurfaceIds?.size) return false;
-    // claimedSurfaceIds contains only whole-surface reservations. Any later request
-    // touching that physical surface must yield, even when it owns a distinct semantic
-    // opportunity inside the facade. Ordinary opportunity-scoped requests do not add
-    // whole-surface claims, so siblings on an unreserved facade remain compatible.
-    for (const key of taskSurfaceKeys(task)) if (claimedSurfaceIds.has(key)) return true;
-    return false;
-}
-
 function styleScoreBonus(entry, style) {
     const task = entry.task;
     const tier = exteriorTaskVisualTier(task);
@@ -379,15 +395,25 @@ function bestSpectaclePerEntity(chunkKey, groups, buildings) {
             .sort((a, b) => stableEntryCompare(chunkKey, a, b, EXTERIOR_COMPOSITION_STYLES.MEDIA_MONSTER));
         if (!spectacles.length) continue;
         const entity = buildings.get(entityId);
+        const districtPolicy = districtExteriorPolicyForEntity(entity);
         best.push({
             entityId,
             entry: spectacles[0],
             landmark: entity?.kind === 'district-landmark' ? 1 : 0,
+            districtHierarchy: districtPolicy.anchor ? 2 : districtPolicy.secondaryLandmark ? 1 : 0,
+            districtSpectaclePriority: districtPolicy.spectaclePriority ?? 0,
+            spectacleCorridor: districtPolicy.spectacleCorridor ? 1 : 0,
             impact: exteriorTaskVisualImpact(spectacles[0].task),
             rank: hash32(`${chunkKey}:${entityId}:spectacle-choice`),
         });
     }
-    best.sort((a, b) => b.landmark - a.landmark || b.impact - a.impact || a.rank - b.rank || a.entityId.localeCompare(b.entityId));
+    best.sort((a, b) => b.landmark - a.landmark
+        || b.districtHierarchy - a.districtHierarchy
+        || b.districtSpectaclePriority - a.districtSpectaclePriority
+        || b.spectacleCorridor - a.spectacleCorridor
+        || b.impact - a.impact
+        || a.rank - b.rank
+        || a.entityId.localeCompare(b.entityId));
     return best;
 }
 
@@ -403,7 +429,25 @@ function chooseSpectacleEntities(chunkKey, groups, buildings) {
     return { eligible, selected, quota };
 }
 
-function semanticStylePool(entity) {
+function buildingSemanticTruthForEntity(chunk, entityId, entity) {
+    const existing = entity?.buildingSemanticTruth ?? entity?.buildingPlan?.buildingSemanticTruth ?? null;
+    const truth = ensureBuildingSemanticTruth({
+        existing,
+        worldSeed: entity?.buildingPlan?.worldSeed ?? chunk?.worldSeed ?? 0,
+        chunkKey: entity?.buildingPlan?.chunkKey ?? chunk?.key ?? 'world',
+        entityId,
+        physicalUse: entity?.physicalUse ?? null,
+        archetype: entity?.archetype ?? entity?.physicalUse?.morphology ?? null,
+        signatureType: entity?.buildingPlan?.signature?.signatureType ?? null,
+        programHint: entity?.buildingPlan?.grammar?.semanticProgram ?? entity?.program ?? entity?.semanticProgram ?? null,
+        districtContext: entity?.districtComposition ?? entity?.physicalUse?.districtContext ?? null,
+        exteriorMacroPreference: entity?.exteriorMacroPreference ?? null,
+    });
+    if (entity) entity.buildingSemanticTruth = truth;
+    return truth;
+}
+
+function physicalStylePool(entity) {
     const family = String(entity?.physicalUse?.family ?? '');
     const archetype = String(entity?.archetype ?? '');
     if (family === 'industrial-service' || /industrial|service|mechanical/i.test(archetype)) {
@@ -456,13 +500,24 @@ function semanticStylePool(entity) {
     ];
 }
 
-function compositionStyleForEntity(chunkKey, entityId, entity, selectedSpectacleEntry) {
+function semanticStylePool(entity, buildingSemanticTruth = null) {
+    if (buildingSemanticTruth) return buildingSemanticCompositionStyles(buildingSemanticTruth);
+    const physical = physicalStylePool(entity);
+    const districtPolicy = districtExteriorPolicyForEntity(entity);
+    const districtBiases = [...(districtPolicy.styleBiases ?? [])];
+    if (!districtBiases.length) return physical;
+    // Compatibility fallback only: normal managed buildings already carry shared
+    // Building Semantic Truth, which absorbs district identity before this planner.
+    return [...districtBiases, ...districtBiases, ...physical];
+}
+
+function compositionStyleForEntity(chunkKey, entityId, entity, selectedSpectacleEntry, buildingSemanticTruth = null) {
     const rank = hash32(`${chunkKey}:${entityId}:composition-style`);
     if (selectedSpectacleEntry) {
         if (entity?.kind === 'district-landmark') return EXTERIOR_COMPOSITION_STYLES.MEDIA_MONSTER;
         return rank % 4 === 0 ? EXTERIOR_COMPOSITION_STYLES.SIGNAGE_BAZAAR : EXTERIOR_COMPOSITION_STYLES.MEDIA_MONSTER;
     }
-    const pool = semanticStylePool(entity);
+    const pool = semanticStylePool(entity, buildingSemanticTruth);
     return pool[rank % pool.length];
 }
 
@@ -470,8 +525,9 @@ function planIdFor(chunkKey, entityId) {
     return `${EXTERIOR_COMPOSITION_SCHEMA}:${chunkKey}:${entityId}:${hash32(`${chunkKey}:${entityId}:exterior-plan`).toString(16).padStart(8, '0')}`;
 }
 
-function planForEntity(chunkKey, entityId, entity, selectedSpectacleEntry) {
-    const style = compositionStyleForEntity(chunkKey, entityId, entity, selectedSpectacleEntry);
+function planForEntity(chunkKey, entityId, entity, selectedSpectacleEntry, buildingSemanticTruth = null) {
+    const districtPolicy = districtExteriorPolicyForEntity(entity);
+    const style = compositionStyleForEntity(chunkKey, entityId, entity, selectedSpectacleEntry, buildingSemanticTruth);
     const profile = STYLE_PROFILES[style] ?? STYLE_PROFILES[EXTERIOR_COMPOSITION_STYLES.MIXED];
     const caps = { ...profile.caps };
     if (selectedSpectacleEntry) caps.spectacle = 1;
@@ -479,7 +535,17 @@ function planForEntity(chunkKey, entityId, entity, selectedSpectacleEntry) {
         schema: EXTERIOR_COMPOSITION_SCHEMA,
         id: planIdFor(chunkKey, entityId),
         entityId,
+        buildingSemanticTruth,
+        buildingSemanticTruthId: buildingSemanticTruth?.id ?? null,
+        buildingSemanticTruthFingerprint: buildingSemanticTruth?.fingerprint ?? null,
+        semanticProgram: buildingSemanticTruth?.program ?? entity?.program ?? entity?.semanticProgram ?? null,
+        physicalUseFamily: buildingSemanticTruth?.physicalUseFamily ?? entity?.physicalUse?.family ?? null,
         style,
+        districtCompositionId: districtPolicy.compositionId ?? null,
+        districtBlockRole: districtPolicy.blockRole ?? null,
+        districtFrontageCharacter: districtPolicy.frontageCharacter ?? null,
+        districtSpectaclePriority: districtPolicy.spectaclePriority ?? 0,
+        districtSpectacleCorridor: !!districtPolicy.spectacleCorridor,
         densityCeiling: profile.densityCeiling,
         coverageFloorTarget: profile.coverageFloor,
         caps,
@@ -488,65 +554,197 @@ function planForEntity(chunkKey, entityId, entity, selectedSpectacleEntry) {
 
 const CLAIMING_TIERS = new Set(['spectacle', 'identity', 'macro', 'medium']);
 
-function claimAcceptedSurfaces(entry, claimedSurfaceIds, reservations, planId) {
+function exteriorClaimType(entry) {
     const tier = exteriorTaskVisualTier(entry.task);
-    if (!CLAIMING_TIERS.has(tier)) return;
-    const opportunityId = taskOpportunityId(entry.task);
-    const conflictSurfaces = [...taskConflictSurfaceKeys(entry.task)];
-    if (conflictSurfaces.length) {
-        for (const surfaceId of conflictSurfaces) {
-            if (claimedSurfaceIds.has(surfaceId)) continue;
-            claimedSurfaceIds.add(surfaceId);
-            reservations.push({
-                id: `${planId}:reservation:${reservations.length}`,
-                planId,
-                entityId: entityIdOf(entry.task),
-                requestTier: tier,
-                scope: 'surface',
-                surfaceId,
-                opportunityId: opportunityId == null ? null : String(opportunityId),
-                source: entry.source,
-            });
-        }
-        return;
+    const role = String(entry.task?.semanticOpportunityRole ?? entry.task?.semanticPlacement?.role ?? '');
+    if (tier === 'spectacle') return SPATIAL_CLAIM_TYPES.SPECTACLE_SURFACE;
+    if (tier === 'macro' && /roof/i.test(role)) return SPATIAL_CLAIM_TYPES.ROOF_EQUIPMENT;
+    if (tier === 'macro') return SPATIAL_CLAIM_TYPES.MACRO_EQUIPMENT;
+    if (/service-band/i.test(role)) return SPATIAL_CLAIM_TYPES.SERVICE_BAND;
+    if (tier === 'micro') return SPATIAL_CLAIM_TYPES.MICRO_CLUTTER;
+    return SPATIAL_CLAIM_TYPES.EXTERIOR_OPPORTUNITY;
+}
+
+function finitePositive(value, fallback = 0) {
+    const number = Number(value);
+    return Number.isFinite(number) && number > 0 ? number : fallback;
+}
+
+function taskPhysicalClaimParts(task, tier) {
+    // Opportunity identity remains the precise semantic scope. Physical boxes are
+    // supplemental for equipment/clutter so overlapping independently discovered
+    // opportunities still arbitrate real space instead of only matching IDs.
+    if (!['macro', 'medium', 'micro'].includes(tier)) return [];
+    const parts = [];
+    const placements = task?.fieldPlan?.placements ?? [];
+    for (const placement of placements) {
+        if (placement?.shape !== 'box') continue;
+        const sx = finitePositive(placement.sx);
+        const sy = finitePositive(placement.sy);
+        const sz = finitePositive(placement.sz);
+        if (![placement.x, placement.y, placement.z].every(Number.isFinite) || !(sx > 0 && sy > 0 && sz > 0)) continue;
+        parts.push({ kind: 'box3', x: placement.x, y: placement.y, z: placement.z, halfX: sx * 0.5, halfY: sy * 0.5, halfZ: sz * 0.5 });
     }
-    if (opportunityId != null) {
-        const surfaceId = [...taskSurfaceKeys(entry.task)][0] ?? null;
-        reservations.push({
-            id: `${planId}:reservation:${reservations.length}`,
-            planId,
-            entityId: entityIdOf(entry.task),
-            requestTier: tier,
-            scope: 'opportunity',
-            surfaceId,
+    if (parts.length) return parts;
+
+    const placement = task?.semanticPlacement;
+    if (!placement || ![placement.x, placement.y, placement.z].every(Number.isFinite)) return parts;
+    const clearance = task?.exteriorRequest?.clearance ?? task?.semanticOpportunityBounds ?? {};
+    const width = finitePositive(clearance.width, finitePositive(task?.width, 0));
+    const depth = finitePositive(clearance.depth, finitePositive(task?.depth, tier === 'macro' ? 0.8 : 0.42));
+    const height = finitePositive(clearance.height, finitePositive(task?.height, tier === 'macro' ? 2.4 : 1.2));
+    if (!(width > 0 && depth > 0 && height > 0)) return parts;
+    parts.push({
+        kind: 'box3',
+        x: placement.x,
+        y: placement.y,
+        z: placement.z,
+        halfX: width * 0.5,
+        halfY: height * 0.5,
+        halfZ: depth * 0.5,
+    });
+    return parts;
+}
+
+function exteriorSpatialClaimForEntry(chunkKey, entityId, entry, plan) {
+    if (entry.spatialClaim) return entry.spatialClaim;
+    const task = entry.task;
+    const tier = exteriorTaskVisualTier(task);
+    const opportunityId = taskOpportunityId(task);
+    const surfaces = [...taskSurfaceKeys(task)];
+    const wholeSurfaceClaims = [...taskConflictSurfaceKeys(task)];
+    const parts = [];
+
+    if (wholeSurfaceClaims.length) {
+        for (const surfaceId of wholeSurfaceClaims) parts.push({ kind: 'surface-ref', surfaceId });
+    } else if (opportunityId != null) {
+        parts.push({
+            kind: 'opportunity-ref',
             opportunityId: String(opportunityId),
-            source: entry.source,
+            ...(surfaces[0] ? { surfaceId: surfaces[0] } : {}),
         });
+    } else if (surfaces.length) {
+        for (const surfaceId of surfaces) parts.push({ kind: 'surface-ref', surfaceId });
+    }
+    parts.push(...taskPhysicalClaimParts(task, tier));
+    if (!parts.length) {
+        // Unscoped legacy work still receives an entity-local reference rather than
+        // silently bypassing spatial ownership.
+        parts.push({ kind: 'opportunity-ref', opportunityId: `${entityId}:legacy:${task.kind}:${task.seed ?? 0}` });
+    }
+
+    const geometry = parts.length === 1 ? parts[0] : { kind: 'compound', parts };
+    const tierBase = { spectacle: 800, identity: 700, macro: 620, medium: 430, micro: 160 }[tier] ?? 300;
+    const stableRank = hash32(`${chunkKey}:${entityId}:${entry.source}:${task.kind}:${task.seed ?? 0}:${opportunityId ?? ''}`);
+    const priority = tierBase + (0xffffffff - stableRank) / 0x100000000;
+    const claim = createSpatialClaim({
+        id: `${plan.id}:claim:${hash32(`${entityId}:${entry.source}:${task.kind}:${task.seed ?? 0}:${opportunityId ?? ''}:${tier}`).toString(16).padStart(8, '0')}`,
+        owner: { system: 'exterior-composition', id: plan.id, scopeId: entityId },
+        claimType: exteriorClaimType(entry),
+        geometry,
+        priority,
+        semanticTier: tier,
+        lifetime: { kind: 'plan', scopeId: plan.id },
+        provenance: {
+            sourceSystem: 'exterior-composition-authority',
+            sourceId: task.exteriorRequestId ?? null,
+            sourceKind: task.kind,
+            candidateSource: entry.source,
+        },
+        metadata: {
+            entityId,
+            opportunityId: opportunityId == null ? null : String(opportunityId),
+            surfaceIds: surfaces,
+            requestTier: tier,
+        },
+    });
+    entry.spatialClaim = claim;
+    return claim;
+}
+
+function projectLegacyExteriorReservations(claim, entry, reservations, planId) {
+    if (!CLAIMING_TIERS.has(exteriorTaskVisualTier(entry.task))) return;
+    const projected = legacyExteriorReservationsFromSpatialClaim(claim, {
+        planId,
+        entityId: entityIdOf(entry.task),
+        requestTier: exteriorTaskVisualTier(entry.task),
+        source: entry.source,
+    });
+    for (const reservation of projected) {
+        reservations.push({ ...reservation, id: `${planId}:reservation:${reservations.length}` });
     }
 }
 
-function selectEntityEntries(chunkKey, entityId, entries, selectedSpectacleEntry, plan) {
+function externalSpatialClaimsForEntity(payload, entity) {
+    const claims = new Map();
+    const sources = [
+        ...(payload?.physics?.circulationReservations ?? []),
+        ...(payload?.semanticContext?.spatialTopology?.reservations ?? []),
+        ...(entity?.buildingPlan?.circulationClearances ?? []),
+    ];
+    for (const reservation of sources) {
+        if (!reservation?.id) continue;
+        try {
+            const claim = spatialClaimFromCirculationReservation(reservation);
+            claims.set(claim.id, claim);
+        } catch {
+            // Compatibility bridge is intentionally tolerant: malformed legacy
+            // reservations remain the responsibility of their existing producer.
+        }
+    }
+    // Portal-derived facade apertures participate in the same typed conflict
+    // authority. Surface-local claims block only the actual threshold territory,
+    // so unrelated opportunities on the same facade remain usable.
+    for (const aperture of payload?.semanticContext?.spatialTopology?.apertures ?? []) {
+        if (!aperture?.id || !aperture?.surfaceId) continue;
+        if (entity?.id != null && aperture.entityId != null && String(aperture.entityId) !== String(entity.id)) continue;
+        try {
+            const claim = spatialClaimFromFacadeAperture(aperture, {
+                owner: { system: 'access-portal', id: String(aperture.portalId ?? aperture.connectorId ?? aperture.id) },
+                provenance: {
+                    sourceSystem: 'access-portal',
+                    sourceId: aperture.id,
+                    portalId: aperture.portalId ?? null,
+                    connectorId: aperture.connectorId ?? null,
+                },
+            });
+            claims.set(claim.id, claim);
+        } catch {
+            // Invalid legacy aperture data remains owned by topology compatibility.
+        }
+    }
+    return [...claims.values()];
+}
+
+function selectEntityEntries(chunkKey, entityId, entries, selectedSpectacleEntry, plan, externalSpatialClaims = []) {
     const selected = [];
     const selectedSet = new Set();
-    const claimedSurfaceIds = new Set();
-    const claimedOpportunityIds = new Set();
     const reservations = [];
+    const claimAuthority = new SpatialClaimAuthority(externalSpatialClaims);
+
+    const canAdmit = entry => {
+        if (!entry || selectedSet.has(entry) || selected.length >= plan.densityCeiling) return false;
+        const claim = exteriorSpatialClaimForEntry(chunkKey, entityId, entry, plan);
+        return claimAuthority.canClaim(claim);
+    };
 
     const admit = entry => {
-        if (!entry || selectedSet.has(entry) || selected.length >= plan.densityCeiling) return false;
-        const opportunityId = taskOpportunityId(entry.task);
-        if (opportunityId && claimedOpportunityIds.has(String(opportunityId))) return false;
-        if (intersectsClaimedSurface(entry.task, claimedSurfaceIds)) return false;
+        if (!canAdmit(entry)) return false;
+        const claim = exteriorSpatialClaimForEntry(chunkKey, entityId, entry, plan);
+        const decision = claimAuthority.claim(claim);
+        if (!decision.accepted || decision.displaced.length) return false;
         selected.push(entry);
         selectedSet.add(entry);
-        if (opportunityId) claimedOpportunityIds.add(String(opportunityId));
-        claimAcceptedSurfaces(entry, claimedSurfaceIds, reservations, plan.id);
+        projectLegacyExteriorReservations(claim, entry, reservations, plan.id);
         return true;
     };
 
     if (selectedSpectacleEntry) admit(selectedSpectacleEntry);
 
-    for (const tier of ['identity', 'macro', 'medium', 'micro']) {
+    // Coarse physical identity wins before smaller facade identity when claims overlap.
+    // This preserves the global big-before-small rule while coverage metadata still
+    // decides which accepted high-tier request publishes first.
+    for (const tier of ['macro', 'identity', 'medium', 'micro']) {
         const cap = plan.caps[tier] ?? 0;
         if (!(cap > 0) || selected.length >= plan.densityCeiling) continue;
         const alreadyInTier = selected.filter(entry => exteriorTaskVisualTier(entry.task) === tier).length;
@@ -554,11 +752,6 @@ function selectEntityEntries(chunkKey, entityId, entries, selectedSpectacleEntry
         if (!(remaining > 0)) continue;
         const pool = entries
             .filter(entry => !selectedSet.has(entry) && exteriorTaskVisualTier(entry.task) === tier)
-            .filter(entry => {
-                const opportunityId = taskOpportunityId(entry.task);
-                return !opportunityId || !claimedOpportunityIds.has(String(opportunityId));
-            })
-            .filter(entry => !intersectsClaimedSurface(entry.task, claimedSurfaceIds))
             .sort((a, b) => stableEntryCompare(`${chunkKey}:${entityId}:${tier}`, a, b, plan.style));
         for (const entry of pool) {
             if (selected.filter(item => exteriorTaskVisualTier(item.task) === tier).length >= cap) break;
@@ -571,7 +764,13 @@ function selectEntityEntries(chunkKey, entityId, entries, selectedSpectacleEntry
         admit([...entries].sort((a, b) => stableEntryCompare(`${chunkKey}:${entityId}:fallback`, a, b, plan.style))[0]);
     }
 
-    return { selected, reservations };
+    const spatialClaims = claimAuthority.claims().filter(claim => claim.owner?.system === 'exterior-composition' && claim.owner?.id === plan.id);
+    return {
+        selected,
+        reservations,
+        spatialClaims,
+        externalSpatialClaimCount: externalSpatialClaims.length,
+    };
 }
 
 function coverageCandidate(entries, anchor, plan) {
@@ -626,6 +825,8 @@ function assignCoverageMetadata(entries, selectedSpectacleEntry, plan) {
         entry.task.exteriorComposition = {
             schema: EXTERIOR_COMPOSITION_SCHEMA,
             entityId: plan.entityId,
+            buildingSemanticTruthId: plan.buildingSemanticTruthId,
+            semanticProgram: plan.semanticProgram,
             style: plan.style,
             tier,
             wave,
@@ -652,22 +853,29 @@ function annotatePlanRequests(plan, selected, reservations) {
             }
             return reservation.scope === 'surface' && surfaceIds.includes(reservation.surfaceId);
         }).map(reservation => reservation.id);
+        const spatialClaimIds = entry.spatialClaim ? [entry.spatialClaim.id] : [];
         entry.task.exteriorComposition = {
             ...(entry.task.exteriorComposition ?? {}),
             schema: EXTERIOR_COMPOSITION_SCHEMA,
             planId: plan.id,
             requestId,
             entityId: plan.entityId,
+            buildingSemanticTruthId: plan.buildingSemanticTruthId,
+            semanticProgram: plan.semanticProgram,
             source: entry.source,
             tier,
             ordinal,
             surfaceIds,
             reservationIds,
+            spatialClaimIds,
         };
+        entry.task.buildingSemanticTruthId = plan.buildingSemanticTruthId;
+        entry.task.buildingSemanticProgram = plan.semanticProgram;
         entry.task.exteriorPlanId = plan.id;
         entry.task.exteriorCompositionPlanId = plan.id;
         entry.task.exteriorRequestId = requestId;
         entry.task.exteriorReservationIds = reservationIds;
+        entry.task.exteriorSpatialClaimIds = spatialClaimIds;
     }
 }
 
@@ -701,6 +909,8 @@ function bestOpportunity(chunkKey, entityId, opportunities, roles, excludedIds =
 }
 
 function requestContract(entity, opportunity, spec) {
+    const frontageBinding = opportunity?.frontageBinding ?? null;
+    const contentContext = frontageContentContextFromBinding(frontageBinding);
     return {
         entityId: entity.id,
         semanticFamily: spec.semanticFamily,
@@ -709,11 +919,20 @@ function requestContract(entity, opportunity, spec) {
         availableBounds: opportunity.bounds ? { ...opportunity.bounds } : { ...(opportunity.clearanceBudget ?? {}) },
         orientation: finite(opportunity.transform?.rotY),
         clearance: { ...(opportunity.clearanceBudget ?? {}) },
-        styleProgramPreference: entity.program ?? entity.semanticProgram ?? entity.kind ?? 'mixed',
+        buildingSemanticTruthId: entity?.buildingSemanticTruth?.id ?? entity?.buildingPlan?.buildingSemanticTruthId ?? null,
+        styleProgramPreference: contentContext?.program
+            ?? entity?.buildingSemanticTruth?.program
+            ?? entity.program ?? entity.semanticProgram ?? entity.kind ?? 'mixed',
         planOwner: EXTERIOR_COMPOSITION_SCHEMA,
         reservationOwner: `${entity.id}:${opportunity.id}`,
         priorityTier: spec.priorityTier,
         planRequestId: spec.planRequestId,
+        frontageBinding,
+        contentContext,
+        semanticProgram: contentContext?.program ?? null,
+        semanticDestinationId: contentContext?.destinationId ?? null,
+        frontageRole: contentContext?.frontageRole ?? null,
+        publicRole: contentContext?.publicRole ?? null,
     };
 }
 
@@ -722,7 +941,13 @@ function annotateTaskContract(task, entity, opportunity, request) {
     task.exteriorPlanOwner = request.planOwner;
     task.exteriorReservationOwner = request.reservationOwner;
     task.exteriorRequest = { ...(task.exteriorRequest ?? {}), ...request };
+    task.buildingSemanticTruthId ??= request.buildingSemanticTruthId ?? null;
+    task.buildingSemanticProgram ??= request.styleProgramPreference ?? null;
     task.semanticOpportunityRole ??= opportunity?.role ?? null;
+    task.frontageBinding ??= request.frontageBinding ?? opportunity?.frontageBinding ?? null;
+    task.semanticContentContext ??= request.contentContext ?? frontageContentContextFromBinding(task.frontageBinding);
+    task.semanticProgram ??= task.semanticContentContext?.program ?? null;
+    task.semanticDestinationId ??= task.semanticContentContext?.destinationId ?? null;
     if (opportunity && !task.semanticPlacement) bindSemanticExteriorPlacement(task, opportunity);
     return task;
 }
@@ -775,6 +1000,7 @@ function buildPlannerServiceCandidates({ chunk, payload, buildings, groups, sele
     };
 
     for (const [entityId, entity] of buildings) {
+        const districtPolicy = districtExteriorPolicyForEntity(entity);
         const opportunities = opportunitiesForEntity(payload, entityId);
         if (!opportunities.length) continue;
         const reserved = new Set();
@@ -802,6 +1028,8 @@ function buildPlannerServiceCandidates({ chunk, payload, buildings, groups, sele
         if (facadeMacro) {
             addServiceTask(entity, facadeMacro, {
                 semanticFamily: entity.exteriorMacroPreference?.facadeSemanticFamily
+                    ?? entity?.buildingSemanticTruth?.exteriorTendencies?.facadeSemanticFamily
+                    ?? districtPolicy.facadeSemanticFamily
                     ?? (facadeMacro.role === 'facade-service-band' ? 'vertical-mechanical' : 'mechanical-service'),
                 desiredScaleClass: 'large', priorityTier: 'macro',
             }, true);
@@ -811,7 +1039,9 @@ function buildPlannerServiceCandidates({ chunk, payload, buildings, groups, sele
         const roofMacro = bestOpportunity(chunkKey, entityId, opportunities, ['roof-utility-zone'], reserved);
         if (roofMacro) {
             addServiceTask(entity, roofMacro, {
-                semanticFamily: entity.exteriorMacroPreference?.roofSemanticFamily ?? 'roof-mechanical',
+                semanticFamily: entity.exteriorMacroPreference?.roofSemanticFamily
+                    ?? entity?.buildingSemanticTruth?.exteriorTendencies?.roofSemanticFamily
+                    ?? districtPolicy.roofSemanticFamily ?? 'roof-mechanical',
                 desiredScaleClass: 'large', priorityTier: 'macro',
             }, true);
             reserved.add(roofMacro.id);
@@ -839,6 +1069,7 @@ export function compileExteriorCompositionAuthority({
     const chunkKey = String(chunk.key ?? 'world');
     const buildings = buildingEntityMap(payload);
     const groups = new Map([...buildings.keys()].map(entityId => [entityId, []]));
+    for (const [entityId, entity] of buildings) buildingSemanticTruthForEntity(chunk, entityId, entity);
     const untouched = [];
 
     const add = (task, source) => {
@@ -877,8 +1108,10 @@ export function compileExteriorCompositionAuthority({
     for (const [entityId, entries] of [...groups.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
         const selectedSpectacleEntry = spectacle.selected.get(entityId) ?? null;
         const entity = buildings.get(entityId);
-        const plan = planForEntity(chunkKey, entityId, entity, selectedSpectacleEntry);
-        const selection = selectEntityEntries(chunkKey, entityId, entries, selectedSpectacleEntry, plan);
+        const buildingSemanticTruth = buildingSemanticTruthForEntity(chunk, entityId, entity);
+        const plan = planForEntity(chunkKey, entityId, entity, selectedSpectacleEntry, buildingSemanticTruth);
+        const externalSpatialClaims = externalSpatialClaimsForEntity(payload, entity);
+        const selection = selectEntityEntries(chunkKey, entityId, entries, selectedSpectacleEntry, plan, externalSpatialClaims);
         const selected = selection.selected;
         const coverage = assignCoverageMetadata(selected, selectedSpectacleEntry, plan);
         annotatePlanRequests(plan, selected, selection.reservations);
@@ -900,6 +1133,9 @@ export function compileExteriorCompositionAuthority({
             requestIds: selected.map(entry => entry.task.exteriorRequestId),
             reservationIds: selection.reservations.map(item => item.id),
             reservations: selection.reservations,
+            spatialClaimIds: selection.spatialClaims.map(item => item.id),
+            spatialClaims: selection.spatialClaims,
+            externalSpatialClaimCount: selection.externalSpatialClaimCount,
             tierCounts,
             waveCounts: coverage.waveCounts,
             spectacle: !!selectedSpectacleEntry,
@@ -913,6 +1149,9 @@ export function compileExteriorCompositionAuthority({
         plans.push(planRecord);
         perEntity[entityId] = {
             planId: plan.id,
+            buildingSemanticTruthId: plan.buildingSemanticTruthId,
+            semanticProgram: plan.semanticProgram,
+            physicalUseFamily: plan.physicalUseFamily,
             candidates: entries.length,
             accepted: selected.length,
             rejected: Math.max(0, entries.length - selected.length),
@@ -920,6 +1159,8 @@ export function compileExteriorCompositionAuthority({
             style: plan.style,
             densityCeiling: plan.densityCeiling,
             reservations: selection.reservations.length,
+            spatialClaims: selection.spatialClaims.length,
+            externalSpatialClaims: selection.externalSpatialClaimCount,
             coverageFloor: planRecord.coverageFloor,
             tierCounts,
             waveCounts: coverage.waveCounts,
@@ -980,6 +1221,8 @@ export function compileExteriorCompositionAuthority({
             maxAcceptedPerEntity,
             maxDensityCeiling,
             reservationCount: plans.reduce((sum, plan) => sum + plan.reservations.length, 0),
+            spatialClaimCount: plans.reduce((sum, plan) => sum + plan.spatialClaims.length, 0),
+            externalSpatialClaimConsultations: plans.reduce((sum, plan) => sum + plan.externalSpatialClaimCount, 0),
             waveCounts: aggregateWaveCounts,
             styleCounts,
             perEntity,
@@ -994,4 +1237,370 @@ export function compileExteriorCompositionAuthority({
             highTierReservationsProtectLowerTier: true,
         },
     };
+}
+
+// Cooperative facade over the same Exterior Composition Authority semantics.
+// The planner owns deterministic phase order; the runtime chooses only how many
+// bounded units to execute before yielding.
+export function createExteriorCompositionCompiler({
+    chunk,
+    payload,
+    authoredTasks = [],
+    contextualTasks = [],
+    fieldTasks = [],
+    selectContextAsset = null,
+    planFieldRequest = null,
+} = {}) {
+    if (!chunk || !payload) throw new Error('createExteriorCompositionCompiler requires chunk and payload');
+    const chunkKey = String(chunk.key ?? 'world');
+    const buildings = buildingEntityMap(payload);
+    const groups = new Map([...buildings.keys()].map(entityId => [entityId, []]));
+    for (const [entityId, entity] of buildings) buildingSemanticTruthForEntity(chunk, entityId, entity);
+    const untouched = [];
+    const sourceTasks = [
+        ...(authoredTasks ?? []).map(task => ({ task, source: 'authored' })),
+        ...(contextualTasks ?? []).map(task => ({ task, source: 'context' })),
+        ...(fieldTasks ?? []).map(task => ({ task, source: 'field' })),
+    ];
+    const serviceEntityIds = [...buildings.keys()];
+    const planEntityIds = [...buildings.keys()].sort((a, b) => a.localeCompare(b));
+    const service = {
+        usedAssetIds: new Set(),
+        requests: 0,
+        context: 0,
+        field: 0,
+        failed: 0,
+    };
+
+    let phase = 'collect-candidates';
+    let sourceCursor = 0;
+    let serviceCursor = 0;
+    let planCursor = 0;
+    let spectacle = null;
+    let result = null;
+    let done = false;
+    let unitsCompleted = 0;
+    let stepCount = 0;
+    let maxUnitsInStep = 0;
+
+    const accepted = [];
+    const acceptedEntries = [];
+    const perEntity = {};
+    const plans = [];
+    const styleCounts = {};
+    const aggregateWaveCounts = { 0: 0, 1: 0, 2: 0, 3: 0, 4: 0 };
+    let coverageFloorTasks = 0;
+    let buildingsWithCoarseFloor = 0;
+
+    const add = (task, source) => {
+        if (!isManagedBuildingExteriorTask(task, buildings)) {
+            untouched.push(task);
+            return;
+        }
+        const entityId = entityIdOf(task);
+        const entity = buildings.get(entityId);
+        let projected = task;
+        if (source === 'authored' && !task.semanticPlacement) {
+            projected = projectAuthoredCandidate(task, entity, opportunitiesForEntity(payload, entityId));
+        }
+        if (!projected) return;
+        const entry = { task: projected, source, wasFirstPass: !!projected.firstPassBundle };
+        const group = groups.get(entityId) ?? [];
+        group.push(entry);
+        groups.set(entityId, group);
+    };
+
+    const addServiceTask = (entity, opportunity, spec, preferContext = true) => {
+        if (!opportunity) return null;
+        service.requests++;
+        const request = requestContract(entity, opportunity, {
+            ...spec,
+            planRequestId: `${entity.id}:${spec.priorityTier}:${spec.semanticFamily}:${opportunity.id}`,
+        });
+        let task = null;
+        let source = null;
+        if (preferContext && typeof selectContextAsset === 'function') {
+            task = selectContextAsset({ chunk, payload, entity, opportunity, request, usedAssetIds: service.usedAssetIds });
+            if (task) {
+                source = 'planner-context';
+                service.context++;
+                if (task.assetId) service.usedAssetIds.add(task.assetId);
+            }
+        }
+        if (!task && typeof planFieldRequest === 'function') {
+            task = planFieldRequest({ chunk, payload, entity, opportunity, request });
+            if (task) {
+                source = 'planner-field';
+                service.field++;
+            }
+        }
+        if (!task) {
+            service.failed++;
+            return null;
+        }
+        annotateTaskContract(task, entity, opportunity, request);
+        const list = groups.get(String(entity.id)) ?? [];
+        list.push({ task, source, wasFirstPass: false });
+        groups.set(String(entity.id), list);
+        return task;
+    };
+
+    const buildServiceCandidatesForEntity = entityId => {
+        if (typeof selectContextAsset !== 'function' && typeof planFieldRequest !== 'function') return;
+        const entity = buildings.get(entityId);
+        if (!entity) return;
+        const districtPolicy = districtExteriorPolicyForEntity(entity);
+        const opportunities = opportunitiesForEntity(payload, entityId);
+        if (!opportunities.length) return;
+        const reserved = new Set();
+        const current = groups.get(entityId) ?? [];
+
+        const spectacleOpportunity = bestOpportunity(chunkKey, entityId, opportunities,
+            ['corner-media-band', 'facade-spectacle-span', 'roof-spectacle-envelope'], reserved);
+        if (spectacleOpportunity) {
+            addServiceTask(entity, spectacleOpportunity,
+                { semanticFamily: 'media-spectacle', desiredScaleClass: 'spectacle', priorityTier: 'spectacle' }, false);
+            reserved.add(spectacleOpportunity.id);
+        }
+
+        const hasIdentity = current.some(entry => exteriorTaskVisualTier(entry.task) === 'identity');
+        if (!hasIdentity) {
+            const sign = bestOpportunity(chunkKey, entityId, opportunities, ['facade-sign-zone'], reserved);
+            if (sign) {
+                addServiceTask(entity, sign, { semanticFamily: 'signage', desiredScaleClass: 'large', priorityTier: 'identity' }, false);
+                reserved.add(sign.id);
+            }
+        }
+
+        const facadeMacro = bestOpportunity(chunkKey, entityId, opportunities,
+            ['facade-service-band', 'wall-mounted-prop-zone'], reserved);
+        if (facadeMacro) {
+            addServiceTask(entity, facadeMacro, {
+                semanticFamily: entity.exteriorMacroPreference?.facadeSemanticFamily
+                    ?? entity?.buildingSemanticTruth?.exteriorTendencies?.facadeSemanticFamily
+                    ?? districtPolicy.facadeSemanticFamily
+                    ?? (facadeMacro.role === 'facade-service-band' ? 'vertical-mechanical' : 'mechanical-service'),
+                desiredScaleClass: 'large',
+                priorityTier: 'macro',
+            }, true);
+            reserved.add(facadeMacro.id);
+        }
+
+        const roofMacro = bestOpportunity(chunkKey, entityId, opportunities, ['roof-utility-zone'], reserved);
+        if (roofMacro) {
+            addServiceTask(entity, roofMacro, {
+                semanticFamily: entity.exteriorMacroPreference?.roofSemanticFamily
+                    ?? entity?.buildingSemanticTruth?.exteriorTendencies?.roofSemanticFamily
+                    ?? districtPolicy.roofSemanticFamily ?? 'roof-mechanical',
+                desiredScaleClass: 'large',
+                priorityTier: 'macro',
+            }, true);
+            reserved.add(roofMacro.id);
+        }
+
+        const medium = bestOpportunity(chunkKey, entityId, opportunities,
+            ['portal-lintel-zone', 'portal-flank-wall-zone', 'wall-mounted-prop-zone'], reserved);
+        if (medium) {
+            addServiceTask(entity, medium,
+                { semanticFamily: 'security-hardware', desiredScaleClass: 'medium', priorityTier: 'medium' }, true);
+            reserved.add(medium.id);
+        }
+    };
+
+    const selectPlanForEntity = entityId => {
+        const entries = groups.get(entityId) ?? [];
+        const selectedSpectacleEntry = spectacle?.selected.get(entityId) ?? null;
+        const entity = buildings.get(entityId);
+        const buildingSemanticTruth = buildingSemanticTruthForEntity(chunk, entityId, entity);
+        const plan = planForEntity(chunkKey, entityId, entity, selectedSpectacleEntry, buildingSemanticTruth);
+        const externalSpatialClaims = externalSpatialClaimsForEntity(payload, entity);
+        const selection = selectEntityEntries(chunkKey, entityId, entries, selectedSpectacleEntry, plan, externalSpatialClaims);
+        const selected = selection.selected;
+        const coverage = assignCoverageMetadata(selected, selectedSpectacleEntry, plan);
+        annotatePlanRequests(plan, selected, selection.reservations);
+
+        for (const entry of selected) {
+            accepted.push(entry.task);
+            acceptedEntries.push(entry);
+        }
+        const tierCounts = { spectacle: 0, identity: 0, macro: 0, medium: 0, micro: 0 };
+        for (const entry of selected) tierCounts[exteriorTaskVisualTier(entry.task)]++;
+        for (const [wave, count] of Object.entries(coverage.waveCounts)) aggregateWaveCounts[wave] += count;
+        coverageFloorTasks += coverage.required.length;
+        if (coverage.required.length > 1) buildingsWithCoarseFloor++;
+        styleCounts[plan.style] = (styleCounts[plan.style] ?? 0) + 1;
+
+        const planRecord = {
+            ...plan,
+            chunkKey,
+            requestIds: selected.map(entry => entry.task.exteriorRequestId),
+            reservationIds: selection.reservations.map(item => item.id),
+            reservations: selection.reservations,
+            spatialClaimIds: selection.spatialClaims.map(item => item.id),
+            spatialClaims: selection.spatialClaims,
+            externalSpatialClaimCount: selection.externalSpatialClaimCount,
+            tierCounts,
+            waveCounts: coverage.waveCounts,
+            spectacle: !!selectedSpectacleEntry,
+            coverageFloor: {
+                target: plan.coverageFloorTarget,
+                planned: coverage.required.length,
+                requestIds: coverage.required.map(entry => entry.task.exteriorRequestId),
+                tiers: coverage.required.map(entry => exteriorTaskVisualTier(entry.task)),
+            },
+        };
+        plans.push(planRecord);
+        perEntity[entityId] = {
+            planId: plan.id,
+            buildingSemanticTruthId: plan.buildingSemanticTruthId,
+            semanticProgram: plan.semanticProgram,
+            physicalUseFamily: plan.physicalUseFamily,
+            candidates: entries.length,
+            accepted: selected.length,
+            rejected: Math.max(0, entries.length - selected.length),
+            spectacle: !!selectedSpectacleEntry,
+            style: plan.style,
+            densityCeiling: plan.densityCeiling,
+            reservations: selection.reservations.length,
+            spatialClaims: selection.spatialClaims.length,
+            externalSpatialClaims: selection.externalSpatialClaimCount,
+            coverageFloor: planRecord.coverageFloor,
+            tierCounts,
+            waveCounts: coverage.waveCounts,
+            plannedLargeMacro: selected.filter(entry => ['large', 'macro'].includes(entry.task?.exteriorRequest?.desiredScaleClass)).length,
+        };
+    };
+
+    const finalize = () => {
+        const candidateCount = [...groups.values()].reduce((sum, list) => sum + list.length, 0);
+        const contextAccepted = acceptedEntries.filter(entry => entry.source === 'context' || entry.source === 'planner-context').length;
+        const fieldAccepted = acceptedEntries.filter(entry => entry.source === 'field' || entry.source === 'planner-field').length;
+        const authoredAccepted = acceptedEntries.filter(entry => entry.source === 'authored').length;
+        const plannerContextAccepted = acceptedEntries.filter(entry => entry.source === 'planner-context').length;
+        const plannerFieldAccepted = acceptedEntries.filter(entry => entry.source === 'planner-field').length;
+        const anchorCount = acceptedEntries.filter(entry => entry.task.firstPassBundle).length;
+        const maxAcceptedPerEntity = Math.max(0, ...Object.values(perEntity).map(item => item.accepted));
+        const maxDensityCeiling = Math.max(0, ...Object.values(perEntity).map(item => item.densityCeiling));
+        const taskOrder = new Map(acceptedEntries.map((entry, index) => [entry.task, index]));
+        accepted.sort((a, b) => {
+            const waveA = finite(a?.exteriorComposition?.wave, 9);
+            const waveB = finite(b?.exteriorComposition?.wave, 9);
+            const tierA = EXTERIOR_VISUAL_TIER[exteriorTaskVisualTier(a)] ?? 9;
+            const tierB = EXTERIOR_VISUAL_TIER[exteriorTaskVisualTier(b)] ?? 9;
+            return waveA - waveB || tierA - tierB || exteriorTaskVisualImpact(b) - exteriorTaskVisualImpact(a)
+                || finite(taskOrder.get(a)) - finite(taskOrder.get(b));
+        });
+
+        result = {
+            schema: EXTERIOR_COMPOSITION_SCHEMA,
+            plans,
+            tasks: [...untouched, ...accepted],
+            acceptedExteriorTasks: accepted,
+            stats: {
+                schema: EXTERIOR_COMPOSITION_SCHEMA,
+                runtimeSchema: EXTERIOR_COMPOSITION_RUNTIME_SCHEMA,
+                buildingsManaged: groups.size,
+                buildingsWithComposition: Object.values(perEntity).filter(item => item.accepted > 0).length,
+                plans: plans.length,
+                candidates: candidateCount,
+                accepted: accepted.length,
+                rejected: Math.max(0, candidateCount - accepted.length),
+                coverageAnchors: anchorCount,
+                coverageFloorTasks,
+                buildingsWithCoarseFloor,
+                spectacleEligible: spectacle?.eligible.length ?? 0,
+                spectacleQuota: spectacle?.quota ?? 0,
+                spectacleSelected: spectacle?.selected.size ?? 0,
+                contextAccepted,
+                fieldAccepted,
+                authoredAccepted,
+                plannerContextAccepted,
+                plannerFieldAccepted,
+                plannerRequests: service.requests,
+                plannerRequestFailures: service.failed,
+                plannerContextCandidates: service.context,
+                plannerFieldCandidates: service.field,
+                uniqueContextAssetsRequested: service.usedAssetIds.size,
+                largeMacroAccepted: acceptedEntries.filter(entry => ['large', 'macro'].includes(entry.task?.exteriorRequest?.desiredScaleClass)).length,
+                maxAcceptedPerEntity,
+                maxDensityCeiling,
+                reservationCount: plans.reduce((sum, plan) => sum + plan.reservations.length, 0),
+                spatialClaimCount: plans.reduce((sum, plan) => sum + plan.spatialClaims.length, 0),
+                externalSpatialClaimConsultations: plans.reduce((sum, plan) => sum + plan.externalSpatialClaimCount, 0),
+                waveCounts: aggregateWaveCounts,
+                styleCounts,
+                perEntity,
+                singleAuthority: true,
+                opportunityGridIsCandidateOnly: true,
+                plannerOwnsQuantity: true,
+                legacyPopulationAfterPlanDisabled: true,
+                coverageFloorPolicy: true,
+                densityCeilingPolicy: true,
+                neighborhoodWavePolicy: true,
+                traceablePlanOwnership: true,
+                highTierReservationsProtectLowerTier: true,
+            },
+        };
+        done = true;
+        phase = 'complete';
+    };
+
+    const totalUnits = sourceTasks.length + serviceEntityIds.length + 1 + planEntityIds.length + 1;
+    const compiler = {
+        schema: EXTERIOR_COMPOSITION_RUNTIME_SCHEMA,
+        get done() { return done; },
+        get phase() { return phase; },
+        get result() { return result; },
+        get unitsCompleted() { return unitsCompleted; },
+        get totalUnits() { return totalUnits; },
+        metrics() {
+            return { schema: EXTERIOR_COMPOSITION_RUNTIME_SCHEMA, phase, done, unitsCompleted, totalUnits, stepCount, maxUnitsInStep };
+        },
+        step({ maxUnits = 1 } = {}) {
+            if (done) return { done: true, phase, units: 0, unitsCompleted, totalUnits, result };
+            const cap = Number.isFinite(maxUnits) ? Math.max(1, Math.floor(maxUnits)) : Infinity;
+            let units = 0;
+            while (!done && units < cap) {
+                if (phase === 'collect-candidates') {
+                    if (sourceCursor < sourceTasks.length) {
+                        const item = sourceTasks[sourceCursor++];
+                        add(item.task, item.source);
+                        units++;
+                    } else phase = 'service-candidates';
+                    continue;
+                }
+                if (phase === 'service-candidates') {
+                    if (serviceCursor < serviceEntityIds.length) {
+                        buildServiceCandidatesForEntity(serviceEntityIds[serviceCursor++]);
+                        units++;
+                    } else phase = 'spectacle-selection';
+                    continue;
+                }
+                if (phase === 'spectacle-selection') {
+                    spectacle = chooseSpectacleEntities(chunkKey, groups, buildings);
+                    phase = 'entity-plans';
+                    units++;
+                    continue;
+                }
+                if (phase === 'entity-plans') {
+                    if (planCursor < planEntityIds.length) {
+                        selectPlanForEntity(planEntityIds[planCursor++]);
+                        units++;
+                    } else phase = 'finalize';
+                    continue;
+                }
+                if (phase === 'finalize') {
+                    finalize();
+                    units++;
+                    continue;
+                }
+                throw new Error(`unknown exterior composition compiler phase: ${phase}`);
+            }
+            stepCount++;
+            unitsCompleted += units;
+            maxUnitsInStep = Math.max(maxUnitsInStep, units);
+            return { done, phase, units, unitsCompleted, totalUnits, result };
+        },
+    };
+    return compiler;
 }

@@ -11,8 +11,9 @@ import { createExteriorPropFieldSystem } from './exterior-prop-field.js';
 import { requiresSemanticExteriorPlacement, semanticExteriorProvenance, semanticPlacementPoint } from './semantic-exterior-authority.js';
 import { semanticAssetAlignment, semanticAssetFitScale } from './semantic-asset-frame.js';
 import { EXTERIOR_FIRST_PASS_KIND_ORDER, EXTERIOR_TASK_KIND_PRIORITY, compareExteriorPriorityKeys, exteriorTaskPriorityKey, exteriorTaskVisualImpact } from './exterior-spectacle-priority.js';
-import { attachSpectacleMedia, compileExteriorCompositionAuthority } from './exterior-composition-authority.js';
+import { attachSpectacleMedia, compileExteriorCompositionAuthority, createExteriorCompositionCompiler } from './exterior-composition-authority.js';
 import { createExteriorCoverageRuntime, exteriorCoverageSnapshot, noteMicroAheadCoverageViolation, recordExteriorCoverageResult } from './exterior-composition-runtime.js';
+import { runCooperativeCompiler } from './architecture/semantic-plan-runtime.js';
 
 function mulberry32(seed) {
     let a = seed >>> 0;
@@ -76,6 +77,28 @@ function adjacentSide(side, clockwise) {
     const sides = ['north', 'east', 'south', 'west'];
     const i = sides.indexOf(side);
     return sides[(i + (clockwise ? 1 : 3)) % 4];
+}
+
+function semanticContentLabel(value, fallback = 'LOCAL') {
+    const text = String(value ?? fallback).replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim();
+    return (text || fallback).toUpperCase();
+}
+
+function frontageContentFallback(context, fallbackPair = ['NO SIGNAL', 'LOCAL WORLD']) {
+    if (!context) return fallbackPair;
+    const program = semanticContentLabel(context.program ?? context.spaceType ?? context.physicalUseFamily, 'MIXED');
+    const role = semanticContentLabel(context.frontageRole ?? context.publicRole, 'FRONTAGE');
+    const district = semanticContentLabel(context.districtFamily, 'LOCAL');
+    const landmark = context.landmark ? ' / LANDMARK' : '';
+    return [fallbackPair?.[0] || `${program} ${role}`, `${program} / ${role} / ${district}${landmark}`];
+}
+
+function semanticMediaFamily(context) {
+    if (!context) return null;
+    if (context.publicRole === 'service' || /service|mechanical/.test(String(context.frontageRole ?? ''))) return 'service-warning';
+    if (context.frontageRole === 'storefront') return 'commercial-ad';
+    if (context.publicRole === 'public' || context.landmark) return 'institutional';
+    return 'data-feed';
 }
 
 function canvasTextTexture(THREE, title, subtitle, seed) {
@@ -1743,7 +1766,7 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
         };
     }
 
-        function initializePayload(chunk, payload) {
+    function preparePayloadPlanningState(chunk, payload) {
         const detailRoot = new THREE.Group();
         detailRoot.name = `world-chunk-details:${chunk.key}`;
         detailRoot.userData.worldChunkDetailRoot = true;
@@ -1772,11 +1795,13 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
         state.tasks = state.tasks.filter(task =>
             (!String(task.kind).startsWith('semantic-') || !!task.semanticPlacement || !!task.exteriorPlacementDeferred)
             && (!requiresSemanticExteriorPlacement(task) || !!task.semanticPlacement || !!task.exteriorPlacementDeferred));
+        return state;
+    }
 
-        // SINGLE EXTERIOR AUTHORITY: legacy authored objects are candidate intelligence,
-        // while the corpus selector and primitive field are request/realization services.
-        // Neither service is allowed to derive quantity from opportunity count.
-        const exteriorComposition = compileExteriorCompositionAuthority({
+    function exteriorCompositionInput(chunk, payload, state) {
+        // Services expose candidates only. Exterior Composition retains quantity,
+        // density, coverage, spectacle, reservation and final request authority.
+        return {
             chunk,
             payload,
             authoredTasks: state.tasks,
@@ -1784,15 +1809,59 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
                 chunk, payload, assets: SEMANTIC_INTERIOR_ASSETS, opportunity, request, usedAssetIds,
             }),
             planFieldRequest: ({ opportunity, request }) => exteriorPropField.planRequestTask(chunk, payload, opportunity, request),
-        });
+        };
+    }
+
+    function finishPayloadPlanningState(chunk, payload, state, exteriorComposition, semanticPlanning = null) {
+        // Content selection consumes the binding after Exterior Composition has
+        // decided WHICH requests survive. No sign is created here and no quantity
+        // decision is revisited. Existing debug/signature text remains authoritative.
+        for (const task of exteriorComposition.acceptedExteriorTasks) {
+            const context = task.semanticContentContext;
+            if (task.kind !== 'sign' || !context || task.semanticDebug || task.signatureIdentity) continue;
+            const semanticFallback = frontageContentFallback(context, [task.title, task.subtitle]);
+            const [title, excitedSubtitle] = textExciter.pairFor(
+                chunk,
+                task.entityId,
+                `frontage-sign:${context.campaignKey}:${context.bindingKey}`,
+                semanticFallback,
+            );
+            task.title = title;
+            task.subtitle = `${semanticFallback[1]} :: ${excitedSubtitle}`.slice(0, 116);
+            task.semanticContent = {
+                ...context,
+                title: task.title,
+                subtitle: task.subtitle,
+                source: 'frontage-semantic-binding+procedural-text-exciter',
+            };
+        }
+
         const mediaStats = attachSpectacleMedia({
             chunk,
             tasks: exteriorComposition.acceptedExteriorTasks,
-            pairFor: ({ task, assemblyId, rng }) => textExciter.pairFor(chunk, task.entityId, `megascreen:${assemblyId}`, pickMassiveNoisePair(rng)),
+            pairFor: ({ task, assemblyId, rng, semanticContentContext }) => {
+                const context = semanticContentContext ?? task.semanticContentContext ?? null;
+                const semanticFallback = frontageContentFallback(context, pickMassiveNoisePair(rng));
+                const [title, excitedSubtitle] = textExciter.pairFor(
+                    chunk,
+                    task.entityId,
+                    `megascreen:${context?.campaignKey ?? assemblyId}`,
+                    semanticFallback,
+                );
+                const subtitle = context ? `${semanticFallback[1]} :: ${excitedSubtitle}`.slice(0, 116) : excitedSubtitle;
+                return {
+                    0: title,
+                    1: subtitle,
+                    title,
+                    subtitle,
+                    family: semanticMediaFamily(context),
+                };
+            },
         });
         state.tasks = exteriorComposition.tasks;
         state.exteriorComposition = { ...exteriorComposition.stats, media: mediaStats };
         state.exteriorCoverage = createExteriorCoverageRuntime(exteriorComposition);
+        if (semanticPlanning) state.semanticPlanning = semanticPlanning;
 
         // Rebuild first-pass accounting from the one admitted queue. The authority
         // guarantees exactly one building exterior anchor while leaving plaza and
@@ -1819,6 +1888,9 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
             plannerCandidates: exteriorComposition.stats.plannerContextCandidates,
             acceptedByComposition: exteriorComposition.stats.plannerContextAccepted,
         };
+
+        // Traversal/collision truth remains an indivisible precommit invariant:
+        // cooperative planning cannot publish a half-planned collision world.
         state.topologyPrecommit = solveBlockingTopology(chunk, payload, state.tasks);
         state.exteriorPropField = {
             plannerRequestOnly: true,
@@ -1831,6 +1903,32 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
         };
         payload.refinement = state;
         return state;
+    }
+
+    function initializePayload(chunk, payload) {
+        const state = preparePayloadPlanningState(chunk, payload);
+        const exteriorComposition = compileExteriorCompositionAuthority(exteriorCompositionInput(chunk, payload, state));
+        return finishPayloadPlanningState(chunk, payload, state, exteriorComposition);
+    }
+
+    async function initializePayloadCooperative(chunk, payload, {
+        yieldControl = null,
+        maxUnitsPerSlice = 1,
+    } = {}) {
+        const state = preparePayloadPlanningState(chunk, payload);
+        const compiler = createExteriorCompositionCompiler(exteriorCompositionInput(chunk, payload, state));
+        const compiled = await runCooperativeCompiler(compiler, {
+            yieldControl,
+            maxUnitsPerSlice,
+            label: `exterior-plan:${chunk.key}`,
+        });
+        return finishPayloadPlanningState(chunk, payload, state, compiled.result, {
+            ...compiled.metrics,
+            mode: 'cooperative-exterior-composition',
+            schedulerOwnsTiming: true,
+            plannerOwnsMeaning: true,
+            semanticSeedsIndependentOfQueueOrder: true,
+        });
     }
 
     function disposePayload(payload) {
@@ -1861,6 +1959,7 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
     return {
         DETAIL_PHASE,
         initializePayload,
+        initializePayloadCooperative,
         hasPending,
         pump,
         disposePayload,

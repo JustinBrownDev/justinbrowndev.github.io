@@ -1,3 +1,9 @@
+import {
+    compileAccessPortals,
+    portalApertureForSurface,
+    portalNoClutterRegions,
+} from './access-portals.js';
+
 export const SPATIAL_TOPOLOGY_SCHEMA = 'jweb.spatial-topology.v1';
 
 const SIDES = Object.freeze(['north', 'east', 'south', 'west']);
@@ -9,7 +15,6 @@ const NORMAL = Object.freeze({
 });
 
 function finite(value, fallback = 0) { return Number.isFinite(value) ? value : fallback; }
-function clamp(value, lo, hi) { return Math.max(lo, Math.min(hi, value)); }
 function pushUnique(array, value) { if (value && !array.includes(value)) array.push(value); }
 
 function surfaceFromExisting(entity, facade, index) {
@@ -29,7 +34,7 @@ function surfaceFromExisting(entity, facade, index) {
         yMin: finite(facade?.yMin, 0),
         yMax: finite(facade?.yMax, Math.max(2.6, finite(entity?.height, finite(entity?.floorH, 3.15)))),
         exposure: facade?.exposure ?? (side === entity?.doorSide ? 'street' : 'exterior'),
-        apertureIds: [], connectorIds: [], spaceIds: [],
+        apertureIds: [], connectorIds: [], portalIds: [], accessNoClutterRegionIds: [], spaceIds: [],
     };
 }
 
@@ -46,7 +51,7 @@ function surfaceFromModule(entity, module, side) {
         yMin: 0,
         yMax: Math.max(2.6, finite(module.floors, 1) * finite(entity.floorH, 3.15)),
         exposure: side === entity?.doorSide ? 'street' : 'exterior',
-        apertureIds: [], connectorIds: [], spaceIds: [],
+        apertureIds: [], connectorIds: [], portalIds: [], accessNoClutterRegionIds: [], spaceIds: [],
     };
 }
 
@@ -61,10 +66,6 @@ function compileSurfaces(payload) {
         }
     }
     return result;
-}
-
-function surfaceTangent(surface) {
-    return surface.side === 'north' || surface.side === 'south' ? { x: 1, z: 0 } : { x: 0, z: 1 };
 }
 
 function surfaceDistance(surface, endpoint) {
@@ -85,27 +86,6 @@ function bestSurface(surfaces, connector, endpoint) {
         .filter(surface => surface.side === endpoint.side && (!entityId || surface.entityId === entityId))
         .sort((a, b) => surfaceDistance(a, endpoint) - surfaceDistance(b, endpoint) || a.id.localeCompare(b.id));
     return fallback[0] ?? null;
-}
-
-function apertureFor(connector, endpoint, surface, index) {
-    if (!surface || !endpoint) return null;
-    const tangent = surfaceTangent(surface);
-    const u = (finite(endpoint.x) - surface.x) * tangent.x + (finite(endpoint.z) - surface.z) * tangent.z;
-    const width = Math.max(0.5, finite(endpoint.width, finite(connector?.aperture?.width, 1.2)));
-    const yMin = finite(endpoint.y, surface.yMin);
-    const height = Math.max(1.2, finite(endpoint.height, finite(connector?.aperture?.height, 2.2)));
-    const uMin = clamp(u - width * 0.5, -surface.half, surface.half);
-    const uMax = clamp(u + width * 0.5, -surface.half, surface.half);
-    if (!(uMax > uMin)) return null;
-    return {
-        id: `${connector.id}:aperture:${index}`,
-        kind: connector.kind === 'door' ? 'entrance' : connector.kind === 'stair' ? 'stair-opening' : connector.kind === 'bridge' ? 'bridge-entry' : 'connector-opening',
-        connectorId: connector.id, surfaceId: surface.id, entityId: surface.entityId, moduleKey: surface.moduleKey,
-        traversable: connector.kind !== 'window',
-        uMin, uMax, vMin: yMin, vMax: yMin + height,
-        clearance: (connector.reservations ?? []).map(item => item.id),
-        authority: 'semantic-connector',
-    };
 }
 
 function normalizeSpace(space) {
@@ -136,6 +116,26 @@ function edge(id, kind, fromId, toId, metadata = null) {
     return { id, kind, fromId, toId, metadata };
 }
 
+function accessEndpointNodes(portals) {
+    const byId = new Map();
+    const add = (portalId, endpoint, role) => {
+        if (!endpoint?.id) return;
+        byId.set(String(endpoint.id), {
+            ...endpoint,
+            id: String(endpoint.id),
+            kind: endpoint.kind ?? 'access-endpoint',
+            portalId,
+            role,
+        });
+    };
+    for (const portal of portals) {
+        add(portal.id, portal.outsideEndpoint, 'outside');
+        add(portal.id, portal.insideEndpoint, 'inside');
+        for (const endpoint of portal.endpoints ?? []) add(portal.id, endpoint, 'connector-endpoint');
+    }
+    return [...byId.values()];
+}
+
 export function compileSpatialTopologyGraph({ chunk, payload } = {}) {
     if (!chunk || !payload) throw new Error('compileSpatialTopologyGraph requires chunk and payload');
     const surfaces = compileSurfaces(payload);
@@ -143,18 +143,37 @@ export function compileSpatialTopologyGraph({ chunk, payload } = {}) {
     const sourceSpaces = payload.semanticTopologySpaces?.length ? payload.semanticTopologySpaces : (payload.semanticSpaces ?? []);
     const spaces = sourceSpaces.map(normalizeSpace);
     const spaceById = new Map(spaces.map(item => [item.id, item]));
+    const portals = compileAccessPortals({ physics: payload.physics, spaces, entities: payload.entities ?? [] });
+    const portalById = new Map(portals.map(item => [item.id, item]));
+    const accessEndpoints = accessEndpointNodes(portals);
+    const noClutterRegions = portals.flatMap(portalNoClutterRegions);
+    const protectionByPortal = new Map();
+    for (const region of noClutterRegions) {
+        const list = protectionByPortal.get(region.portalId) ?? [];
+        list.push(region);
+        protectionByPortal.set(region.portalId, list);
+    }
+
+    if (payload.physics) {
+        payload.physics.accessPortals = portals;
+        for (const raw of payload.physics.semanticConnectors ?? []) raw.accessPortal = portalById.get(String(raw.id)) ?? null;
+    }
+    payload.accessPortals = portals;
+
     const apertures = [];
     const connectors = [];
+    const connectorById = new Map();
     const reservations = [];
     const instances = [];
     const edges = [];
     const reservationOwner = new Map();
 
     for (const raw of payload.physics?.semanticConnectors ?? []) {
+        const portal = portalById.get(String(raw.id)) ?? null;
         const connector = {
             id: raw.id, kind: raw.kind, source: raw.source ?? null, visualRole: raw.visualRole ?? null,
             fromSpaceId: raw.fromSpaceId ?? null, toSpaceId: raw.toSpaceId ?? null,
-            spaceIds: [...(raw.spaceIds ?? [])], reservationIds: [], apertureIds: [], endpointCount: raw.endpoints?.length ?? 0,
+            spaceIds: [...(raw.spaceIds ?? [])], reservationIds: [], apertureIds: [], portalIds: portal ? [portal.id] : [], endpointCount: raw.endpoints?.length ?? 0,
             metadata: raw.metadata ?? null,
         };
         pushUnique(connector.spaceIds, connector.fromSpaceId);
@@ -163,20 +182,46 @@ export function compileSpatialTopologyGraph({ chunk, payload } = {}) {
             connector.reservationIds.push(reservation.id);
             reservationOwner.set(reservation.id, raw.id);
         }
-        (raw.endpoints ?? []).forEach((endpoint, index) => {
-            const surface = bestSurface(surfaces, raw, endpoint);
-            const aperture = apertureFor(raw, endpoint, surface, index);
-            if (!aperture) return;
-            apertures.push(aperture);
-            connector.apertureIds.push(aperture.id);
-            pushUnique(surface.apertureIds, aperture.id);
-            pushUnique(surface.connectorIds, raw.id);
-        });
         for (const spaceId of connector.spaceIds) {
             const space = spaceById.get(spaceId);
             if (space) pushUnique(space.connectorIds, connector.id);
         }
         connectors.push(connector);
+        connectorById.set(String(connector.id), connector);
+    }
+
+    // Facade openings are a derived view of Portal identity. Raw connector
+    // endpoints no longer independently reconstruct another entrance aperture.
+    for (const portal of portals) {
+        const endpoint = portal.facadeEndpoint;
+        if (!endpoint) continue;
+        const surface = bestSurface(surfaces, {
+            metadata: {
+                entityId: portal.buildingId ?? endpoint.entityId ?? null,
+                moduleKey: endpoint.moduleKey ?? portal.apertureGeometry?.moduleKey ?? null,
+            },
+        }, endpoint);
+        const aperture = portalApertureForSurface(portal, surface, 0);
+        if (!aperture || !surface) continue;
+        apertures.push(aperture);
+        portal.facadeBinding = {
+            surfaceId: surface.id,
+            apertureId: aperture.id,
+            entityId: surface.entityId,
+            moduleKey: surface.moduleKey,
+            side: surface.side,
+            authority: 'access-portal',
+        };
+        const connector = connectorById.get(String(portal.structuralConnectorId));
+        if (connector) pushUnique(connector.apertureIds, aperture.id);
+        pushUnique(surface.apertureIds, aperture.id);
+        pushUnique(surface.connectorIds, portal.structuralConnectorId);
+        pushUnique(surface.portalIds, portal.id);
+        for (const region of protectionByPortal.get(portal.id) ?? []) {
+            region.surfaceId = surface.id;
+            region.entityId = surface.entityId;
+            pushUnique(surface.accessNoClutterRegionIds, region.id);
+        }
     }
 
     for (const raw of payload.physics?.circulationReservations ?? []) {
@@ -203,8 +248,8 @@ export function compileSpatialTopologyGraph({ chunk, payload } = {}) {
         if (space.entityId) edges.push(edge(`edge:entity-space:${space.entityId}:${space.id}`, 'contains-space', space.entityId, space.id));
     }
     // Planned adjacency is semantic truth, not something to rediscover by testing
-    // already-rendered wall boxes.  Publish one undirected graph relationship per
-    // authored room pair while retaining connector ownership separately below.
+    // already-rendered wall boxes. Publish one undirected graph relationship per
+    // authored room pair while retaining access identity separately below.
     const plannedAdjacencyPairs = new Set();
     for (const space of spaces) {
         for (const adjacentId of space.adjacentSpaceIds ?? []) {
@@ -227,21 +272,38 @@ export function compileSpatialTopologyGraph({ chunk, payload } = {}) {
     for (const aperture of apertures) {
         edges.push(edge(`edge:surface-aperture:${aperture.surfaceId}:${aperture.id}`, 'has-aperture', aperture.surfaceId, aperture.id));
         edges.push(edge(`edge:connector-aperture:${aperture.connectorId}:${aperture.id}`, 'owns-aperture', aperture.connectorId, aperture.id));
+        edges.push(edge(`edge:portal-aperture:${aperture.portalId}:${aperture.id}`, 'owns-access-aperture', aperture.portalId, aperture.id, {
+            authority: 'access-portal',
+        }));
     }
     for (const connector of connectors) {
         for (const spaceId of connector.spaceIds) edges.push(edge(`edge:connector-space:${connector.id}:${spaceId}`, 'connects-space', connector.id, spaceId));
         for (const reservationId of connector.reservationIds) edges.push(edge(`edge:connector-reservation:${connector.id}:${reservationId}`, 'owns-reservation', connector.id, reservationId));
     }
+    for (const portal of portals) {
+        for (const spaceId of portal.linkedSpaceIds ?? []) {
+            edges.push(edge(`edge:portal-space:${portal.id}:${spaceId}`, 'connects-access-space', portal.id, spaceId, { authority: 'access-portal' }));
+        }
+        if (portal.outsideEndpoint) edges.push(edge(`edge:outside-portal:${portal.id}`, 'approaches-access-portal', portal.outsideEndpoint.id, portal.id));
+        if (portal.insideEndpoint) {
+            edges.push(edge(`edge:portal-inside:${portal.id}`, 'enters-access-endpoint', portal.id, portal.insideEndpoint.id));
+            if (portal.insideEndpoint.spaceId) edges.push(edge(
+                `edge:inside-space:${portal.insideEndpoint.id}:${portal.insideEndpoint.spaceId}`,
+                'terminates-in-space', portal.insideEndpoint.id, portal.insideEndpoint.spaceId,
+                { authority: 'access-portal' },
+            ));
+        }
+        for (const region of protectionByPortal.get(portal.id) ?? []) {
+            edges.push(edge(`edge:portal-protection:${portal.id}:${region.id}`, 'protects-access-region', portal.id, region.id, {
+                reservationId: region.reservationId ?? null,
+                spatialClaimId: region.spatialClaimId ?? null,
+            }));
+        }
+    }
     for (const instance of instances) {
         if (instance.spaceId) edges.push(edge(`edge:space-instance:${instance.spaceId}:${instance.id}`, 'contains-instance', instance.spaceId, instance.id));
     }
 
-    const apertureByConnector = new Map();
-    for (const aperture of apertures) {
-        const list = apertureByConnector.get(aperture.connectorId) ?? [];
-        list.push(aperture);
-        apertureByConnector.set(aperture.connectorId, list);
-    }
     let unboundEntranceFaces = 0;
     for (const entity of payload.entities ?? []) {
         for (const face of entity.entranceFaces ?? []) {
@@ -253,17 +315,21 @@ export function compileSpatialTopologyGraph({ chunk, payload } = {}) {
     }
 
     const orphanReservations = reservations.filter(item => !item.connectorId).length;
-    const orphanApertures = apertures.filter(item => !item.connectorId).length;
+    const orphanApertures = apertures.filter(item => !item.connectorId || !item.portalId).length;
     const danglingConnectorSpaces = connectors.reduce((count, connector) => count + connector.spaceIds.filter(id => !spaceById.has(id)).length, 0);
+    const danglingPortalSpaces = portals.reduce((count, portal) => count + (portal.linkedSpaceIds ?? []).filter(id => !spaceById.has(id)).length, 0);
+    const unboundPortalApertures = portals.filter(portal => portal.facadeEndpoint && portal.apertureGeometry
+        && !apertures.some(aperture => aperture.portalId === portal.id)).length;
     const graph = {
         schema: SPATIAL_TOPOLOGY_SCHEMA,
         ownerId: payload.ownerId ?? null,
         chunkKey: chunk.key,
-        spaces, surfaces, apertures, connectors, reservations, instances, edges,
+        spaces, surfaces, apertures, portals, accessEndpoints, noClutterRegions, connectors, reservations, instances, edges,
         stats: {
-            spaces: spaces.length, surfaces: surfaces.length, apertures: apertures.length, connectors: connectors.length,
+            spaces: spaces.length, surfaces: surfaces.length, apertures: apertures.length, portals: portals.length,
+            accessEndpoints: accessEndpoints.length, noClutterRegions: noClutterRegions.length, connectors: connectors.length,
             reservations: reservations.length, instances: instances.length, edges: edges.length,
-            orphanReservations, orphanApertures, unboundEntranceFaces, danglingConnectorSpaces,
+            orphanReservations, orphanApertures, unboundEntranceFaces, danglingConnectorSpaces, danglingPortalSpaces, unboundPortalApertures,
         },
     };
     payload.spatialTopology = graph;

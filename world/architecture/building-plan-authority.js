@@ -1,3 +1,8 @@
+import {
+  attachSpatialClaimToReservation,
+  spatialClaimFromCirculationReservation,
+} from '../spatial-claims.js';
+
 export const BUILDING_PLAN_AUTHORITY_SCHEMA = 'jweb.building-plan-authority.v1';
 export const BUILDING_PLAN_SPACE_SCHEMA = 'jweb.building-plan-space.v1';
 
@@ -265,7 +270,7 @@ export function compileBuildingPlanCirculationClearances(plan) {
       const width = region.maxX - region.minX;
       const depth = region.maxZ - region.minZ;
       if (width <= EPS || depth <= EPS) continue;
-      result.push({
+      const reservation = {
         id: `${space.id}:circulation-clearance:${index}`,
         kind: 'building-plan-circulation-clearance',
         buildingPlanId: plan?.deterministicKey ?? null,
@@ -279,7 +284,23 @@ export function compileBuildingPlanCirculationClearances(plan) {
         yMax: space.yBase + Math.min(2.2, Math.max(1.8, space.floorH)),
         source: 'building-plan-authority',
         architecturalAuthority: BUILDING_PLAN_AUTHORITY_SCHEMA,
+      };
+      const scopeId = plan?.deterministicKey == null ? null : String(plan.deterministicKey);
+      const spatialClaim = spatialClaimFromCirculationReservation(reservation, {
+        owner: {
+          system: 'building-plan-authority',
+          id: scopeId ?? String(space.id),
+          ...(scopeId ? { scopeId } : {}),
+        },
+        lifetime: { kind: 'plan', ...(scopeId ? { scopeId } : {}) },
+        provenance: {
+          sourceSystem: 'building-plan-authority',
+          sourceId: reservation.id,
+          sourceSpaceId: space.id,
+          sourcePlanId: scopeId,
+        },
       });
+      result.push(attachSpatialClaimToReservation(reservation, spatialClaim));
     }
   }
   return result;

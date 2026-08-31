@@ -1,4 +1,5 @@
 import { architecturalFieldProfile, clamp01 } from './distance-inversion.js';
+import { ensureBuildingSemanticTruth } from '../building-semantic-truth.js';
 import {
   ARCHITECTURAL_NORTH_STAR,
   FAMILY_GRAMMAR_POOLS,
@@ -43,20 +44,6 @@ function clamp(value, lo, hi) {
 function stableIndex(key, length) {
   return length ? hashString32(key) % length : 0;
 }
-
-function normalizedPhysicalFamily(physicalUse) {
-  return typeof physicalUse === 'string' ? physicalUse : physicalUse?.family ?? 'mercantile-public';
-}
-
-const DEFAULT_PROGRAM_BY_FAMILY = Object.freeze({
-  'residential-lodging': 'motel_room',
-  'mercantile-public': 'convenience',
-  business: 'office',
-  'assembly-institutional': 'library',
-  'industrial-service': 'electronics_repair',
-  storage: 'archive',
-  'maintenance-utility': 'server_room',
-});
 
 function chooseGrammar({ stableKey, family, programHint, authoredIntent }) {
   if (authoredIntent?.grammar && PLAN_GRAMMARS[authoredIntent.grammar]) return PLAN_GRAMMARS[authoredIntent.grammar];
@@ -357,7 +344,6 @@ function buildTopology({ spaces, floor, profile, stableKey }) {
 
   return { rootKey: root.key, edges, inversionOperations: [...new Set(operations)] };
 }
-
 function floorBounds(modules) {
   return modules.reduce((acc, module) => ({
     minX: Math.min(acc.minX, module.cx - module.halfX),
@@ -1057,6 +1043,8 @@ export function planBuildingSidecar({
   entityId = 'building',
   signatureType = null,
   programHint = null,
+  districtComposition = null,
+  exteriorMacroPreference = null,
   physicalUse = null,
   physicalTruth = null,
   floorHeight = null,
@@ -1067,10 +1055,22 @@ export function planBuildingSidecar({
 } = {}) {
   const normalized = normalizeModules(modules);
   if (!normalized.length) throw new Error('planBuildingSidecar requires at least one footprint module');
-  const family = normalizedPhysicalFamily(physicalUse);
   const authoredIntent = explicitAuthoredIntent ?? (isSpawn && signatureType ? SPAWN_AUTHORED_INTENTS[signatureType] ?? null : null);
-  const semanticProgram = authoredIntent?.program ?? programHint ?? DEFAULT_PROGRAM_BY_FAMILY[family] ?? 'office';
-  const stableKey = `${worldSeed >>> 0}:${chunkKey}:${entityId}`;
+  const buildingSemanticTruth = ensureBuildingSemanticTruth({
+    worldSeed,
+    chunkKey,
+    entityId,
+    physicalUse,
+    archetype: typeof physicalUse === 'object' ? physicalUse?.morphology ?? null : null,
+    signatureType,
+    programHint,
+    authoredIntent,
+    districtContext: districtComposition ?? (typeof physicalUse === 'object' ? physicalUse?.districtContext ?? null : null),
+    exteriorMacroPreference,
+  });
+  const family = buildingSemanticTruth.physicalUseFamily;
+  const semanticProgram = buildingSemanticTruth.program;
+  const stableKey = buildingSemanticTruth.stableKey;
   const profile = architecturalFieldProfile({ distanceChunks, weirdnessSampled, isSpawn });
   const grammar = chooseGrammar({ stableKey, family, programHint: semanticProgram, authoredIntent });
   const floorH = clamp(floorHeight ?? physicalTruth?.floorHeight?.realizedSI ?? 3.15, 2.4, 5.8);
@@ -1111,12 +1111,17 @@ export function planBuildingSidecar({
     worldSeed: worldSeed >>> 0,
     chunkKey,
     entityId,
+    buildingSemanticTruth,
+    buildingSemanticTruthId: buildingSemanticTruth.id,
+    buildingSemanticTruthFingerprint: buildingSemanticTruth.fingerprint,
     signature: planSignature({ signatureType, authoredIntent }),
     architecturalField: profile,
     northStar: ARCHITECTURAL_NORTH_STAR,
     grammar: {
       id: grammar.id,
-      source: authoredIntent ? 'spawn-authored-intent' : programHint ? 'program-hint' : 'physical-use-family',
+      source: 'building-semantic-truth',
+      buildingSemanticTruthId: buildingSemanticTruth.id,
+      programDecision: buildingSemanticTruth.programDecision,
       physicalUseFamily: family,
       semanticProgram,
       notes: grammar.notes,
@@ -1150,6 +1155,7 @@ export function planBuildingSidecar({
     },
   };
   result.fingerprint = hashString32(JSON.stringify({
+    buildingSemanticTruth: { id: buildingSemanticTruth.id, fingerprint: buildingSemanticTruth.fingerprint },
     grammar: result.grammar,
     field: result.architecturalField,
     floors: result.floors.map(f => ({
@@ -1170,6 +1176,7 @@ export function summarizeBuildingPlan(plan) {
     fidelity: plan?.architecturalField?.fidelity,
     inversion: plan?.architecturalField?.inversion,
     grammar: plan?.grammar?.id,
+    buildingSemanticTruthId: plan?.buildingSemanticTruthId ?? null,
     semanticProgram: plan?.grammar?.semanticProgram,
     floorCount: plan?.floors?.length ?? 0,
     totalSpaces: plan?.diagnostics?.totalSpaces ?? 0,

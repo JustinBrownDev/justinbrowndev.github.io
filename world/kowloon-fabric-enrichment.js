@@ -6,6 +6,7 @@ import { SEMANTIC_RUNTIME_PROP_ASSETS as SEMANTIC_INTERIOR_ASSETS, SEMANTIC_RUNT
 import { SEMANTIC_ROOM_RECIPES } from '../vendor/city-pack/semantic-megapack/room-recipes.js';
 import { anyReservationIntersectsBox } from './circulation-reservations.js';
 import { solveSemanticLayout } from './semantic-layout.js';
+import { compileSemanticContextMultiplier } from './semantic-context-multiplier.js';
 
 function mulberry32(seed) {
     let a = seed >>> 0;
@@ -345,6 +346,47 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
             const clone = template.clone(true);
             normalizeDecorationTemplate(clone);
             holder.add(clone);
+            clone.traverse?.(freezeObject);
+            freezeObject(clone);
+            holder.updateMatrixWorld?.(true);
+        });
+    }
+
+    function queueSemanticContextUpgrade(payload, holder, def, task) {
+        if (typeof window === 'undefined' || !holder || !def || !task?.semanticFit) return;
+        loadSemanticTemplate(def).then(template => {
+            if (!template || payload?.disposed || !holder.parent) return;
+            const clone = template.clone(true);
+            normalizeDecorationTemplate(clone);
+            clone.updateMatrixWorld?.(true);
+            const rawBounds = new THREE.Box3().setFromObject(clone);
+            if (rawBounds.isEmpty()) return;
+            const size = rawBounds.getSize(new THREE.Vector3());
+            const fit = task.semanticFit;
+            const requested = Number.isFinite(fit.scale) ? fit.scale : 1;
+            const measured = Math.min(
+                1,
+                requested,
+                Math.max(0.01, fit.width) / Math.max(0.01, size.x),
+                Math.max(0.01, fit.height) / Math.max(0.01, size.y),
+                Math.max(0.01, fit.depth) / Math.max(0.01, size.z)
+            );
+            if (!Number.isFinite(measured) || measured < (fit.minScale ?? 0.24)) return;
+            clone.scale.multiplyScalar(measured);
+            clone.updateMatrixWorld?.(true);
+            const fittedBounds = new THREE.Box3().setFromObject(clone);
+            const center = fittedBounds.getCenter(new THREE.Vector3());
+            clone.position.x -= center.x;
+            clone.position.z -= center.z;
+            clone.position.y -= fit.anchor === 'center' ? center.y : fittedBounds.min.y;
+            holder.clear();
+            holder.add(clone);
+            holder.updateMatrixWorld?.(true);
+            if (!objectClearsStructuralReservations(payload, holder)) {
+                holder.remove(clone);
+                return;
+            }
+            holder.userData.semanticContextScale = measured;
             clone.traverse?.(freezeObject);
             freezeObject(clone);
             holder.updateMatrixWorld?.(true);
@@ -1273,6 +1315,27 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
         return group;
     }
 
+    function createSemanticContextProp(payload, task) {
+        const def = SEMANTIC_INTERIOR_ASSET_BY_ID.get(task.assetId);
+        const placement = task.semanticPlacement;
+        if (!def || !placement || !task.contextualCosmetic) return null;
+        const group = new THREE.Group();
+        group.name = `chunk-semantic-context:${task.semanticContextRole}:${def.kind}:${task.entityId}`;
+        group.position.set(placement.x, placement.y, placement.z);
+        group.rotation.y = placement.rotY;
+        group.userData.chunkCosmetic = true;
+        group.userData.detailKind = task.kind;
+        group.userData.semanticClass = def.semanticClass;
+        group.userData.semanticProgram = task.program;
+        group.userData.semanticContextId = task.semanticContextId ?? null;
+        group.userData.semanticOpportunityId = task.semanticOpportunityId ?? null;
+        group.userData.semanticContextRole = task.semanticContextRole ?? null;
+        group.userData.semanticLayer = task.semanticLayer ?? null;
+        group.userData.semanticInstanceId = task.instanceId ?? placement.instanceId ?? null;
+        queueSemanticContextUpgrade(payload, group, def, task);
+        return group;
+    }
+
     function createOverheadCable(payload, task) {
         const a = getEntity(payload, task.entityId);
         const b = getEntity(payload, task.otherEntityId);
@@ -1443,6 +1506,7 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
         else if (task.kind === 'security') object = createSecurity(payload, task);
         else if (task.kind === 'elevator-hardware') object = createElevatorHardware(payload, task);
         else if (task.kind === 'street-fixture') object = createStreetFixture(payload, task);
+        else if (task.kind === 'semantic-context-prop') object = createSemanticContextProp(payload, task);
         else if (String(task.kind).startsWith('semantic-')) object = createSemanticInterior(payload, task);
         else if (task.kind === 'overhead-cable') object = createOverheadCable(payload, task);
         else if (task.kind === 'roof-clutter') object = createRoofClutter(payload, task);
@@ -1565,6 +1629,14 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
         state.semanticTasksSolved = state.semanticLayout.solved;
         state.semanticTasksUnresolved = state.semanticLayout.unresolved;
         state.tasks = state.tasks.filter(task => !String(task.kind).startsWith('semantic-') || !!task.semanticPlacement);
+        const semanticContextMultiplier = compileSemanticContextMultiplier({
+            chunk,
+            payload,
+            assets: SEMANTIC_INTERIOR_ASSETS,
+            existingTasks: state.tasks,
+        });
+        state.tasks.push(...semanticContextMultiplier.tasks);
+        state.semanticContextMultiplier = semanticContextMultiplier.stats;
         state.topologyPrecommit = solveBlockingTopology(chunk, payload, state.tasks);
         payload.refinement = state;
         return state;

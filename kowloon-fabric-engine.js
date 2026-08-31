@@ -1,6 +1,7 @@
 import { hashString32 } from './world-chunk-streamer.js';
 import { WORLD_FORMAT_VERSION, worldChunkOwnerId, worldEntityId } from './world-contract.js';
 import { createKowloonFabricEnrichment } from './world/kowloon-fabric-enrichment.js';
+import { assertBuildingFootprintsDoNotOverlap } from './world/building-footprint-invariant.js';
 import { createKowloonMazeTopology } from './world/kowloon-district-plan.js';
 import { classifyPhysicalUse } from './world/physical-use.js';
 import { deriveStairFlight, resolvePhysicalTruth } from './world/physical-truth.js';
@@ -2045,6 +2046,10 @@ export function createKowloonFabricEngine({
             if (yieldControl) await yieldControl(`building Kowloon compound ${chunk.key}`, entities.length, sitePlans.length + (districtLandmarkCell ? 1 : 0));
         }
 
+        // Cross-building footprint overlap is a generator contract failure, not a
+        // visual defect to hide later. Fail before bridges, enrichment, or publish.
+        const buildingFootprintInvariant = assertBuildingFootprintsDoNotOverlap(entities);
+
         const compoundEntityBySite = new Map(entities.filter(entity => entity.kind === 'building').map(entity => [entity.siteId, entity]));
         let skybridges = 0;
         for (const bridge of bridgePlans) {
@@ -2066,6 +2071,7 @@ export function createKowloonFabricEngine({
             buildings,
             plazas,
             skybridges,
+            buildingFootprintInvariant,
             portals: { ...roadPlan.portals },
             roadCells: roadPlan.roads.size,
             weirdness: chunk.weirdness,

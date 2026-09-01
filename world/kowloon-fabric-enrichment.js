@@ -15,6 +15,8 @@ import { EXTERIOR_FIRST_PASS_KIND_ORDER, EXTERIOR_TASK_KIND_PRIORITY, compareExt
 import { attachSpectacleMedia, compileExteriorCompositionAuthority, createExteriorCompositionCompiler } from './exterior-composition-authority.js';
 import { createExteriorCoverageRuntime, exteriorCoverageSnapshot, noteMicroAheadCoverageViolation, recordExteriorCoverageResult } from './exterior-composition-runtime.js';
 import { runCooperativeCompiler } from './architecture/semantic-plan-runtime.js';
+import { recipeContextFromExteriorTask, resolveDisplayRecipe } from '../content/sign-visual-language.js';
+import { renderDisplayCanvas } from '../systems/sign-display-renderer.js';
 
 function mulberry32(seed) {
     let a = seed >>> 0;
@@ -102,88 +104,50 @@ function semanticMediaFamily(context) {
     return 'data-feed';
 }
 
-function canvasTextTexture(THREE, title, subtitle, seed) {
+function canvasTextTexture(THREE, title, subtitle, seed, task = null) {
     if (typeof document === 'undefined') return null;
     const canvas = document.createElement('canvas');
     canvas.width = 384;
     canvas.height = 160;
     const ctx = canvas.getContext('2d');
     if (!ctx) return null;
-    const rng = mulberry32(seed);
-    ctx.fillStyle = pick(rng, SIGN_BACKGROUNDS);
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.strokeStyle = pick(rng, SIGN_INKS);
-    ctx.lineWidth = 8;
-    ctx.strokeRect(8, 8, canvas.width - 16, canvas.height - 16);
-    ctx.fillStyle = ctx.strokeStyle;
-    ctx.textBaseline = 'middle';
-    ctx.font = '700 32px monospace';
-    const fit = (text, max) => {
-        const s = String(text ?? '').replace(/\s+/g, ' ').trim();
-        if (ctx.measureText(s).width <= max) return s;
-        let lo = 4, hi = s.length;
-        while (lo < hi) {
-            const mid = Math.ceil((lo + hi) * 0.5);
-            if (ctx.measureText(`${s.slice(0, mid)}…`).width <= max) lo = mid;
-            else hi = mid - 1;
-        }
-        return `${s.slice(0, lo)}…`;
-    };
-    ctx.fillText(fit(title, 342), 24, 60);
-    ctx.font = '18px monospace';
-    ctx.globalAlpha = 0.78;
-    ctx.fillText(fit(subtitle, 342), 24, 115);
-    ctx.globalAlpha = 1;
+    const recipe = resolveDisplayRecipe(recipeContextFromExteriorTask(task ?? { seed }, {
+        surfaceKind: 'blade-sign',
+        instanceKey: task?.exteriorRequestId ?? task?.semanticOpportunityId ?? seed,
+    }));
+    const context = task?.semanticContentContext ?? {};
+    renderDisplayCanvas(ctx, canvas.width, canvas.height, {
+        recipe,
+        title,
+        subtitle,
+        family: semanticContentLabel(context.districtFamily ?? context.program ?? recipe.family, recipe.family),
+        serial: task?.exteriorRequestId ?? task?.semanticOpportunityId ?? seed,
+    });
     const texture = new THREE.CanvasTexture(canvas);
     texture.colorSpace = THREE.SRGBColorSpace;
     texture.needsUpdate = true;
     return texture;
 }
 
-function canvasFlyerTexture(THREE, title, subtitle, seed) {
+function canvasFlyerTexture(THREE, title, subtitle, seed, task = null) {
     if (typeof document === 'undefined') return null;
     const canvas = document.createElement('canvas');
     canvas.width = 256;
     canvas.height = 336;
     const ctx = canvas.getContext('2d');
     if (!ctx) return null;
-    const rng = mulberry32(seed ^ 0x51ed270b);
-    ctx.fillStyle = pick(rng, ['#d7c9a3', '#c7d2cb', '#d4b7ae', '#bfc3d7']);
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.strokeStyle = '#26231f';
-    ctx.lineWidth = 7;
-    ctx.strokeRect(8, 8, canvas.width - 16, canvas.height - 16);
-    ctx.fillStyle = '#24211e';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    const clean = value => String(value ?? '').replace(/\s+/g, ' ').trim();
-    const fit = (text, maxWidth, startPx) => {
-        let px = startPx;
-        const value = clean(text);
-        while (px > 12) {
-            ctx.font = `700 ${px}px monospace`;
-            if (ctx.measureText(value).width <= maxWidth) return { value, px };
-            px -= 2;
-        }
-        let clipped = value;
-        ctx.font = '700 12px monospace';
-        while (clipped.length > 4 && ctx.measureText(clipped + '...').width > maxWidth) clipped = clipped.slice(0, -1);
-        return { value: clipped + '...', px: 12 };
-    };
-    const head = fit(title, 216, 25);
-    ctx.font = `700 ${head.px}px monospace`;
-    ctx.fillText(head.value, 128, 96);
-    const sub = fit(subtitle, 216, 16);
-    ctx.font = `${sub.px}px monospace`;
-    const words = sub.value.split(' ');
-    let line = '', y = 185;
-    for (const word of words) {
-        const test = line ? line + ' ' + word : word;
-        if (ctx.measureText(test).width > 216 && line) { ctx.fillText(line, 128, y); line = word; y += 30; }
-        else line = test;
-        if (y > 276) break;
-    }
-    if (line && y <= 306) ctx.fillText(line, 128, y);
+    const recipe = resolveDisplayRecipe(recipeContextFromExteriorTask(task ?? { seed }, {
+        surfaceKind: 'flyer',
+        instanceKey: task?.exteriorRequestId ?? task?.semanticOpportunityId ?? seed,
+    }));
+    const context = task?.semanticContentContext ?? {};
+    renderDisplayCanvas(ctx, canvas.width, canvas.height, {
+        recipe,
+        title,
+        subtitle,
+        family: semanticContentLabel(context.districtFamily ?? context.program ?? recipe.family, recipe.family),
+        serial: task?.exteriorRequestId ?? task?.semanticOpportunityId ?? seed,
+    });
     const texture = new THREE.CanvasTexture(canvas);
     texture.colorSpace = THREE.SRGBColorSpace;
     texture.needsUpdate = true;
@@ -1185,7 +1149,7 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
         const point = semanticPlacementPoint(task);
         const texture = graffiti
             ? graffitiTexture(THREE, task.text, task.seed)
-            : canvasTextTexture(THREE, task.title, task.subtitle, task.seed);
+            : canvasTextTexture(THREE, task.title, task.subtitle, task.seed, task);
         const material = texture
             ? (!graffiti && GENERATION_LANES.signageStress
                 ? new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide, toneMapped: false })
@@ -1325,7 +1289,7 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
         const halfX = tangentX ? task.width * 0.5 : 0.03;
         const halfZ = tangentX ? 0.03 : task.width * 0.5;
         if (!reserveDetailBox(payload, point.x, point.z, halfX, halfZ, point.y - task.height * 0.5, point.y + task.height * 0.5, 0.02)) return null;
-        const texture = canvasFlyerTexture(THREE, task.title, task.subtitle, task.seed);
+        const texture = canvasFlyerTexture(THREE, task.title, task.subtitle, task.seed, task);
         const material = texture ? new THREE.MeshStandardMaterial({
             map: texture, roughness: 0.92, side: THREE.DoubleSide, emissive: 0x080604, emissiveIntensity: 0.05,
         }) : flyerFallbackMat;
@@ -1838,7 +1802,7 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
         detailRoot.userData.noSpatialChunk = true;
         payload.root.add(detailRoot);
         payload.detailRoot = detailRoot;
-        payload.detailResources = { textures: new Set(), materials: new Set() };
+        payload.detailResources = { textures: new Set(), materials: new Set(), geometries: new Set() };
         payload.detailReservations = [];
         payload.semanticPlacements = [];
         payload.semanticSpaces = [];
@@ -2001,8 +1965,10 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
         if (state) state.phase = DETAIL_PHASE.DISPOSED;
         for (const texture of payload?.detailResources?.textures ?? []) texture.dispose?.();
         for (const material of payload?.detailResources?.materials ?? []) material.dispose?.();
+        for (const geometry of payload?.detailResources?.geometries ?? []) geometry.dispose?.();
         payload?.detailResources?.textures?.clear?.();
         payload?.detailResources?.materials?.clear?.();
+        payload?.detailResources?.geometries?.clear?.();
         payload?.detailRoot?.clear?.();
         if (payload) payload.disposed = true;
     }

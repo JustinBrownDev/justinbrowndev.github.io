@@ -1,6 +1,5 @@
 import { QP } from '../runtime/main-quantitative-literals.js';
 import { CURATED_STREET_SIGN_PAIRS, CURATED_SYSTEM_SIGN_PAIRS, CURATED_ABOUT_PAIRS, CURATED_TUTORIAL_PAIRS } from '../content/curated/index.js';
-import { CODE_LORE_PAIRS } from '../content/code-lore/index.js';
 
 export const CONFIG = {
 
@@ -486,24 +485,26 @@ export const CONFIG = {
          
          
         decoyIdentities: [
-            ['J. BROWN', 'orthodontist · OH'], ['JUSTIN BROWN', 'youth soccer, U12'],
-            ['J BROWN', 'in memoriam 1958–2011'], ['JUSTINBROWN99', 'last seen 2013'],
-            ['J BROWN LLC', 'entity dissolved'], ['JUSTIN R. BROWN', 'unclaimed property'],
-            ['@justinbrown', 'account suspended'], ['J. BROWN', '214 county matches'],
-            ['JUSTIN BROWN', 'this is not him'], ['J. BROWN', 'no relation'],
-            ['JUSTIN BROWN', 'real estate, TX'], ['J BROWN', 'obituary, 1972'],
-            ['JUSTIN BROWN', 'band, defunct'], ['J. BROWN', 'wrong number'],
-            ['JUSTIN BROWN', 'see also: 3,529 others'],
+            ['RECORD 0142', 'index mismatch · verify source'],
+            ['RECORD 0288', 'duplicate key · manual review'],
+            ['RECORD 0319', 'forwarding address unavailable'],
+            ['RECORD 0441', 'cross-reference incomplete'],
+            ['RECORD 0510', 'stale copy · newer source expected'],
+            ['RECORD 0627', 'owner field intentionally blank'],
+            ['RECORD 0713', 'two systems disagree'],
+            ['RECORD 0834', 'paper trail continues downstairs'],
+            ['RECORD 0918', 'match confidence insufficient'],
+            ['RECORD 1040', 'local copy only'],
+            ['RECORD 1182', 'lineage preserved · meaning uncertain'],
+            ['RECORD 1299', 'manual override recorded'],
         ],
-         
-         
-        codeLore: CODE_LORE_PAIRS,
+
         systemNoise: [
             ...CURATED_SYSTEM_SIGN_PAIRS,
-            ['NO RESULTS', 'refine your query'], ['0 OF 3,529', 'estimated matches'],
+            ['NO RESULTS', 'refine your query'], ['0 OF MANY', 'candidate rows'],
             ['404', 'identity not found'], ['ACCESS DENIED', 'insufficient signal'],
             ['CACHED', '3 years stale'], ['RATE LIMITED', 'try again later'],
-            ['DELETED', 'profile unavailable'], ['AMBIGUOUS', 'too common a name'],
+            ['DELETED', 'record unavailable'], ['AMBIGUOUS', 'too many candidate rows'],
             ['LOADING', '...'], ['PAYWALL', 'subscribe to continue'],
             ['UNVERIFIED', 'take with salt'], ['INDEXING', 'come back later'],
              
@@ -526,27 +527,22 @@ export const CONFIG = {
         ],
          
          
-        signal: { title: 'J. BROWN', subtitle: 'verified · you found it', color: 0xffffff },
-         
-         
+        signal: { title: 'SOURCE FOUND', subtitle: 'verified · local authority', color: 0xffffff },
+
         tabloidHeadlines: [
-            ['3,529 JUSTIN BROWNS FOUND', 'none of them him — full report pg. 6'],
-            ['LOCAL MAN STILL UNGOOGLABLE', 'experts baffled, ask him for help anyway'],
-            ['SEARCH ENGINE ADMITS DEFEAT', '"we have too many results," says spokesbot'],
-            ['NAME TOO COMMON, CLAIMS STUDY', 'try a middle initial, scientists suggest'],
-            ['PUBLIC SECRET CONFIRMED REAL', 'hidden in plain sight since birth'],
+            ['INDEX RETURNS TOO MANY ROWS', 'narrow the key · full report pg. 6'],
+            ['LOCAL CACHE STILL DISAGREES', 'operators compare source-of-truth records'],
+            ['SEARCH ENGINE ADMITS DEFEAT', 'query is broader than the evidence'],
+            ['DUPLICATE RECORDS CLAIM PRIORITY', 'lineage decides which survives'],
+            ['PUBLIC SECRET: CHECK THE SOURCE', 'visible data still needs provenance'],
         ],
-         
-         
-         
-         
+
         nearMissSignals: [
-            { title: 'J. BROWN', subtitle: 'unverified — keep looking', color: 0xd8ded8 },
-            { title: 'J. BROWN', subtitle: 'listing expired', color: 0xffd93f },
+            { title: 'SOURCE CANDIDATE', subtitle: 'unverified · keep tracing', color: 0xd8ded8 },
+            { title: 'SOURCE CANDIDATE', subtitle: 'stale listing', color: 0xffd93f },
         ],
-         
-         
-        contentWeights: { nav: 3, decoy: 6, noise: 3, code: 1.25, flavor: 5, data: 18 },
+
+        contentWeights: { nav: 3, decoy: 6, noise: 3, flavor: 5, data: 18 },
     },
 
      
@@ -555,72 +551,58 @@ export const CONFIG = {
      
     siteContent: {
         skills: [
-            ['PYTHON', 'daily driver'], ['WEB DEV', 'html/css/js'],
-            ['LEADERSHIP', 'ACM president'], ['C / C# / C++', 'systems'],
-            ['EMBEDDED', 'bare metal'], ['LINUX', 'no distro war'],
+            ['MEASURE FIRST', 'evidence before confidence'],
+            ['TRACE THE SIGNAL', 'source to effect'],
+            ['KEEP IT REPAIRABLE', 'open paths beat sealed guesses'],
+            ['ONE OWNER', 'one authoritative state'],
+            ['LOCAL OVERRIDE', 'escape hatch with provenance'],
+            ['DIFF ALWAYS', 'preserve what changed and why'],
         ],
         education: [
-            ['SIU CARBONDALE', 'B.S. comp sci · 2023-now'],
-            ['ACM PRESIDENT', 'assoc. of computing machinery'],
-            ['COLLEGE OF DUPAGE', '2019-2023'],
-            ['COURSEWORK', 'ML · cybersecurity · SWE'],
+            ['READ THE MACHINE', 'observe before replacing'],
+            ['FOLLOW LINEAGE', 'old systems remember why'],
+            ['PROVE THE PATH', 'walkability is a contract'],
+            ['CHECK THE FORMAT', 'shape is part of meaning'],
         ],
         employment: [
-            ['DATAANNOTATION', 'AI trainer · 2024-now'],
-            ["HORTON'S LIGHTING", 'warehouse · 2021-23'],
-            ['LA GRANGE THEATER', 'projectionist · 2018-20'],
-            ['ACE HARDWARE', 'former job'],
-            ['DRY CLEANERS', 'former job'],
+            ['OPERATOR WINDOW', 'manual authority still matters'],
+            ['REPAIR BENCH', 'fix the system, not only the symptom'],
+            ['SERVICE AISLE', 'access before spectacle'],
+            ['CONTROL ROOM', 'state must be inspectable'],
         ],
         art: [
-            ["'TEETH'", 'acrylic on canvas'],
-            ['SELF PORTRAIT', 'acrylic on canvas'],
-            ["'GARY FISCHER'", 'india ink on paper'],
-            ["'THE FISH'", 'linoleum print'],
-            ['ORGANIC TV', 'cast iron · lost wax'],
-            ['PUPPET HEAD', 'wire & tissue paper'],
+            ['MEASUREMENT STUDY', 'caliper marks on working stock'],
+            ['OPEN CASE', 'structure exposed for inspection'],
+            ['SIGNAL PATH', 'source · route · effect'],
+            ['REPAIR HISTORY', 'visible changes, preserved lineage'],
+            ['LOAD TRACE', 'stress made legible'],
+            ['LOCAL OVERRIDE', 'manual path under glass'],
         ],
-         
         codeProjects: [
-            ['TRAFFIC BLASTER', 'python · openvpn, 2024'],
-            ['SLIDING TILES', 'python solver, 2023'],
-            ['SPINNING CUBE', 'c++ terminal 3d, 2022'],
-            ['BIBITINATOR', 'c# save editor, 2021'],
-            ['MC COMPUTER', 'copper bulb logic, 2025'],
-            ['CYBERDECK', 'raspberry pi rig, 2024'],
-            ['EMP GENERATOR', 'grill lighter build, 2024'],
+            ['PROVENANCE CHECK', 'source · transform · output'],
+            ['STATE DIFF', 'before / after / authority'],
+            ['ROUTE TRACE', 'edge · owner · destination'],
+            ['FORMAT GUARD', 'shape changes are behavior changes'],
+            ['LOAD SHEDDER', 'expensive detail yields first'],
+            ['PLAN CACHE', 'stable identity, deterministic reuse'],
         ],
-         
         webProjects: [
-            ['VITALSAGE', 'wordpress build, 2024'],
-            ['BRANDYOUPROMO', 'asp.net site, 2022'],
+            ['VISIBLE SHELL', 'coarse truth before deep detail'],
+            ['SEMANTIC FRONTAGE', 'inside program informs outside face'],
         ],
-         
         about: [
             ...CURATED_ABOUT_PAIRS,
-            ['TAKE IT APART', 'to see how it works'],
-            ['ALWAYS LEARNING', 'next skill, next problem'],
-            ['UNBOUND', 'not afraid of the machine'],
-            ['THEY ASK ME', "for the advice"],
-            ['PUBLIC SECRET', 'hidden by numbers, not by hiding'],
+            ['OPEN THE CASE', 'inspect the mechanism'],
+            ['KEEP THE RECEIPT', 'provenance travels with the fact'],
+            ['MAKE IT WALKABLE', 'geometry should mean something'],
+            ['PREFER ONE TRUTH', 'parallel authorities drift'],
+            ['LEAVE AN ESCAPE HATCH', 'manual recovery is architecture'],
         ],
-         
-         
-         
-         
-        lifePhotos: [
-            ['GRADUATION', 'SIU Carbondale'],
-            ['FOUNDRY DAY', 'iron casting'],
-            ['SERVER RACK', 'cable management, in progress'],
-            ['DISK ARRAY', 'reclaimed hardware'],
-            ['MIRROR, 2AM', 'a photo, for once'],
-        ],
-         
-         
+        lifePhotos: [],
         contact: [
-            ['JUSTIN BROWN', 'justin@jweb.dev'],
-            ['J. BROWN', '(630) 880-7886'],
-            ['JWEB.DEV', 'expired business card'],
+            ['SERVICE DESK', 'local operator channel'],
+            ['CONTROL ROOM', 'manual escalation path'],
+            ['JWEB.DEV', 'public surface'],
         ],
     },
 

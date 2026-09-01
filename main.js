@@ -22,14 +22,12 @@ import {
     singularEntityId,
     worldWeirdnessAt,
 } from './world-contract.js';
-import { WIKI_FALLBACK, PERSONAL_WANTED_FACTS, WANTED_TAGLINES } from './content/wanted-content.js';
+import { WIKI_FALLBACK, WANTED_TAGLINES } from './content/wanted-content.js';
 import { ART_GALLERY_CATALOG, AS400_CONTENT } from './content/signature-content.js';
 import { BASE_GRAFFITI_TAGS } from './content/graffiti-content.js';
 import { MYTHOLOGY_FRAGMENTS, INFRA_LORE_FRAGMENTS, UNDERCITY_LORE_FRAGMENTS } from './content/lore-fragments.js';
 import { JUNK_BASE_KINDS, JUNK_WEAR_STATES, JUNK_SIZE_CLASSES } from './content/junk-content.js';
 import { TEXT_FONTS, PAPER_COLORS, INK_COLORS, SIGN_SHAPES, SIGN_FONTS, SIGN_BACKINGS } from './content/text-style.js';
-import { PHOTO_BY_TITLE } from './content/photo-catalog.js';
-import { CODE_LORE_PAIRS } from './content/code-lore/index.js';
 import { createSignatureBuildingSystem } from './world/signature-buildings.js';
 import { CELL_SIDE_DEFS, outwardRotationY } from './systems/cardinal.js';
 import { createAdornmentSystem } from './systems/adornment-assets.js';
@@ -1319,7 +1317,6 @@ function pickSignContent(x, z) {
          
          
         case 'noise': return { ...toContent(pickRandomizedCuratedPair(CONFIG.billboards.systemNoise, 'system')), flicker: true };
-        case 'code': return { ...toContent(pick(CODE_LORE_PAIRS)), flicker: false };
          
          
         case 'data': return { ...toContent(pickCityNoisePair(rng, x, z)), flicker: rng() < QP[538] };
@@ -1609,20 +1606,11 @@ function makeWantedTexture(title, subtitle, tagline1 = 'KNOWLEDGE OF THIS TOPIC'
 }
 
 function addWantedPoster(x, z, rotY, placement = null) {
-     
-     
-    const isPersonal = rng() < QP[666];
-     
-     
-     
-     
-    const [title, subtitle] = isPersonal
-        ? pick(PERSONAL_WANTED_FACTS)
-        : (rng() < QP[667] ? pick(WIKI_FALLBACK) : pickCityNoisePair(rng, x, z));
+    const [title, subtitle] = rng() < QP[667]
+        ? pick(WIKI_FALLBACK)
+        : pickCityNoisePair(rng, x, z);
     const [tagline1, tagline2] = pickRandomizedWantedTaglines();
-    const tex = isPersonal
-        ? makeWantedTexture(title, subtitle, 'ON FILE, ALLEGEDLY', "REWARD: NONE, HE'S FINE")
-        : makeWantedTexture(title, subtitle, tagline1, tagline2);
+    const tex = makeWantedTexture(title, subtitle, tagline1, tagline2);
     const plane = new THREE.Mesh(
         new THREE.PlaneGeometry(randRange(QP[668], QP[669]), randRange(QP[670], QP[671])),
         new THREE.MeshStandardMaterial({ map: tex, roughness: QP[672] })
@@ -1634,9 +1622,7 @@ function addWantedPoster(x, z, rotY, placement = null) {
     plane.position.set(x, randRange(minCenter, maxCenter), z);
     plane.rotation.y = rotY;
     scene.add(plane);
-     
-     
-    if (!isPersonal) wantedPosterMeshes.push(plane);
+    wantedPosterMeshes.push(plane);
     return QP[679];
 }
 

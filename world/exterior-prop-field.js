@@ -4,6 +4,8 @@
 
 import { GENERATION_LANES } from '../config/performance-isolation.js';
 import { EXTERIOR_OPPORTUNITY_PRIORITY, EXTERIOR_VISUAL_TIER, exteriorOpportunityVisualTier, exteriorPlacementVisualImpact } from './exterior-spectacle-priority.js';
+import { recipeContextFromSemanticMedia, resolveDisplayRecipe } from '../content/sign-visual-language.js';
+import { renderDisplayCanvas } from '../systems/sign-display-renderer.js';
 
 const SHAPES = Object.freeze(['box', 'cylinder', 'cone', 'sphere']);
 const COLORS = Object.freeze([0x4b5150, 0x62635e, 0x756956, 0x42585d, 0x6b5b61, 0x514c45]);
@@ -527,66 +529,45 @@ export function createExteriorPropFieldSystem({ THREE, worldSeed = 0 } = {}) {
     const scale = new THREE.Vector3();
     const color = new THREE.Color();
 
-    function createMediaTexture(media) {
+    function createMediaTexture(media, placement = null) {
         if (typeof document === 'undefined' || !media) return null;
         const canvas = document.createElement('canvas');
         canvas.width = 1280;
         canvas.height = 512;
         const ctx = canvas.getContext('2d');
         if (!ctx) return null;
-        const seed = Number(media.contentSeed ?? media.campaignSeed ?? media.seed) >>> 0;
-        const backgrounds = ['#07131b', '#210b1b', '#17120a', '#071b16', '#150c24'];
-        const inks = ['#82f7ff', '#ff79cf', '#ffe36c', '#8dff9a', '#d4b2ff'];
-        ctx.fillStyle = backgrounds[seed % backgrounds.length];
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-        ctx.strokeStyle = inks[(seed >>> 3) % inks.length];
-        ctx.lineWidth = 18;
-        ctx.strokeRect(18, 18, canvas.width - 36, canvas.height - 36);
-        ctx.fillStyle = ctx.strokeStyle;
-        ctx.textAlign = 'left';
-        ctx.textBaseline = 'middle';
-        const clean = value => String(value ?? '').replace(/\s+/g, ' ').trim();
-        const fit = (text, maxWidth, startPx, minPx) => {
-            const value = clean(text);
-            let px = startPx;
-            while (px > minPx) {
-                ctx.font = '800 ' + px + 'px monospace';
-                if (ctx.measureText(value).width <= maxWidth) return { value, px };
-                px -= 4;
-            }
-            let clipped = value;
-            ctx.font = '800 ' + minPx + 'px monospace';
-            while (clipped.length > 5 && ctx.measureText(clipped + '...').width > maxWidth) clipped = clipped.slice(0, -1);
-            return { value: clipped + (clipped === value ? '' : '...'), px: minPx };
-        };
-        const family = clean(media.family || 'semantic-media').replace(/[-_]+/g, ' ').toUpperCase();
-        ctx.globalAlpha = 0.78;
-        ctx.font = '700 25px monospace';
-        ctx.fillText(family, 58, 68);
-        ctx.globalAlpha = 1;
-        const title = fit(media.title, 1160, 122, 52);
-        ctx.font = '800 ' + title.px + 'px monospace';
-        ctx.fillText(title.value, 58, 210);
-        const subtitle = fit(media.subtitle, 880, 46, 24);
-        ctx.globalAlpha = 0.90;
-        ctx.font = '700 ' + subtitle.px + 'px monospace';
-        ctx.fillText(subtitle.value, 58, 338);
-        const value = fit(media.value?.label ?? '', 420, 56, 28);
-        if (value.value) {
-            ctx.textAlign = 'right';
-            ctx.globalAlpha = 1;
-            ctx.font = '800 ' + value.px + 'px monospace';
-            ctx.fillText(value.value, canvas.width - 58, 424);
-        }
-        ctx.textAlign = 'left';
-        ctx.globalAlpha = 0.52;
-        ctx.font = '600 18px monospace';
-        ctx.fillText('SEMANTIC MEDIA / ' + clean(media.assemblyKind || 'SCREEN').toUpperCase(), 58, 446);
-        ctx.globalAlpha = 1;
+        const recipe = resolveDisplayRecipe(recipeContextFromSemanticMedia(media, placement ?? {}));
+        renderDisplayCanvas(ctx, canvas.width, canvas.height, {
+            recipe,
+            title: media.title,
+            subtitle: media.subtitle,
+            family: media.family,
+            value: media.value?.label,
+            serial: media.id,
+        });
         const texture = new THREE.CanvasTexture(canvas);
         texture.colorSpace = THREE.SRGBColorSpace;
         texture.needsUpdate = true;
         return texture;
+    }
+
+    function createMediaSegmentGeometry(segment) {
+        const u0 = clamp(Number(segment?.u0 ?? 0), 0, 1);
+        const rawU1 = clamp(Number(segment?.u1 ?? 1), 0, 1);
+        const u1 = rawU1 > u0 ? rawU1 : 1;
+        if (u0 <= 0.000001 && u1 >= 0.999999) return mediaPlaneGeometry;
+        const geometry = mediaPlaneGeometry.clone();
+        const uv = geometry.getAttribute?.('uv');
+        if (uv) {
+            const span = u1 - u0;
+            for (let i = 0; i < uv.count; i++) uv.setX(i, u0 + uv.getX(i) * span);
+            uv.needsUpdate = true;
+        }
+        geometry.userData = {
+            ...(geometry.userData ?? {}),
+            semanticMediaSegment: { u0, u1, index: segment?.index ?? 0, count: segment?.count ?? 1 },
+        };
+        return geometry;
     }
 
     function makeTask(chunk, plan, placements, tier, entityId, ordinal, request = {}) {
@@ -701,13 +682,15 @@ export function createExteriorPropFieldSystem({ THREE, worldSeed = 0 } = {}) {
         group.userData.mediaDescriptorIds = [...mediaGroups.keys()];
         for (const [mediaId, assemblyPlacements] of mediaGroups) {
             const media = assemblyPlacements[0]?.media;
-            const texture = createMediaTexture(media);
+            const texture = createMediaTexture(media, assemblyPlacements[0]);
             if (!texture) continue;
             const material = new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide, toneMapped: false });
             payload?.detailResources?.textures?.add?.(texture);
             payload?.detailResources?.materials?.add?.(material);
             for (const item of assemblyPlacements) {
-                const panel = new THREE.Mesh(mediaPlaneGeometry, material);
+                const segmentGeometry = createMediaSegmentGeometry(item.mediaSegment);
+                if (segmentGeometry !== mediaPlaneGeometry) payload?.detailResources?.geometries?.add?.(segmentGeometry);
+                const panel = new THREE.Mesh(segmentGeometry, material);
                 panel.name = group.name + ':media:' + mediaId + ':' + String(item.mediaSegment?.index ?? 0);
                 const outwardX = -Math.sin(item.rotY);
                 const outwardZ = -Math.cos(item.rotY);

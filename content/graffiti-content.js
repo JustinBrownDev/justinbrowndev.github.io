@@ -9,7 +9,7 @@ export const BASE_GRAFFITI_TAGS = [
     'NOT THIS ONE EITHER', 'KEEP WALKING', 'PUBLIC SECRET', 'UNBOUND',
      
      
-    'NO 5TH BUTTON', 'OPEN THE CASE', 'THE CYCLE KNOWS', 'JTHEWAY',
+    'NO 5TH BUTTON', 'OPEN THE CASE', 'THE CYCLE KNOWS', 'FOLLOW THE SIGNAL',
     'HEAT SHALL MOVE', 'WHO LEFT THIS OPEN', 'YES BUT HOW', 'REMOVE THE COVER',
      
      
@@ -25,7 +25,7 @@ export const BASE_GRAFFITI_TAGS = [
     ...(() => {
         const subjects = [
             'THE CYCLE', 'THE FIFTH BUTTON', 'THE VISE', 'THE WORKBENCH', 'THE OPEN CASE',
-            'THE COMPRESSOR', 'THE MAGNETRON', 'JTHEWAY', '8gH', 'THE SEALED BLACK BOX',
+            'THE COMPRESSOR', 'THE MAGNETRON', 'THE TRACE MARK', 'THE SERVICE TAG', 'THE SEALED BLACK BOX',
             'THE REVERSING VALVE', 'THE SIGNAL',
         ];
         const predicates = [

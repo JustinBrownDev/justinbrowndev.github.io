@@ -37,7 +37,6 @@ import { BICYCLES_VOICE, BICYCLES_PAIRS } from './bicycles.js';
 import { PLANTS_VOICE, PLANTS_PAIRS } from './plants.js';
 import { AVIATION_VOICE, AVIATION_PAIRS } from './aviation.js';
 import { BROADCAST_VOICE, BROADCAST_PAIRS } from './broadcast.js';
-import { CODE_LORE_PAIRS } from '../code-lore/index.js';
 
 const merge = (...lists) => Object.freeze([...new Set(lists.flat())]);
 const mergePairs = (...lists) => Object.freeze(lists.flat().filter((pair, index, all) => all.findIndex(other => other[0] === pair[0] && other[1] === pair[1]) === index));
@@ -102,7 +101,7 @@ export const CURATED_SYSTEM_SIGN_PAIRS = mergePairs(SYSTEMS_PAIRS, MIDRANGE_PAIR
 export const CURATED_LORE_PAIRS = mergePairs(MYTH_PAIRS, REFRIGERATION_PAIRS, FABRICATION_PAIRS, MECHANICAL_PAIRS, PRINTMAKING_PAIRS, PROJECTION_PAIRS, THEATER_PAIRS, MACHINING_PAIRS, PHOTOGRAPHY_PAIRS, PLANTS_PAIRS);
 export const CURATED_INFRA_PAIRS = mergePairs(MAINTENANCE_PAIRS, MEASUREMENT_PAIRS, MUNICIPAL_PAIRS, LOGISTICS_PAIRS, RAIL_PAIRS, ELECTRICAL_PAIRS, PLUMBING_PAIRS, HVAC_PAIRS, DATACENTER_PAIRS, NETWORKING_PAIRS, CONTROLS_PAIRS);
 export const CURATED_RECORDS_PAIRS = mergePairs(ARCHIVES_PAIRS, CLERICAL_PAIRS, LIBRARY_PAIRS, PRINTING_PAIRS);
-export const CURATED_CODE_LORE_PAIRS = CODE_LORE_PAIRS;
+export const CURATED_CODE_LORE_PAIRS = Object.freeze([]);
 export const CURATED_TUTORIAL_PAIRS = TUTORIAL_PAIRS;
 export const CURATED_ABOUT_PAIRS = mergePairs([
     ['MEASURE, DON\'T GUESS', 'evidence before confidence'], ['TAKE IT APART', 'to see how it works'], ['FIX THE SYSTEM', 'not just the symptom'],

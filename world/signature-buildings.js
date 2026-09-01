@@ -159,8 +159,9 @@ export function createSignatureBuildingSystem(deps) {
         if (!spot) return false;
         const p = pointOnFacade(facade, spot.u, spot.v, QP[2260]);  
         const rotY = facade.rotY + Math.PI;  
-        const img = photoImages[piece.photoKey];
-        if (img) buildGalleryArtPanel(img, p.x, p.y, p.z, rotY, width, piece.title, piece.subtitle);
+        const img = piece.photoKey ? photoImages[piece.photoKey] : null;
+        if (!piece.photoKey) addWallPoster(p.x, p.y, p.z, rotY, piece.title, piece.subtitle);
+        else if (img) buildGalleryArtPanel(img, p.x, p.y, p.z, rotY, width, piece.title, piece.subtitle);
         else (pendingGalleryPanels[piece.photoKey] ??= []).push({ x: p.x, y: p.y, z: p.z, rotY, widthUnits: width, title: piece.title, subtitle: piece.subtitle });
         return true;
     }
@@ -652,7 +653,7 @@ export function createSignatureBuildingSystem(deps) {
                     hung++;
                 }
             }
-            console.log(`[signature] JUSTIN BROWN INDEX: records lobby -- reception + ${hung} system-noise panels`);
+            console.log(`[signature] RECORDS INDEX: records lobby -- reception + ${hung} system-noise panels`);
         }
     
          
@@ -678,7 +679,7 @@ export function createSignatureBuildingSystem(deps) {
                 yield { phase: 'signature-index-stack-fixture', row: cell.row, col: cell.col, index: i };
             }
         }
-        console.log(`[signature] JUSTIN BROWN INDEX: deep stacks -- ${stackFixtures} cabinets/shelves across ${allStackCells.length} rooms, ${stackLabels} real decoy records labeled`);
+        console.log(`[signature] RECORDS INDEX: deep stacks -- ${stackFixtures} cabinets/shelves across ${allStackCells.length} rooms, ${stackLabels} real decoy records labeled`);
     
          
          
@@ -705,7 +706,7 @@ export function createSignatureBuildingSystem(deps) {
             placeSemanticCityAsset(primaryRect, pick(LOCKER_MODELS), fl * floorHeight, { roomHeight: floorHeight });
             yield { phase: 'signature-index-floor', floor: fl };
         }
-        console.log(`[signature] JUSTIN BROWN INDEX: ${floorCount - QP[2557]} upper floors -- ${upperHung} real decoy/noise panels hung, deeper into the stacks per floor`);
+        console.log(`[signature] RECORDS INDEX: ${floorCount - QP[2557]} upper floors -- ${upperHung} real decoy/noise panels hung, deeper into the stacks per floor`);
     
          
         const vestFacade = facadesFor(lobby)[QP[2558]] ?? facadesFor(primary)[QP[2559]];
@@ -720,7 +721,7 @@ export function createSignatureBuildingSystem(deps) {
             }
         }
     
-        console.log(`[signature] JUSTIN BROWN INDEX: built ${cells.length} modules, ${floorCount} floors -- lobby+search hall+deep stacks all populated, ${allStackCells.length + QP[2575]} internally-connected rooms give real multiple routes`);
+        console.log(`[signature] RECORDS INDEX: built ${cells.length} modules, ${floorCount} floors -- lobby+search hall+deep stacks all populated, ${allStackCells.length + QP[2575]} internally-connected rooms give real multiple routes`);
     }
     
     function* buildSystemsWorkshopSteps(site) {

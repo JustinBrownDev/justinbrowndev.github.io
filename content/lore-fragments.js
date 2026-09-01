@@ -9,9 +9,9 @@ export const MYTHOLOGY_FRAGMENTS = [
     ...CURATED_LORE_PAIRS,
     ['FOUR BUTTONS', 'time -- power -- start -- stop'],
     ['THE FIFTH WAS JUDGED', 'ruled unnecessary, disputed since'],
-    ['HIS EMINENCE OF REFRIGERATION', 'sovereign of the cycle'],
+    ['THE REFRIGERATION CYCLE', 'compress -- condense -- expand -- evaporate'],
     ['THE VISE-GRIP REVELATION', 'the moment gripping acquired state'],
-    ['8gH', 'a signature attached to opened structures'],
+    ['THE SERVICE TAG', 'a mark attached to opened structures'],
     ['TAKE IT APART', 'to see how it works'],
      
      

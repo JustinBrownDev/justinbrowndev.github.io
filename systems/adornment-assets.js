@@ -552,26 +552,7 @@ export function createAdornmentSystem({ CONFIG, camera, scene, pick, randRange, 
         else (pendingPhotoPlacements[key] ??= []).push(req);
     }
 
-    loadPhoto('portrait', 'me_smiling.jpg');
-    loadPhoto('teeth', 'teeth.jpg');
-    loadPhoto('selfPortrait', 'self_portrait.jpg');
-    loadPhoto('bike', 'bike.jpg');
-    loadPhoto('linoPrint', 'lino_print.jpg');
-    loadPhoto('puppet', 'puppet_image.jpg');
-    loadPhoto('vitalsage', 'vitalsage.jpg');
-    loadPhoto('brandyou', 'brandyou.jpg');
-    loadPhoto('bibitinator', 'bibitinator.jpg');
-    loadPhoto('slidingTiles', 'sliding_tiles.jpg');
-     
-     
-     
-     
-     
-    loadPhoto('graduation', 'graduation.jpg');
-    loadPhoto('foundry', 'foundry.jpg');
-    loadPhoto('serverRack', 'server_rack.jpg');
-    loadPhoto('hardDrives', 'hard_drives.jpg');
-    loadPhoto('mirrorPortrait', 'mirror_portrait.jpg');
+    // Authored photo files are archival/explicit-surface material; ambient runtime does not hydrate them.
 
      
 

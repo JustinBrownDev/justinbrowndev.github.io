@@ -1,9 +1,10 @@
 import { CUT_AUTHORED_SPAWN_DECORATION } from '../config/performance-isolation.js';
 import * as THREE from '../vendor/three/three.module.js';
 import { QP } from '../runtime/main-quantitative-literals.js';
-import { PHOTO_BY_TITLE } from '../content/photo-catalog.js';
 import { SIGN_SHAPES, SIGN_FONTS, SIGN_BACKINGS, TEXT_FONTS, PAPER_COLORS, INK_COLORS } from '../content/text-style.js';
 import { fitCanvasText, drawCanvasLines } from '../systems/canvas-text.js';
+import { hashDisplaySeed, resolveDisplayRecipe } from '../content/sign-visual-language.js';
+import { renderDisplayCanvas } from '../systems/sign-display-renderer.js';
 
 export function createSignageSystem(deps) {
     const {
@@ -29,17 +30,18 @@ export function createSignageSystem(deps) {
          
          
         const shape = shapeOverride ?? pick(SIGN_SHAPES);
-        const font = pick(SIGN_FONTS);
-        const backing = pick(SIGN_BACKINGS);
-        const borderStyle = pick(SIGN_BORDER_STYLES);
-        const borderWidth = randRange(QP[2886], QP[2887]);
-         
-         
-        const borderColorHex = rng() < QP[2888] ? pick(CONFIG.neonPalette) : colorHex;
-
-         
-         
-         
+        const authoredDisplaySeed = hashDisplaySeed([title, subtitle, colorHex].join('|'));
+        const baseRecipe = resolveDisplayRecipe({
+            campaignKey: 'authored-sign:' + authoredDisplaySeed.toString(16),
+            campaignSeed: authoredDisplaySeed,
+            program: 'local mixed',
+            surfaceKind: 'blade-sign',
+            instanceKey: [x, y, z, rotY].join(':'),
+        });
+        const displayRecipe = Object.freeze({
+            ...baseRecipe,
+            palette: Object.freeze({ ...baseRecipe.palette, accent: hexToCss(colorHex) }),
+        });
         let width = widthOverride ?? randRange(QP[2889], QP[2890]);
         let armLength = armLengthOverride ?? randRange(QP[2891], QP[2892]);
         const safeDepth = safeBladeProjectionDepth(x, z, rotY);
@@ -51,34 +53,13 @@ export function createSignageSystem(deps) {
         const panelDepth = randRange(QP[2893], QP[2894]);
 
         const tex = makePixelTexture((ctx, w, h) => {
-            const color = hexToCss(colorHex);
-            ctx.fillStyle = backing;
-            ctx.fillRect(QP[2895], QP[2896], w, h);
-            if (borderStyle !== 'none') {
-                ctx.strokeStyle = hexToCss(borderColorHex);
-                ctx.lineWidth = borderWidth;
-                if (borderStyle === 'cut') {  
-                    const c = Math.min(w, h) * QP[2897];
-                    ctx.beginPath();
-                    ctx.moveTo(c, QP[2898]); ctx.lineTo(w - c, QP[2899]); ctx.lineTo(w - QP[2900], c); ctx.lineTo(w - QP[2901], h - c);
-                    ctx.lineTo(w - c, h - QP[2902]); ctx.lineTo(c, h - QP[2903]); ctx.lineTo(QP[2904], h - c); ctx.lineTo(QP[2905], c);
-                    ctx.closePath(); ctx.stroke();
-                } else {
-                    ctx.strokeRect(borderWidth / QP[2906], borderWidth / QP[2907], w - borderWidth, h - borderWidth);
-                    if (borderStyle === 'double') {
-                        ctx.lineWidth = Math.max(QP[2908], borderWidth * QP[2909]);
-                        ctx.strokeRect(borderWidth * QP[2910], borderWidth * QP[2911], w - borderWidth * QP[2912], h - borderWidth * QP[2913]);
-                    }
-                }
-            }
-            ctx.fillStyle = color;
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            const textW = Math.max(QP[2914], w - Math.max(QP[2915], borderWidth * QP[2916]));
-            const titleFit = fitCanvasText(ctx, title, textW, shape.h > shape.w ? QP[2917] : QP[2918], h * QP[2919], QP[2920], font, 'bold');
-            drawCanvasLines(ctx, titleFit, w / QP[2921], h * QP[2922], QP[2923]);
-            const subFit = fitCanvasText(ctx, subtitle, textW, shape.h > shape.w ? QP[2924] : QP[2925], h * QP[2926], QP[2927], font);
-            drawCanvasLines(ctx, subFit, w / QP[2928], h * QP[2929], QP[2930]);
+            renderDisplayCanvas(ctx, w, h, {
+                recipe: displayRecipe,
+                title,
+                subtitle,
+                family: 'LOCAL',
+                serial: authoredDisplaySeed.toString(16).padStart(8, '0').toUpperCase(),
+            });
         }, shape.w, shape.h);
 
          
@@ -486,8 +467,8 @@ export function createSignageSystem(deps) {
         let fi = QP[3257];
         for (let ji = QP[3257]; ji < jobs.length; ji++) {
             const job = jobs[ji];
-            const photoKey = PHOTO_BY_TITLE[job.title];
-            const kind = photoKey ? 'photo' : job.kind;
+            const photoKey = null;
+            const kind = job.kind;
             const { width, height } = CONTENT_CARD_RESERVE[kind];
             let placed = false;
             while (!placed && fi < faces.length) {

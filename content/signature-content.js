@@ -19,17 +19,14 @@ import { QP } from '../runtime/main-quantitative-literals.js';
  
  
 export const ART_GALLERY_CATALOG = [
-    { id: 'teeth', title: "'TEETH'", subtitle: 'acrylic on canvas', photoKey: 'teeth', aspectRatio: QP[2187] / QP[2188], kind: 'wall', featured: false, room: 'sideGalleryA' },
-    { id: 'selfPortrait', title: 'SELF PORTRAIT', subtitle: 'acrylic on canvas', photoKey: 'selfPortrait', aspectRatio: QP[2189] / QP[2190], kind: 'wall', featured: true, room: 'mainGallery' },
-    { id: 'garyFischer', title: "'GARY FISCHER'", subtitle: 'india ink on paper', photoKey: 'bike', aspectRatio: QP[2191] / QP[2192], kind: 'wall', featured: false, room: 'sideGalleryA' },
-    { id: 'theFish', title: "'THE FISH'", subtitle: 'linoleum print', photoKey: 'linoPrint', aspectRatio: QP[2193] / QP[2194], kind: 'wall', featured: false, room: 'sideGalleryB' },
-     
-     
-     
-    { id: 'organicTV', title: 'ORGANIC TV', subtitle: 'cast iron · lost wax', photoKey: null, aspectRatio: null, kind: 'pedestal', featured: true, room: 'courtyard' },
-    { id: 'puppetHead', title: 'PUPPET HEAD', subtitle: 'wire & tissue paper', photoKey: 'puppet', aspectRatio: QP[2195] / QP[2196], kind: 'wall', featured: false, room: 'sideGalleryB' },
-    { id: 'vitalsage', title: 'VITALSAGE', subtitle: 'wordpress build, 2024', photoKey: 'vitalsage', aspectRatio: QP[2197] / QP[2198], kind: 'wall', featured: false, room: 'upperGallery' },
-    { id: 'brandyoupromo', title: 'BRANDYOUPROMO', subtitle: 'asp.net site, 2022', photoKey: 'brandyou', aspectRatio: QP[2199] / QP[2200], kind: 'wall', featured: false, room: 'upperGallery' },
+    { id: 'measurementStudy', title: 'MEASUREMENT STUDY', subtitle: 'reference marks · tolerance · repeatability', photoKey: null, aspectRatio: QP[2187] / QP[2188], kind: 'wall', featured: false, room: 'sideGalleryA' },
+    { id: 'openCase', title: 'OPEN CASE', subtitle: 'structure exposed for inspection', photoKey: null, aspectRatio: QP[2189] / QP[2190], kind: 'wall', featured: true, room: 'mainGallery' },
+    { id: 'signalPath', title: 'SIGNAL PATH', subtitle: 'source · route · effect', photoKey: null, aspectRatio: QP[2191] / QP[2192], kind: 'wall', featured: false, room: 'sideGalleryA' },
+    { id: 'repairHistory', title: 'REPAIR HISTORY', subtitle: 'visible changes · preserved lineage', photoKey: null, aspectRatio: QP[2193] / QP[2194], kind: 'wall', featured: false, room: 'sideGalleryB' },
+    { id: 'localOverride', title: 'LOCAL OVERRIDE', subtitle: 'manual path under glass', photoKey: null, aspectRatio: null, kind: 'pedestal', featured: true, room: 'courtyard' },
+    { id: 'loadTrace', title: 'LOAD TRACE', subtitle: 'stress made legible', photoKey: null, aspectRatio: QP[2195] / QP[2196], kind: 'wall', featured: false, room: 'sideGalleryB' },
+    { id: 'visibleShell', title: 'VISIBLE SHELL', subtitle: 'coarse truth before deep detail', photoKey: null, aspectRatio: QP[2197] / QP[2198], kind: 'wall', featured: false, room: 'upperGallery' },
+    { id: 'semanticFrontage', title: 'SEMANTIC FRONTAGE', subtitle: 'inside program informs outside face', photoKey: null, aspectRatio: QP[2199] / QP[2200], kind: 'wall', featured: false, room: 'upperGallery' },
 ];
 
  

@@ -1841,7 +1841,10 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
             firstPassComplete: !!state.firstPassComplete,
             firstPassEntitiesComplete: state.firstPassEntitiesComplete,
             firstPassEntityTarget: state.firstPassEntityTarget,
-            exteriorCoverage: exteriorCoverageSnapshot(state, payload, playerPosition),
+            // A full snapshot scans remaining tasks and aggregates diagnostics. Keep the
+            // incremental runtime counters hot, but pay the snapshot cost only once when
+            // this payload finishes instead of after every one-task refinement turn.
+            exteriorCoverage: complete ? exteriorCoverageSnapshot(state, payload, playerPosition) : null,
         };
     }
 

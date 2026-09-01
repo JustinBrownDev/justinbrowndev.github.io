@@ -1,0 +1,42 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>JWEB Signage Visual Language POC</title>
+<style>
+  body { margin: 0; background: #151515; color: #eee; font: 14px system-ui, sans-serif; }
+  main { display: grid; grid-template-columns: repeat(auto-fit, minmax(360px,1fr)); gap: 18px; padding: 18px; }
+  figure { margin:0; background:#222; padding:10px; }
+  canvas { width:100%; aspect-ratio: 2 / 1; display:block; background:#000; }
+  figcaption { padding-top:8px; opacity:.8; }
+</style>
+<main id="grid"></main>
+<script type="module">
+import { resolveDisplayRecipe } from '../content/sign-visual-language.js';
+import { renderDisplayCanvas } from '../systems/sign-display-renderer.js';
+
+const cases = [
+  ['Market storefront', {campaignKey:'market:one',districtFamily:'geographic market',program:'retail restaurant',frontageRole:'storefront public-entry',surfaceKind:'facade-sign'}, 'NIGHT ORCHARD', 'OPEN CIRCUIT KITCHEN', 'MARKET', '27 CR'],
+  ['Network service', {campaignKey:'net:service',districtFamily:'network protocol',program:'mechanical service utility',frontageRole:'service',surfaceKind:'facade-sign'}, 'ROUTE AUTHORITY', 'PORT 443 / EDGE 07', 'NETWORK', '443'],
+  ['Civic public', {campaignKey:'civic:hall',districtFamily:'geographic',program:'institutional public civic',frontageRole:'public-entry',publicRole:'public',surfaceKind:'facade-sign'}, 'PUBLIC RECORD', 'ACCESS / LEVEL B', 'CIVIC', 'A-117'],
+  ['Industrial warning', {campaignKey:'plant:warning',districtFamily:'scientific',program:'industrial mechanical service',frontageRole:'loading service',publicRole:'warning',surfaceKind:'facade-sign'}, 'THERMAL LIMIT', 'AUTHORIZED EXCHANGE ONLY', 'WARNING', '880 K'],
+  ['Transit identity', {campaignKey:'transit:line',districtFamily:'transport transit',program:'public circulation',blockRole:'pedestrian corridor',surfaceKind:'roof-billboard'}, 'LINE 08', 'WEST PLATFORM / NIGHT SERVICE', 'TRANSIT', '08'],
+  ['Editorial poster', {campaignKey:'alley:poster',districtFamily:'geographic',program:'residential personal',blockRole:'quiet alley',surfaceKind:'poster'}, 'LOCAL MEMORY', 'Nothing leaves the block unchanged.', 'ARCHIVE', null],
+  ['Market spectacle', {campaignKey:'market:mega',districtFamily:'market geographic',program:'retail entertainment',blockRole:'spectacle corridor landmark',surfaceKind:'facade-megascreen',landmark:true}, 'BUY THE WEATHER', 'TONIGHT / DISTRICT 6', 'MARKET', '88 CR'],
+  ['Broadcast corner', {campaignKey:'broadcast:corner',districtFamily:'network',program:'commercial entertainment broadcast',blockRole:'landmark spectacle corridor',surfaceKind:'corner-megascreen',landmark:true}, 'PUBLIC SIGNAL', 'INDEX TRANSMISSION LIVE', 'BROADCAST', '2097'],
+  ['Science instrument', {campaignKey:'science:lab',districtFamily:'scientific',program:'institutional scientific',frontageRole:'service public',surfaceKind:'facade-megascreen'}, 'STATION Δ-14', 'PRESSURE TREND NOMINAL', 'OBSERVATORY', '101.3'],
+  ['Human handmade', {campaignKey:'alley:cafe',districtFamily:'geographic',program:'restaurant personal',blockRole:'alley pedestrian',surfaceKind:'blade-sign'}, 'HOT WATER', 'NO PERFECT MACHINES', 'CAFE', '24H'],
+  ['Luxury sparse', {campaignKey:'tower:quiet',districtFamily:'commercial',program:'commercial lobby',blockRole:'anchor quiet',surfaceKind:'roof-billboard'}, 'EIDOLON', 'PRIVATE HORIZON', 'TOWER', null],
+  ['Archive dense', {campaignKey:'archive:wall',districtFamily:'encoding',program:'archive institutional public',frontageRole:'public',surfaceKind:'poster'}, 'FIELD NOTES 31', 'Recovered index of local systems and names.', 'ARCHIVE', '31'],
+];
+
+const grid = document.querySelector('#grid');
+for (const [label, context, title, subtitle, family, value] of cases) {
+  const fig = document.createElement('figure');
+  const canvas = document.createElement('canvas');
+  canvas.width = 960; canvas.height = 480;
+  const recipe = resolveDisplayRecipe(context);
+  renderDisplayCanvas(canvas.getContext('2d'), canvas.width, canvas.height, {recipe,title,subtitle,family,value});
+  const caption = document.createElement('figcaption');
+  caption.textContent = `${label} — ${recipe.dialect} / ${recipe.layout}`;
+  fig.append(canvas, caption); grid.append(fig);
+}
+</script>

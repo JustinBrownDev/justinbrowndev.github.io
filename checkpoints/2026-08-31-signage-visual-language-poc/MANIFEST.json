@@ -1,0 +1,29 @@
+{
+  "name": "JWEB Signage Visual Language POC",
+  "baseline": "42586936fb89d9870fc0ab4f3acabe8207f253f8",
+  "repository": "JustinBrownDev/justinbrowndev.github.io",
+  "purpose": "Drop-in implementation raw material for signage-adjacent agents",
+  "entrypoint": "AGENT-INSTRUCTION.md",
+  "files": [
+    "AGENT-INSTRUCTION.md",
+    "README.md",
+    "REFERENCE-LIVE-JWEB.md",
+    "content/sign-visual-language.js",
+    "systems/sign-display-renderer.js",
+    "integration/JWEB-ADAPTERS.md",
+    "tests/sign-visual-language-selftest.mjs",
+    "demo/sign-display-proof.html"
+  ],
+  "constraints": {
+    "new3DModels": 0,
+    "newImagesRequired": 0,
+    "perFrameCanvasRendering": false,
+    "newSemanticAuthority": false,
+    "deterministic": true
+  },
+  "distribution": {
+    "pushLauncher": "PUSH-JWEB-SIGNAGE-VISUAL-LANGUAGE-POC.cmd",
+    "repositoryDestination": "checkpoints/2026-08-31-signage-visual-language-poc",
+    "runtimeIntegration": false
+  }
+}

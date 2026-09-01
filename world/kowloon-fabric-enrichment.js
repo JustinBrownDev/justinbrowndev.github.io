@@ -198,6 +198,8 @@ const MODERATE_PROP_PERCENT = Object.freeze({
     graffiti: 35,
     // Primitive-only 2-4 can cluster; task already exists only beside planned graffiti.
     'spray-cans': 40,
+    // Five shared-geometry primitive segments; cable tasks are already sparsely planned.
+    'overhead-cable': 30,
     security: 25,
     'roof-clutter': 22,
     ivy: 15,

@@ -185,6 +185,10 @@ function destinationTaskGroupKey(chunk, payload, task) {
 
 function compileDestinationCompatibility({ chunk, payload, tasks, assetById }) {
     const raw = tasks.filter(semanticTask);
+    // The stripped/runtime-skeleton profile deliberately has no semantic-interior
+    // tasks. Do not copy/filter the full semantic asset catalog when there is
+    // nothing to destination-compile; the normal semantic path below is unchanged.
+    if (!raw.length) return { tasks: [], remappedSpaces: 0, remappedTasks: 0, rejectedTasks: 0 };
     const groups = new Map();
     for (const task of raw) {
         const key = destinationTaskGroupKey(chunk, payload, task);

@@ -191,6 +191,9 @@ function freezeObject(object) {
 const DIAGNOSTIC_SIGNAGE_RE = /(?:^|[-_ ])(?:sign|signage|billboard|megascreen|screen|marquee)(?:$|[-_ ])/i;
 const DIAGNOSTIC_SMALL_PROP_RE = /(?:pipe|duct|hvac|vent|fixture|clutter|ivy|security|spray|awning|interior|semantic-prop|street-fixture|furniture|crate|trash|plant|bench|bollard|overhead-cable|elevator-hardware)/i;
 const DIAGNOSTIC_ARCHITECTURE_RE = /(?:^|[-_ ])(?:roof-topper)(?:$|[-_ ])/i;
+// Runtime task order is already layered across entities. Keep exact priority
+// comparison inside a bounded look-ahead instead of rescanning an arbitrary tail.
+const DETAIL_PRIORITY_SCAN_MAX = 32;
 const MODERATE_PROP_PERCENT = Object.freeze({
     awning: 72,
     // Single shared-geometry cylinder; restore more of the already-bounded 1-2 pipe tasks.
@@ -1191,7 +1194,7 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
     }
 
     function getEntity(payload, id) {
-        return payload.entities?.find(entity => entity.id === id) ?? null;
+        return payload.entityById?.get(id) ?? payload.entities?.find(entity => entity.id === id) ?? null;
     }
 
     function createPanel(payload, task, graffiti = false) {
@@ -1720,7 +1723,11 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
         if (!state || state.cursor >= state.tasks.length) return state?.cursor ?? 0;
         let bestIndex = state.cursor;
         let bestKey = null;
-        for (let index = state.cursor; index < state.tasks.length; index++) {
+        // Planning emits every first-pass anchor first, then round-robin deep layers.
+        // Preserve the same priority law inside a fixed look-ahead so one cosmetic
+        // publication cannot rescan an arbitrarily long remaining task tail.
+        const scanEnd = Math.min(state.tasks.length, state.cursor + DETAIL_PRIORITY_SCAN_MAX);
+        for (let index = state.cursor; index < scanEnd; index++) {
             const task = state.tasks[index];
             const key = exteriorTaskPriorityKey(task, {
                 playerPosition,
@@ -1738,7 +1745,8 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
             playerPosition,
             chosen: state.tasks[bestIndex],
             chosenPriorityKey: bestKey,
-            remainingTasks: state.tasks.slice(state.cursor),
+            // The canary evaluates the same candidate domain the scheduler used.
+            remainingTasks: state.tasks.slice(state.cursor, scanEnd),
             taskPositionFor: task => taskRuntimePosition(payload, task),
         });
         return bestIndex;
@@ -1859,6 +1867,9 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
         payload.detailReservations = [];
         payload.semanticPlacements = [];
         payload.semanticSpaces = [];
+        // Priority ranking asks for entity position repeatedly. Index once per payload
+        // so the bounded scan is O(candidate-count), not O(candidates * entities).
+        payload.entityById = new Map((payload.entities ?? []).map(entity => [entity.id, entity]));
         const state = plan(chunk, payload.entities);
         state.semanticLayout = solveSemanticLayout({
             chunk,

@@ -196,6 +196,8 @@ const MODERATE_PROP_PERCENT = Object.freeze({
     pipe: 45,
     'street-fixture': 38,
     graffiti: 35,
+    // Primitive-only 2-4 can cluster; task already exists only beside planned graffiti.
+    'spray-cans': 40,
     security: 25,
     'roof-clutter': 22,
     ivy: 15,

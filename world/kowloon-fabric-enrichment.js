@@ -204,7 +204,9 @@ const MODERATE_PROP_PERCENT = Object.freeze({
     'spray-cans': 40,
     // Five shared-geometry primitive segments; cable tasks are already sparsely planned.
     'overhead-cable': 30,
-    security: 25,
+    // Two shared-material box meshes; planner is already sparse (~44% eligible).
+    // Restore a little facade life after the refinement/setup spike cleanup.
+    security: 40,
     'roof-clutter': 22,
     ivy: 15,
     'elevator-hardware': 12,

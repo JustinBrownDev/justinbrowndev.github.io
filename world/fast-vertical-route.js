@@ -72,11 +72,19 @@ export function assertFastVerticalRoute(route) {
     if (lower.generated) throw new Error(`${route.id}: ground support must replace lower landing geometry`);
     if (upper.generated && !upper.geometry) throw new Error(`${route.id}: generated upper landing requires real geometry`);
     if (!upper.generated && upper.geometry) throw new Error(`${route.id}: existing support must replace duplicate landing geometry`);
-    const generated = route.endpointLandings.filter(landing => landing.generated);
+    const allLandings = Array.isArray(route.landings) && route.landings.length
+        ? route.landings
+        : route.endpointLandings;
+    for (const landing of allLandings) {
+        if (!landing.support) throw new Error(`${route.id}: landing support binding missing`);
+        if (landing.generated && !landing.geometry) throw new Error(`${route.id}: generated landing requires real geometry`);
+        if (!landing.generated && landing.geometry) throw new Error(`${route.id}: existing support must replace duplicate landing geometry`);
+    }
+    const generated = allLandings.filter(landing => landing.generated);
     if (route.generatedLandings.length !== generated.length) throw new Error(`${route.id}: generated landing registry drift`);
 
     const nodeIds = new Set((route.nodes ?? []).map(node => node.id));
-    const landingIds = new Set(route.endpointLandings.map(landing => landing.id));
+    const landingIds = new Set(allLandings.map(landing => landing.id));
     for (const flight of route.flights) {
         if (!nodeIds.has(flight.fromNodeId) || !nodeIds.has(flight.toNodeId)) throw new Error(`${route.id}: flight endpoint node missing`);
         if (!landingIds.has(flight.fromLandingId) || !landingIds.has(flight.toLandingId)) throw new Error(`${route.id}: flight must connect endpoint landings`);
@@ -227,6 +235,213 @@ export function planFastVerticalRoute({
         endpointLandings: Object.freeze([lowerLanding, upperLanding]),
         generatedLandings: Object.freeze(upperLanding.generated ? [upperLanding] : []),
         flights: Object.freeze([flight]),
+    });
+    assertFastVerticalRoute(route);
+    return route;
+}
+
+
+// Shared wall stair: room/floor portal nodes are supplied first. The stair solver
+// never invents a doorway; it only realizes graph edges between valid portals.
+// One trunk may serve several room doors on successive floors.
+export function planSharedVerticalTrunk({
+    routeId,
+    family = 'shared-wall-stair',
+    fp,
+    moduleKey = null,
+    dirKey = null,
+    floorH,
+    physicalTruth,
+    portalStops = [],
+    stableKey = routeId,
+    maxRun = Infinity,
+} = {}) {
+    if (!routeId || !physicalTruth?.stair || !fp || !(Number(floorH) > 0)) return null;
+    const stops = [...portalStops]
+        .filter(stop => Number.isInteger(Number(stop?.floor)) && Number(stop.floor) > 0 && stop?.portal && stop?.roomSpaceId)
+        .sort((a, b) => Number(a.floor) - Number(b.floor));
+    if (!stops.length) return null;
+    for (let i = 1; i < stops.length; i++) {
+        if (Number(stops[i].floor) !== Number(stops[i - 1].floor) + 1) return null;
+    }
+
+    const firstPortal = stops[0].portal;
+    const nx = Number(firstPortal.normalX) || 0;
+    const nz = Number(firstPortal.normalZ) || 0;
+    const cardinalX = Math.abs(nx) > 0.5 && Math.abs(nz) < 0.5;
+    const cardinalZ = Math.abs(nz) > 0.5 && Math.abs(nx) < 0.5;
+    if (!cardinalX && !cardinalZ) return null;
+
+    const tangentAxis = cardinalZ ? 'x' : 'z';
+    const normalAxis = cardinalZ ? 'z' : 'x';
+    const outward = cardinalZ ? Math.sign(nz) : Math.sign(nx);
+    const faceCoord = normalAxis === 'z' ? Number(firstPortal.z) : Number(firstPortal.x);
+    const tangentCenter = tangentAxis === 'x' ? Number(firstPortal.x) : Number(firstPortal.z);
+    if (![faceCoord, tangentCenter, outward].every(Number.isFinite) || !outward) return null;
+
+    for (const stop of stops) {
+        const p = stop.portal;
+        const stopNx = Number(p.normalX) || 0;
+        const stopNz = Number(p.normalZ) || 0;
+        const stopNormal = normalAxis === 'z' ? stopNz : stopNx;
+        const stopFaceCoord = normalAxis === 'z' ? Number(p.z) : Number(p.x);
+        const stopTangent = tangentAxis === 'x' ? Number(p.x) : Number(p.z);
+        if (Math.sign(stopNormal) !== outward || Math.abs(stopFaceCoord - faceCoord) > 0.08 || Math.abs(stopTangent - tangentCenter) > 0.08) return null;
+    }
+
+    const clearWidth = clamp(Number(physicalTruth.stair.widthSI) || 0.9, 0.72, 1.55);
+    const halfWidth = clearWidth * 0.5;
+    const facadeMargin = Math.max(0.20, clearWidth * 0.18);
+    const tangentHalf = tangentAxis === 'x' ? Number(fp.halfX) : Number(fp.halfZ);
+    const tangentMin = tangentCenter - tangentHalf + facadeMargin;
+    const tangentMax = tangentCenter + tangentHalf - facadeMargin;
+    const landingDepth = Math.max(1.10, clearWidth + 0.26);
+    const fixedCoord = faceCoord + outward * (halfWidth + 0.20);
+    const lowerSupport = supportRecord(null, { kind: 'existing-ground', id: `${routeId}:support:ground`, y: 0, existing: true });
+    const lowerLanding = endpointLanding(`${routeId}:landing:ground`, 'lower', 0, lowerSupport, false, null);
+
+    const landings = [lowerLanding];
+    const nodes = [];
+    const flights = [];
+    const generatedLandings = [];
+    const graphNodes = [Object.freeze({ id: `${routeId}:graph:ground`, kind: 'support', supportKind: 'ground', y: 0 })];
+    const graphEdges = [];
+    const initialDirection = (hash32(`${stableKey}:wall-trunk-direction`) & 1) ? 1 : -1;
+    let direction = initialDirection;
+    let previousFloor = 0;
+    let previousLanding = lowerLanding;
+    let previousTangent = null;
+    let previousNode = null;
+
+    for (let index = 0; index < stops.length; index++) {
+        const stop = stops[index];
+        const floor = Number(stop.floor);
+        const rise = (floor - previousFloor) * Number(floorH);
+        const stairFlight = deriveStairFlight({ rise, truth: physicalTruth, stableKey: `${stableKey}:floor:${floor}` });
+        if (stairFlight.fitClassification !== 'fits-resolved-truth') return null;
+        const run = Number(stairFlight.requiredRun);
+        if (!(run > EPS) || run > Number(maxRun)) return null;
+
+        const portalTangent = tangentAxis === 'x' ? Number(stop.portal.x) : Number(stop.portal.z);
+        const support = stop.support?.existing === true
+            ? supportRecord(stop.support, null)
+            : supportRecord(null, {
+                kind: 'generated-shared-landing', id: `${routeId}:support:floor:${floor}`,
+                existing: false, moduleKey, floor, y: floor * Number(floorH),
+            });
+        const existingSupport = support.existing === true;
+
+        let targetTangent;
+        if (index === 0 && existingSupport) {
+            targetTangent = portalTangent;
+            previousTangent = targetTangent - direction * run;
+        } else if (index === 0) {
+            targetTangent = portalTangent + direction * run * 0.5;
+            previousTangent = portalTangent - direction * run * 0.5;
+        } else {
+            targetTangent = previousTangent + direction * run;
+        }
+        if (previousTangent < tangentMin - EPS || previousTangent > tangentMax + EPS
+            || targetTangent < tangentMin - EPS || targetTangent > tangentMax + EPS) return null;
+
+        const y = floor * Number(floorH);
+        const landingGeometry = existingSupport ? null : (() => {
+            const landingTangentHalf = Math.min(
+                tangentHalf - facadeMargin,
+                Math.max(Math.abs(targetTangent - portalTangent) + clearWidth * 0.34, clearWidth),
+            );
+            const outerCoord = fixedCoord + outward * (halfWidth + 0.16);
+            const innerCoord = faceCoord + outward * 0.03;
+            const normalCenter = (innerCoord + outerCoord) * 0.5;
+            const normalHalf = Math.abs(outerCoord - innerCoord) * 0.5;
+            return tangentAxis === 'x'
+                ? { x: portalTangent, z: normalCenter, hx: landingTangentHalf, hz: normalHalf }
+                : { x: normalCenter, z: portalTangent, hx: normalHalf, hz: landingTangentHalf };
+        })();
+        const role = index === stops.length - 1 ? 'upper' : 'intermediate';
+        const landing = endpointLanding(`${routeId}:landing:floor:${floor}`, role, y, support, !existingSupport, landingGeometry);
+        landings.push(landing);
+        if (landing.generated) generatedLandings.push(landing);
+
+        const fromPoint = pointFor(tangentAxis, previousTangent, fixedCoord, previousFloor * Number(floorH));
+        const toPoint = pointFor(tangentAxis, targetTangent, fixedCoord, y);
+        if (!previousNode) {
+            previousNode = flightNode(`${routeId}:node:ground`, fromPoint, lowerLanding.id, lowerSupport);
+            nodes.push(previousNode);
+        }
+        const targetNode = flightNode(`${routeId}:node:floor:${floor}`, toPoint, landing.id, support);
+        nodes.push(targetNode);
+        const flight = Object.freeze({
+            id: `${routeId}:flight:${index}`, level: previousFloor, segment: index,
+            axis: tangentAxis, from: previousTangent, to: targetTangent, fixedCoord,
+            halfWidth, y0: previousFloor * Number(floorH), y1: y,
+            run: Math.abs(targetTangent - previousTangent), rise, clearWidth,
+            headroom: Number(physicalTruth.stair.headroomSI) || Number(physicalTruth.route?.headroomSI) || 2.03,
+            fromNodeId: previousNode.id, toNodeId: targetNode.id,
+            fromLandingId: previousLanding.id, toLandingId: landing.id,
+            stairFlight, fitClassification: stairFlight.fitClassification,
+        });
+        flights.push(flight);
+
+        const roomNodeId = `${routeId}:graph:room:${floor}`;
+        const portalNodeId = `${routeId}:graph:portal:${floor}`;
+        const landingNodeId = `${routeId}:graph:landing:${floor}`;
+        graphNodes.push(
+            Object.freeze({ id: roomNodeId, kind: 'room', spaceId: stop.roomSpaceId, floor }),
+            Object.freeze({ id: portalNodeId, kind: 'portal', portalId: stop.portal.id, floor, source: stop.source ?? 'room-door' }),
+            Object.freeze({ id: landingNodeId, kind: 'landing', landingId: landing.id, floor, generated: landing.generated }),
+        );
+        graphEdges.push(
+            Object.freeze({ from: roomNodeId, to: portalNodeId, kind: 'door-threshold' }),
+            Object.freeze({ from: portalNodeId, to: landingNodeId, kind: 'portal-to-landing' }),
+            Object.freeze({ from: previousFloor === 0 ? `${routeId}:graph:ground` : `${routeId}:graph:landing:${previousFloor}`, to: landingNodeId, kind: 'stair-flight', flightId: flight.id }),
+        );
+
+        previousLanding = landing;
+        previousNode = targetNode;
+        previousTangent = targetTangent;
+        previousFloor = floor;
+        direction *= -1;
+    }
+
+    const upperLanding = landings[landings.length - 1];
+    const route = Object.freeze({
+        schema: FAST_VERTICAL_ROUTE_SCHEMA,
+        id: routeId,
+        family,
+        shape: 'wall-trunk',
+        graphAuthority: 'room-portal-first',
+        moduleKey,
+        dirKey,
+        side: firstPortal.side ?? null,
+        targetFloor: Number(stops[stops.length - 1].floor),
+        floorH: Number(floorH),
+        physicalTruth,
+        lowerSupport,
+        upperSupport: upperLanding.support,
+        hostRect: Object.freeze({ cx: Number(fp.cx), cz: Number(fp.cz), halfX: Number(fp.halfX), halfZ: Number(fp.halfZ) }),
+        orientation: Object.freeze({
+            faceSide: firstPortal.side ?? null,
+            tangentAxis,
+            normalAxis,
+            outward,
+            tangentDirection: initialDirection,
+            ascent: 'along-facade-shared-trunk',
+            faceCoord,
+            fixedCoord,
+        }),
+        portalStops: Object.freeze(stops.map(stop => Object.freeze({ ...stop }))),
+        nodes: Object.freeze(nodes),
+        landings: Object.freeze(landings),
+        endpointLandings: Object.freeze([lowerLanding, upperLanding]),
+        generatedLandings: Object.freeze(generatedLandings),
+        flights: Object.freeze(flights),
+        graph: Object.freeze({
+            schema: 'jweb.fast-circulation-graph.v1',
+            authority: 'room-portal-first',
+            nodes: Object.freeze(graphNodes),
+            edges: Object.freeze(graphEdges),
+        }),
     });
     assertFastVerticalRoute(route);
     return route;

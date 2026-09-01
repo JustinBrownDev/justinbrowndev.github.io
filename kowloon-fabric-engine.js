@@ -12,7 +12,7 @@ import { createSemanticPlanCache, semanticPlanCacheKey } from './world/architect
 import { accessAnchorsForBuildingPortals, compileAccessPortals } from './world/access-portals.js';
 import { compileDistrictBlockComposition, districtBuildingPolicyForEntity, districtContextForEntity } from './world/district-block-composition.js';
 import { planExteriorScaffoldRoute } from './world/scaffold-circulation-plan.js';
-import { assertFastVerticalRoute, planFastVerticalRoute } from './world/fast-vertical-route.js';
+import { assertFastVerticalRoute, planSharedVerticalTrunk } from './world/fast-vertical-route.js';
 import {
     anyReservationIntersectsBox,
     createBoxCirculationReservation,
@@ -696,13 +696,14 @@ export function createKowloonFabricEngine({
         return plan.landings.length;
     }
 
-    function realizeFastVerticalRoute({ physics, transforms, plan }) {
+    function realizeFastVerticalRoute({ physics, transforms, wallList, plan }) {
         assertFastVerticalRoute(plan);
         const routeRegistry = physics.fastVerticalRoutes ?? (physics.fastVerticalRoutes = []);
         if (!routeRegistry.some(route => route.id === plan.id)) routeRegistry.push(plan);
 
         let realizedFlights = 0;
         let realizedLandings = 0;
+        let realizedDecks = 0;
         for (const flight of plan.flights) {
             physics.ramps.push({
                 axis: flight.axis, from: flight.from, to: flight.to, fixedCoord: flight.fixedCoord,
@@ -722,6 +723,7 @@ export function createKowloonFabricEngine({
                 stairFlight: flight.stairFlight,
                 metadata: {
                     routeId: plan.id, family: plan.family, shape: plan.shape,
+                    graphAuthority: plan.graphAuthority ?? null,
                     fromLandingId: flight.fromLandingId, toLandingId: flight.toLandingId,
                     lowerSupport: plan.lowerSupport, upperSupport: plan.upperSupport,
                     fitClassification: flight.fitClassification,
@@ -746,34 +748,63 @@ export function createKowloonFabricEngine({
             realizedFlights++;
         }
 
+        const deckRegistry = physics.fastExteriorDecks ?? (physics.fastExteriorDecks = []);
         for (const landing of plan.generatedLandings) {
             const geometry = landing.geometry;
             physics.platforms.push({
                 x: geometry.x, z: geometry.z, hx: geometry.hx, hz: geometry.hz, y: landing.y,
-                supportKind: 'broad-vertical-landing', routeId: plan.id, landingId: landing.id,
+                supportKind: 'broad-vertical-landing', deckKind: 'shared-circulation-deck',
+                routeId: plan.id, landingId: landing.id,
             });
             transforms.slabs.push({
-                x: geometry.x, y: landing.y - 0.06, z: geometry.z,
-                sx: geometry.hx * 2, sy: 0.12, sz: geometry.hz * 2, routeId: plan.id, landingId: landing.id,
+                x: geometry.x, y: landing.y - 0.07, z: geometry.z,
+                sx: geometry.hx * 2, sy: 0.14, sz: geometry.hz * 2,
+                routeId: plan.id, landingId: landing.id, deckKind: 'shared-circulation-deck',
             });
+
+            // Guard only the outer edge. The wall side remains the doorway edge and
+            // the tangent ends remain open so adjacent stair flights can continue.
+            const railH = 0.92;
+            const railT = 0.08;
+            const outward = plan.orientation?.outward ?? 0;
+            if (wallList && outward && plan.orientation?.normalAxis === 'z') {
+                const outerZ = geometry.z + outward * geometry.hz;
+                wallTransform(wallList, geometry.x, landing.y + railH * 0.5, outerZ, geometry.hx * 2, railH, railT);
+                physics.mazeWalls.push({ x1: geometry.x - geometry.hx, z1: outerZ, x2: geometry.x + geometry.hx, z2: outerZ, yMin: landing.y, yMax: landing.y + railH });
+            } else if (wallList && outward && plan.orientation?.normalAxis === 'x') {
+                const outerX = geometry.x + outward * geometry.hx;
+                wallTransform(wallList, outerX, landing.y + railH * 0.5, geometry.z, railT, railH, geometry.hz * 2);
+                physics.mazeWalls.push({ x1: outerX, z1: geometry.z - geometry.hz, x2: outerX, z2: geometry.z + geometry.hz, yMin: landing.y, yMax: landing.y + railH });
+            }
+
             const connector = createLandingConnector({
                 id: `${landing.id}:connector`,
                 x: geometry.x, z: geometry.z, halfX: geometry.hx, halfZ: geometry.hz, y: landing.y,
                 source: 'broad-vertical-route',
-                visualRole: `${plan.family}-landing`,
+                visualRole: `${plan.family}-landing-deck`,
                 reservationKind: 'broad-vertical-landing',
                 physicalTruth: plan.physicalTruth,
                 metadata: {
                     routeId: plan.id, landingId: landing.id, family: plan.family, shape: plan.shape,
-                    support: landing.support, generated: true,
+                    graphAuthority: plan.graphAuthority ?? null,
+                    support: landing.support, generated: true, deckKind: 'shared-circulation-deck',
                 },
             });
             connector.routeId = plan.id;
             connector.landingId = landing.id;
             registerSemanticConnector(physics, connector);
+
+            const floor = Number(landing.support?.floor) || Math.round(landing.y / Math.max(0.001, Number(plan.floorH)));
+            const portalIds = (plan.portalStops ?? []).filter(stop => Number(stop.floor) === floor).map(stop => stop.portal?.id).filter(Boolean);
+            deckRegistry.push({
+                id: `${landing.id}:deck`, routeId: plan.id, landingId: landing.id,
+                faceKey: `${plan.moduleKey}:${plan.dirKey}`, floor,
+                kind: 'shared-circulation-deck', priority: 'circulation-owned', portalIds,
+            });
             realizedLandings++;
+            realizedDecks++;
         }
-        return { flights: realizedFlights, landings: realizedLandings };
+        return { flights: realizedFlights, landings: realizedLandings, decks: realizedDecks };
     }
 
     function addCompoundSideWall({ physics, wallList, rect, floorH, floor, side, opening = 0 }) {
@@ -953,72 +984,138 @@ export function createKowloonFabricEngine({
             }
         }
 
-        // VERTICAL MOVEMENT FAST LANE: every route owns at least one actual flight.
-        // Endpoint landing semantics always exist, but geometry is omitted whenever
-        // an already-present support surface (ground or bridge deck) can serve it.
-        // The broad shell has no dormant interior floor plates, so ordinary facade
-        // stairs terminate on a real generated exterior landing instead of a fake room.
+        // GRAPH-DERIVED VERTICAL MOVEMENT FAST LANE.
+        // Room/floor occupancy emits valid exterior portal nodes first. A shared
+        // wall-hugging stair trunk then realizes graph edges between those nodes.
+        // Bridge/catwalk portals are higher-priority existing nodes/supports and
+        // are never replaced by a competing generated landing/deck.
         const broadVerticalRoutes = [];
         const usedBroadVerticalFaces = new Set();
+        const fastVerticalOpeningByKey = new Map();
+        const fastBridgeFaceKeys = new Set((bridgePortals ?? []).map(portal => `${portal.moduleKey}:${portal.dirKey}`));
+        const bridgeFaceRegistry = physics.fastBridgeFaceKeys ?? (physics.fastBridgeFaceKeys = []);
+        for (const faceKey of fastBridgeFaceKeys) if (!bridgeFaceRegistry.includes(faceKey)) bridgeFaceRegistry.push(faceKey);
+
         const broadVerticalCandidates = streetFaces
             .filter(face => !face.courtyard && face.module.floors >= 2)
             .sort((a, b) => {
+                const floorDelta = b.module.floors - a.module.floors;
+                if (floorDelta) return floorDelta;
                 const ar = hashString32(`${siteSeed}:fast-vertical-rank:${a.module.key}:${a.dir.side}`);
                 const br = hashString32(`${siteSeed}:fast-vertical-rank:${b.module.key}:${b.dir.side}`);
                 return ar - br || `${a.module.key}:${a.dir.side}`.localeCompare(`${b.module.key}:${b.dir.side}`);
             });
         const broadVerticalFaceKey = face => `${face.module.key}:${face.dir.key}`;
         const scaffoldOwnsFace = face => scaffoldPlan?.moduleKey === face.module.key && scaffoldSide === face.dir.side;
+        const entranceOwnsFace = face => entranceFaces.some(entrance => entrance.module === face.module && entrance.dir.key === face.dir.key);
         const canUseBroadVerticalFace = face => !usedBroadVerticalFaces.has(broadVerticalFaceKey(face)) && !scaffoldOwnsFace(face);
-        const tryBroadVerticalRoute = (face, family, shape, upperSupport = null) => {
-            if (!face || !canUseBroadVerticalFace(face)) return false;
+        const portalOpening = portal => ({
+            width: Number(portal.width) || (servicePhysicalTruth?.door?.clearWidth?.realizedSI ?? 1.35),
+            height: Number(portal.height) || (servicePhysicalTruth?.door?.clearHeight?.realizedSI ?? 2.20),
+            center: portal.side === 'north' || portal.side === 'south' ? Number(portal.x) : Number(portal.z),
+        });
+        const makeRoomPortalStop = (face, floor, { source = 'fast-vertical-room-portal', support = null } = {}) => {
+            const roomSpaceId = `${chunk.key}:${siteSignature}:${face.module.key}:floor:${floor}`;
+            const landingSpaceId = `${chunk.key}:${siteSignature}:${face.module.key}:exterior-landing:${floor}`;
+            const portal = semanticPortalForRect({
+                id: `${chunk.key}:${siteSignature}:${face.module.key}:${face.dir.key}:fast-portal:${floor}`,
+                rect: face.module.rect,
+                side: face.dir.side,
+                floor,
+                floorH,
+                physicalTruth: servicePhysicalTruth,
+                source,
+                fromSpaceId: roomSpaceId,
+                toSpaceId: landingSpaceId,
+                metadata: { moduleKey: face.module.key, dirKey: face.dir.key, floor },
+            });
+            return {
+                floor,
+                roomSpaceId,
+                landingSpaceId,
+                source,
+                support,
+                openingKey: `${face.module.key}:${face.dir.key}:${floor}`,
+                portal,
+            };
+        };
+        const commitRoomPortal = (stop, route) => {
+            if (stop.source === 'bridge-portal') return;
+            fastVerticalOpeningByKey.set(stop.openingKey, portalOpening(stop.portal));
+            const connector = createPortalConnector({
+                id: `${stop.portal.id}:connector`,
+                portal: stop.portal,
+                kind: 'door',
+                source: 'fast-vertical-room-portal',
+                visualRole: 'shared-stair-room-door',
+                physicalTruth: servicePhysicalTruth,
+                metadata: {
+                    routeId: route.id,
+                    portalId: stop.portal.id,
+                    moduleKey: route.moduleKey,
+                    dirKey: route.dirKey,
+                    floor: stop.floor,
+                    graphAuthority: route.graphAuthority,
+                },
+            });
+            registerSemanticConnector(physics, connector);
+        };
+        const acceptSharedRoute = (face, stops, family) => {
+            if (!face || !canUseBroadVerticalFace(face) || !stops.length) return false;
             const routeId = `${chunk.key}:${siteSignature}:${face.module.key}:fast-vertical:${family}:${face.dir.side}`;
-            const plan = planFastVerticalRoute({
-                routeId, family, shape, fp: face.module.rect, moduleKey: face.module.key,
-                dirKey: face.dir.key, side: face.dir.side, floorH, targetFloor: 1,
-                physicalTruth: servicePhysicalTruth, stableKey: routeId, maxRun: 6.2, upperSupport,
+            const plan = planSharedVerticalTrunk({
+                routeId,
+                family,
+                fp: face.module.rect,
+                moduleKey: face.module.key,
+                dirKey: face.dir.key,
+                floorH,
+                physicalTruth: servicePhysicalTruth,
+                portalStops: stops,
+                stableKey: routeId,
+                maxRun: 6.2,
             });
             if (!plan) return false;
             usedBroadVerticalFaces.add(broadVerticalFaceKey(face));
             broadVerticalRoutes.push(plan);
+            for (const stop of plan.portalStops) commitRoomPortal(stop, plan);
             return true;
         };
 
-        // Bridge portals are already backed by real catwalk/hanging-bridge platforms.
-        // A side-run stair can therefore omit its upper landing geometry and terminate
-        // directly on that existing support rather than inventing a duplicate deck.
-        for (const portal of bridgePortals ?? []) {
-            if (Number(portal.floor) !== 1) continue;
-            const face = broadVerticalCandidates.find(candidate => candidate.module.key === portal.moduleKey && candidate.dir.key === portal.dirKey);
+        // Existing bridge/catwalk doors are the first-choice graph destination.
+        // Their walkway support wins, so no duplicate landing/deck is generated.
+        let bridgeRouteAccepted = false;
+        for (const bridgePortal of bridgePortals ?? []) {
+            if (Number(bridgePortal.floor) !== 1) continue;
+            const face = broadVerticalCandidates.find(candidate => candidate.module.key === bridgePortal.moduleKey && candidate.dir.key === bridgePortal.dirKey);
             if (!face || !canUseBroadVerticalFace(face)) continue;
-            const horizontal = face.dir.side === 'north' || face.dir.side === 'south';
-            const tangent = horizontal ? face.module.rect.cx : face.module.rect.cz;
-            const faceCoord = horizontal
-                ? face.module.rect.cz + (face.dir.side === 'north' ? -face.module.rect.halfZ : face.module.rect.halfZ)
-                : face.module.rect.cx + (face.dir.side === 'west' ? -face.module.rect.halfX : face.module.rect.halfX);
-            const outward = face.dir.side === 'north' || face.dir.side === 'west' ? -1 : 1;
-            const upperSupport = {
-                kind: 'existing-bridge-deck', existing: true,
-                id: `${chunk.key}:${siteSignature}:${portal.moduleKey}:${portal.dirKey}:bridge-support`,
-                moduleKey: portal.moduleKey, floor: 1, y: floorH, tangent, normalCoord: faceCoord + outward * 0.42,
-            };
-            if (tryBroadVerticalRoute(face, 'bridge-access-stair', 'side-run', upperSupport)) break;
+            const stop = makeRoomPortalStop(face, 1, {
+                source: 'bridge-portal',
+                support: {
+                    kind: 'existing-bridge-deck',
+                    existing: true,
+                    id: `${chunk.key}:${siteSignature}:${bridgePortal.moduleKey}:${bridgePortal.dirKey}:bridge-support`,
+                    moduleKey: bridgePortal.moduleKey,
+                    floor: 1,
+                    y: floorH,
+                },
+            });
+            if (acceptSharedRoute(face, [stop], 'bridge-access-stair')) {
+                bridgeRouteAccepted = true;
+                break;
+            }
         }
 
-        // Most compounds also get one exterior destination stair. Both shapes create
-        // a real upper landing because skeleton intentionally has no interior floor
-        // plate to substitute for it. The direct and side-run layouts are distinct
-        // traversal choices, not mirrored versions of one fire escape.
-        if (hashString32(`${siteSeed}:fast-vertical-presence`) % 100 < 72) {
-            const generalCandidates = broadVerticalCandidates.filter(face => canUseBroadVerticalFace(face));
-            for (const face of generalCandidates) {
-                const preferDirect = hashString32(`${siteSeed}:fast-vertical-shape:${face.module.key}:${face.dir.side}`) % 100 < 54;
-                const primaryFamily = preferDirect ? 'broad-facade-stair' : 'service-side-stair';
-                const primaryShape = preferDirect ? 'direct' : 'side-run';
-                const fallbackFamily = preferDirect ? 'service-side-stair' : 'broad-facade-stair';
-                const fallbackShape = preferDirect ? 'side-run' : 'direct';
-                if (tryBroadVerticalRoute(face, primaryFamily, primaryShape)
-                    || tryBroadVerticalRoute(face, fallbackFamily, fallbackShape)) break;
+        // Otherwise, one wall trunk may serve several real room/floor doors.
+        // The landing at each stop is a substantial circulation-owned balcony/deck.
+        if (!bridgeRouteAccepted && hashString32(`${siteSeed}:fast-vertical-presence`) % 100 < 78) {
+            for (const face of broadVerticalCandidates) {
+                const faceKey = broadVerticalFaceKey(face);
+                if (!canUseBroadVerticalFace(face) || fastBridgeFaceKeys.has(faceKey) || entranceOwnsFace(face)) continue;
+                const topFloor = Math.min(3, face.module.floors - 1);
+                const stops = [];
+                for (let floor = 1; floor <= topFloor; floor++) stops.push(makeRoomPortalStop(face, floor));
+                if (acceptSharedRoute(face, stops, 'shared-room-stair')) break;
             }
         }
 
@@ -1052,6 +1149,8 @@ export function createKowloonFabricEngine({
                     let opening = 0;
                     if (bridgeOpeningKeys.has(openingKey)) {
                         opening = servicePhysicalTruth?.door?.clearWidth?.realizedSI ?? 1.35;
+                    } else if (fastVerticalOpeningByKey.has(openingKey)) {
+                        opening = fastVerticalOpeningByKey.get(openingKey);
                     } else if (scaffoldOpeningByKey.has(openingKey)) {
                         opening = scaffoldOpeningByKey.get(openingKey);
                     } else if (floor === 0 && entranceFaces.some(face => face.module === module && face.dir.key === dir.key)) {
@@ -1128,11 +1227,15 @@ export function createKowloonFabricEngine({
 
         let fastVerticalFlights = 0;
         let fastVerticalLandings = 0;
+        let fastVerticalDecks = 0;
         for (let routeIndex = 0; routeIndex < broadVerticalRoutes.length; routeIndex++) {
             const route = broadVerticalRoutes[routeIndex];
-            const realized = realizeFastVerticalRoute({ physics, transforms, plan: route });
+            const realized = realizeFastVerticalRoute({
+                physics, transforms, wallList: transforms.wallGroups[materialIndex], plan: route,
+            });
             fastVerticalFlights += realized.flights;
             fastVerticalLandings += realized.landings;
+            fastVerticalDecks += realized.decks;
             yield {
                 phase: 'broad-vertical-route',
                 current: routeIndex + 1,
@@ -1190,12 +1293,15 @@ export function createKowloonFabricEngine({
             internalOpenFaces,
             exposedSetbackFaces,
             partyFaces,
-            balconySide: null,
+            balconySide: broadVerticalRoutes.find(route => route.generatedLandings?.length)?.side ?? null,
             scaffoldSide,
             scaffoldLandings,
             fastVerticalRouteCount: broadVerticalRoutes.length,
             fastVerticalFlightCount: fastVerticalFlights,
             fastVerticalLandingCount: fastVerticalLandings,
+            fastVerticalDeckCount: fastVerticalDecks,
+            fastVerticalRoomPortalCount: broadVerticalRoutes.reduce((sum, route) => sum + (route.portalStops?.filter(stop => stop.source !== 'bridge-portal').length ?? 0), 0),
+            fastVerticalSharedTrunkCount: broadVerticalRoutes.filter(route => (route.portalStops?.length ?? 0) > 1).length,
             fastVerticalRouteFamilies: broadVerticalRoutes.map(route => route.family),
             serviceCages: 0,
             cantileverRooms: 0,

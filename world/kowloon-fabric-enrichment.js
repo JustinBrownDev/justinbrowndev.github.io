@@ -437,15 +437,55 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
         });
     }
 
+    function semanticContextUpgradeTelemetry(payload) {
+        return payload.semanticContextUpgradeTelemetry ?? (payload.semanticContextUpgradeTelemetry = {
+            queued: 0, pending: 0, loaded: 0, realized: 0,
+            loadFailed: 0, fitRejected: 0, structuralRejected: 0, invalidBounds: 0, cancelled: 0,
+            cache: { hit: 0, inflight: 0, miss: 0, failed: 0 },
+            byTier: {},
+            settledLatencyMsTotal: 0, settledCount: 0, maxLatencyMs: 0, lastLatencyMs: 0,
+        });
+    }
+
     function queueSemanticContextUpgrade(payload, holder, def, task) {
         if (typeof window === 'undefined' || !holder || !def || !task?.semanticFit) return;
+        const telemetry = semanticContextUpgradeTelemetry(payload);
+        const tier = String(task?.exteriorComposition?.tier ?? task?.exteriorVisualTier ?? 'unknown');
+        const tierStats = telemetry.byTier[tier] ?? (telemetry.byTier[tier] = { queued: 0, realized: 0, rejected: 0 });
+        const cacheState = semanticFailed.has(def.id) ? 'failed'
+            : semanticTemplates.has(def.id) ? 'hit'
+                : semanticTemplatePromises.has(def.id) ? 'inflight' : 'miss';
+        telemetry.cache[cacheState] = (telemetry.cache[cacheState] ?? 0) + 1;
+        telemetry.queued++;
+        telemetry.pending++;
+        tierStats.queued++;
+        holder.userData.semanticContextUpgradeState = 'queued';
+        holder.userData.semanticContextCacheState = cacheState;
+        const startedAt = performance.now();
+        let settled = false;
+        const settle = (outcome, rejected = false) => {
+            if (settled) return;
+            settled = true;
+            const latency = performance.now() - startedAt;
+            telemetry.pending = Math.max(0, telemetry.pending - 1);
+            telemetry[outcome] = (telemetry[outcome] ?? 0) + 1;
+            telemetry.settledLatencyMsTotal += latency;
+            telemetry.settledCount++;
+            telemetry.lastLatencyMs = latency;
+            telemetry.maxLatencyMs = Math.max(telemetry.maxLatencyMs, latency);
+            if (rejected) tierStats.rejected++;
+            holder.userData.semanticContextUpgradeState = outcome;
+            holder.userData.semanticContextUpgradeLatencyMs = latency;
+        };
         loadSemanticTemplate(def).then(template => {
-            if (!template || payload?.disposed || !holder.parent) return;
+            if (!template) { settle('loadFailed', true); return; }
+            if (payload?.disposed || !holder.parent) { settle('cancelled', true); return; }
+            telemetry.loaded++;
             const clone = template.clone(true);
             normalizeDecorationTemplate(clone);
             clone.updateMatrixWorld?.(true);
             const rawBounds = new THREE.Box3().setFromObject(clone);
-            if (rawBounds.isEmpty()) return;
+            if (rawBounds.isEmpty()) { settle('invalidBounds', true); return; }
             const size = rawBounds.getSize(new THREE.Vector3());
             const fit = task.semanticFit;
             const requested = Number.isFinite(fit.scale) ? fit.scale : 1;
@@ -456,7 +496,8 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
                 Math.max(0.01, fit.height) / Math.max(0.01, size.y),
                 Math.max(0.01, fit.depth) / Math.max(0.01, size.z)
             );
-            if (!Number.isFinite(measured) || measured < (fit.minScale ?? 0.24)) return;
+            holder.userData.semanticContextMeasuredScale = measured;
+            if (!Number.isFinite(measured) || measured < (fit.minScale ?? 0.24)) { settle('fitRejected', true); return; }
             clone.scale.multiplyScalar(measured);
             clone.updateMatrixWorld?.(true);
             const fittedBounds = new THREE.Box3().setFromObject(clone);
@@ -469,12 +510,15 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
             holder.updateMatrixWorld?.(true);
             if (!objectClearsStructuralReservations(payload, holder)) {
                 holder.remove(clone);
+                settle('structuralRejected', true);
                 return;
             }
             holder.userData.semanticContextScale = measured;
             clone.traverse?.(freezeObject);
             freezeObject(clone);
             holder.updateMatrixWorld?.(true);
+            tierStats.realized++;
+            settle('realized');
         });
     }
 
@@ -1755,14 +1799,14 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
                 } else {
                     noOp++;
                     state.noOp++;
-                    recordExteriorCoverageResult(state, task, false);
+                    recordExteriorCoverageResult(state, task, false, 'realizer-noop');
                     settleFirstPassMiss(state, task);
                 }
             } catch (error) {
                 failed++;
                 state.failed++;
                 state.failures = state.failed;
-                recordExteriorCoverageResult(state, task, false);
+                recordExteriorCoverageResult(state, task, false, 'realizer-error');
                 settleFirstPassMiss(state, task);
                 console.warn?.(`[world] chunk ${chunk.key} detail ${task.kind} failed`, error);
             }
@@ -1834,8 +1878,8 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
             chunk,
             payload,
             authoredTasks: state.tasks,
-            selectContextAsset: ({ opportunity, request, usedAssetIds }) => selectSemanticContextAsset({
-                chunk, payload, assets: SEMANTIC_INTERIOR_ASSETS, opportunity, request, usedAssetIds,
+            selectContextAsset: ({ opportunity, request, usedAssetIds, diagnostics }) => selectSemanticContextAsset({
+                chunk, payload, assets: SEMANTIC_INTERIOR_ASSETS, opportunity, request, usedAssetIds, diagnostics,
             }),
             planFieldRequest: ({ opportunity, request }) => exteriorPropField.planRequestTask(chunk, payload, opportunity, request),
         };
@@ -1912,6 +1956,7 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
         state.firstPassComplete = state.firstPassEntityTarget === 0;
         state.semanticContextMultiplier = {
             ...semanticContextCatalogStats(SEMANTIC_INTERIOR_ASSETS),
+            upgrades: semanticContextUpgradeTelemetry(payload),
             plannerRequestOnly: true,
             automaticPopulationDisabled: true,
             plannerCandidates: exteriorComposition.stats.plannerContextCandidates,

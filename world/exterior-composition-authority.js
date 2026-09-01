@@ -726,21 +726,45 @@ function selectEntityEntries(chunkKey, entityId, entries, selectedSpectacleEntry
     const selected = [];
     const selectedSet = new Set();
     const reservations = [];
+    const rejectionByEntry = new Map();
     const claimAuthority = new SpatialClaimAuthority(externalSpatialClaims);
 
+    const reject = (entry, reason) => {
+        if (entry && !selectedSet.has(entry) && !rejectionByEntry.has(entry)) rejectionByEntry.set(entry, reason);
+    };
+
     const canAdmit = entry => {
-        if (!entry || selectedSet.has(entry) || selected.length >= plan.densityCeiling) return false;
+        if (!entry || selectedSet.has(entry)) return false;
+        if (selected.length >= plan.densityCeiling) {
+            reject(entry, 'density-ceiling');
+            return false;
+        }
         const claim = exteriorSpatialClaimForEntry(chunkKey, entityId, entry, plan);
-        return claimAuthority.canClaim(claim);
+        const resolved = claimAuthority.resolveWith(claim);
+        const acceptedIds = new Set(resolved.accepted.map(item => item.id));
+        const claimAccepted = acceptedIds.has(claim.id);
+        const wouldDisplace = claimAuthority.claims().some(item => !acceptedIds.has(item.id));
+        if (claimAccepted && !wouldDisplace) return true;
+        const rejected = resolved.rejected.find(item => item.claim.id === claim.id) ?? null;
+        reject(entry, rejected?.blocker?.claimType
+            ? `spatial-conflict:${rejected.blocker.claimType}`
+            : wouldDisplace ? 'spatial-would-displace' : 'spatial-conflict');
+        return false;
     };
 
     const admit = entry => {
         if (!canAdmit(entry)) return false;
         const claim = exteriorSpatialClaimForEntry(chunkKey, entityId, entry, plan);
         const decision = claimAuthority.claim(claim);
-        if (!decision.accepted || decision.displaced.length) return false;
+        if (!decision.accepted || decision.displaced.length) {
+            reject(entry, decision.rejected?.blocker?.claimType
+                ? `spatial-conflict:${decision.rejected.blocker.claimType}`
+                : decision.displaced.length ? 'spatial-would-displace' : 'spatial-conflict');
+            return false;
+        }
         selected.push(entry);
         selectedSet.add(entry);
+        rejectionByEntry.delete(entry);
         projectLegacyExteriorReservations(claim, entry, reservations, plan.id);
         return true;
     };
@@ -784,12 +808,25 @@ function selectEntityEntries(chunkKey, entityId, entries, selectedSpectacleEntry
         admit([...entries].sort((a, b) => stableEntryCompare(`${chunkKey}:${entityId}:fallback`, a, b, plan.style))[0]);
     }
 
+    for (const entry of entries) {
+        if (selectedSet.has(entry) || rejectionByEntry.has(entry)) continue;
+        const tier = exteriorTaskVisualTier(entry.task);
+        const cap = plan.caps[tier] ?? 0;
+        const selectedInTier = selected.filter(item => exteriorTaskVisualTier(item.task) === tier).length;
+        reject(entry, selected.length >= plan.densityCeiling ? 'density-ceiling'
+            : !(cap > 0) || selectedInTier >= cap ? 'tier-cap'
+                : 'lower-ranked');
+    }
+    const rejectionCounts = {};
+    for (const reason of rejectionByEntry.values()) rejectionCounts[reason] = (rejectionCounts[reason] ?? 0) + 1;
+
     const spatialClaims = claimAuthority.claims().filter(claim => claim.owner?.system === 'exterior-composition' && claim.owner?.id === plan.id);
     return {
         selected,
         reservations,
         spatialClaims,
         externalSpatialClaimCount: externalSpatialClaims.length,
+        rejectionCounts,
     };
 }
 
@@ -1006,7 +1043,9 @@ function buildPlannerServiceCandidates({ chunk, payload, buildings, groups, sele
         let task = null;
         let source = null;
         if (preferContext && typeof selectContextAsset === 'function') {
-            task = selectContextAsset({ chunk, payload, entity, opportunity, request, usedAssetIds });
+            const diagnostics = {};
+            task = selectContextAsset({ chunk, payload, entity, opportunity, request, usedAssetIds, diagnostics });
+            if (Object.keys(diagnostics).length) request.contextSelection = { ...diagnostics };
             if (task) { source = 'planner-context'; context++; if (task.assetId) usedAssetIds.add(task.assetId); }
         }
         if (!task && typeof planFieldRequest === 'function') {
@@ -1143,6 +1182,8 @@ export function compileExteriorCompositionAuthority({
     const plans = [];
     const styleCounts = {};
     const aggregateWaveCounts = { 0: 0, 1: 0, 2: 0, 3: 0, 4: 0 };
+    const aggregateAdmissionRejectionReasons = {};
+    let largeMacroRejected = 0;
     let coverageFloorTasks = 0;
     let buildingsWithCoarseFloor = 0;
 
@@ -1154,6 +1195,11 @@ export function compileExteriorCompositionAuthority({
         const externalSpatialClaims = externalSpatialClaimsForEntity(payload, entity);
         const selection = selectEntityEntries(chunkKey, entityId, entries, selectedSpectacleEntry, plan, externalSpatialClaims);
         const selected = selection.selected;
+        for (const [reason, count] of Object.entries(selection.rejectionCounts ?? {})) {
+            aggregateAdmissionRejectionReasons[reason] = (aggregateAdmissionRejectionReasons[reason] ?? 0) + count;
+        }
+        largeMacroRejected += entries.filter(entry => !selected.includes(entry)
+            && ['large', 'macro'].includes(entry.task?.exteriorRequest?.desiredScaleClass)).length;
         const coverage = assignCoverageMetadata(selected, selectedSpectacleEntry, plan);
         annotatePlanRequests(plan, selected, selection.reservations);
 
@@ -1196,6 +1242,9 @@ export function compileExteriorCompositionAuthority({
             candidates: entries.length,
             accepted: selected.length,
             rejected: Math.max(0, entries.length - selected.length),
+            rejectionReasons: { ...(selection.rejectionCounts ?? {}) },
+            largeMacroRejected: entries.filter(entry => !selected.includes(entry)
+                && ['large', 'macro'].includes(entry.task?.exteriorRequest?.desiredScaleClass)).length,
             spectacle: !!selectedSpectacleEntry,
             style: plan.style,
             densityCeiling: plan.densityCeiling,
@@ -1259,6 +1308,8 @@ export function compileExteriorCompositionAuthority({
             plannerFieldCandidates: serviceStats.field,
             uniqueContextAssetsRequested: serviceStats.uniqueContextAssets ?? 0,
             largeMacroAccepted: acceptedEntries.filter(entry => ['large', 'macro'].includes(entry.task?.exteriorRequest?.desiredScaleClass)).length,
+            largeMacroRejected,
+            admissionRejectionReasons: aggregateAdmissionRejectionReasons,
             maxAcceptedPerEntity,
             maxDensityCeiling,
             reservationCount: plans.reduce((sum, plan) => sum + plan.reservations.length, 0),
@@ -1330,6 +1381,8 @@ export function createExteriorCompositionCompiler({
     const plans = [];
     const styleCounts = {};
     const aggregateWaveCounts = { 0: 0, 1: 0, 2: 0, 3: 0, 4: 0 };
+    const aggregateAdmissionRejectionReasons = {};
+    let largeMacroRejected = 0;
     let coverageFloorTasks = 0;
     let buildingsWithCoarseFloor = 0;
 
@@ -1361,7 +1414,9 @@ export function createExteriorCompositionCompiler({
         let task = null;
         let source = null;
         if (preferContext && typeof selectContextAsset === 'function') {
-            task = selectContextAsset({ chunk, payload, entity, opportunity, request, usedAssetIds: service.usedAssetIds });
+            const diagnostics = {};
+            task = selectContextAsset({ chunk, payload, entity, opportunity, request, usedAssetIds: service.usedAssetIds, diagnostics });
+            if (Object.keys(diagnostics).length) request.contextSelection = { ...diagnostics };
             if (task) {
                 source = 'planner-context';
                 service.context++;
@@ -1457,6 +1512,11 @@ export function createExteriorCompositionCompiler({
         const externalSpatialClaims = externalSpatialClaimsForEntity(payload, entity);
         const selection = selectEntityEntries(chunkKey, entityId, entries, selectedSpectacleEntry, plan, externalSpatialClaims);
         const selected = selection.selected;
+        for (const [reason, count] of Object.entries(selection.rejectionCounts ?? {})) {
+            aggregateAdmissionRejectionReasons[reason] = (aggregateAdmissionRejectionReasons[reason] ?? 0) + count;
+        }
+        largeMacroRejected += entries.filter(entry => !selected.includes(entry)
+            && ['large', 'macro'].includes(entry.task?.exteriorRequest?.desiredScaleClass)).length;
         const coverage = assignCoverageMetadata(selected, selectedSpectacleEntry, plan);
         annotatePlanRequests(plan, selected, selection.reservations);
 
@@ -1499,6 +1559,9 @@ export function createExteriorCompositionCompiler({
             candidates: entries.length,
             accepted: selected.length,
             rejected: Math.max(0, entries.length - selected.length),
+            rejectionReasons: { ...(selection.rejectionCounts ?? {}) },
+            largeMacroRejected: entries.filter(entry => !selected.includes(entry)
+                && ['large', 'macro'].includes(entry.task?.exteriorRequest?.desiredScaleClass)).length,
             spectacle: !!selectedSpectacleEntry,
             style: plan.style,
             densityCeiling: plan.densityCeiling,
@@ -1563,6 +1626,8 @@ export function createExteriorCompositionCompiler({
                 plannerFieldCandidates: service.field,
                 uniqueContextAssetsRequested: service.usedAssetIds.size,
                 largeMacroAccepted: acceptedEntries.filter(entry => ['large', 'macro'].includes(entry.task?.exteriorRequest?.desiredScaleClass)).length,
+                largeMacroRejected,
+                admissionRejectionReasons: aggregateAdmissionRejectionReasons,
                 maxAcceptedPerEntity,
                 maxDensityCeiling,
                 reservationCount: plans.reduce((sum, plan) => sum + plan.reservations.length, 0),

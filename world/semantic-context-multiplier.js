@@ -227,22 +227,46 @@ function macroVisualRequest(request = {}) {
     return scaleClass === 'large' || scaleClass === 'macro' || scaleClass === 'spectacle';
 }
 
-function chooseAsset(pool, context, opportunity, seed, request = {}, usedAssetIds = null) {
-    if (!pool?.length) return null;
+function chooseAsset(pool, context, opportunity, seed, request = {}, usedAssetIds = null, diagnostics = null) {
     const role = ROLE_BY_OPPORTUNITY[opportunity.role];
     const budget = fitBudget(opportunity, role);
+    const trace = diagnostics && typeof diagnostics === 'object' ? diagnostics : null;
+    if (trace) Object.assign(trace, {
+        role,
+        poolSize: pool?.length ?? 0,
+        examined: 0,
+        collisionRejected: 0,
+        fitRejected: 0,
+        familyRejected: 0,
+        chosenAssetId: null,
+        chosenScale: null,
+        outcome: null,
+    });
+    if (!pool?.length) {
+        if (trace) trace.outcome = 'empty-role-pool';
+        return null;
+    }
     const start = seed % pool.length;
     const strictFamily = !!FAMILY_PATTERNS[request.semanticFamily];
     let best = null;
     let bestFamilyMatch = null;
     for (let i = 0; i < Math.min(pool.length, CATALOG_SEARCH_DEPTH); i++) {
         const def = pool[(start + i * 17) % pool.length];
+        if (trace) trace.examined++;
         // Collision is architectural truth, not a reason to hide a high-value
         // machine. Only explicit macro visual requests may defer activation;
         // medium/micro decoration still requires collision-free candidates.
-        if ((def.collision ?? 'none') !== 'none' && !macroVisualRequest(request)) continue;
+        if ((def.collision ?? 'none') !== 'none' && !macroVisualRequest(request)) {
+            if (trace) trace.collisionRejected++;
+            continue;
+        }
         const scale = fitScale(def, budget);
-        if (scale < MIN_CONTEXT_PROP_SCALE) continue;
+        if (scale < MIN_CONTEXT_PROP_SCALE) {
+            if (trace) trace.fitRejected++;
+            continue;
+        }
+        const familyMatch = familyMatches(def, request.semanticFamily);
+        if (strictFamily && !familyMatch && trace) trace.familyRejected++;
         const novelty = usedAssetIds?.has(def.id) ? -7 : 0;
         const visualImpact = exteriorAssetVisualImpact(def, scale, budget, role);
         const score = contextualAssetScore(def, context, role)
@@ -252,14 +276,23 @@ function chooseAsset(pool, context, opportunity, seed, request = {}, usedAssetId
             + novelty;
         const candidate = { def, scale, visualImpact, score, ordinal: i, budget, role };
         if (!best || candidate.score > best.score || (candidate.score === best.score && candidate.ordinal < best.ordinal)) best = candidate;
-        if (familyMatches(def, request.semanticFamily)
+        if (familyMatch
             && (!bestFamilyMatch || candidate.score > bestFamilyMatch.score || (candidate.score === bestFamilyMatch.score && candidate.ordinal < bestFamilyMatch.ordinal))) {
             bestFamilyMatch = candidate;
         }
     }
     // Explicit family requests are contracts. If the corpus lacks a compatible
     // member, return null so the planner can use its deterministic realizer.
-    return strictFamily ? bestFamilyMatch : best;
+    const selected = strictFamily ? bestFamilyMatch : best;
+    if (trace) {
+        trace.chosenAssetId = selected?.def?.id ?? null;
+        trace.chosenScale = selected?.scale ?? null;
+        trace.outcome = selected ? 'selected'
+            : strictFamily && best ? 'family-miss'
+                : trace.collisionRejected + trace.fitRejected > 0 ? 'collision-or-fit-exhausted'
+                    : 'no-candidate';
+    }
+    return selected;
 }
 
 function contextMap(semanticContext) {
@@ -274,15 +307,21 @@ export function semanticContextCatalogStats(assets) {
     return { ...buildCatalog(assets).stats };
 }
 
-export function selectSemanticContextAsset({ chunk, payload, assets, opportunity, request = {}, usedAssetIds = null } = {}) {
+export function selectSemanticContextAsset({ chunk, payload, assets, opportunity, request = {}, usedAssetIds = null, diagnostics = null } = {}) {
     if (!chunk || !payload || !Array.isArray(assets) || !opportunity) throw new Error('selectSemanticContextAsset requires chunk, payload, assets, and opportunity');
-    if (opportunity.decorationMayIntrude === false || opportunity.spectacleReserved === true) return null;
+    if (opportunity.decorationMayIntrude === false || opportunity.spectacleReserved === true) {
+        if (diagnostics && typeof diagnostics === 'object') diagnostics.outcome = 'opportunity-disabled';
+        return null;
+    }
     const role = ROLE_BY_OPPORTUNITY[opportunity.role];
-    if (!role) return null;
+    if (!role) {
+        if (diagnostics && typeof diagnostics === 'object') diagnostics.outcome = 'unsupported-role';
+        return null;
+    }
     const catalog = buildCatalog(assets);
     const context = contextMap(payload.semanticContext).get(opportunity.contextId) ?? null;
     const seed = hash32(`${chunk.key}:${opportunity.id}:${context?.program ?? 'mixed'}:${request.semanticFamily ?? 'any'}:${request.desiredScaleClass ?? 'any'}`);
-    const chosen = chooseAsset(catalog.byRole[role], context, opportunity, seed, request, usedAssetIds);
+    const chosen = chooseAsset(catalog.byRole[role], context, opportunity, seed, request, usedAssetIds, diagnostics);
     if (!chosen) return null;
     const { def, scale, visualImpact, budget } = chosen;
     const collisionMode = def.collision ?? 'none';
@@ -298,7 +337,15 @@ export function selectSemanticContextAsset({ chunk, payload, assets, opportunity
         activation: 'deferred',
     } : null;
     const placement = opportunity.transform;
-    if (![placement?.x, placement?.y, placement?.z].every(Number.isFinite)) return null;
+    if (![placement?.x, placement?.y, placement?.z].every(Number.isFinite)) {
+        if (diagnostics && typeof diagnostics === 'object') diagnostics.outcome = 'invalid-transform';
+        return null;
+    }
+    if (diagnostics && typeof diagnostics === 'object') {
+        diagnostics.collisionDeferred = collisionDeferred;
+        diagnostics.collisionMode = collisionMode;
+        diagnostics.realizedScale = scale;
+    }
     const instanceId = `${chunk.key}:context-prop:${hash32(`${opportunity.id}:${def.id}:${request.planRequestId ?? ''}`)}`;
     const priorityTier = request.priorityTier ?? (request.desiredScaleClass === 'large' || request.desiredScaleClass === 'macro' ? 'macro' : 'medium');
     return {

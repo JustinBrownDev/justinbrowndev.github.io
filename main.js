@@ -2175,7 +2175,7 @@ function registerUnifiedSpawnFabricSite(site, payload) {
 
 function* buildUnifiedKowloonSiteSteps(site) {
     yield { phase: 'unified-fabric-ready', siteId: site.id };
-    const payload = cityFabricEngine.buildAuthoredSite({
+    const payload = yield* cityFabricEngine.buildAuthoredSiteSteps({
         site, siteIdOf, grid, cellToWorld, colHalf, rowHalf,
         ownerId: `spawn-fabric:${SEED}:${site.id}`,
         weirdness: Math.max(CONFIG.maze.loopChance, CONFIG.narrative.darkWeb.signChance),
@@ -2257,7 +2257,7 @@ function* buildUnifiedSignatureSiteSteps(site) {
         return;
     }
 
-    const payload = cityFabricEngine.buildAuthoredSite({
+    const payload = yield* cityFabricEngine.buildAuthoredSiteSteps({
         site, siteIdOf, grid, cellToWorld, colHalf, rowHalf,
         ownerId: `spawn-singular-fabric:${SEED}:${site.id}`,
         weirdness: Math.max(CONFIG.maze.loopChance, CONFIG.narrative.darkWeb.signChance),

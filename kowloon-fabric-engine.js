@@ -763,7 +763,7 @@ export function createKowloonFabricEngine({
     // It publishes deterministic massing, exterior shell collision, roofs, facade
     // opportunities and bridge/door apertures.  Richer layers can be reintroduced
     // later without making them prerequisites for a visible traversable city.
-    function buildBroadStrokesCompound({
+    function* buildBroadStrokesCompoundSteps({
         chunk, site, topology, siteSignature, siteSeed, structureProfile,
         physics, transforms, materialIndex, modulePlans, moduleByKey, primaryModule,
         floorH, archetype, physicalUse, physicalTruth, servicePhysicalTruth,
@@ -777,13 +777,20 @@ export function createKowloonFabricEngine({
         let partyFaces = 0;
 
         const streetFaces = [];
-        for (const module of modulePlans) {
+        for (let broadStreetModuleIndex = 0; broadStreetModuleIndex < modulePlans.length; broadStreetModuleIndex++) {
+            const module = modulePlans[broadStreetModuleIndex];
             for (const dir of KOWLOON_DIRS) {
                 const exposure = module.edgeKinds[dir.key];
                 if (exposure === 'street' || exposure === 'courtyard') {
                     streetFaces.push({ module, dir, courtyard: exposure === 'courtyard' });
                 }
             }
+            yield {
+                phase: 'broad-street-faces',
+                current: broadStreetModuleIndex + 1,
+                total: modulePlans.length,
+                moduleKey: module.key,
+            };
         }
         const requestedEntrances = Array.isArray(structureProfile?.entrances) ? structureProfile.entrances : [];
         const forcedEntranceFaces = [];
@@ -799,7 +806,8 @@ export function createKowloonFabricEngine({
             ?? (doorPool.length ? doorPool[siteSeed % doorPool.length] : null);
         const entranceFaces = forcedEntranceFaces.length ? forcedEntranceFaces : (doorFace ? [doorFace] : []);
 
-        for (const module of modulePlans) {
+        for (let broadModuleIndex = 0; broadModuleIndex < modulePlans.length; broadModuleIndex++) {
+            const module = modulePlans[broadModuleIndex];
             transforms.slabs.push({
                 x: module.rect.cx, y: 0.055, z: module.rect.cz,
                 sx: module.rect.halfX * 2 + 0.12, sy: 0.11, sz: module.rect.halfZ * 2 + 0.12,
@@ -833,6 +841,14 @@ export function createKowloonFabricEngine({
                     }
                     addCompoundSideWall({ physics, wallList, rect: module.rect, floorH, floor, side: dir.side, opening });
                 }
+                yield {
+                    phase: 'broad-shell-floor',
+                    current: floor + 1,
+                    total: module.floors,
+                    moduleKey: module.key,
+                    moduleIndex: broadModuleIndex,
+                    moduleTotal: modulePlans.length,
+                };
             }
 
             // Semantic facade hosts are whole exposed wall faces, not per-floor
@@ -850,6 +866,13 @@ export function createKowloonFabricEngine({
                 });
             }
 
+            yield {
+                phase: 'broad-facade-hosts',
+                current: broadModuleIndex + 1,
+                total: modulePlans.length,
+                moduleKey: module.key,
+            };
+
             const roofY = module.floors * floorH;
             const roofRect = computeKowloonSlabRect(module, moduleByKey, module.floors, { roof: true });
             addRectPlatform(physics.platforms, roofRect.cx, roofRect.cz, roofRect.width, roofRect.depth, roofY, 'roof');
@@ -865,6 +888,12 @@ export function createKowloonFabricEngine({
                 }
                 if (exposed) addCompoundRoofParapetSide({ physics, wallList, rect: module.rect, roofY, side: dir.side });
             }
+            yield {
+                phase: 'broad-roof-shell',
+                current: broadModuleIndex + 1,
+                total: modulePlans.length,
+                moduleKey: module.key,
+            };
         }
 
         const bounds = modulePlans.reduce((acc, module) => ({
@@ -1112,7 +1141,7 @@ export function createKowloonFabricEngine({
         const moduleByKey = new Map(modulePlans.map(module => [module.key, module]));
 
         if (GENERATION_LANES.broadStrokesOnly) {
-            return buildBroadStrokesCompound({
+            return yield* buildBroadStrokesCompoundSteps({
                 chunk, site, topology, siteSignature, siteSeed, structureProfile,
                 physics, transforms, materialIndex, modulePlans, moduleByKey, primaryModule,
                 floorH, archetype, physicalUse, physicalTruth, servicePhysicalTruth,
@@ -2370,7 +2399,7 @@ export function createKowloonFabricEngine({
         return authoredOriginChunkPayload;
     }
 
-    function buildAuthoredSite({
+    function* buildAuthoredSiteSteps({
         site, siteIdOf, grid, cellToWorld, colHalf, rowHalf,
         ownerId = `spawn-fabric:${site?.id ?? 'unknown'}`,
         weirdness = 0.20, materialIndex = null, structureProfile = null, bridgePortalsBySite = null,
@@ -2414,7 +2443,7 @@ export function createKowloonFabricEngine({
                 return { x: center.x, z: center.z, cellSize: Math.max(0.5, Math.min(colHalf(cell.col) * 2, rowHalf(cell.row) * 2)) };
             },
         };
-        const structural = buildKowloonCompound({
+        const structural = yield* buildKowloonCompoundSteps({
             chunk, site, siteIdOf, roadPlan: { roads: new Set() }, openSiteIds: new Set(), bridgePortalsBySite,
             physics, transforms, cx0: 0, cz0: 0, half: 0, cellSize: 1,
             materialIndex: materialIndex ?? (hashString32(`${worldSeed}:spawn-fabric-material:${site.id}`) % wallMats.length),
@@ -2436,6 +2465,10 @@ export function createKowloonFabricEngine({
         enrichment.initializePayload(chunk, payload);
         freezeChunkRoot(root);
         return payload;
+    }
+
+    function buildAuthoredSite(args = {}) {
+        return runCompoundStepperToCompletion(buildAuthoredSiteSteps(args));
     }
 
 
@@ -3010,5 +3043,5 @@ export function createKowloonFabricEngine({
     const refine = (chunk, payload, budget) => enrichment.pump(chunk, payload, budget);
     const planningCacheStats = () => buildingPlanCache.stats();
 
-    return { build, buildAuthoredOriginChunk, buildAuthoredSite, buildAuthoredPlaza, buildAuthoredSurfacePatch, buildAuthoredBridge, planAuthoredBridgeNetwork, commit, setVisible, verifyReady, unload, refine, hasPendingRefinement, planChunk, districtLandmarkFor, planningCacheStats, disposeShared };
+    return { build, buildAuthoredOriginChunk, buildAuthoredSite, buildAuthoredSiteSteps, buildAuthoredPlaza, buildAuthoredSurfacePatch, buildAuthoredBridge, planAuthoredBridgeNetwork, commit, setVisible, verifyReady, unload, refine, hasPendingRefinement, planChunk, districtLandmarkFor, planningCacheStats, disposeShared };
 }

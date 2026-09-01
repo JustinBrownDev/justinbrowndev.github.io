@@ -72,20 +72,60 @@ function surfaceDistance(surface, endpoint) {
     return Math.hypot(surface.x - finite(endpoint?.x), surface.z - finite(endpoint?.z));
 }
 
-function bestSurface(surfaces, connector, endpoint) {
+const TOPOLOGY_JOIN_SEPARATOR = '\u001f';
+function topologyJoinKey(...parts) { return parts.map(value => String(value ?? '')).join(TOPOLOGY_JOIN_SEPARATOR); }
+function pushIndexed(map, key, value) {
+    const list = map.get(key) ?? [];
+    list.push(value);
+    map.set(key, list);
+}
+
+function indexSurfacesForPortalJoin(surfaces) {
+    const bySide = new Map();
+    const byEntitySide = new Map();
+    const byModuleSide = new Map();
+    const byEntityModuleSide = new Map();
+    for (const surface of surfaces) {
+        pushIndexed(bySide, surface.side, surface);
+        if (surface.entityId) pushIndexed(byEntitySide, topologyJoinKey(surface.entityId, surface.side), surface);
+        if (surface.moduleKey) pushIndexed(byModuleSide, topologyJoinKey(surface.moduleKey, surface.side), surface);
+        if (surface.entityId && surface.moduleKey) {
+            pushIndexed(byEntityModuleSide, topologyJoinKey(surface.entityId, surface.moduleKey, surface.side), surface);
+        }
+    }
+    return { bySide, byEntitySide, byModuleSide, byEntityModuleSide };
+}
+
+function nearestSurface(candidates, endpoint) {
+    let best = null;
+    let bestDistance = Infinity;
+    for (const surface of candidates ?? []) {
+        const distance = surfaceDistance(surface, endpoint);
+        if (distance < bestDistance || (distance === bestDistance && (!best || surface.id.localeCompare(best.id) < 0))) {
+            best = surface;
+            bestDistance = distance;
+        }
+    }
+    return best;
+}
+
+function bestSurface(surfaceIndex, connector, endpoint) {
     if (!endpoint?.side) return null;
     const entityId = connector?.metadata?.entityId ?? endpoint?.entityId ?? null;
     const moduleKey = connector?.metadata?.moduleKey ?? endpoint?.moduleKey ?? null;
-    const ranked = surfaces
-        .filter(surface => surface.side === endpoint.side)
-        .filter(surface => !entityId || surface.entityId === entityId)
-        .filter(surface => !moduleKey || surface.moduleKey === moduleKey)
-        .sort((a, b) => surfaceDistance(a, endpoint) - surfaceDistance(b, endpoint) || a.id.localeCompare(b.id));
-    if (ranked.length) return ranked[0];
-    const fallback = surfaces
-        .filter(surface => surface.side === endpoint.side && (!entityId || surface.entityId === entityId))
-        .sort((a, b) => surfaceDistance(a, endpoint) - surfaceDistance(b, endpoint) || a.id.localeCompare(b.id));
-    return fallback[0] ?? null;
+    const exactPool = entityId && moduleKey
+        ? surfaceIndex.byEntityModuleSide.get(topologyJoinKey(entityId, moduleKey, endpoint.side))
+        : entityId
+            ? surfaceIndex.byEntitySide.get(topologyJoinKey(entityId, endpoint.side))
+            : moduleKey
+                ? surfaceIndex.byModuleSide.get(topologyJoinKey(moduleKey, endpoint.side))
+                : surfaceIndex.bySide.get(endpoint.side);
+    const exact = nearestSurface(exactPool, endpoint);
+    if (exact) return exact;
+    const fallbackPool = entityId
+        ? surfaceIndex.byEntitySide.get(topologyJoinKey(entityId, endpoint.side))
+        : surfaceIndex.bySide.get(endpoint.side);
+    return nearestSurface(fallbackPool, endpoint);
 }
 
 function normalizeSpace(space) {
@@ -116,6 +156,24 @@ function edge(id, kind, fromId, toId, metadata = null) {
     return { id, kind, fromId, toId, metadata };
 }
 
+function indexSpacesForSurfaceJoin(spaces) {
+    const byEntity = new Map();
+    const byEntityModule = new Map();
+    for (const space of spaces) {
+        if (!space.entityId) continue;
+        pushIndexed(byEntity, space.entityId, space);
+        if (space.moduleKey) pushIndexed(byEntityModule, topologyJoinKey(space.entityId, space.moduleKey), space);
+    }
+    return { byEntity, byEntityModule };
+}
+
+function spacesForSurface(spaceIndex, surface) {
+    if (!surface?.entityId) return [];
+    return surface.moduleKey
+        ? spaceIndex.byEntityModule.get(topologyJoinKey(surface.entityId, surface.moduleKey)) ?? []
+        : spaceIndex.byEntity.get(surface.entityId) ?? [];
+}
+
 function accessEndpointNodes(portals) {
     const byId = new Map();
     const add = (portalId, endpoint, role) => {
@@ -140,9 +198,11 @@ export function compileSpatialTopologyGraph({ chunk, payload } = {}) {
     if (!chunk || !payload) throw new Error('compileSpatialTopologyGraph requires chunk and payload');
     const surfaces = compileSurfaces(payload);
     const surfaceById = new Map(surfaces.map(item => [item.id, item]));
+    const surfaceJoinIndex = indexSurfacesForPortalJoin(surfaces);
     const sourceSpaces = payload.semanticTopologySpaces?.length ? payload.semanticTopologySpaces : (payload.semanticSpaces ?? []);
     const spaces = sourceSpaces.map(normalizeSpace);
     const spaceById = new Map(spaces.map(item => [item.id, item]));
+    const spaceJoinIndex = indexSpacesForSurfaceJoin(spaces);
     const portals = compileAccessPortals({ physics: payload.physics, spaces, entities: payload.entities ?? [] });
     const portalById = new Map(portals.map(item => [item.id, item]));
     const accessEndpoints = accessEndpointNodes(portals);
@@ -195,7 +255,7 @@ export function compileSpatialTopologyGraph({ chunk, payload } = {}) {
     for (const portal of portals) {
         const endpoint = portal.facadeEndpoint;
         if (!endpoint) continue;
-        const surface = bestSurface(surfaces, {
+        const surface = bestSurface(surfaceJoinIndex, {
             metadata: {
                 entityId: portal.buildingId ?? endpoint.entityId ?? null,
                 moduleKey: endpoint.moduleKey ?? portal.apertureGeometry?.moduleKey ?? null,
@@ -265,9 +325,7 @@ export function compileSpatialTopologyGraph({ chunk, payload } = {}) {
     }
     for (const surface of surfaces) {
         edges.push(edge(`edge:entity-surface:${surface.entityId}:${surface.id}`, 'has-surface', surface.entityId, surface.id));
-        for (const space of spaces) {
-            if (space.entityId === surface.entityId && (!surface.moduleKey || space.moduleKey === surface.moduleKey)) pushUnique(surface.spaceIds, space.id);
-        }
+        for (const space of spacesForSurface(spaceJoinIndex, surface)) pushUnique(surface.spaceIds, space.id);
     }
     for (const aperture of apertures) {
         edges.push(edge(`edge:surface-aperture:${aperture.surfaceId}:${aperture.id}`, 'has-aperture', aperture.surfaceId, aperture.id));

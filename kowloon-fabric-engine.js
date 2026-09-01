@@ -14,6 +14,8 @@ import { compileDistrictBlockComposition, districtBuildingPolicyForEntity, distr
 import { planExteriorScaffoldRoute } from './world/scaffold-circulation-plan.js';
 import { assertCanonicalScaffoldSwitchback } from './world/stair-volume-contract.js';
 import { normalizeTransportSurface, planExteriorTransportNetwork, transportSurfaceIntersection } from './world/exterior-transport-network.js';
+import { planFastFacadeArchitecture } from './world/fast-facade-architecture.js';
+import { buildExteriorDebugSnapshot, emitExteriorDebugSnapshot } from './world/exterior-debug-summary.js';
 import { EXTERIOR_CIRCULATION_DEBT, planExteriorStreetLayerPolicy } from './world/exterior-street-layer-policy.js';
 import { assertFastVerticalRoute, planExteriorStreetLayerTrunk } from './world/fast-vertical-route.js';
 import {
@@ -1687,6 +1689,72 @@ export function createKowloonFabricEngine({
         }), { minX: Infinity, maxX: -Infinity, minZ: Infinity, maxZ: -Infinity });
         const anchor = doorFace?.module || primaryModule;
         const floorCounts = modulePlans.map(module => module.floors);
+        // FACADE ARCHITECTURE V1: circulation openings already exist. This layer can
+        // frame those voids and consume leftover wall area, but it never creates a door.
+        // Transport remains above facade treatment in the authority hierarchy.
+        const defaultFacadeDoorWidth = servicePhysicalTruth?.door?.clearWidth?.realizedSI
+            ?? physicalTruth?.door?.clearWidth?.realizedSI ?? 1.35;
+        const defaultFacadeDoorHeight = servicePhysicalTruth?.door?.clearHeight?.realizedSI
+            ?? physicalTruth?.door?.clearHeight?.realizedSI ?? 2.20;
+        const facadeArchitectureFaces = streetFaces.filter(face => !face.courtyard).map(face => {
+            const tangentCenter = face.dir.side === 'north' || face.dir.side === 'south'
+                ? face.module.rect.cx : face.module.rect.cz;
+            const openings = [];
+            for (let floor = 0; floor < face.module.floors; floor++) {
+                const openingKey = `${face.module.key}:${face.dir.key}:${floor}`;
+                if (bridgeOpeningKeys.has(openingKey)) {
+                    openings.push({
+                        floor, kind: 'bridge-portal', openingKey, center: tangentCenter,
+                        width: defaultFacadeDoorWidth, height: defaultFacadeDoorHeight,
+                    });
+                    continue;
+                }
+                if (fastVerticalOpeningByKey.has(openingKey)) {
+                    const raw = fastVerticalOpeningByKey.get(openingKey);
+                    openings.push({
+                        floor, kind: 'street-layer-portal', openingKey, openingId: raw?.openingId ?? null,
+                        center: Number.isFinite(raw?.center) ? Number(raw.center) : tangentCenter,
+                        width: Number(raw?.width) || defaultFacadeDoorWidth,
+                        height: Number(raw?.height) || defaultFacadeDoorHeight,
+                    });
+                    continue;
+                }
+                if (scaffoldOpeningByKey.has(openingKey)) {
+                    const raw = scaffoldOpeningByKey.get(openingKey);
+                    openings.push({
+                        floor, kind: 'scaffold-portal', openingKey, openingId: raw?.openingId ?? null,
+                        center: Number.isFinite(raw?.center) ? Number(raw.center) : tangentCenter,
+                        width: Number(raw?.width) || defaultFacadeDoorWidth,
+                        height: Number(raw?.height) || defaultFacadeDoorHeight,
+                    });
+                    continue;
+                }
+                if (floor === 0 && entranceFaces.some(entry => entry.module === face.module && entry.dir.key === face.dir.key)) {
+                    openings.push({
+                        floor, kind: 'primary-entrance', openingKey, center: tangentCenter,
+                        width: physicalTruth?.door?.clearWidth?.realizedSI ?? defaultFacadeDoorWidth,
+                        height: physicalTruth?.door?.clearHeight?.realizedSI ?? defaultFacadeDoorHeight,
+                    });
+                }
+            }
+            return {
+                moduleKey: face.module.key, dirKey: face.dir.key, side: face.dir.side,
+                floors: face.module.floors, rect: { ...face.module.rect }, openings,
+            };
+        });
+        const facadeArchitecture = planFastFacadeArchitecture({
+            stableKey: `${chunk.key}:${siteSignature}:facade-07`,
+            faces: facadeArchitectureFaces, floorH,
+            defaultDoorWidth: defaultFacadeDoorWidth,
+            defaultDoorHeight: defaultFacadeDoorHeight,
+        });
+        transforms.props.push(...facadeArchitecture.render.props);
+        transforms.windows.push(...facadeArchitecture.render.windows);
+        const facadeRegistry = physics.fastFacadeArchitecture ?? (physics.fastFacadeArchitecture = []);
+        for (const treatment of facadeArchitecture.treatments) {
+            facadeRegistry.push({ ...treatment, chunkKey: chunk.key, siteId: site.id });
+        }
+
         const roofTopper = broadRoofTopper;
 
         return {
@@ -1735,6 +1803,8 @@ export function createKowloonFabricEngine({
             fastVerticalRoomPortalCount: broadVerticalRoutes.reduce((sum, route) => sum + (route.portalStops?.filter(stop => stop.source !== 'bridge-portal').length ?? 0), 0),
             fastVerticalSharedTrunkCount: broadVerticalRoutes.filter(route => (route.streetLayers?.length ?? 0) > 1).length,
             fastVerticalRouteFamilies: broadVerticalRoutes.map(route => route.family),
+            fastFacadeArchitectureSchema: facadeArchitecture.schema,
+            fastFacadeArchitectureMetrics: facadeArchitecture.metrics,
             exteriorCirculationDebtTags: EXTERIOR_CIRCULATION_DEBT.map(item => item.tag),
             serviceCages: 0,
             cantileverRooms: 0,
@@ -3680,6 +3750,11 @@ export function createKowloonFabricEngine({
         const exteriorTransportNetwork = realizeExteriorTransportNetwork({
             physics, transforms, stableKey: `${worldSeed}:${chunk.key}:exterior-transport`,
         });
+        const exteriorDebugSnapshot = buildExteriorDebugSnapshot({
+            chunk, physics, entities, exteriorTransportNetwork,
+        });
+        physics.exteriorDebugSnapshot = exteriorDebugSnapshot;
+        emitExteriorDebugSnapshot(exteriorDebugSnapshot);
 
         attachFabricMeshes(root, transforms, `chunk:${chunk.key}`);
 

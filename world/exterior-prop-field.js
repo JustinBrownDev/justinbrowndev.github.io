@@ -2,6 +2,7 @@
 // semantic opportunities; it is not allowed to discover facade/roof/portal
 // geometry independently.
 
+import { GENERATION_LANES } from '../config/performance-isolation.js';
 import { EXTERIOR_OPPORTUNITY_PRIORITY, EXTERIOR_VISUAL_TIER, exteriorOpportunityVisualTier, exteriorPlacementVisualImpact } from './exterior-spectacle-priority.js';
 
 const SHAPES = Object.freeze(['box', 'cylinder', 'cone', 'sphere']);
@@ -151,8 +152,12 @@ function emitFacadeSpectacle(opportunity, placements) {
     let emitted = 0;
     for (let index = 0; index < segments.length; index++) {
         const segment = segments[index];
-        const width = clamp(finite(segment.width, 3.2) * 0.93, 3.0, 12.5);
-        const height = clamp(Math.min(finite(segment.height, 3.0) * 0.82, width * 0.62), 1.55, 6.8);
+        const signageStress = GENERATION_LANES.signageStress === true;
+        const width = clamp(finite(segment.width, 3.2) * (signageStress ? 0.99 : 0.93), 3.0, signageStress ? 18.0 : 12.5);
+        const height = clamp(
+            Math.min(finite(segment.height, 3.0) * (signageStress ? 0.94 : 0.82), width * (signageStress ? 1.35 : 0.62)),
+            1.55, signageStress ? 10.0 : 6.8,
+        );
         const p = segmentPoint(segment, 0.17);
         const pseudo = { ...opportunity, surfaceId: segment.surfaceId ?? opportunity.surfaceId, side: segment.side ?? opportunity.side };
         pushPrimitive(placements, pseudo, {
@@ -160,17 +165,19 @@ function emitFacadeSpectacle(opportunity, placements) {
             assemblyId, assemblyKind, visualTier: 'spectacle', spectacleSurfaceIds: surfaceIds,
             color: [0x6ecbd1, 0xe06caa, 0xf0c65e, 0x78d779][hash32(opportunity.id + ':screen:' + index) % 4],
         }, 'facade-spectacle', index * 4);
-        for (const [supportIndex, du] of [-width * 0.43, width * 0.43].entries()) {
-            const f = segment.surfaceFrame ?? {};
-            pushPrimitive(placements, pseudo, {
-                x: p.x + finite(f.tangentX) * du,
-                y: p.y - height * 0.42,
-                z: p.z + finite(f.tangentZ) * du,
-                rotY: p.rotY,
-                shape: 'cylinder', sx: 0.13, sy: height * 0.92, sz: 0.13,
-                assemblyId, assemblyKind, visualTier: 'spectacle', spectacleSurfaceIds: surfaceIds,
-                color: 0x343b3d,
-            }, 'facade-spectacle', index * 4 + supportIndex + 1);
+        if (!signageStress) {
+            for (const [supportIndex, du] of [-width * 0.43, width * 0.43].entries()) {
+                const f = segment.surfaceFrame ?? {};
+                pushPrimitive(placements, pseudo, {
+                    x: p.x + finite(f.tangentX) * du,
+                    y: p.y - height * 0.42,
+                    z: p.z + finite(f.tangentZ) * du,
+                    rotY: p.rotY,
+                    shape: 'cylinder', sx: 0.13, sy: height * 0.92, sz: 0.13,
+                    assemblyId, assemblyKind, visualTier: 'spectacle', spectacleSurfaceIds: surfaceIds,
+                    color: 0x343b3d,
+                }, 'facade-spectacle', index * 4 + supportIndex + 1);
+            }
         }
         emitted++;
     }

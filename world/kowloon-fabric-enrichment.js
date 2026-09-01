@@ -227,6 +227,25 @@ function freezeObject(object) {
 const DIAGNOSTIC_SIGNAGE_RE = /(?:^|[-_ ])(?:sign|signage|billboard|megascreen|screen|marquee)(?:$|[-_ ])/i;
 const DIAGNOSTIC_SMALL_PROP_RE = /(?:pipe|duct|hvac|vent|fixture|clutter|ivy|security|spray|awning|interior|semantic-prop|street-fixture|furniture|crate|trash|plant|bench|bollard|overhead-cable|elevator-hardware)/i;
 const DIAGNOSTIC_ARCHITECTURE_RE = /(?:^|[-_ ])(?:roof-topper)(?:$|[-_ ])/i;
+const MODERATE_PROP_PERCENT = Object.freeze({
+    awning: 72,
+    pipe: 45,
+    'street-fixture': 38,
+    graffiti: 35,
+    security: 25,
+    'roof-clutter': 22,
+    ivy: 15,
+    'elevator-hardware': 12,
+});
+
+function keepModerateProp(task, percent) {
+    const fallback = hashString32([
+        task?.entityId, task?.kind, task?.semanticOpportunityId, task?.assetId,
+    ].filter(Boolean).join(':'));
+    const seed = Number.isFinite(task?.seed) ? (task.seed >>> 0) : fallback;
+    return seed % 100 < percent;
+}
+
 function keepTaskUnderCommonDiagnosticCut(task) {
     if (!CUT_COMMON_KOWLOON_ENRICHMENT) return true;
     const label = [
@@ -235,6 +254,10 @@ function keepTaskUnderCommonDiagnosticCut(task) {
     ].filter(Boolean).join(' ');
     if (DIAGNOSTIC_SIGNAGE_RE.test(label)) return GENERATION_LANES.macroSignage;
     if (DIAGNOSTIC_ARCHITECTURE_RE.test(label)) return GENERATION_LANES.spectacle;
+    if (GENERATION_LANES.moderateProps) {
+        const percent = MODERATE_PROP_PERCENT[String(task?.kind ?? '')];
+        if (Number.isFinite(percent) && keepModerateProp(task, percent)) return true;
+    }
     const tier = String(task?.exteriorVisualTier ?? task?.priorityTier ?? '').toLowerCase();
     if ((tier === 'spectacle' || tier === 'macro' || tier === 'identity') && !DIAGNOSTIC_SMALL_PROP_RE.test(label)) return GENERATION_LANES.spectacle;
     return false;
@@ -807,9 +830,14 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
         // facade/pipe/awning RNG sequence. Tight streets should read as vertical
         // layers of projecting signs, not one token sign per building.
         const signDensityRng = mulberry32(taskSeed(chunk, entity.id, 'sign-density'));
-        const extraSignCount = (signDensityRng() < 0.78 ? 1 : 0)
-            + (floors >= 2 && signDensityRng() < 0.46 ? 1 : 0)
-            + (floors >= 4 && signDensityRng() < 0.20 ? 1 : 0);
+        const signageStress = GENERATION_LANES.signageStress && GENERATION_LANES.macroSignage;
+        const extraSignCount = signageStress
+            ? 4
+                + (floors >= 2 ? 2 : 0)
+                + (floors >= 4 ? 1 : 0)
+            : (signDensityRng() < 0.78 ? 1 : 0)
+                + (floors >= 2 && signDensityRng() < 0.46 ? 1 : 0)
+                + (floors >= 4 && signDensityRng() < 0.20 ? 1 : 0);
         for (let i = 0; i < extraSignCount; i++) {
             const signSide = i % 2 ? side : front;
             const signFacadeIndex = chooseFacadeIndex(entity, signDensityRng, signSide);
@@ -1159,15 +1187,17 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
             ? graffitiTexture(THREE, task.text, task.seed)
             : canvasTextTexture(THREE, task.title, task.subtitle, task.seed);
         const material = texture
-            ? new THREE.MeshStandardMaterial({
-                map: texture,
-                transparent: graffiti,
-                alphaTest: graffiti ? 0.08 : 0,
-                emissive: graffiti ? 0x070707 : 0x16110a,
-                emissiveIntensity: graffiti ? 0.08 : 0.35,
-                roughness: graffiti ? 0.88 : 0.64,
-                side: THREE.DoubleSide,
-            })
+            ? (!graffiti && GENERATION_LANES.signageStress
+                ? new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide, toneMapped: false })
+                : new THREE.MeshStandardMaterial({
+                    map: texture,
+                    transparent: graffiti,
+                    alphaTest: graffiti ? 0.08 : 0,
+                    emissive: graffiti ? 0x070707 : 0x16110a,
+                    emissiveIntensity: graffiti ? 0.08 : 0.35,
+                    roughness: graffiti ? 0.88 : 0.64,
+                    side: THREE.DoubleSide,
+                }))
             : posterFallbackMat;
         if (texture) {
             payload.detailResources.textures.add(texture);
@@ -1197,9 +1227,14 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
         group.name = `chunk-blade-sign:${task.entityId}`;
         group.position.set(point.x, point.y, point.z);
         group.rotation.y = point.ry;
-        const armLength = 0.34 + rng() * 0.18;
-        const bladeWidth = clamp(task.width * 0.52, 1.08, 1.92);
-        const bladeHeight = clamp(bladeWidth / 2.25, 0.58, 0.92);
+        const signageStress = GENERATION_LANES.signageStress;
+        const armLength = signageStress ? 0.46 + rng() * 0.24 : 0.34 + rng() * 0.18;
+        const bladeWidth = signageStress
+            ? clamp(task.width * 0.31, 0.72, 1.22)
+            : clamp(task.width * 0.52, 1.08, 1.92);
+        const bladeHeight = signageStress
+            ? clamp(1.25 + rng() * 1.15, 1.25, 2.40)
+            : clamp(bladeWidth / 2.25, 0.58, 0.92);
         const panelLocalZ = -(armLength + bladeWidth * 0.5);
         const panelCenterX = point.x + Math.sin(point.ry) * panelLocalZ;
         const panelCenterZ = point.z + Math.cos(point.ry) * panelLocalZ;

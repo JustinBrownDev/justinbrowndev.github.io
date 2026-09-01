@@ -15,6 +15,8 @@
 //   ?laneAuthored=0|1
 //   ?lanePlaza=0|1
 //   ?laneBroad=0|1
+//   ?laneProps=0|1
+//   ?signageStress=0|1
 // Scheduler budget override:
 //   ?buildBudgetMs=2..12
 //
@@ -33,6 +35,8 @@ export const GENERATION_PROFILE_DEFINITIONS = Object.freeze({
         microEnrichment: false,
         authoredDecoration: false,
         plazaClutter: false,
+        moderateProps: true,
+        signageStress: true,
     }),
     full: Object.freeze({
         broadStrokesOnly: false,
@@ -42,6 +46,8 @@ export const GENERATION_PROFILE_DEFINITIONS = Object.freeze({
         microEnrichment: true,
         authoredDecoration: true,
         plazaClutter: true,
+        moderateProps: true,
+        signageStress: false,
     }),
 });
 
@@ -53,6 +59,8 @@ const LANE_QUERY_NAMES = Object.freeze({
     microEnrichment: 'laneMicro',
     authoredDecoration: 'laneAuthored',
     plazaClutter: 'lanePlaza',
+    moderateProps: 'laneProps',
+    signageStress: 'signageStress',
 });
 
 function parseBoolean(raw, fallback) {
@@ -127,6 +135,8 @@ if (IS_BROWSER) {
             macroSignage: 'laneMacro',
             spectacle: 'laneSpectacle',
             broadStrokesOnly: 'laneBroad',
+            moderateProps: 'laneProps',
+            signageStress: 'signageStress',
             worldBuildBudgetMs: 'buildBudgetMs',
         }),
     });

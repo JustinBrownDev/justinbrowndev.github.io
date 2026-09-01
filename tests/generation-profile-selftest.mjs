@@ -22,19 +22,24 @@ assert.equal(skeleton.lanes.signatureContent, false);
 assert.equal(skeleton.lanes.microEnrichment, false);
 assert.equal(skeleton.lanes.authoredDecoration, false);
 assert.equal(skeleton.lanes.plazaClutter, false);
+assert.equal(skeleton.lanes.moderateProps, true);
+assert.equal(skeleton.lanes.signageStress, true);
 
 const override = resolveGenerationProfile({
     browser: true,
-    search: '?generationProfile=skeleton&laneSignature=1&laneMacro=0&lanePlaza=1',
+    search: '?generationProfile=skeleton&laneSignature=1&laneMacro=0&lanePlaza=1&laneProps=0&signageStress=0',
 });
 assert.equal(override.lanes.signatureContent, true);
 assert.equal(override.lanes.macroSignage, false);
 assert.equal(override.lanes.plazaClutter, true);
+assert.equal(override.lanes.moderateProps, false);
+assert.equal(override.lanes.signageStress, false);
 
 const full = resolveGenerationProfile({ browser: true, search: '?generationProfile=full' });
 assert.equal(full.name, 'full');
 assert.equal(full.lanes.broadStrokesOnly, false);
 assert.equal(full.lanes.signatureContent, true);
 assert.equal(full.lanes.microEnrichment, true);
+assert.equal(full.lanes.signageStress, false);
 
 console.log('generation-profile-selftest: ok');

@@ -1,3 +1,4 @@
+import { GENERATION_LANES } from '../config/performance-isolation.js';
 import {
     EXTERIOR_OPPORTUNITY_PRIORITY,
     EXTERIOR_VISUAL_TIER,
@@ -424,7 +425,9 @@ function chooseSpectacleEntities(chunkKey, groups, buildings) {
     // expose several obvious spectacles, while still leaving most buildings to
     // other deliberate composition styles. This is a district quota, not a prop roll.
     const minimum = eligible.length >= 5 ? 3 : Math.min(2, eligible.length);
-    const quota = Math.min(eligible.length, 5, Math.max(minimum, Math.ceil(eligible.length * 0.32)));
+    const quota = GENERATION_LANES.signageStress
+        ? eligible.length
+        : Math.min(eligible.length, 5, Math.max(minimum, Math.ceil(eligible.length * 0.32)));
     const selected = new Map(eligible.slice(0, quota).map(item => [item.entityId, item.entry]));
     return { eligible, selected, quota };
 }
@@ -529,8 +532,11 @@ function planForEntity(chunkKey, entityId, entity, selectedSpectacleEntry, build
     const districtPolicy = districtExteriorPolicyForEntity(entity);
     const style = compositionStyleForEntity(chunkKey, entityId, entity, selectedSpectacleEntry, buildingSemanticTruth);
     const profile = STYLE_PROFILES[style] ?? STYLE_PROFILES[EXTERIOR_COMPOSITION_STYLES.MIXED];
-    const caps = { ...profile.caps };
-    if (selectedSpectacleEntry) caps.spectacle = 1;
+    const signageStress = GENERATION_LANES.signageStress === true;
+    const caps = signageStress
+        ? { spectacle: 2, identity: 8, macro: 2, medium: 1, micro: 0 }
+        : { ...profile.caps };
+    if (selectedSpectacleEntry && !signageStress) caps.spectacle = 1;
     return {
         schema: EXTERIOR_COMPOSITION_SCHEMA,
         id: planIdFor(chunkKey, entityId),
@@ -546,8 +552,8 @@ function planForEntity(chunkKey, entityId, entity, selectedSpectacleEntry, build
         districtFrontageCharacter: districtPolicy.frontageCharacter ?? null,
         districtSpectaclePriority: districtPolicy.spectaclePriority ?? 0,
         districtSpectacleCorridor: !!districtPolicy.spectacleCorridor,
-        densityCeiling: profile.densityCeiling,
-        coverageFloorTarget: profile.coverageFloor,
+        densityCeiling: signageStress ? 13 : profile.densityCeiling,
+        coverageFloorTarget: signageStress ? 2 : profile.coverageFloor,
         caps,
     };
 }
@@ -741,10 +747,24 @@ function selectEntityEntries(chunkKey, entityId, entries, selectedSpectacleEntry
 
     if (selectedSpectacleEntry) admit(selectedSpectacleEntry);
 
+    if (GENERATION_LANES.signageStress) {
+        const spectacleCap = plan.caps.spectacle ?? 0;
+        const spectaclePool = entries
+            .filter(entry => !selectedSet.has(entry) && exteriorTaskVisualTier(entry.task) === 'spectacle')
+            .sort((a, b) => stableEntryCompare(`${chunkKey}:${entityId}:spectacle-stress`, a, b, EXTERIOR_COMPOSITION_STYLES.MEDIA_MONSTER));
+        for (const entry of spectaclePool) {
+            if (selected.filter(item => exteriorTaskVisualTier(item.task) === 'spectacle').length >= spectacleCap) break;
+            if (selected.length >= plan.densityCeiling) break;
+            admit(entry);
+        }
+    }
+
     // Coarse physical identity wins before smaller facade identity when claims overlap.
     // This preserves the global big-before-small rule while coverage metadata still
     // decides which accepted high-tier request publishes first.
-    for (const tier of ['macro', 'identity', 'medium', 'micro']) {
+    const tierOrder = GENERATION_LANES.signageStress
+        ? ['identity', 'macro', 'medium', 'micro'] : ['macro', 'identity', 'medium', 'micro'];
+    for (const tier of tierOrder) {
         const cap = plan.caps[tier] ?? 0;
         if (!(cap > 0) || selected.length >= plan.densityCeiling) continue;
         const alreadyInTier = selected.filter(entry => exteriorTaskVisualTier(entry.task) === tier).length;
@@ -818,8 +838,10 @@ function assignCoverageMetadata(entries, selectedSpectacleEntry, plan) {
         const tier = exteriorTaskVisualTier(entry.task);
         const isAnchor = entry === anchor;
         const coverageRequired = requiredSet.has(entry);
+        const signageStressPriority = GENERATION_LANES.signageStress
+            && (tier === 'spectacle' || entry.task.kind === 'sign');
         const wave = isAnchor ? 0
-            : coverageRequired ? 1
+            : (coverageRequired || signageStressPriority) ? 1
                 : tier === 'spectacle' || tier === 'identity' || tier === 'macro' ? 2
                     : tier === 'medium' ? 3 : 4;
         entry.task.exteriorComposition = {
@@ -1006,10 +1028,23 @@ function buildPlannerServiceCandidates({ chunk, payload, buildings, groups, sele
         const reserved = new Set();
         const current = groups.get(entityId) ?? [];
 
-        const spectacle = bestOpportunity(chunkKey, entityId, opportunities, ['corner-media-band', 'facade-spectacle-span', 'roof-spectacle-envelope'], reserved);
-        if (spectacle) {
-            addServiceTask(entity, spectacle, { semanticFamily: 'media-spectacle', desiredScaleClass: 'spectacle', priorityTier: 'spectacle' }, false);
-            reserved.add(spectacle.id);
+        if (GENERATION_LANES.signageStress) {
+            const facadeSpectacle = bestOpportunity(chunkKey, entityId, opportunities, ['corner-media-band', 'facade-spectacle-span'], reserved);
+            if (facadeSpectacle) {
+                addServiceTask(entity, facadeSpectacle, { semanticFamily: 'media-spectacle', desiredScaleClass: 'spectacle', priorityTier: 'spectacle' }, false);
+                reserved.add(facadeSpectacle.id);
+            }
+            const roofSpectacle = bestOpportunity(chunkKey, entityId, opportunities, ['roof-spectacle-envelope'], reserved);
+            if (roofSpectacle) {
+                addServiceTask(entity, roofSpectacle, { semanticFamily: 'media-spectacle', desiredScaleClass: 'spectacle', priorityTier: 'spectacle' }, false);
+                reserved.add(roofSpectacle.id);
+            }
+        } else {
+            const spectacle = bestOpportunity(chunkKey, entityId, opportunities, ['corner-media-band', 'facade-spectacle-span', 'roof-spectacle-envelope'], reserved);
+            if (spectacle) {
+                addServiceTask(entity, spectacle, { semanticFamily: 'media-spectacle', desiredScaleClass: 'spectacle', priorityTier: 'spectacle' }, false);
+                reserved.add(spectacle.id);
+            }
         }
 
         const hasIdentity = current.some(entry => exteriorTaskVisualTier(entry.task) === 'identity');
@@ -1025,7 +1060,9 @@ function buildPlannerServiceCandidates({ chunk, payload, buildings, groups, sele
         // One facade and one roof macro request are enough to make large corpus
         // content common without turning opportunity count into density.
         const facadeMacro = bestOpportunity(chunkKey, entityId, opportunities, ['facade-service-band', 'wall-mounted-prop-zone'], reserved);
-        if (facadeMacro) {
+        const allowFacadeMacro = !GENERATION_LANES.signageStress
+            || hash32(`${chunkKey}:${entityId}:signage-stress:facade-prop`) % 100 < 28;
+        if (facadeMacro && allowFacadeMacro) {
             addServiceTask(entity, facadeMacro, {
                 semanticFamily: entity.exteriorMacroPreference?.facadeSemanticFamily
                     ?? entity?.buildingSemanticTruth?.exteriorTendencies?.facadeSemanticFamily
@@ -1037,7 +1074,9 @@ function buildPlannerServiceCandidates({ chunk, payload, buildings, groups, sele
         }
 
         const roofMacro = bestOpportunity(chunkKey, entityId, opportunities, ['roof-utility-zone'], reserved);
-        if (roofMacro) {
+        const allowRoofMacro = !GENERATION_LANES.signageStress
+            || hash32(`${chunkKey}:${entityId}:signage-stress:roof-prop`) % 100 < 18;
+        if (roofMacro && allowRoofMacro) {
             addServiceTask(entity, roofMacro, {
                 semanticFamily: entity.exteriorMacroPreference?.roofSemanticFamily
                     ?? entity?.buildingSemanticTruth?.exteriorTendencies?.roofSemanticFamily
@@ -1048,7 +1087,9 @@ function buildPlannerServiceCandidates({ chunk, payload, buildings, groups, sele
         }
 
         const medium = bestOpportunity(chunkKey, entityId, opportunities, ['portal-lintel-zone', 'portal-flank-wall-zone', 'wall-mounted-prop-zone'], reserved);
-        if (medium) {
+        const allowMedium = !GENERATION_LANES.signageStress
+            || hash32(`${chunkKey}:${entityId}:signage-stress:medium-prop`) % 100 < 14;
+        if (medium && allowMedium) {
             addServiceTask(entity, medium, { semanticFamily: 'security-hardware', desiredScaleClass: 'medium', priorityTier: 'medium' }, true);
             reserved.add(medium.id);
         }

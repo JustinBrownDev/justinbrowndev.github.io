@@ -1,3 +1,4 @@
+import { GENERATION_LANES } from '../config/performance-isolation.js';
 import { compileSpatialTopologyGraph } from './spatial-topology.js';
 import { bindSemanticExteriorPlacement, chooseSemanticExteriorOpportunity } from './semantic-exterior-authority.js';
 import { isManagedBuildingExteriorTask } from './exterior-composition-authority.js';
@@ -155,14 +156,40 @@ function facadeOpportunities(surfaces, apertures, contextByEntity) {
                 surfaceFrame,
                 decorationMayIntrude: true,
             };
-            const signY = clamp(surface.yMin + 2.3 + index * 0.7, surface.yMin + 1.9, Math.max(surface.yMin + 2, surface.yMax - 0.55));
-            opportunities.push({
-                id: `${surface.id}:sign:${index}`, role: 'facade-sign-zone', ...base,
-                transform: pointForSurface(surface, u, signY, 0.035),
-                region: { uMin: lo, uMax: hi, vMin: Math.max(surface.yMin + 1.8, signY - 1.2), vMax: surface.yMax },
-                clearanceBudget: { width, height: Math.max(0.5, surface.yMax - signY) },
-                layer: verticalLayer(signY), shellPriority: 'first-pass',
-            });
+            if (GENERATION_LANES.signageStress) {
+                const facadeHeight = Math.max(0, surface.yMax - surface.yMin);
+                const signRows = clamp(Math.floor((facadeHeight - 1.0) / 2.0), 1, 5);
+                const signColumns = width >= 5.0 ? 2 : 1;
+                for (let row = 0; row < signRows; row++) {
+                    for (let col = 0; col < signColumns; col++) {
+                        const cellLo = lo + width * (col / signColumns);
+                        const cellHi = lo + width * ((col + 1) / signColumns);
+                        const signU = (cellLo + cellHi) * 0.5;
+                        const signWidth = cellHi - cellLo;
+                        const signY = clamp(surface.yMin + 2.05 + row * 2.05, surface.yMin + 1.85, Math.max(surface.yMin + 1.9, surface.yMax - 0.60));
+                        opportunities.push({
+                            id: `${surface.id}:sign:${index}:${row}:${col}`, role: 'facade-sign-zone',
+                            ...base,
+                            u: signU,
+                            along: surface.half > 0 ? clamp(signU / surface.half, -0.92, 0.92) : 0,
+                            availableWidth: signWidth,
+                            transform: pointForSurface(surface, signU, signY, 0.035),
+                            region: { uMin: cellLo, uMax: cellHi, vMin: Math.max(surface.yMin + 1.6, signY - 1.1), vMax: Math.min(surface.yMax, signY + 1.1) },
+                            clearanceBudget: { width: signWidth, height: Math.max(0.7, Math.min(2.2, surface.yMax - signY + 0.6)) },
+                            layer: verticalLayer(signY, row), shellPriority: 'first-pass',
+                        });
+                    }
+                }
+            } else {
+                const signY = clamp(surface.yMin + 2.3 + index * 0.7, surface.yMin + 1.9, Math.max(surface.yMin + 2, surface.yMax - 0.55));
+                opportunities.push({
+                    id: `${surface.id}:sign:${index}`, role: 'facade-sign-zone', ...base,
+                    transform: pointForSurface(surface, u, signY, 0.035),
+                    region: { uMin: lo, uMax: hi, vMin: Math.max(surface.yMin + 1.8, signY - 1.2), vMax: surface.yMax },
+                    clearanceBudget: { width, height: Math.max(0.5, surface.yMax - signY) },
+                    layer: verticalLayer(signY), shellPriority: 'first-pass',
+                });
+            }
             opportunities.push({
                 id: `${surface.id}:poster:${index}`, role: 'facade-poster-zone', ...base,
                 transform: pointForSurface(surface, u, clamp(surface.yMin + 1.45, surface.yMin + 1, surface.yMax - 0.4), 0.025),
@@ -391,12 +418,18 @@ function spectacleOpportunities(chunk, payload, surfaces, apertures, contextByEn
 
     const candidates = [];
     for (const [entityId, entityCandidates] of candidatesByEntity) {
-        entityCandidates.sort((a, b) => b.spectacleImpact - a.spectacleImpact
+        const ranked = [...entityCandidates].sort((a, b) => b.spectacleImpact - a.spectacleImpact
             || (a.role === 'corner-media-band' ? -1 : b.role === 'corner-media-band' ? 1 : 0)
             || String(a.id).localeCompare(String(b.id)));
-        const best = entityCandidates[0];
-        if (!best) continue;
-        candidates.push({ ...best, spectacleCandidate: true });
+        if (GENERATION_LANES.signageStress) {
+            const bestFacade = ranked.find(item => item.role === 'corner-media-band' || item.role === 'facade-spectacle-span');
+            const bestRoof = ranked.find(item => item.role === 'roof-spectacle-envelope');
+            if (bestFacade) candidates.push({ ...bestFacade, spectacleCandidate: true });
+            if (bestRoof) candidates.push({ ...bestRoof, spectacleCandidate: true });
+            continue;
+        }
+        const best = ranked[0];
+        if (best) candidates.push({ ...best, spectacleCandidate: true });
     }
     return candidates;
 }

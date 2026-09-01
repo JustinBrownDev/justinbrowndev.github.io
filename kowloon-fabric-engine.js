@@ -832,15 +832,22 @@ export function createKowloonFabricEngine({
                         opening = physicalTruth?.door?.clearWidth?.realizedSI ?? 1.35;
                     }
                     addCompoundSideWall({ physics, wallList, rect: module.rect, floorH, floor, side: dir.side, opening });
-                    if (kind === 'street' || kind === 'courtyard') {
-                        facades.push({
-                            moduleKey: module.key, side: dir.side, exposure: kind,
-                            x: module.rect.cx, z: module.rect.cz,
-                            halfX: module.rect.halfX, halfZ: module.rect.halfZ,
-                            yMin: y0, yMax: y1,
-                        });
-                    }
                 }
+            }
+
+            // Semantic facade hosts are whole exposed wall faces, not per-floor
+            // slices. Publish them on the actual wall plane so projecting signs and
+            // facade/corner megascreens cannot be buried inside the building mass.
+            for (const dir of KOWLOON_DIRS) {
+                const exposure = module.edgeKinds[dir.key];
+                if (exposure !== 'street' && exposure !== 'courtyard') continue;
+                facades.push({
+                    moduleKey: module.key, side: dir.side, exposure,
+                    x: module.rect.cx + (dir.side === 'west' ? -module.rect.halfX : dir.side === 'east' ? module.rect.halfX : 0),
+                    z: module.rect.cz + (dir.side === 'north' ? -module.rect.halfZ : dir.side === 'south' ? module.rect.halfZ : 0),
+                    halfX: module.rect.halfX, halfZ: module.rect.halfZ,
+                    yMin: 0, yMax: module.floors * floorH,
+                });
             }
 
             const roofY = module.floors * floorH;

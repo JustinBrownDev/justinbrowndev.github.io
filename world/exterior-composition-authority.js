@@ -138,7 +138,7 @@ function mediaLayoutFor(assemblyKind, placements) {
     };
 }
 
-const MEDIA_SIDE_ORDER = Object.freeze(['north', 'east', 'south', 'west']);
+const MEDIA_FACE_GAP = 0.024;
 
 function mediaPanelUvAxis(placement) {
     const theta = finite(placement?.rotY) + Math.PI;
@@ -154,7 +154,7 @@ function mediaPanelUvEndpoints(member) {
     const placement = member?.placement ?? {};
     const axis = mediaPanelUvAxis(placement);
     const outward = mediaPanelOutward(placement);
-    const panelOffset = Math.max(0.015, finite(placement.sz, 0.16) * 0.5 + 0.012);
+    const panelOffset = Math.max(MEDIA_FACE_GAP, finite(placement.sz, 0.16) * 0.5 + MEDIA_FACE_GAP);
     const cx = finite(placement.x) + outward.x * panelOffset;
     const cz = finite(placement.z) + outward.z * panelOffset;
     const half = Math.max(0.01, finite(placement.sx, 1) * 0.5);
@@ -167,40 +167,52 @@ function mediaPanelUvEndpoints(member) {
 function routeCornerMediaMembers(members) {
     const stable = [...members].sort((a, b) => a.sourceIndex - b.sourceIndex);
     if (stable.length !== 2) return stable;
-    const sideIndex = member => MEDIA_SIDE_ORDER.indexOf(String(member?.placement?.side ?? ''));
-    const ai = sideIndex(stable[0]);
-    const bi = sideIndex(stable[1]);
-    let first = stable[0];
-    let second = stable[1];
-    if (ai >= 0 && bi >= 0 && (bi + 1) % 4 === ai) {
-        first = stable[1];
-        second = stable[0];
-    }
 
-    const aEnds = mediaPanelUvEndpoints(first);
-    const bEnds = mediaPanelUvEndpoints(second);
+    const stableAEnds = mediaPanelUvEndpoints(stable[0]);
+    const stableBEnds = mediaPanelUvEndpoints(stable[1]);
     let best = null;
     for (const aKey of ['lo', 'hi']) for (const bKey of ['lo', 'hi']) {
-        const a = aEnds[aKey];
-        const b = bEnds[bKey];
+        const a = stableAEnds[aKey];
+        const b = stableBEnds[bKey];
         const distance = Math.hypot(a.x - b.x, a.z - b.z);
         if (!best || distance < best.distance) best = { aKey, bKey, a, b, distance };
     }
     if (!best) return stable;
+
+    // A readable wrap should not mirror either face. Route the two physical faces
+    // so the first face reaches the corner at local U=1 (hi) and the second leaves
+    // it at local U=0 (lo). Adjacent orthogonal facade faces naturally provide one
+    // hi endpoint and one lo endpoint; ordering, not UV reflection, is the fix.
+    let first = stable[0];
+    let second = stable[1];
+    let firstEnds = stableAEnds;
+    let secondEnds = stableBEnds;
+    let firstKey = best.aKey;
+    let secondKey = best.bKey;
+    if (firstKey === 'lo' && secondKey === 'hi') {
+        [first, second] = [second, first];
+        [firstEnds, secondEnds] = [secondEnds, firstEnds];
+        [firstKey, secondKey] = [secondKey, firstKey];
+    }
+
+    const canonicalReadableRoute = firstKey === 'hi' && secondKey === 'lo';
     const seam = { x: (best.a.x + best.b.x) * 0.5, z: (best.a.z + best.b.z) * 0.5 };
-    const aFar = aEnds[best.aKey === 'lo' ? 'hi' : 'lo'];
-    const bFar = bEnds[best.bKey === 'lo' ? 'hi' : 'lo'];
-    const aLen = Math.max(1e-6, Math.hypot(seam.x - aFar.x, seam.z - aFar.z));
-    const bLen = Math.max(1e-6, Math.hypot(bFar.x - seam.x, bFar.z - seam.z));
-    const ax = (seam.x - aFar.x) / aLen;
-    const az = (seam.z - aFar.z) / aLen;
-    const bx = (bFar.x - seam.x) / bLen;
-    const bz = (bFar.z - seam.z) / bLen;
+    const firstFar = firstEnds[firstKey === 'lo' ? 'hi' : 'lo'];
+    const secondFar = secondEnds[secondKey === 'lo' ? 'hi' : 'lo'];
+    const firstLen = Math.max(1e-6, Math.hypot(seam.x - firstFar.x, seam.z - firstFar.z));
+    const secondLen = Math.max(1e-6, Math.hypot(secondFar.x - seam.x, secondFar.z - seam.z));
+    const ax = (seam.x - firstFar.x) / firstLen;
+    const az = (seam.z - firstFar.z) / firstLen;
+    const bx = (secondFar.x - seam.x) / secondLen;
+    const bz = (secondFar.z - seam.z) / secondLen;
     const turn = ax * bz - az * bx >= 0 ? 'left' : 'right';
-    const seamAligned = best.distance <= 0.035;
+    const seamAligned = canonicalReadableRoute && best.distance <= 0.035;
+
+    // Never mirror display copy. If an exotic/non-orthogonal pair cannot form the
+    // canonical hi->lo route, it remains readable and simply loses strict seam mode.
     return [
-        { ...first, reverseU: best.aKey === 'lo', seamAligned, cornerTurn: turn, seamDistance: best.distance },
-        { ...second, reverseU: best.bKey === 'hi', seamAligned, cornerTurn: turn, seamDistance: best.distance },
+        { ...first, reverseU: false, seamEdge: firstKey, seamAligned, cornerTurn: turn, seamDistance: best.distance },
+        { ...second, reverseU: false, seamEdge: secondKey, seamAligned, cornerTurn: turn, seamDistance: best.distance },
     ];
 }
 
@@ -302,6 +314,7 @@ export function attachSpectacleMedia({ chunk, tasks = [], pairFor = null } = {})
                     u0,
                     u1,
                     reverseU: member.reverseU === true,
+                    seamEdge: member.seamEdge ?? null,
                     seamAligned: member.seamAligned === true,
                     cornerTurn: member.cornerTurn ?? null,
                     seamDistance: Number.isFinite(member.seamDistance) ? member.seamDistance : null,

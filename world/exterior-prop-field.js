@@ -9,6 +9,7 @@ import { renderDisplayCanvas } from '../systems/sign-display-renderer.js';
 
 const SHAPES = Object.freeze(['box', 'cylinder', 'cone', 'sphere']);
 const COLORS = Object.freeze([0x4b5150, 0x62635e, 0x756956, 0x42585d, 0x6b5b61, 0x514c45]);
+const MEDIA_FACE_GAP = 0.024;
 
 function hash32(value) {
     let h = 2166136261 >>> 0;
@@ -149,7 +150,7 @@ function lineIntersection2D(aPoint, aDir, bPoint, bDir) {
     return { x: aPoint.x + aDir.x * t, z: aPoint.z + aDir.z * t };
 }
 
-function alignCornerMediaSegments(segments, screenOutward = 0.17, panelOffset = 0.092) {
+function alignCornerMediaSegments(segments, screenOutward = 0.17, panelOffset = 0.08 + MEDIA_FACE_GAP) {
     if (!Array.isArray(segments) || segments.length !== 2) return null;
     const lines = segments.map(segment => {
         const f = segment.surfaceFrame ?? {};
@@ -721,10 +722,29 @@ export function createExteriorPropFieldSystem({ THREE, worldSeed = 0 } = {}) {
             mesh.instanceMatrix.setUsage?.(THREE.StaticDrawUsage);
             for (let i = 0; i < bucket.length; i++) {
                 const item = bucket[i];
-                position.set(item.x, item.y + item.sy * 0.5, item.z);
+                let renderX = item.x;
+                let renderZ = item.z;
+                let renderSx = item.sx;
+                const mediaSeamEdge = shape === 'box' && item.mediaSegment?.seamAligned === true
+                    ? item.mediaSegment?.seamEdge
+                    : null;
+                if ((mediaSeamEdge === 'lo' || mediaSeamEdge === 'hi') && /megascreen/i.test(String(item.assemblyKind ?? ''))) {
+                    // The media plane itself reaches the shared corner seam. Trim only the
+                    // solid backing/frame at that edge so two perpendicular boxes cannot
+                    // occupy the same corner volume and shimmer against each other.
+                    const backingTrim = Math.min(item.sx * 0.10, Math.max(0.06, item.sz * 1.10));
+                    const theta = item.rotY + Math.PI;
+                    const localAxisX = Math.cos(theta);
+                    const localAxisZ = -Math.sin(theta);
+                    const seamSign = mediaSeamEdge === 'hi' ? 1 : -1;
+                    renderSx = Math.max(0.04, item.sx - backingTrim);
+                    renderX -= localAxisX * seamSign * backingTrim * 0.5;
+                    renderZ -= localAxisZ * seamSign * backingTrim * 0.5;
+                }
+                position.set(renderX, item.y + item.sy * 0.5, renderZ);
                 euler.set(0, item.rotY, 0);
                 quaternion.setFromEuler(euler);
-                scale.set(item.sx, item.sy, item.sz);
+                scale.set(renderSx, item.sy, item.sz);
                 matrix.compose(position, quaternion, scale);
                 mesh.setMatrixAt(i, matrix);
                 mesh.setColorAt(i, color.set(item.color));
@@ -754,7 +774,10 @@ export function createExteriorPropFieldSystem({ THREE, worldSeed = 0 } = {}) {
             const media = assemblyPlacements[0]?.media;
             const texture = createMediaTexture(media, assemblyPlacements[0]);
             if (!texture) continue;
-            const material = new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide, toneMapped: false });
+            const material = new THREE.MeshBasicMaterial({
+                map: texture, side: THREE.FrontSide, toneMapped: false,
+                polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2,
+            });
             payload?.detailResources?.textures?.add?.(texture);
             payload?.detailResources?.materials?.add?.(material);
             for (const item of assemblyPlacements) {
@@ -764,7 +787,7 @@ export function createExteriorPropFieldSystem({ THREE, worldSeed = 0 } = {}) {
                 panel.name = group.name + ':media:' + mediaId + ':' + String(item.mediaSegment?.index ?? 0);
                 const outwardX = -Math.sin(item.rotY);
                 const outwardZ = -Math.cos(item.rotY);
-                const offset = Math.max(0.015, item.sz * 0.5 + 0.012);
+                const offset = Math.max(MEDIA_FACE_GAP, item.sz * 0.5 + MEDIA_FACE_GAP);
                 panel.position.set(item.x + outwardX * offset, item.y + item.sy * 0.5, item.z + outwardZ * offset);
                 panel.rotation.y = item.rotY + Math.PI;
                 const seamAligned = item.mediaSegment?.seamAligned === true;

@@ -1,9 +1,9 @@
 // Generation profile + lane switches.
 //
 // The browser intentionally starts in SKELETON mode: topology, building massing,
-// exterior shells, essential collision, large signage and spectacle only.  The
-// expensive authored/interior/micro lanes stay genuinely OFF so they are not even
-// planned during the baseline performance pass.
+// exterior shells, essential collision, large signage/spectacle, moderate props,
+// and the cheapest primitive plaza clutter. Expensive authored/interior/micro lanes
+// stay genuinely OFF so they are not even planned during the baseline pass.
 //
 // A/B escape hatch:
 //   ?generationProfile=skeleton|full
@@ -34,7 +34,9 @@ export const GENERATION_PROFILE_DEFINITIONS = Object.freeze({
         signatureContent: false,
         microEnrichment: false,
         authoredDecoration: false,
-        plazaClutter: false,
+        // Cheap primitive/transformed plaza objects are the first detail lane restored.
+        // Keep this separately reversible with ?lanePlaza=0 while heavier lanes stay off.
+        plazaClutter: true,
         moderateProps: true,
         signageStress: true,
     }),

@@ -193,7 +193,8 @@ const DIAGNOSTIC_SMALL_PROP_RE = /(?:pipe|duct|hvac|vent|fixture|clutter|ivy|sec
 const DIAGNOSTIC_ARCHITECTURE_RE = /(?:^|[-_ ])(?:roof-topper)(?:$|[-_ ])/i;
 const MODERATE_PROP_PERCENT = Object.freeze({
     awning: 72,
-    pipe: 45,
+    // Single shared-geometry cylinder; restore more of the already-bounded 1-2 pipe tasks.
+    pipe: 65,
     'street-fixture': 38,
     graffiti: 35,
     // Primitive-only 2-4 can cluster; task already exists only beside planned graffiti.

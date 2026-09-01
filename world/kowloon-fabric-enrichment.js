@@ -1695,9 +1695,10 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
         const exteriorProvenance = semanticExteriorProvenance(task);
         if (exteriorProvenance) object.userData.semanticExteriorProvenance = exteriorProvenance;
         payload.detailRoot.add(object);
+        // Object3D.traverse includes the root object. freezeObject updates each new
+        // node's local/world matrices before disabling automatic updates, so do not
+        // re-freeze the root or re-walk the entire accumulated detail tree here.
         object.traverse?.(freezeObject);
-        freezeObject(object);
-        payload.detailRoot.updateMatrixWorld(true);
         payload.refinement.lastKind = task.kind;
         return true;
     }

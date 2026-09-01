@@ -12,7 +12,8 @@ import { createSemanticPlanCache, semanticPlanCacheKey } from './world/architect
 import { accessAnchorsForBuildingPortals, compileAccessPortals } from './world/access-portals.js';
 import { compileDistrictBlockComposition, districtBuildingPolicyForEntity, districtContextForEntity } from './world/district-block-composition.js';
 import { planExteriorScaffoldRoute } from './world/scaffold-circulation-plan.js';
-import { assertFastVerticalRoute, planSharedVerticalTrunk } from './world/fast-vertical-route.js';
+import { EXTERIOR_CIRCULATION_DEBT, planExteriorStreetLayerPolicy } from './world/exterior-street-layer-policy.js';
+import { assertFastVerticalRoute, planExteriorStreetLayerTrunk } from './world/fast-vertical-route.js';
 import {
     anyReservationIntersectsBox,
     createBoxCirculationReservation,
@@ -696,6 +697,28 @@ export function createKowloonFabricEngine({
         return plan.landings.length;
     }
 
+    function rectPiecesMinusGap(rect, gap) {
+        const full = { x: Number(rect.x), z: Number(rect.z), hx: Number(rect.hx), hz: Number(rect.hz) };
+        if (!gap || ![full.x, full.z, full.hx, full.hz].every(Number.isFinite) || full.hx <= 0 || full.hz <= 0) return [full];
+        const x0 = full.x - full.hx, x1 = full.x + full.hx;
+        const z0 = full.z - full.hz, z1 = full.z + full.hz;
+        const gx0 = Math.max(x0, Number(gap.x) - Number(gap.hx));
+        const gx1 = Math.min(x1, Number(gap.x) + Number(gap.hx));
+        const gz0 = Math.max(z0, Number(gap.z) - Number(gap.hz));
+        const gz1 = Math.min(z1, Number(gap.z) + Number(gap.hz));
+        if (!(gx1 > gx0 + 0.02) || !(gz1 > gz0 + 0.02)) return [full];
+        const pieces = [];
+        const push = (ax0, ax1, az0, az1) => {
+            if (!(ax1 > ax0 + 0.04) || !(az1 > az0 + 0.04)) return;
+            pieces.push({ x: (ax0 + ax1) * 0.5, z: (az0 + az1) * 0.5, hx: (ax1 - ax0) * 0.5, hz: (az1 - az0) * 0.5 });
+        };
+        push(x0, gx0, z0, z1);
+        push(gx1, x1, z0, z1);
+        push(gx0, gx1, z0, gz0);
+        push(gx0, gx1, gz1, z1);
+        return pieces;
+    }
+
     function realizeFastVerticalRoute({ physics, transforms, wallList, plan }) {
         assertFastVerticalRoute(plan);
         const routeRegistry = physics.fastVerticalRoutes ?? (physics.fastVerticalRoutes = []);
@@ -749,21 +772,38 @@ export function createKowloonFabricEngine({
         }
 
         const deckRegistry = physics.fastExteriorDecks ?? (physics.fastExteriorDecks = []);
+        const throatRegistry = physics.fastStairThroats ?? (physics.fastStairThroats = []);
         for (const landing of plan.generatedLandings) {
             const geometry = landing.geometry;
-            physics.platforms.push({
-                x: geometry.x, z: geometry.z, hx: geometry.hx, hz: geometry.hz, y: landing.y,
-                supportKind: 'broad-vertical-landing', deckKind: 'shared-circulation-deck',
-                routeId: plan.id, landingId: landing.id,
-            });
-            transforms.slabs.push({
-                x: geometry.x, y: landing.y - 0.07, z: geometry.z,
-                sx: geometry.hx * 2, sy: 0.14, sz: geometry.hz * 2,
-                routeId: plan.id, landingId: landing.id, deckKind: 'shared-circulation-deck',
-            });
+            const throat = landing.stairThroat ?? null;
+            const pieces = rectPiecesMinusGap(geometry, throat);
+            if (!pieces.length) throw new Error(`${plan.id}:${landing.id}: stair throat consumed the entire street-layer deck`);
+            for (let pieceIndex = 0; pieceIndex < pieces.length; pieceIndex++) {
+                const piece = pieces[pieceIndex];
+                physics.platforms.push({
+                    x: piece.x, z: piece.z, hx: piece.hx, hz: piece.hz, y: landing.y,
+                    supportKind: 'broad-vertical-landing', deckKind: 'exterior-street-layer',
+                    routeId: plan.id, landingId: landing.id, pieceIndex,
+                });
+                transforms.slabs.push({
+                    x: piece.x, y: landing.y - 0.07, z: piece.z,
+                    sx: piece.hx * 2, sy: 0.14, sz: piece.hz * 2,
+                    routeId: plan.id, landingId: landing.id, pieceIndex, deckKind: 'exterior-street-layer',
+                });
+            }
+            if (throat) {
+                throatRegistry.push({
+                    ...throat,
+                    routeId: plan.id,
+                    landingId: landing.id,
+                    floor: Number(landing.support?.floor) || Math.round(landing.y / Math.max(0.001, Number(plan.floorH))),
+                    y: landing.y,
+                    requiredHeadroom: plan.flights.find(flight => flight.toLandingId === landing.id)?.headroom ?? null,
+                });
+            }
 
-            // Guard only the outer edge. The wall side remains the doorway edge and
-            // the tangent ends remain open so adjacent stair flights can continue.
+            // Guard only the exterior edge. Door thresholds and tangent stair throats
+            // remain unguarded openings in the transport surface.
             const railH = 0.92;
             const railT = 0.08;
             const outward = plan.orientation?.outward ?? 0;
@@ -781,13 +821,14 @@ export function createKowloonFabricEngine({
                 id: `${landing.id}:connector`,
                 x: geometry.x, z: geometry.z, halfX: geometry.hx, halfZ: geometry.hz, y: landing.y,
                 source: 'broad-vertical-route',
-                visualRole: `${plan.family}-landing-deck`,
+                visualRole: `${plan.family}-street-layer`,
                 reservationKind: 'broad-vertical-landing',
                 physicalTruth: plan.physicalTruth,
                 metadata: {
                     routeId: plan.id, landingId: landing.id, family: plan.family, shape: plan.shape,
                     graphAuthority: plan.graphAuthority ?? null,
-                    support: landing.support, generated: true, deckKind: 'shared-circulation-deck',
+                    support: landing.support, generated: true, deckKind: 'exterior-street-layer',
+                    stairThroat: throat,
                 },
             });
             connector.routeId = plan.id;
@@ -795,11 +836,14 @@ export function createKowloonFabricEngine({
             registerSemanticConnector(physics, connector);
 
             const floor = Number(landing.support?.floor) || Math.round(landing.y / Math.max(0.001, Number(plan.floorH)));
-            const portalIds = (plan.portalStops ?? []).filter(stop => Number(stop.floor) === floor).map(stop => stop.portal?.id).filter(Boolean);
+            const layer = (plan.streetLayers ?? []).find(item => Number(item.floor) === floor);
+            const portalIds = layer?.portalIds ?? (plan.portalStops ?? [])
+                .filter(stop => Number(stop.floor) === floor).map(stop => stop.portal?.id).filter(Boolean);
             deckRegistry.push({
                 id: `${landing.id}:deck`, routeId: plan.id, landingId: landing.id,
                 faceKey: `${plan.moduleKey}:${plan.dirKey}`, floor,
-                kind: 'shared-circulation-deck', priority: 'circulation-owned', portalIds,
+                kind: 'exterior-street-layer', priority: 'circulation-owned', portalIds,
+                stairThroat: throat, pieceCount: pieces.length,
             });
             realizedLandings++;
             realizedDecks++;
@@ -984,41 +1028,41 @@ export function createKowloonFabricEngine({
             }
         }
 
-        // GRAPH-DERIVED VERTICAL MOVEMENT FAST LANE.
-        // Room/floor occupancy emits valid exterior portal nodes first. A shared
-        // wall-hugging stair trunk then realizes graph edges between those nodes.
-        // Bridge/catwalk portals are higher-priority existing nodes/supports and
-        // are never replaced by a competing generated landing/deck.
+        // EXTERIOR STREET-LAYER CIRCULATION V1.
+        // Transport surfaces are planned before occupancy doors. Bridges/catwalks
+        // are authoritative street-layer anchors; sparse room portals attach to
+        // those layers. One wall-hugging stair trunk connects neighboring layers.
         const broadVerticalRoutes = [];
         const usedBroadVerticalFaces = new Set();
         const fastVerticalOpeningByKey = new Map();
         const fastBridgeFaceKeys = new Set((bridgePortals ?? []).map(portal => `${portal.moduleKey}:${portal.dirKey}`));
         const bridgeFaceRegistry = physics.fastBridgeFaceKeys ?? (physics.fastBridgeFaceKeys = []);
         for (const faceKey of fastBridgeFaceKeys) if (!bridgeFaceRegistry.includes(faceKey)) bridgeFaceRegistry.push(faceKey);
+        const debtRegistry = physics.exteriorCirculationDebtTags ?? (physics.exteriorCirculationDebtTags = []);
+        for (const item of EXTERIOR_CIRCULATION_DEBT) if (!debtRegistry.includes(item.tag)) debtRegistry.push(item.tag);
 
         const broadVerticalCandidates = streetFaces
             .filter(face => !face.courtyard && face.module.floors >= 2)
             .sort((a, b) => {
                 const floorDelta = b.module.floors - a.module.floors;
                 if (floorDelta) return floorDelta;
-                const ar = hashString32(`${siteSeed}:fast-vertical-rank:${a.module.key}:${a.dir.side}`);
-                const br = hashString32(`${siteSeed}:fast-vertical-rank:${b.module.key}:${b.dir.side}`);
+                const ar = hashString32(`${siteSeed}:street-layer-rank:${a.module.key}:${a.dir.side}`);
+                const br = hashString32(`${siteSeed}:street-layer-rank:${b.module.key}:${b.dir.side}`);
                 return ar - br || `${a.module.key}:${a.dir.side}`.localeCompare(`${b.module.key}:${b.dir.side}`);
             });
         const broadVerticalFaceKey = face => `${face.module.key}:${face.dir.key}`;
-        const scaffoldOwnsFace = face => scaffoldPlan?.moduleKey === face.module.key && scaffoldSide === face.dir.side;
         const entranceOwnsFace = face => entranceFaces.some(entrance => entrance.module === face.module && entrance.dir.key === face.dir.key);
-        const canUseBroadVerticalFace = face => !usedBroadVerticalFaces.has(broadVerticalFaceKey(face)) && !scaffoldOwnsFace(face);
+        const canUseBroadVerticalFace = face => !usedBroadVerticalFaces.has(broadVerticalFaceKey(face));
         const portalOpening = portal => ({
             width: Number(portal.width) || (servicePhysicalTruth?.door?.clearWidth?.realizedSI ?? 1.35),
             height: Number(portal.height) || (servicePhysicalTruth?.door?.clearHeight?.realizedSI ?? 2.20),
             center: portal.side === 'north' || portal.side === 'south' ? Number(portal.x) : Number(portal.z),
         });
-        const makeRoomPortalStop = (face, floor, { source = 'fast-vertical-room-portal', support = null } = {}) => {
+        const makeRoomPortalStop = (face, floor, { source = 'fast-vertical-room-portal' } = {}) => {
             const roomSpaceId = `${chunk.key}:${siteSignature}:${face.module.key}:floor:${floor}`;
-            const landingSpaceId = `${chunk.key}:${siteSignature}:${face.module.key}:exterior-landing:${floor}`;
+            const layerSpaceId = `${chunk.key}:${siteSignature}:${face.module.key}:street-layer:${floor}`;
             const portal = semanticPortalForRect({
-                id: `${chunk.key}:${siteSignature}:${face.module.key}:${face.dir.key}:fast-portal:${floor}`,
+                id: `${chunk.key}:${siteSignature}:${face.module.key}:${face.dir.key}:street-layer-portal:${floor}`,
                 rect: face.module.rect,
                 side: face.dir.side,
                 floor,
@@ -1026,15 +1070,14 @@ export function createKowloonFabricEngine({
                 physicalTruth: servicePhysicalTruth,
                 source,
                 fromSpaceId: roomSpaceId,
-                toSpaceId: landingSpaceId,
+                toSpaceId: layerSpaceId,
                 metadata: { moduleKey: face.module.key, dirKey: face.dir.key, floor },
             });
             return {
                 floor,
                 roomSpaceId,
-                landingSpaceId,
+                landingSpaceId: layerSpaceId,
                 source,
-                support,
                 openingKey: `${face.module.key}:${face.dir.key}:${floor}`,
                 portal,
             };
@@ -1047,7 +1090,7 @@ export function createKowloonFabricEngine({
                 portal: stop.portal,
                 kind: 'door',
                 source: 'fast-vertical-room-portal',
-                visualRole: 'shared-stair-room-door',
+                visualRole: 'street-layer-occupancy-door',
                 physicalTruth: servicePhysicalTruth,
                 metadata: {
                     routeId: route.id,
@@ -1060,62 +1103,94 @@ export function createKowloonFabricEngine({
             });
             registerSemanticConnector(physics, connector);
         };
-        const acceptSharedRoute = (face, stops, family) => {
-            if (!face || !canUseBroadVerticalFace(face) || !stops.length) return false;
-            const routeId = `${chunk.key}:${siteSignature}:${face.module.key}:fast-vertical:${family}:${face.dir.side}`;
-            const plan = planSharedVerticalTrunk({
+        const consumeScaffoldForModule = face => {
+            if (!scaffoldPlan || scaffoldPlan.moduleKey !== face.module.key) return false;
+            scaffoldPlan = null;
+            scaffoldSide = null;
+            scaffoldOpeningByKey.clear();
+            return true;
+        };
+        const bridgePortalForFaceFloor = (face, floor) => (bridgePortals ?? []).find(portal =>
+            portal.moduleKey === face.module.key && portal.dirKey === face.dir.key && Number(portal.floor) === Number(floor));
+        const buildStreetLayerStops = (face, policy) => policy.layerFloors.map(floor => {
+            const bridgePortal = bridgePortalForFaceFloor(face, floor);
+            const portals = [];
+            let support = null;
+            let transportKind = 'balcony-street-layer';
+            if (bridgePortal) {
+                portals.push(makeRoomPortalStop(face, floor, { source: 'bridge-portal' }));
+                // The walkway owns the portal/anchor, but the facade street layer still
+                // supplies its own notched stair-arrival deck. That prevents the bridge
+                // deck itself from becoming a ceiling over the top of the stair flight.
+                transportKind = 'bridge-anchored-street-layer';
+            }
+            if (policy.occupancyPortalFloors.includes(floor) && !bridgePortal) {
+                portals.push(makeRoomPortalStop(face, floor));
+            }
+            return { floor, support, portals, transportKind };
+        });
+        const acceptStreetLayerRoute = (face, policy, family) => {
+            if (!face || !canUseBroadVerticalFace(face) || !policy?.layerFloors?.length) return false;
+            const routeId = `${chunk.key}:${siteSignature}:${face.module.key}:street-layers:${family}:${face.dir.side}`;
+            const plan = planExteriorStreetLayerTrunk({
                 routeId,
                 family,
                 fp: face.module.rect,
                 moduleKey: face.module.key,
                 dirKey: face.dir.key,
+                side: face.dir.side,
                 floorH,
                 physicalTruth: servicePhysicalTruth,
-                portalStops: stops,
+                layerStops: buildStreetLayerStops(face, policy),
                 stableKey: routeId,
                 maxRun: 6.2,
             });
             if (!plan) return false;
+            consumeScaffoldForModule(face);
             usedBroadVerticalFaces.add(broadVerticalFaceKey(face));
             broadVerticalRoutes.push(plan);
             for (const stop of plan.portalStops) commitRoomPortal(stop, plan);
             return true;
         };
 
-        // Existing bridge/catwalk doors are the first-choice graph destination.
-        // Their walkway support wins, so no duplicate landing/deck is generated.
-        let bridgeRouteAccepted = false;
+        // Walkways are the strongest horizontal street-layer anchors. If a bridge
+        // face can host the trunk, it anchors the layer and the route may continue through upper
+        // balcony layers without creating a second vertical connector for the site.
+        let streetLayerRouteAccepted = false;
         for (const bridgePortal of bridgePortals ?? []) {
-            if (Number(bridgePortal.floor) !== 1) continue;
-            const face = broadVerticalCandidates.find(candidate => candidate.module.key === bridgePortal.moduleKey && candidate.dir.key === bridgePortal.dirKey);
+            const face = broadVerticalCandidates.find(candidate =>
+                candidate.module.key === bridgePortal.moduleKey && candidate.dir.key === bridgePortal.dirKey);
             if (!face || !canUseBroadVerticalFace(face)) continue;
-            const stop = makeRoomPortalStop(face, 1, {
-                source: 'bridge-portal',
-                support: {
-                    kind: 'existing-bridge-deck',
-                    existing: true,
-                    id: `${chunk.key}:${siteSignature}:${bridgePortal.moduleKey}:${bridgePortal.dirKey}:bridge-support`,
-                    moduleKey: bridgePortal.moduleKey,
-                    floor: 1,
-                    y: floorH,
-                },
+            const existingFloors = (bridgePortals ?? [])
+                .filter(item => item.moduleKey === face.module.key && item.dirKey === face.dir.key)
+                .map(item => Number(item.floor));
+            const policy = planExteriorStreetLayerPolicy({
+                floors: face.module.floors,
+                existingPortalFloors: existingFloors,
+                maxLayers: 4,
+                maxExteriorConnections: 2,
             });
-            if (acceptSharedRoute(face, [stop], 'bridge-access-stair')) {
-                bridgeRouteAccepted = true;
+            if (acceptStreetLayerRoute(face, policy, 'walkway-anchored-street-trunk')) {
+                streetLayerRouteAccepted = true;
                 break;
             }
         }
 
-        // Otherwise, one wall trunk may serve several real room/floor doors.
-        // The landing at each stop is a substantial circulation-owned balcony/deck.
-        if (!bridgeRouteAccepted && hashString32(`${siteSeed}:fast-vertical-presence`) % 100 < 78) {
+        // Without an existing walkway, choose one transport facade for the compound.
+        // It receives several stacked street layers but at most two occupancy doors.
+        if (!streetLayerRouteAccepted && hashString32(`${siteSeed}:street-layer-presence`) % 100 < 82) {
             for (const face of broadVerticalCandidates) {
-                const faceKey = broadVerticalFaceKey(face);
-                if (!canUseBroadVerticalFace(face) || fastBridgeFaceKeys.has(faceKey) || entranceOwnsFace(face)) continue;
-                const topFloor = Math.min(3, face.module.floors - 1);
-                const stops = [];
-                for (let floor = 1; floor <= topFloor; floor++) stops.push(makeRoomPortalStop(face, floor));
-                if (acceptSharedRoute(face, stops, 'shared-room-stair')) break;
+                if (!canUseBroadVerticalFace(face) || entranceOwnsFace(face)) continue;
+                const policy = planExteriorStreetLayerPolicy({
+                    floors: face.module.floors,
+                    existingPortalFloors: [],
+                    maxLayers: 4,
+                    maxExteriorConnections: 2,
+                });
+                if (acceptStreetLayerRoute(face, policy, 'shared-exterior-street-trunk')) {
+                    streetLayerRouteAccepted = true;
+                    break;
+                }
             }
         }
 
@@ -1300,9 +1375,11 @@ export function createKowloonFabricEngine({
             fastVerticalFlightCount: fastVerticalFlights,
             fastVerticalLandingCount: fastVerticalLandings,
             fastVerticalDeckCount: fastVerticalDecks,
+            fastExteriorStreetLayerCount: broadVerticalRoutes.reduce((sum, route) => sum + (route.streetLayers?.length ?? 0), 0),
             fastVerticalRoomPortalCount: broadVerticalRoutes.reduce((sum, route) => sum + (route.portalStops?.filter(stop => stop.source !== 'bridge-portal').length ?? 0), 0),
-            fastVerticalSharedTrunkCount: broadVerticalRoutes.filter(route => (route.portalStops?.length ?? 0) > 1).length,
+            fastVerticalSharedTrunkCount: broadVerticalRoutes.filter(route => (route.streetLayers?.length ?? 0) > 1).length,
             fastVerticalRouteFamilies: broadVerticalRoutes.map(route => route.family),
+            exteriorCirculationDebtTags: EXTERIOR_CIRCULATION_DEBT.map(item => item.tag),
             serviceCages: 0,
             cantileverRooms: 0,
             mezzanines: 0,

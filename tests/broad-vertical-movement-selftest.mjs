@@ -9,26 +9,35 @@ const url = rel => pathToFileURL(path.join(repo, rel)).href;
 globalThis.window = {};
 globalThis.location = { search: '?generationProfile=skeleton&buildBudgetMs=5.5' };
 
-const [{ createKowloonFabricEngine }, THREE, stream, perf, vertical, physical] = await Promise.all([
-  import(url('kowloon-fabric-engine.js') + '?broad-vertical-graph-selftest=1'),
-  import(url('vendor/three/three.module.js') + '?broad-vertical-graph-selftest=1'),
-  import(url('world-chunk-streamer.js') + '?broad-vertical-graph-selftest=1'),
-  import(url('config/performance-isolation.js') + '?broad-vertical-graph-selftest=1'),
-  import(url('world/fast-vertical-route.js') + '?broad-vertical-graph-selftest=1'),
-  import(url('world/physical-truth.js') + '?broad-vertical-graph-selftest=1'),
+const [{ createKowloonFabricEngine }, THREE, stream, perf, vertical, policyMod, physical] = await Promise.all([
+  import(url('kowloon-fabric-engine.js') + '?street-layer-selftest=1'),
+  import(url('vendor/three/three.module.js') + '?street-layer-selftest=1'),
+  import(url('world-chunk-streamer.js') + '?street-layer-selftest=1'),
+  import(url('config/performance-isolation.js') + '?street-layer-selftest=1'),
+  import(url('world/fast-vertical-route.js') + '?street-layer-selftest=1'),
+  import(url('world/exterior-street-layer-policy.js') + '?street-layer-selftest=1'),
+  import(url('world/physical-truth.js') + '?street-layer-selftest=1'),
 ]);
 
 assert.equal(perf.GENERATION_PROFILE_NAME, 'skeleton');
-assert.equal(perf.GENERATION_LANES.broadStrokesOnly, true, 'graph correction must stay on the fast shell');
+assert.equal(perf.GENERATION_LANES.broadStrokesOnly, true, 'street-layer rewrite must stay on the fast shell');
 assert.equal(perf.GENERATION_LANES.microEnrichment, false);
 assert.equal(perf.GENERATION_LANES.authoredDecoration, false);
-assert.equal(perf.GENERATION_LANES.signatureContent, false);
+
+const noBridgePolicy = policyMod.planExteriorStreetLayerPolicy({ floors: 5, maxLayers: 4, maxExteriorConnections: 2 });
+assert.deepEqual([...noBridgePolicy.layerFloors], [1, 2, 3, 4]);
+assert.deepEqual([...noBridgePolicy.occupancyPortalFloors], [1, 4], 'four transport layers should still emit at most two occupancy doors');
+const bridgePolicy = policyMod.planExteriorStreetLayerPolicy({ floors: 5, existingPortalFloors: [1], maxLayers: 4, maxExteriorConnections: 2 });
+assert.deepEqual([...bridgePolicy.layerFloors], [1, 2, 3, 4]);
+assert.deepEqual([...bridgePolicy.occupancyPortalFloors], [4], 'existing walkway portal consumes the exterior-connection budget first');
+assert.ok(policyMod.EXTERIOR_CIRCULATION_DEBT.some(item => item.tag === 'CIRC_DEBT_REAL_ROOM_AUTHORITY'));
+assert.ok(policyMod.EXTERIOR_CIRCULATION_DEBT.some(item => item.tag === 'CIRC_DEBT_STANDALONE_FIRE_ESCAPE_HEADROOM'));
 
 const truth = physical.resolvePhysicalTruth({
   physicalUse: 'industrial-service', role: 'maintenance-access', weirdness: 0.35,
-  stableKey: 'broad-vertical-graph-selftest',
+  stableKey: 'street-layer-selftest',
 });
-const fp = { cx: 0, cz: 0, halfX: 4.2, halfZ: 3.2 };
+const fp = { cx: 0, cz: 0, halfX: 5.8, halfZ: 3.2 };
 const floorH = 3.35;
 const northPortal = floor => ({
   id: `unit:north:${floor}`,
@@ -36,56 +45,38 @@ const northPortal = floor => ({
   width: 1.25, height: 2.2, depth: 1.2,
   side: 'north', normalX: 0, normalZ: -1,
 });
-
-// Unit contract: rooms/doors exist first; one wall-hugging trunk may service
-// several room portals. Every floor transition remains a real flight.
-const sharedStops = [1, 2, 3].map(floor => ({
+const roomStop = floor => ({
   floor,
-  roomSpaceId: `unit:room:${floor}`,
+  roomSpaceId: `unit:occupancy:${floor}`,
   source: 'fast-vertical-room-portal',
   openingKey: `m:N:${floor}`,
   portal: northPortal(floor),
-}));
-const shared = vertical.planSharedVerticalTrunk({
-  routeId: 'unit:shared-trunk', family: 'shared-room-stair', fp,
-  moduleKey: 'm', dirKey: 'N', floorH, physicalTruth: truth,
-  portalStops: sharedStops, maxRun: 6.2,
 });
-assert.ok(shared, 'three-room shared wall trunk should fit the unit facade');
+const unitLayers = [
+  { floor: 1, transportKind: 'balcony-street-layer', portals: [roomStop(1)] },
+  { floor: 2, transportKind: 'balcony-street-layer', portals: [] },
+  { floor: 3, transportKind: 'balcony-street-layer', portals: [roomStop(3)] },
+];
+const shared = vertical.planExteriorStreetLayerTrunk({
+  routeId: 'unit:street-layers', family: 'shared-exterior-street-trunk', fp,
+  moduleKey: 'm', dirKey: 'N', side: 'north', floorH, physicalTruth: truth,
+  layerStops: unitLayers, maxRun: 6.2,
+});
+assert.ok(shared, 'three stacked transport layers should fit the unit facade');
 assert.equal(vertical.assertFastVerticalRoute(shared), true);
-assert.equal(shared.graphAuthority, 'room-portal-first');
-assert.equal(shared.portalStops.length, 3, 'three emitted room doors are serviced by one staircase');
-assert.equal(shared.flights.length, 3, 'ground->1, 1->2, and 2->3 are distinct real flights');
-assert.equal(shared.generatedLandings.length, 3, 'each serviced room floor owns a real exterior landing/deck');
-assert.equal(shared.graph.nodes.filter(node => node.kind === 'room').length, 3);
-assert.equal(shared.graph.nodes.filter(node => node.kind === 'portal').length, 3);
-assert.equal(shared.graph.edges.filter(edge => edge.kind === 'stair-flight').length, 3);
-assert.equal(shared.orientation.ascent, 'along-facade-shared-trunk');
+assert.equal(shared.graphAuthority, 'exterior-street-layer-first');
+assert.equal(shared.shape, 'street-layer-trunk');
+assert.equal(shared.streetLayers.length, 3, 'transport layers are independent of the number of occupancy doors');
+assert.equal(shared.portalStops.length, 2, 'one occupancy should not receive a door at every transport layer');
+assert.equal(shared.flights.length, 3, 'ground->1->2->3 uses one vertical edge per neighboring street layer');
+assert.equal(shared.graph.edges.filter(edge => edge.kind === 'vertical-layer-neighbor').length, 3);
+assert.equal(shared.graph.edges.filter(edge => edge.kind === 'occupancy-threshold').length, 2);
+assert.ok(shared.generatedLandings.every(landing => landing.stairThroat), 'every generated street layer must carve a stair-headroom throat');
 for (const flight of shared.flights) {
-  assert.equal(flight.axis, 'x', 'north facade stair flights run along the wall, never through the room');
+  assert.equal(flight.axis, 'x', 'north facade street trunk must run along the wall');
   assert.ok(flight.fixedCoord + flight.halfWidth < -fp.halfZ,
-    'north wall stair inner edge must remain outside the host footprint');
+    'unsupported wall stair must remain outside the occupancy footprint');
 }
-
-// A bridge/catwalk portal is already an authoritative support + wall opening.
-// The stair binds to it and must not create a competing balcony/deck.
-const bridgeStop = {
-  floor: 1,
-  roomSpaceId: 'unit:bridge-room:1',
-  source: 'bridge-portal',
-  openingKey: 'm:N:1',
-  portal: northPortal(1),
-  support: { kind: 'existing-bridge-deck', existing: true, id: 'unit:bridge-support', floor: 1, y: floorH },
-};
-const bridge = vertical.planSharedVerticalTrunk({
-  routeId: 'unit:bridge-trunk', family: 'bridge-access-stair', fp: { ...fp, halfX: 6.2 },
-  moduleKey: 'm', dirKey: 'N', floorH, physicalTruth: truth,
-  portalStops: [bridgeStop], maxRun: 6.2,
-});
-assert.ok(bridge);
-assert.equal(bridge.flights.length, 1);
-assert.equal(bridge.generatedLandings.length, 0, 'existing bridge deck outranks and replaces a generated landing deck');
-assert.equal(bridge.upperSupport.kind, 'existing-bridge-deck');
 
 function wallBlocksPortal(wall, portal) {
   const probeY = portal.y + Math.min(1.0, portal.height * 0.5);
@@ -101,18 +92,23 @@ function wallBlocksPortal(wall, portal) {
 }
 
 function flightOutsideHost(route, flight) {
-  const fp = route.hostRect;
+  const host = route.hostRect;
   const { normalAxis, outward } = route.orientation;
   if (normalAxis === 'z') {
-    const face = fp.cz + outward * fp.halfZ;
+    const face = host.cz + outward * host.halfZ;
     return outward < 0
       ? flight.fixedCoord + flight.halfWidth < face - 0.05
       : flight.fixedCoord - flight.halfWidth > face + 0.05;
   }
-  const face = fp.cx + outward * fp.halfX;
+  const face = host.cx + outward * host.halfX;
   return outward < 0
     ? flight.fixedCoord + flight.halfWidth < face - 0.05
     : flight.fixedCoord - flight.halfWidth > face + 0.05;
+}
+
+function rectOverlap(a, b, epsilon = 0.015) {
+  return Math.abs(a.x - b.x) < a.hx + b.hx - epsilon
+    && Math.abs(a.z - b.z) < a.hz + b.hz - epsilon;
 }
 
 const worldSeed = 0x73A1B00C;
@@ -137,11 +133,13 @@ const samples = [
   [5,0], [0,5], [-5,0], [0,-5],
 ];
 let routesSeen = 0;
-let sharedTrunksSeen = 0;
-let roomPortalsSeen = 0;
+let multiLayerRoutesSeen = 0;
+let occupancyPortalsSeen = 0;
 let bridgeAccessSeen = 0;
-let routeDecksSeen = 0;
+let streetLayerDecksSeen = 0;
+let throatsSeen = 0;
 let scaffoldRoutesSeen = 0;
+let consumedScaffoldChecks = 0;
 
 for (const [x, z] of samples) {
   const c = chunk(x, z);
@@ -150,38 +148,39 @@ for (const [x, z] of samples) {
   const stairRamps = (payload.physics.ramps ?? []).filter(ramp => ramp.supportKind === 'broad-vertical-stair');
   const landingPlatforms = (payload.physics.platforms ?? []).filter(platform => platform.supportKind === 'broad-vertical-landing');
   const decks = payload.physics.fastExteriorDecks ?? [];
+  const throats = payload.physics.fastStairThroats ?? [];
   const semanticConnectors = payload.physics.semanticConnectors ?? [];
-  const bridgeFaceKeys = new Set(payload.physics.fastBridgeFaceKeys ?? []);
   const scaffoldRoutes = payload.physics.scaffoldCirculationRoutes ?? [];
   const walls = payload.physics.mazeWalls ?? [];
 
   for (const scaffoldRoute of scaffoldRoutes) {
     scaffoldRoutesSeen++;
     assert.equal(scaffoldRoute.topology, 'alternating-straight',
-      `${c.key}:${scaffoldRoute.id}: switchback fire-escape debt remains parked`);
+      `${c.key}:${scaffoldRoute.id}: switchback composition debt remains parked`);
   }
 
   for (const route of routes) {
     routesSeen++;
     assert.equal(vertical.assertFastVerticalRoute(route), true);
-    assert.equal(route.graphAuthority, 'room-portal-first', `${c.key}:${route.id}: rooms/doors must precede stair geometry`);
-    assert.equal(route.shape, 'wall-trunk');
-    assert.ok(route.portalStops.length >= 1);
-    assert.equal(route.flights.length, route.portalStops.length,
-      `${c.key}:${route.id}: every serviced floor transition must own a real flight`);
+    assert.equal(route.graphAuthority, 'exterior-street-layer-first');
+    assert.equal(route.shape, 'street-layer-trunk');
+    assert.ok(route.streetLayers.length >= 1);
+    assert.equal(route.flights.length, route.streetLayers.length,
+      `${c.key}:${route.id}: vertical movement must connect neighboring street layers, not individual doors`);
+    assert.ok(route.portalStops.filter(stop => stop.source !== 'bridge-portal').length <= 2,
+      `${c.key}:${route.id}: occupancy exterior-door budget exceeded`);
     assert.ok(route.flights.every(flight => flightOutsideHost(route, flight)),
-      `${c.key}:${route.id}: unsupported stair geometry may not enter the host footprint`);
-    if (route.portalStops.length > 1) sharedTrunksSeen++;
+      `${c.key}:${route.id}: unsupported stair geometry may not enter occupancy footprint`);
+    if (route.streetLayers.length > 1) multiLayerRoutesSeen++;
 
-    const routeFaceKey = `${route.moduleKey}:${route.dirKey}`;
-    if (route.family !== 'bridge-access-stair') {
-      assert.equal(bridgeFaceKeys.has(routeFaceKey), false,
-        `${c.key}:${route.id}: generic stairs/decks may not compete with bridge/catwalk faces`);
-    }
+    const sameModuleScaffold = scaffoldRoutes.some(scaffold => scaffold.moduleKey === route.moduleKey);
+    assert.equal(sameModuleScaffold, false,
+      `${c.key}:${route.id}: accepted balcony street trunk must consume redundant fire escape on the same occupancy module`);
+    consumedScaffoldChecks++;
 
     for (const flight of route.flights) {
       assert.ok(stairRamps.some(ramp => ramp.routeId === route.id && ramp.flightId === flight.id),
-        `${c.key}:${flight.id}: planned flight missing traversable physics ramp`);
+        `${c.key}:${flight.id}: planned layer-neighbor flight missing traversable physics ramp`);
     }
 
     for (const stop of route.portalStops) {
@@ -189,42 +188,46 @@ for (const [x, z] of samples) {
         bridgeAccessSeen++;
         continue;
       }
-      roomPortalsSeen++;
+      occupancyPortalsSeen++;
       assert.ok(semanticConnectors.some(connector => connector.source === 'fast-vertical-room-portal'
           && connector.metadata?.routeId === route.id && connector.metadata?.portalId === stop.portal.id),
-        `${c.key}:${route.id}:${stop.portal.id}: room portal connector must publish before the staircase`);
+        `${c.key}:${route.id}:${stop.portal.id}: selected occupancy portal must publish`);
       assert.equal(walls.some(wall => wallBlocksPortal(wall, stop.portal)), false,
-        `${c.key}:${route.id}:${stop.portal.id}: stair-served doorway must be a real wall void`);
+        `${c.key}:${route.id}:${stop.portal.id}: selected occupancy doorway must be a real wall void`);
     }
 
     for (const landing of route.generatedLandings) {
-      routeDecksSeen++;
-      assert.ok(landingPlatforms.some(platform => platform.routeId === route.id && platform.landingId === landing.id),
-        `${c.key}:${route.id}: generated shared landing/deck must be traversable`);
-      assert.ok(decks.some(deck => deck.routeId === route.id && deck.landingId === landing.id),
-        `${c.key}:${route.id}: route landing must publish as a circulation-owned balcony/deck`);
-    }
-
-    if (route.family === 'bridge-access-stair') {
-      assert.equal(route.generatedLandings.length, 0,
-        `${c.key}:${route.id}: bridge/catwalk support must win over duplicate deck geometry`);
+      streetLayerDecksSeen++;
+      const pieces = landingPlatforms.filter(platform => platform.routeId === route.id && platform.landingId === landing.id);
+      assert.ok(pieces.length > 0, `${c.key}:${route.id}:${landing.id}: street layer must retain walkable deck pieces`);
+      assert.ok(decks.some(deck => deck.routeId === route.id && deck.landingId === landing.id && deck.kind === 'exterior-street-layer'),
+        `${c.key}:${route.id}:${landing.id}: generated balcony must publish as a transport layer`);
+      assert.ok(landing.stairThroat, `${c.key}:${route.id}:${landing.id}: stair throat missing`);
+      const throat = throats.find(item => item.routeId === route.id && item.landingId === landing.id);
+      assert.ok(throat, `${c.key}:${route.id}:${landing.id}: realized throat registry missing`);
+      throatsSeen++;
+      assert.equal(pieces.some(piece => rectOverlap(piece, throat)), false,
+        `${c.key}:${route.id}:${landing.id}: deck slab still caps the stair headroom throat`);
     }
   }
   await factory.unload(c, payload);
 }
 
-assert.ok(routesSeen > 0, 'browser skeleton sample must publish graph-derived vertical routes');
-assert.ok(sharedTrunksSeen > 0, 'sample must contain one staircase servicing several room doors/landings');
-assert.ok(roomPortalsSeen > 0, 'sample must publish room-derived exterior stair portals');
-assert.ok(routeDecksSeen > 0, 'shared stair landings must also restore navigable balconies/decks');
-assert.ok(scaffoldRoutesSeen > 0, 'existing fire-escape family must remain present');
+assert.ok(routesSeen > 0, 'browser skeleton sample must publish exterior street-layer routes');
+assert.ok(multiLayerRoutesSeen > 0, 'sample must get off the one-floor pattern and publish stacked exterior street layers');
+assert.ok(occupancyPortalsSeen > 0, 'sample must attach sparse occupancy doors to street layers');
+assert.ok(streetLayerDecksSeen > 0, 'sample must publish balconies/decks as horizontal transport');
+assert.ok(throatsSeen > 0, 'generated street layers must expose stair headroom throats');
+assert.ok(consumedScaffoldChecks > 0, 'sample must verify street-layer trunks consume redundant same-module fire escapes');
 console.log('[broad-vertical-movement-selftest] PASS', {
   samples: samples.length,
   routesSeen,
-  sharedTrunksSeen,
-  roomPortalsSeen,
+  multiLayerRoutesSeen,
+  occupancyPortalsSeen,
   bridgeAccessSeen,
-  routeDecksSeen,
+  streetLayerDecksSeen,
+  throatsSeen,
   scaffoldRoutesSeen,
-  invariant: 'room/floor occupancy -> portals -> shared wall stair trunk -> circulation-owned landing decks',
+  debtTags: policyMod.EXTERIOR_CIRCULATION_DEBT.map(item => item.tag),
+  invariant: 'occupancy demand -> sparse portals -> stacked street layers -> neighbor flights; balconies are transport, not per-door decoration',
 });

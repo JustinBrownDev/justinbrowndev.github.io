@@ -12,6 +12,7 @@ import { createSemanticPlanCache, semanticPlanCacheKey } from './world/architect
 import { accessAnchorsForBuildingPortals, compileAccessPortals } from './world/access-portals.js';
 import { compileDistrictBlockComposition, districtBuildingPolicyForEntity, districtContextForEntity } from './world/district-block-composition.js';
 import { planExteriorScaffoldRoute } from './world/scaffold-circulation-plan.js';
+import { assertFastVerticalRoute, planFastVerticalRoute } from './world/fast-vertical-route.js';
 import {
     anyReservationIntersectsBox,
     createBoxCirculationReservation,
@@ -695,6 +696,86 @@ export function createKowloonFabricEngine({
         return plan.landings.length;
     }
 
+    function realizeFastVerticalRoute({ physics, transforms, plan }) {
+        assertFastVerticalRoute(plan);
+        const routeRegistry = physics.fastVerticalRoutes ?? (physics.fastVerticalRoutes = []);
+        if (!routeRegistry.some(route => route.id === plan.id)) routeRegistry.push(plan);
+
+        let realizedFlights = 0;
+        let realizedLandings = 0;
+        for (const flight of plan.flights) {
+            physics.ramps.push({
+                axis: flight.axis, from: flight.from, to: flight.to, fixedCoord: flight.fixedCoord,
+                halfWidth: flight.halfWidth, y0: flight.y0, y1: flight.y1,
+                supportKind: 'broad-vertical-stair', routeId: plan.id, flightId: flight.id,
+            });
+            const connector = createRampConnector({
+                id: `${flight.id}:connector`,
+                kind: 'stair',
+                axis: flight.axis, from: flight.from, to: flight.to, fixedCoord: flight.fixedCoord,
+                halfWidth: flight.halfWidth, y0: flight.y0, y1: flight.y1,
+                headroom: flight.headroom,
+                source: 'broad-vertical-route',
+                visualRole: plan.family,
+                reservationKind: 'broad-vertical-ramp',
+                physicalTruth: plan.physicalTruth,
+                stairFlight: flight.stairFlight,
+                metadata: {
+                    routeId: plan.id, family: plan.family, shape: plan.shape,
+                    fromLandingId: flight.fromLandingId, toLandingId: flight.toLandingId,
+                    lowerSupport: plan.lowerSupport, upperSupport: plan.upperSupport,
+                    fitClassification: flight.fitClassification,
+                },
+            });
+            connector.routeId = plan.id;
+            connector.flightId = flight.id;
+            connector.fromLandingId = flight.fromLandingId;
+            connector.toLandingId = flight.toLandingId;
+            registerSemanticConnector(physics, connector);
+
+            const steps = flight.stairFlight.stepCount;
+            const stepThickness = Math.min(0.14, Math.max(0.075, flight.stairFlight.riserHeight * 0.62));
+            for (let i = 0; i < steps; i++) {
+                const t = (i + 0.5) / steps;
+                const along = flight.from + (flight.to - flight.from) * t;
+                const stepY = flight.y0 + flight.stairFlight.riserHeight * (i + 1) - stepThickness * 0.5;
+                transforms.steps.push(flight.axis === 'x'
+                    ? { x: along, y: stepY, z: flight.fixedCoord, sx: flight.run / steps * 1.08, sy: stepThickness, sz: flight.clearWidth, routeId: plan.id, flightId: flight.id }
+                    : { x: flight.fixedCoord, y: stepY, z: along, sx: flight.clearWidth, sy: stepThickness, sz: flight.run / steps * 1.08, routeId: plan.id, flightId: flight.id });
+            }
+            realizedFlights++;
+        }
+
+        for (const landing of plan.generatedLandings) {
+            const geometry = landing.geometry;
+            physics.platforms.push({
+                x: geometry.x, z: geometry.z, hx: geometry.hx, hz: geometry.hz, y: landing.y,
+                supportKind: 'broad-vertical-landing', routeId: plan.id, landingId: landing.id,
+            });
+            transforms.slabs.push({
+                x: geometry.x, y: landing.y - 0.06, z: geometry.z,
+                sx: geometry.hx * 2, sy: 0.12, sz: geometry.hz * 2, routeId: plan.id, landingId: landing.id,
+            });
+            const connector = createLandingConnector({
+                id: `${landing.id}:connector`,
+                x: geometry.x, z: geometry.z, halfX: geometry.hx, halfZ: geometry.hz, y: landing.y,
+                source: 'broad-vertical-route',
+                visualRole: `${plan.family}-landing`,
+                reservationKind: 'broad-vertical-landing',
+                physicalTruth: plan.physicalTruth,
+                metadata: {
+                    routeId: plan.id, landingId: landing.id, family: plan.family, shape: plan.shape,
+                    support: landing.support, generated: true,
+                },
+            });
+            connector.routeId = plan.id;
+            connector.landingId = landing.id;
+            registerSemanticConnector(physics, connector);
+            realizedLandings++;
+        }
+        return { flights: realizedFlights, landings: realizedLandings };
+    }
+
     function addCompoundSideWall({ physics, wallList, rect, floorH, floor, side, opening = 0 }) {
         const y0 = floor * floorH;
         const y1 = y0 + floorH;
@@ -768,7 +849,7 @@ export function createKowloonFabricEngine({
         physics, transforms, materialIndex, modulePlans, moduleByKey, primaryModule,
         floorH, archetype, physicalUse, physicalTruth, servicePhysicalTruth,
         floorConnectivityRepair, courtyard, courtyardSuppressedForConnectivity,
-        bridgeOpeningKeys,
+        bridgeOpeningKeys, bridgePortals,
     }) {
         const wallList = transforms.wallGroups[materialIndex];
         const facades = [];
@@ -834,7 +915,11 @@ export function createKowloonFabricEngine({
                         maxExteriorDepth: scaffoldEnvelopeDepth,
                         routeId: `${chunk.key}:${siteSignature}:${face.module.key}:scaffold:${face.dir.side}`,
                     });
-                    if (!plan) return null;
+                    // Known debt: the switchback planner remains available for later repair,
+                    // but the browser skeleton deliberately uses one fire-escape family. The
+                    // tiled switchback orientation seam stays parked; vertical variety comes
+                    // from distinct stair destinations instead of a second fire-escape style.
+                    if (!plan || plan.topology !== 'alternating-straight') return null;
                     const openingConflict = plan.openings.some(opening => {
                         const openingKey = `${face.module.key}:${face.dir.key}:${opening.level}`;
                         return bridgeOpeningKeys.has(openingKey)
@@ -865,6 +950,75 @@ export function createKowloonFabricEngine({
                         );
                     }
                 }
+            }
+        }
+
+        // VERTICAL MOVEMENT FAST LANE: every route owns at least one actual flight.
+        // Endpoint landing semantics always exist, but geometry is omitted whenever
+        // an already-present support surface (ground or bridge deck) can serve it.
+        // The broad shell has no dormant interior floor plates, so ordinary facade
+        // stairs terminate on a real generated exterior landing instead of a fake room.
+        const broadVerticalRoutes = [];
+        const usedBroadVerticalFaces = new Set();
+        const broadVerticalCandidates = streetFaces
+            .filter(face => !face.courtyard && face.module.floors >= 2)
+            .sort((a, b) => {
+                const ar = hashString32(`${siteSeed}:fast-vertical-rank:${a.module.key}:${a.dir.side}`);
+                const br = hashString32(`${siteSeed}:fast-vertical-rank:${b.module.key}:${b.dir.side}`);
+                return ar - br || `${a.module.key}:${a.dir.side}`.localeCompare(`${b.module.key}:${b.dir.side}`);
+            });
+        const broadVerticalFaceKey = face => `${face.module.key}:${face.dir.key}`;
+        const scaffoldOwnsFace = face => scaffoldPlan?.moduleKey === face.module.key && scaffoldSide === face.dir.side;
+        const canUseBroadVerticalFace = face => !usedBroadVerticalFaces.has(broadVerticalFaceKey(face)) && !scaffoldOwnsFace(face);
+        const tryBroadVerticalRoute = (face, family, shape, upperSupport = null) => {
+            if (!face || !canUseBroadVerticalFace(face)) return false;
+            const routeId = `${chunk.key}:${siteSignature}:${face.module.key}:fast-vertical:${family}:${face.dir.side}`;
+            const plan = planFastVerticalRoute({
+                routeId, family, shape, fp: face.module.rect, moduleKey: face.module.key,
+                dirKey: face.dir.key, side: face.dir.side, floorH, targetFloor: 1,
+                physicalTruth: servicePhysicalTruth, stableKey: routeId, maxRun: 6.2, upperSupport,
+            });
+            if (!plan) return false;
+            usedBroadVerticalFaces.add(broadVerticalFaceKey(face));
+            broadVerticalRoutes.push(plan);
+            return true;
+        };
+
+        // Bridge portals are already backed by real catwalk/hanging-bridge platforms.
+        // A side-run stair can therefore omit its upper landing geometry and terminate
+        // directly on that existing support rather than inventing a duplicate deck.
+        for (const portal of bridgePortals ?? []) {
+            if (Number(portal.floor) !== 1) continue;
+            const face = broadVerticalCandidates.find(candidate => candidate.module.key === portal.moduleKey && candidate.dir.key === portal.dirKey);
+            if (!face || !canUseBroadVerticalFace(face)) continue;
+            const horizontal = face.dir.side === 'north' || face.dir.side === 'south';
+            const tangent = horizontal ? face.module.rect.cx : face.module.rect.cz;
+            const faceCoord = horizontal
+                ? face.module.rect.cz + (face.dir.side === 'north' ? -face.module.rect.halfZ : face.module.rect.halfZ)
+                : face.module.rect.cx + (face.dir.side === 'west' ? -face.module.rect.halfX : face.module.rect.halfX);
+            const outward = face.dir.side === 'north' || face.dir.side === 'west' ? -1 : 1;
+            const upperSupport = {
+                kind: 'existing-bridge-deck', existing: true,
+                id: `${chunk.key}:${siteSignature}:${portal.moduleKey}:${portal.dirKey}:bridge-support`,
+                moduleKey: portal.moduleKey, floor: 1, y: floorH, tangent, normalCoord: faceCoord + outward * 0.42,
+            };
+            if (tryBroadVerticalRoute(face, 'bridge-access-stair', 'side-run', upperSupport)) break;
+        }
+
+        // Most compounds also get one exterior destination stair. Both shapes create
+        // a real upper landing because skeleton intentionally has no interior floor
+        // plate to substitute for it. The direct and side-run layouts are distinct
+        // traversal choices, not mirrored versions of one fire escape.
+        if (hashString32(`${siteSeed}:fast-vertical-presence`) % 100 < 72) {
+            const generalCandidates = broadVerticalCandidates.filter(face => canUseBroadVerticalFace(face));
+            for (const face of generalCandidates) {
+                const preferDirect = hashString32(`${siteSeed}:fast-vertical-shape:${face.module.key}:${face.dir.side}`) % 100 < 54;
+                const primaryFamily = preferDirect ? 'broad-facade-stair' : 'service-side-stair';
+                const primaryShape = preferDirect ? 'direct' : 'side-run';
+                const fallbackFamily = preferDirect ? 'service-side-stair' : 'broad-facade-stair';
+                const fallbackShape = preferDirect ? 'side-run' : 'direct';
+                if (tryBroadVerticalRoute(face, primaryFamily, primaryShape)
+                    || tryBroadVerticalRoute(face, fallbackFamily, fallbackShape)) break;
             }
         }
 
@@ -972,6 +1126,23 @@ export function createKowloonFabricEngine({
             };
         }
 
+        let fastVerticalFlights = 0;
+        let fastVerticalLandings = 0;
+        for (let routeIndex = 0; routeIndex < broadVerticalRoutes.length; routeIndex++) {
+            const route = broadVerticalRoutes[routeIndex];
+            const realized = realizeFastVerticalRoute({ physics, transforms, plan: route });
+            fastVerticalFlights += realized.flights;
+            fastVerticalLandings += realized.landings;
+            yield {
+                phase: 'broad-vertical-route',
+                current: routeIndex + 1,
+                total: broadVerticalRoutes.length,
+                moduleKey: route.moduleKey,
+                routeId: route.id,
+                family: route.family,
+            };
+        }
+
         const bounds = modulePlans.reduce((acc, module) => ({
             minX: Math.min(acc.minX, module.rect.cx - module.rect.halfX),
             maxX: Math.max(acc.maxX, module.rect.cx + module.rect.halfX),
@@ -1022,6 +1193,10 @@ export function createKowloonFabricEngine({
             balconySide: null,
             scaffoldSide,
             scaffoldLandings,
+            fastVerticalRouteCount: broadVerticalRoutes.length,
+            fastVerticalFlightCount: fastVerticalFlights,
+            fastVerticalLandingCount: fastVerticalLandings,
+            fastVerticalRouteFamilies: broadVerticalRoutes.map(route => route.family),
             serviceCages: 0,
             cantileverRooms: 0,
             mezzanines: 0,
@@ -1222,7 +1397,7 @@ export function createKowloonFabricEngine({
                 physics, transforms, materialIndex, modulePlans, moduleByKey, primaryModule,
                 floorH, archetype, physicalUse, physicalTruth, servicePhysicalTruth,
                 floorConnectivityRepair, courtyard, courtyardSuppressedForConnectivity,
-                bridgeOpeningKeys,
+                bridgeOpeningKeys, bridgePortals,
             });
         }
         yield { phase: 'compound-massing-plan', current: 0, total: modulePlans.length };

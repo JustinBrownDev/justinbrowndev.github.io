@@ -23,13 +23,20 @@ export function createSignageSystem(deps) {
 
     const SIGN_BORDER_STYLES = ['solid', 'double', 'cut', 'none'];
 
+    function pickWeightedSignShape() {
+        const wide = SIGN_SHAPES.filter(shape => shape.w >= shape.h * 1.18);
+        // Tall signs remain possible, but the common case is now landscape.
+        if (wide.length && rng() < 0.82) return pick(wide);
+        return pick(SIGN_SHAPES);
+    }
+
     function addSign(x, y, z, rotY, title, subtitle, colorHex, flicker = false, widthOverride = null, shapeOverride = null, armLengthOverride = null) {
          
          
          
          
          
-        const shape = shapeOverride ?? pick(SIGN_SHAPES);
+        const shape = shapeOverride ?? pickWeightedSignShape();
         const authoredDisplaySeed = hashDisplaySeed([title, subtitle, colorHex].join('|'));
         const baseRecipe = resolveDisplayRecipe({
             campaignKey: 'authored-sign:' + authoredDisplaySeed.toString(16),
@@ -52,6 +59,11 @@ export function createSignageSystem(deps) {
         const height = Math.max(0.52, width * (shape.h / shape.w));
         const panelDepth = randRange(QP[2893], QP[2894]);
 
+        // Keep the authored sign's physical aspect ratio while giving Canvas2D enough
+        // source pixels to stay readable once the texture is viewed obliquely in-world.
+        const textureScale = Math.max(3, 384 / Math.max(1, shape.w), 224 / Math.max(1, shape.h));
+        const textureWidth = Math.round(shape.w * textureScale);
+        const textureHeight = Math.round(shape.h * textureScale);
         const tex = makePixelTexture((ctx, w, h) => {
             renderDisplayCanvas(ctx, w, h, {
                 recipe: displayRecipe,
@@ -60,7 +72,7 @@ export function createSignageSystem(deps) {
                 family: 'LOCAL',
                 serial: authoredDisplaySeed.toString(16).padStart(8, '0').toUpperCase(),
             });
-        }, shape.w, shape.h);
+        }, textureWidth, textureHeight);
 
          
          

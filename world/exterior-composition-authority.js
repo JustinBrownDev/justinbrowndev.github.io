@@ -138,6 +138,77 @@ function mediaLayoutFor(assemblyKind, placements) {
     };
 }
 
+const MEDIA_SIDE_ORDER = Object.freeze(['north', 'east', 'south', 'west']);
+
+function mediaPanelUvAxis(placement) {
+    const theta = finite(placement?.rotY) + Math.PI;
+    return { x: Math.cos(theta), z: -Math.sin(theta) };
+}
+
+function mediaPanelOutward(placement) {
+    const theta = finite(placement?.rotY);
+    return { x: -Math.sin(theta), z: -Math.cos(theta) };
+}
+
+function mediaPanelUvEndpoints(member) {
+    const placement = member?.placement ?? {};
+    const axis = mediaPanelUvAxis(placement);
+    const outward = mediaPanelOutward(placement);
+    const panelOffset = Math.max(0.015, finite(placement.sz, 0.16) * 0.5 + 0.012);
+    const cx = finite(placement.x) + outward.x * panelOffset;
+    const cz = finite(placement.z) + outward.z * panelOffset;
+    const half = Math.max(0.01, finite(placement.sx, 1) * 0.5);
+    return {
+        lo: { x: cx - axis.x * half, z: cz - axis.z * half },
+        hi: { x: cx + axis.x * half, z: cz + axis.z * half },
+    };
+}
+
+function routeCornerMediaMembers(members) {
+    const stable = [...members].sort((a, b) => a.sourceIndex - b.sourceIndex);
+    if (stable.length !== 2) return stable;
+    const sideIndex = member => MEDIA_SIDE_ORDER.indexOf(String(member?.placement?.side ?? ''));
+    const ai = sideIndex(stable[0]);
+    const bi = sideIndex(stable[1]);
+    let first = stable[0];
+    let second = stable[1];
+    if (ai >= 0 && bi >= 0 && (bi + 1) % 4 === ai) {
+        first = stable[1];
+        second = stable[0];
+    }
+
+    const aEnds = mediaPanelUvEndpoints(first);
+    const bEnds = mediaPanelUvEndpoints(second);
+    let best = null;
+    for (const aKey of ['lo', 'hi']) for (const bKey of ['lo', 'hi']) {
+        const a = aEnds[aKey];
+        const b = bEnds[bKey];
+        const distance = Math.hypot(a.x - b.x, a.z - b.z);
+        if (!best || distance < best.distance) best = { aKey, bKey, a, b, distance };
+    }
+    if (!best) return stable;
+    const seam = { x: (best.a.x + best.b.x) * 0.5, z: (best.a.z + best.b.z) * 0.5 };
+    const aFar = aEnds[best.aKey === 'lo' ? 'hi' : 'lo'];
+    const bFar = bEnds[best.bKey === 'lo' ? 'hi' : 'lo'];
+    const aLen = Math.max(1e-6, Math.hypot(seam.x - aFar.x, seam.z - aFar.z));
+    const bLen = Math.max(1e-6, Math.hypot(bFar.x - seam.x, bFar.z - seam.z));
+    const ax = (seam.x - aFar.x) / aLen;
+    const az = (seam.z - aFar.z) / aLen;
+    const bx = (bFar.x - seam.x) / bLen;
+    const bz = (bFar.z - seam.z) / bLen;
+    const turn = ax * bz - az * bx >= 0 ? 'left' : 'right';
+    const seamAligned = best.distance <= 0.035;
+    return [
+        { ...first, reverseU: best.aKey === 'lo', seamAligned, cornerTurn: turn, seamDistance: best.distance },
+        { ...second, reverseU: best.bKey === 'hi', seamAligned, cornerTurn: turn, seamDistance: best.distance },
+    ];
+}
+
+function routeMediaMembers(assemblyKind, members) {
+    if (/corner/i.test(String(assemblyKind ?? '')) && members.length === 2) return routeCornerMediaMembers(members);
+    return [...members].sort((a, b) => a.sourceIndex - b.sourceIndex);
+}
+
 export function attachSpectacleMedia({ chunk, tasks = [], pairFor = null } = {}) {
     const chunkKey = String(chunk?.key ?? 'world');
     let surfaces = 0;
@@ -153,6 +224,7 @@ export function attachSpectacleMedia({ chunk, tasks = [], pairFor = null } = {})
 
         for (const [assemblyId, members] of groups) {
             const assemblyKind = members[0]?.placement?.assemblyKind ?? 'megascreen';
+            const routedMembers = routeMediaMembers(assemblyKind, members);
             const planId = task.exteriorPlanId ?? task.exteriorComposition?.planId ?? task.exteriorCompositionPlanId ?? null;
             const ownerKey = planId ?? `unowned-exterior:${chunkKey}`;
             const semanticContentContext = task.semanticContentContext ?? frontageContentContextFromBinding(task.frontageBinding);
@@ -161,7 +233,7 @@ export function attachSpectacleMedia({ chunk, tasks = [], pairFor = null } = {})
             const contentRng = rngForSeed(hash32(`${seed}:content`));
             const metadataRng = rngForSeed(hash32(`${seed}:metadata`));
             const requested = typeof pairFor === 'function'
-                ? pairFor({ task, assemblyId, assemblyKind, seed, rng: contentRng, placements: members.map(item => item.placement), semanticContentContext })
+                ? pairFor({ task, assemblyId, assemblyKind, seed, rng: contentRng, placements: routedMembers.map(item => item.placement), semanticContentContext })
                 : null;
             const title = cleanMediaText(requested?.[0] ?? requested?.title, 'PUBLIC SIGNAL');
             const subtitle = cleanMediaText(requested?.[1] ?? requested?.subtitle, 'INDEX TRANSMISSION');
@@ -171,10 +243,10 @@ export function attachSpectacleMedia({ chunk, tasks = [], pairFor = null } = {})
             );
             const amount = 12 + Math.floor(metadataRng() * 9987);
             const currency = MEDIA_CURRENCIES[Math.floor(metadataRng() * MEDIA_CURRENCIES.length) % MEDIA_CURRENCIES.length];
-            const layout = mediaLayoutFor(assemblyKind, members);
-            const surfaceIds = [...new Set(members.map(item => item.placement?.surfaceId).filter(Boolean).map(String))];
-            const opportunityIds = [...new Set(members.map(item => item.placement?.semanticOpportunityId).filter(Boolean).map(String))];
-            const contextIds = [...new Set(members.map(item => item.placement?.semanticContextId).filter(Boolean).map(String))];
+            const layout = mediaLayoutFor(assemblyKind, routedMembers);
+            const surfaceIds = [...new Set(routedMembers.map(item => item.placement?.surfaceId).filter(Boolean).map(String))];
+            const opportunityIds = [...new Set(routedMembers.map(item => item.placement?.semanticOpportunityId).filter(Boolean).map(String))];
+            const contextIds = [...new Set(routedMembers.map(item => item.placement?.semanticContextId).filter(Boolean).map(String))];
             const descriptor = {
                 schema: EXTERIOR_MEDIA_SCHEMA,
                 id: `${ownerKey}:${assemblyId}:media:${seed.toString(16).padStart(8, '0')}`,
@@ -214,8 +286,8 @@ export function attachSpectacleMedia({ chunk, tasks = [], pairFor = null } = {})
             };
 
             let cursor = 0;
-            for (let index = 0; index < members.length; index++) {
-                const member = members[index];
+            for (let index = 0; index < routedMembers.length; index++) {
+                const member = routedMembers[index];
                 const placement = member.placement;
                 const span = Math.max(0.01, finite(placement?.sx, 1));
                 const u0 = layout.totalSpan > 0 ? cursor / layout.totalSpan : 0;
@@ -223,14 +295,18 @@ export function attachSpectacleMedia({ chunk, tasks = [], pairFor = null } = {})
                 placement.media = descriptor;
                 placement.mediaSegment = {
                     index,
-                    count: members.length,
+                    count: routedMembers.length,
                     surfaceId: placement.surfaceId ?? null,
                     semanticOpportunityId: placement.semanticOpportunityId ?? null,
                     span,
                     u0,
                     u1,
+                    reverseU: member.reverseU === true,
+                    seamAligned: member.seamAligned === true,
+                    cornerTurn: member.cornerTurn ?? null,
+                    seamDistance: Number.isFinite(member.seamDistance) ? member.seamDistance : null,
                     continuationBefore: index > 0,
-                    continuationAfter: index < members.length - 1,
+                    continuationAfter: index < routedMembers.length - 1,
                 };
                 cursor += span;
                 surfaces++;

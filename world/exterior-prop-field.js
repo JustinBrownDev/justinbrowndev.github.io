@@ -93,6 +93,8 @@ function placementBase(opportunity, domain, primitiveIndex) {
         surfaceId: opportunity.surfaceId ?? null,
         entityId: opportunity.entityId ?? null,
         role: opportunity.role,
+        side: opportunity.side ?? null,
+        surfaceFrame: opportunity.surfaceFrame ? { ...opportunity.surfaceFrame } : null,
         domain,
         primitiveIndex,
     };
@@ -138,6 +140,63 @@ function segmentPoint(segment, outward = 0.16) {
     };
 }
 
+function lineIntersection2D(aPoint, aDir, bPoint, bDir) {
+    const den = aDir.x * bDir.z - aDir.z * bDir.x;
+    if (Math.abs(den) < 1e-6) return null;
+    const dx = bPoint.x - aPoint.x;
+    const dz = bPoint.z - aPoint.z;
+    const t = (dx * bDir.z - dz * bDir.x) / den;
+    return { x: aPoint.x + aDir.x * t, z: aPoint.z + aDir.z * t };
+}
+
+function alignCornerMediaSegments(segments, screenOutward = 0.17, panelOffset = 0.092) {
+    if (!Array.isArray(segments) || segments.length !== 2) return null;
+    const lines = segments.map(segment => {
+        const f = segment.surfaceFrame ?? {};
+        const t = segment.transform ?? {};
+        const tangent = { x: finite(f.tangentX), z: finite(f.tangentZ) };
+        const normal = { x: finite(f.normalX), z: finite(f.normalZ) };
+        const width = Math.max(0.01, finite(segment.width, 1));
+        const panelCenter = {
+            x: finite(t.x) + normal.x * (screenOutward + panelOffset),
+            z: finite(t.z) + normal.z * (screenOutward + panelOffset),
+        };
+        return { segment, tangent, normal, width, panelCenter };
+    });
+    const seam = lineIntersection2D(lines[0].panelCenter, lines[0].tangent, lines[1].panelCenter, lines[1].tangent);
+    if (!seam) return null;
+
+    const bottom = Math.max(...segments.map(segment => finite(segment.transform?.y) - Math.max(0, finite(segment.height)) * 0.5));
+    const top = Math.min(...segments.map(segment => finite(segment.transform?.y) + Math.max(0, finite(segment.height)) * 0.5));
+    const commonHeight = top - bottom;
+    if (commonHeight < 1.55) return null;
+
+    const aligned = lines.map(line => {
+        const half = line.width * 0.5;
+        const lo = { x: line.panelCenter.x - line.tangent.x * half, z: line.panelCenter.z - line.tangent.z * half };
+        const hi = { x: line.panelCenter.x + line.tangent.x * half, z: line.panelCenter.z + line.tangent.z * half };
+        const dlo = Math.hypot(lo.x - seam.x, lo.z - seam.z);
+        const dhi = Math.hypot(hi.x - seam.x, hi.z - seam.z);
+        const nearDistance = Math.min(dlo, dhi);
+        if (nearDistance > 1.45) return null;
+        const far = dlo > dhi ? lo : hi;
+        const width = Math.hypot(far.x - seam.x, far.z - seam.z);
+        if (width < 3.0 || width > 20.0) return null;
+        const panelCenter = { x: (far.x + seam.x) * 0.5, z: (far.z + seam.z) * 0.5 };
+        return {
+            point: {
+                x: panelCenter.x - line.normal.x * panelOffset,
+                y: bottom,
+                z: panelCenter.z - line.normal.z * panelOffset,
+                rotY: finite(line.segment.transform?.rotY),
+            },
+            width,
+            height: commonHeight,
+        };
+    });
+    return aligned.every(Boolean) ? aligned : null;
+}
+
 function emitFacadeSpectacle(opportunity, placements) {
     const segments = opportunity.segments?.length ? opportunity.segments : [{
         surfaceId: opportunity.surfaceId,
@@ -151,17 +210,24 @@ function emitFacadeSpectacle(opportunity, placements) {
     const assemblyId = opportunity.id + ':megascreen';
     const assemblyKind = opportunity.role === 'corner-media-band' ? 'corner-megascreen' : 'facade-megascreen';
     const surfaceIds = segments.map(segment => segment.surfaceId).filter(Boolean);
+    const alignedCorner = opportunity.role === 'corner-media-band' ? alignCornerMediaSegments(segments) : null;
     let emitted = 0;
     for (let index = 0; index < segments.length; index++) {
         const segment = segments[index];
         const signageStress = GENERATION_LANES.signageStress === true;
-        const width = clamp(finite(segment.width, 3.2) * (signageStress ? 0.99 : 0.93), 3.0, signageStress ? 18.0 : 12.5);
-        const height = clamp(
+        const aligned = alignedCorner?.[index] ?? null;
+        const width = aligned?.width ?? clamp(finite(segment.width, 3.2) * (signageStress ? 0.99 : 0.93), 3.0, signageStress ? 18.0 : 12.5);
+        const height = aligned?.height ?? clamp(
             Math.min(finite(segment.height, 3.0) * (signageStress ? 0.94 : 0.82), width * (signageStress ? 1.35 : 0.62)),
             1.55, signageStress ? 10.0 : 6.8,
         );
-        const p = segmentPoint(segment, 0.17);
-        const pseudo = { ...opportunity, surfaceId: segment.surfaceId ?? opportunity.surfaceId, side: segment.side ?? opportunity.side };
+        const p = aligned?.point ?? segmentPoint(segment, 0.17);
+        const pseudo = {
+            ...opportunity,
+            surfaceId: segment.surfaceId ?? opportunity.surfaceId,
+            side: segment.side ?? opportunity.side,
+            surfaceFrame: segment.surfaceFrame ?? opportunity.surfaceFrame,
+        };
         pushPrimitive(placements, pseudo, {
             ...p, shape: 'box', sx: width, sy: height, sz: 0.16,
             assemblyId, assemblyKind, visualTier: 'spectacle', spectacleSurfaceIds: surfaceIds,
@@ -558,14 +624,18 @@ export function createExteriorPropFieldSystem({ THREE, worldSeed = 0 } = {}) {
         if (u0 <= 0.000001 && u1 >= 0.999999) return mediaPlaneGeometry;
         const geometry = mediaPlaneGeometry.clone();
         const uv = geometry.getAttribute?.('uv');
+        const reverseU = segment?.reverseU === true;
         if (uv) {
             const span = u1 - u0;
-            for (let i = 0; i < uv.count; i++) uv.setX(i, u0 + uv.getX(i) * span);
+            for (let i = 0; i < uv.count; i++) {
+                const localU = uv.getX(i);
+                uv.setX(i, reverseU ? u1 - localU * span : u0 + localU * span);
+            }
             uv.needsUpdate = true;
         }
         geometry.userData = {
             ...(geometry.userData ?? {}),
-            semanticMediaSegment: { u0, u1, index: segment?.index ?? 0, count: segment?.count ?? 1 },
+            semanticMediaSegment: { u0, u1, reverseU, index: segment?.index ?? 0, count: segment?.count ?? 1 },
         };
         return geometry;
     }
@@ -697,7 +767,8 @@ export function createExteriorPropFieldSystem({ THREE, worldSeed = 0 } = {}) {
                 const offset = Math.max(0.015, item.sz * 0.5 + 0.012);
                 panel.position.set(item.x + outwardX * offset, item.y + item.sy * 0.5, item.z + outwardZ * offset);
                 panel.rotation.y = item.rotY + Math.PI;
-                panel.scale.set(item.sx * 0.94, item.sy * 0.90, 1);
+                const seamAligned = item.mediaSegment?.seamAligned === true;
+                panel.scale.set(item.sx * (seamAligned ? 1 : 0.94), item.sy * (seamAligned ? 1 : 0.90), 1);
                 panel.userData.chunkCosmetic = true;
                 panel.userData.detailKind = 'megascreen-media';
                 panel.userData.semanticExteriorAuthority = true;

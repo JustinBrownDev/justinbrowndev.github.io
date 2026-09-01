@@ -156,39 +156,45 @@ function facadeOpportunities(surfaces, apertures, contextByEntity) {
                 surfaceFrame,
                 decorationMayIntrude: true,
             };
-            if (GENERATION_LANES.signageStress) {
-                const facadeHeight = Math.max(0, surface.yMax - surface.yMin);
-                const signRows = clamp(Math.floor((facadeHeight - 1.0) / 2.0), 1, 5);
-                const signColumns = width >= 5.0 ? 2 : 1;
-                for (let row = 0; row < signRows; row++) {
-                    for (let col = 0; col < signColumns; col++) {
-                        const cellLo = lo + width * (col / signColumns);
-                        const cellHi = lo + width * ((col + 1) / signColumns);
-                        const signU = (cellLo + cellHi) * 0.5;
-                        const signWidth = cellHi - cellLo;
-                        const signY = clamp(surface.yMin + 2.05 + row * 2.05, surface.yMin + 1.85, Math.max(surface.yMin + 1.9, surface.yMax - 0.60));
-                        opportunities.push({
-                            id: `${surface.id}:sign:${index}:${row}:${col}`, role: 'facade-sign-zone',
-                            ...base,
-                            u: signU,
-                            along: surface.half > 0 ? clamp(signU / surface.half, -0.92, 0.92) : 0,
-                            availableWidth: signWidth,
-                            transform: pointForSurface(surface, signU, signY, 0.035),
-                            region: { uMin: cellLo, uMax: cellHi, vMin: Math.max(surface.yMin + 1.6, signY - 1.1), vMax: Math.min(surface.yMax, signY + 1.1) },
-                            clearanceBudget: { width: signWidth, height: Math.max(0.7, Math.min(2.2, surface.yMax - signY + 0.6)) },
-                            layer: verticalLayer(signY, row), shellPriority: 'first-pass',
-                        });
-                    }
+            // Signage is probabilistic over the usable facade, not confined to a single
+            // eye-level strip. Exterior Composition still owns final quantity/density;
+            // this layer only offers deterministic candidate locations with vertical variance.
+            const signMinY = Math.min(surface.yMax - 0.55, surface.yMin + 1.85);
+            const signMaxY = Math.max(signMinY, surface.yMax - 0.60);
+            const usableSignHeight = Math.max(0.01, signMaxY - signMinY);
+            const signRows = clamp(Math.ceil(usableSignHeight / (GENERATION_LANES.signageStress ? 1.9 : 2.7)), 1, GENERATION_LANES.signageStress ? 6 : 4);
+            const signColumns = width >= 5.0 ? 2 : 1;
+            const occurrenceProbability = GENERATION_LANES.signageStress ? 0.82 : 0.46;
+            for (let row = 0; row < signRows; row++) {
+                for (let col = 0; col < signColumns; col++) {
+                    const slotKey = `${surface.id}:sign-slot:${index}:${row}:${col}`;
+                    const occurrenceRoll = (hash32(`${slotKey}:occur`) >>> 0) / 4294967296;
+                    if (occurrenceRoll >= occurrenceProbability) continue;
+                    const cellLo = lo + width * (col / signColumns);
+                    const cellHi = lo + width * ((col + 1) / signColumns);
+                    const signU = (cellLo + cellHi) * 0.5;
+                    const signWidth = cellHi - cellLo;
+                    const verticalRoll = (hash32(`${slotKey}:vertical`) >>> 0) / 4294967296;
+                    const bandLo = row / signRows;
+                    const bandHi = (row + 1) / signRows;
+                    const verticalT = bandLo + (bandHi - bandLo) * (0.16 + verticalRoll * 0.68);
+                    const signY = clamp(signMinY + usableSignHeight * verticalT, signMinY, signMaxY);
+                    const floor = Math.max(0, Math.floor((signY - surface.yMin) / 3.15));
+                    const slotHeight = Math.max(0.7, Math.min(2.2, usableSignHeight / signRows + 0.75));
+                    opportunities.push({
+                        id: `${surface.id}:sign:${index}:${row}:${col}`, role: 'facade-sign-zone',
+                        ...base,
+                        u: signU,
+                        along: surface.half > 0 ? clamp(signU / surface.half, -0.92, 0.92) : 0,
+                        availableWidth: signWidth,
+                        occurrenceProbability,
+                        occurrenceRoll,
+                        transform: pointForSurface(surface, signU, signY, 0.035),
+                        region: { uMin: cellLo, uMax: cellHi, vMin: Math.max(surface.yMin + 0.35, signY - slotHeight * 0.55), vMax: Math.min(surface.yMax, signY + slotHeight * 0.55) },
+                        clearanceBudget: { width: signWidth, height: slotHeight },
+                        layer: verticalLayer(signY, floor), shellPriority: 'first-pass',
+                    });
                 }
-            } else {
-                const signY = clamp(surface.yMin + 2.3 + index * 0.7, surface.yMin + 1.9, Math.max(surface.yMin + 2, surface.yMax - 0.55));
-                opportunities.push({
-                    id: `${surface.id}:sign:${index}`, role: 'facade-sign-zone', ...base,
-                    transform: pointForSurface(surface, u, signY, 0.035),
-                    region: { uMin: lo, uMax: hi, vMin: Math.max(surface.yMin + 1.8, signY - 1.2), vMax: surface.yMax },
-                    clearanceBudget: { width, height: Math.max(0.5, surface.yMax - signY) },
-                    layer: verticalLayer(signY), shellPriority: 'first-pass',
-                });
             }
             opportunities.push({
                 id: `${surface.id}:poster:${index}`, role: 'facade-poster-zone', ...base,

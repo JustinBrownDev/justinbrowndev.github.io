@@ -150,18 +150,50 @@ function drawFrame(ctx, w, h, r) {
 
 function drawText(ctx, value, x, y, startPx, font, weight, color, align, maxWidth) {
     const textValue = String(value ?? '').replace(/\s+/g, ' ').trim();
+    if (!textValue) return;
     ctx.save();
     ctx.fillStyle = color;
     ctx.textAlign = align;
     ctx.textBaseline = 'alphabetic';
-    let px = Math.max(7, startPx);
-    for (let i = 0; i < 10; i++) {
+
+    // Sign copy is a single-line display contract. Fit font size to the box instead
+    // of using Canvas2D maxWidth, which horizontally crushes glyphs and makes short
+    // phrases look tiny while long phrases become visibly raster-stretched.
+    const nominalPx = Math.max(7, startPx);
+    const growth = textValue.length <= 12 ? 1.26 : textValue.length <= 24 ? 1.12 : 1;
+    const maxPx = nominalPx * growth;
+    const minPx = Math.max(7, nominalPx * .42);
+    let lo = minPx;
+    let hi = maxPx;
+    let fittedPx = minPx;
+    for (let i = 0; i < 12; i++) {
+        const px = (lo + hi) * .5;
         ctx.font = `${weight} ${px}px ${font}`;
-        if (!ctx.measureText || ctx.measureText(textValue).width <= maxWidth) break;
-        px *= .86;
+        const measured = ctx.measureText ? ctx.measureText(textValue).width : 0;
+        if (!ctx.measureText || measured <= maxWidth * .97) {
+            fittedPx = px;
+            lo = px;
+        } else {
+            hi = px;
+        }
     }
-    ctx.fillText(textValue, x, y, maxWidth);
+    ctx.font = `${weight} ${fittedPx}px ${font}`;
+    const rendered = singleLineEllipsis(ctx, textValue, maxWidth);
+    ctx.fillText(rendered, x, y);
     ctx.restore();
+}
+
+function singleLineEllipsis(ctx, value, maxWidth) {
+    if (!ctx.measureText || ctx.measureText(value).width <= maxWidth) return value;
+    const words = value.split(' ').filter(Boolean);
+    while (words.length > 1) {
+        words.pop();
+        const candidate = `${words.join(' ')}…`;
+        if (ctx.measureText(candidate).width <= maxWidth) return candidate;
+    }
+    let text = words[0] ?? value;
+    while (text.length > 1 && ctx.measureText(`${text}…`).width > maxWidth) text = text.slice(0, -1);
+    return `${text}…`;
 }
 
 function shortCode(value) {

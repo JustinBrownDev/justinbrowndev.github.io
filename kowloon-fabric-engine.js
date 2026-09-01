@@ -12,6 +12,8 @@ import { createSemanticPlanCache, semanticPlanCacheKey } from './world/architect
 import { accessAnchorsForBuildingPortals, compileAccessPortals } from './world/access-portals.js';
 import { compileDistrictBlockComposition, districtBuildingPolicyForEntity, districtContextForEntity } from './world/district-block-composition.js';
 import { planExteriorScaffoldRoute } from './world/scaffold-circulation-plan.js';
+import { assertCanonicalScaffoldSwitchback } from './world/stair-volume-contract.js';
+import { normalizeTransportSurface, planExteriorTransportNetwork, transportSurfaceIntersection } from './world/exterior-transport-network.js';
 import { EXTERIOR_CIRCULATION_DEBT, planExteriorStreetLayerPolicy } from './world/exterior-street-layer-policy.js';
 import { assertFastVerticalRoute, planExteriorStreetLayerTrunk } from './world/fast-vertical-route.js';
 import {
@@ -325,8 +327,8 @@ export function createKowloonFabricEngine({
         });
     }
 
-    function wallTransform(list, x, y, z, sx, sy, sz) {
-        list.push({ x, y, z, sx, sy, sz });
+    function wallTransform(list, x, y, z, sx, sy, sz, metadata = null) {
+        list.push({ x, y, z, sx, sy, sz, ...(metadata || {}) });
     }
 
      
@@ -546,6 +548,7 @@ export function createKowloonFabricEngine({
 
     function realizeExteriorScaffold({ physics, transforms, plan }) {
         if (!plan || plan.fitStatus !== 'fits-resolved-truth') return 0;
+        assertCanonicalScaffoldSwitchback(plan);
         if (plan.flights.some(flight => flight.fitClassification !== 'fits-resolved-truth')) {
             throw new Error(`invalid scaffold route escaped planner: ${plan.id}`);
         }
@@ -580,26 +583,33 @@ export function createKowloonFabricEngine({
             const platform = physics.platforms[physics.platforms.length - 1];
             platform.routeId = plan.id;
             platform.landingId = landing.id;
+            const scaffoldSurface = registerExteriorTransportSurface(physics, {
+                id: `${landing.id}:street-layer`, kind: 'scaffold-landing-street-layer',
+                x: landing.x, z: landing.z, hx: landing.sx * 0.5, hz: landing.sz * 0.5, y: landing.y,
+                siteId: plan.siteId ?? null, moduleKey: plan.moduleKey, routeId: plan.id, networkKey: plan.id,
+                reachable: true, priority: 'circulation-owned', physicalTruth: plan.physicalTruth,
+            });
+            platform.surfaceId = scaffoldSurface.id;
 
             // Guard only the exposed edge; facade-side and flight-entry edges remain
             // open. The rail position is a direct function of the route landing.
             if (horizontalFace) {
                 const outerZ = landing.z + outward * landing.sz * 0.5;
-                wallTransform(transforms.wallGroups[0], landing.x, landing.y + railH * 0.5, outerZ, landing.sx, railH, railT);
-                physics.mazeWalls.push({
+                emitTransportRail({
+                    physics, wallList: transforms.wallGroups[0], surfaceId: scaffoldSurface.id,
                     x1: landing.x - landing.sx * 0.5, z1: outerZ,
                     x2: landing.x + landing.sx * 0.5, z2: outerZ,
-                    yMin: landing.y, yMax: landing.y + railH, thickness: railT,
-                    supportKind: 'scaffold-rail', routeId: plan.id, landingId: landing.id,
+                    y: landing.y, height: railH, thickness: railT, supportKind: 'scaffold-rail',
+                    metadata: { routeId: plan.id, landingId: landing.id },
                 });
             } else {
                 const outerX = landing.x + outward * landing.sx * 0.5;
-                wallTransform(transforms.wallGroups[0], outerX, landing.y + railH * 0.5, landing.z, railT, railH, landing.sz);
-                physics.mazeWalls.push({
+                emitTransportRail({
+                    physics, wallList: transforms.wallGroups[0], surfaceId: scaffoldSurface.id,
                     x1: outerX, z1: landing.z - landing.sz * 0.5,
                     x2: outerX, z2: landing.z + landing.sz * 0.5,
-                    yMin: landing.y, yMax: landing.y + railH, thickness: railT,
-                    supportKind: 'scaffold-rail', routeId: plan.id, landingId: landing.id,
+                    y: landing.y, height: railH, thickness: railT, supportKind: 'scaffold-rail',
+                    metadata: { routeId: plan.id, landingId: landing.id },
                 });
             }
 
@@ -719,6 +729,253 @@ export function createKowloonFabricEngine({
         return pieces;
     }
 
+    function exteriorTransportSurfaces(physics) {
+        return physics.exteriorTransportSurfaces ?? (physics.exteriorTransportSurfaces = []);
+    }
+
+    function registerExteriorTransportSurface(physics, raw) {
+        const registry = exteriorTransportSurfaces(physics);
+        const existing = registry.find(surface => surface.id === raw.id);
+        if (existing) return existing;
+        const surface = normalizeTransportSurface(raw);
+        registry.push(surface);
+        return surface;
+    }
+
+    function transportRectIntersection(a, b) {
+        const minX = Math.max(a.x - a.hx, b.x - b.hx);
+        const maxX = Math.min(a.x + a.hx, b.x + b.hx);
+        const minZ = Math.max(a.z - a.hz, b.z - b.hz);
+        const maxZ = Math.min(a.z + a.hz, b.z + b.hz);
+        if (!(maxX > minX + 0.02) || !(maxZ > minZ + 0.02)) return null;
+        return { x: (minX + maxX) * 0.5, z: (minZ + maxZ) * 0.5, hx: (maxX - minX) * 0.5, hz: (maxZ - minZ) * 0.5 };
+    }
+
+    function piecesMinusCuts(rect, cuts) {
+        let pieces = [rect];
+        for (const cut of cuts) pieces = pieces.flatMap(piece => rectPiecesMinusGap(piece, cut));
+        return pieces;
+    }
+
+    function emitTransportRail({ physics, wallList, surfaceId, x1, z1, x2, z2, y, height, thickness, supportKind = 'transport-rail', metadata = null }) {
+        if (!wallList || !surfaceId) return null;
+        const horizontal = Math.abs(z1 - z2) <= 1e-7;
+        const vertical = Math.abs(x1 - x2) <= 1e-7;
+        if (!horizontal && !vertical) return null;
+        const serial = (physics.transportRailSerial = (physics.transportRailSerial ?? 0) + 1);
+        const railId = `transport-rail:${surfaceId}:${serial}`;
+        const midX = (x1 + x2) * 0.5;
+        const midZ = (z1 + z2) * 0.5;
+        wallTransform(wallList, midX, y + height * 0.5, midZ,
+            horizontal ? Math.abs(x2 - x1) : thickness,
+            height,
+            vertical ? Math.abs(z2 - z1) : thickness,
+            { transportRailId: railId, surfaceId, supportKind, ...(metadata || {}) });
+        physics.mazeWalls.push({
+            x1, z1, x2, z2, yMin: y, yMax: y + height, thickness,
+            supportKind, surfaceId, transportRailId: railId, ...(metadata || {}),
+        });
+        return railId;
+    }
+
+    function removeRailTransform(transforms, railId) {
+        for (const group of transforms.wallGroups ?? []) {
+            const index = group.findIndex(item => item.transportRailId === railId);
+            if (index >= 0) {
+                group.splice(index, 1);
+                return group;
+            }
+        }
+        return null;
+    }
+
+    function carveTransportRailGap({ physics, transforms, surfaceId, point, width }) {
+        if (!surfaceId || !point || !(width > 0)) return 0;
+        const matches = (physics.mazeWalls ?? []).filter(wall => wall.surfaceId === surfaceId && wall.transportRailId);
+        let carved = 0;
+        for (const wall of matches) {
+            const horizontal = Math.abs(wall.z1 - wall.z2) <= 1e-7;
+            const vertical = Math.abs(wall.x1 - wall.x2) <= 1e-7;
+            if (!horizontal && !vertical) continue;
+            const lineDistance = horizontal ? Math.abs(point.z - wall.z1) : Math.abs(point.x - wall.x1);
+            if (lineDistance > Math.max(0.20, width * 0.30)) continue;
+            const lo = horizontal ? Math.min(wall.x1, wall.x2) : Math.min(wall.z1, wall.z2);
+            const hi = horizontal ? Math.max(wall.x1, wall.x2) : Math.max(wall.z1, wall.z2);
+            const at = horizontal ? point.x : point.z;
+            if (at < lo - 0.15 || at > hi + 0.15) continue;
+            const gap0 = Math.max(lo, at - width * 0.5);
+            const gap1 = Math.min(hi, at + width * 0.5);
+            if (!(gap1 > gap0 + 0.04)) continue;
+            const wallIndex = physics.mazeWalls.indexOf(wall);
+            if (wallIndex >= 0) physics.mazeWalls.splice(wallIndex, 1);
+            const wallList = removeRailTransform(transforms, wall.transportRailId);
+            if (!wallList) continue;
+            const emitPart = (a, b) => {
+                if (!(b > a + 0.05)) return;
+                emitTransportRail({
+                    physics, wallList, surfaceId,
+                    x1: horizontal ? a : wall.x1,
+                    z1: horizontal ? wall.z1 : a,
+                    x2: horizontal ? b : wall.x2,
+                    z2: horizontal ? wall.z2 : b,
+                    y: wall.yMin,
+                    height: wall.yMax - wall.yMin,
+                    thickness: wall.thickness ?? 0.08,
+                    supportKind: wall.supportKind ?? 'transport-rail',
+                    metadata: {
+                        routeId: wall.routeId ?? null, landingId: wall.landingId ?? null,
+                        bridgeId: wall.bridgeId ?? null, moduleKey: wall.moduleKey ?? null, side: wall.side ?? null,
+                    },
+                });
+            };
+            emitPart(lo, gap0);
+            emitPart(gap1, hi);
+            carved++;
+        }
+        return carved;
+    }
+
+    function publishTransportSurfaceSlab({ physics, transforms, rawSurface, supportKind = 'exterior-transport-link', slabT = 0.12 }) {
+        const registry = exteriorTransportSurfaces(physics);
+        const overlaps = registry.filter(surface => Math.abs(surface.y - rawSurface.y) <= 0.12)
+            .map(surface => ({ surface, cut: transportRectIntersection(surface, rawSurface) }))
+            .filter(item => item.cut);
+        const pieces = piecesMinusCuts({ x: rawSurface.x, z: rawSurface.z, hx: rawSurface.hx, hz: rawSurface.hz }, overlaps.map(item => item.cut));
+        const surface = registerExteriorTransportSurface(physics, rawSurface);
+        for (let i = 0; i < pieces.length; i++) {
+            const piece = pieces[i];
+            physics.platforms.push({ x: piece.x, z: piece.z, hx: piece.hx, hz: piece.hz, y: surface.y, supportKind, surfaceId: surface.id, pieceIndex: i });
+            transforms.slabs.push({ x: piece.x, y: surface.y - slabT * 0.5, z: piece.z, sx: piece.hx * 2, sy: slabT, sz: piece.hz * 2, surfaceId: surface.id, pieceIndex: i });
+        }
+        return { surface, overlaps: overlaps.map(item => item.surface), pieces };
+    }
+
+    function smoothTransportUnion({ physics, transforms, a, b, intersection = null, width = null }) {
+        const cut = intersection ?? transportSurfaceIntersection(a, b) ?? transportRectIntersection(a, b);
+        if (!cut) return 0;
+        const openingWidth = width ?? Math.max(0.90, Math.min(cut.hx * 2, cut.hz * 2, 1.65));
+        const point = { x: cut.x, z: cut.z };
+        return carveTransportRailGap({ physics, transforms, surfaceId: a.id, point, width: openingWidth })
+            + carveTransportRailGap({ physics, transforms, surfaceId: b.id, point, width: openingWidth });
+    }
+
+    function reserveTransportJunction({ physics, surface, point, width, id, peerSurfaceId = null }) {
+        if (!surface || !point || !(width > 0)) return null;
+        const half = Math.max(0.38, width * 0.55);
+        const connector = createLandingConnector({
+            id, x: point.x, z: point.z,
+            halfX: Math.min(surface.hx, half), halfZ: Math.min(surface.hz, half), y: surface.y,
+            source: 'exterior-transport-network', visualRole: 'street-layer-junction',
+            reservationKind: 'exterior-transport-junction', physicalTruth: surface.physicalTruth,
+            metadata: { surfaceId: surface.id, peerSurfaceId },
+        });
+        registerSemanticConnector(physics, connector);
+        return connector;
+    }
+
+    function realizeExteriorTransportNetwork({ physics, transforms, stableKey }) {
+        const surfaces = exteriorTransportSurfaces(physics);
+        const plan = planExteriorTransportNetwork({ surfaces, maxLinks: 10, maxStairLinks: 6, stableKey });
+        const byId = new Map(surfaces.map(surface => [surface.id, surface]));
+        const edgeRegistry = physics.exteriorTransportEdges ?? (physics.exteriorTransportEdges = []);
+        let realized = 0;
+        let stairLinks = 0;
+        let walkwayLinks = 0;
+        let unions = 0;
+        for (const link of plan.links) {
+            const a = byId.get(link.aId), b = byId.get(link.bId);
+            if (!a || !b) continue;
+            if (link.kind === 'surface-union') {
+                smoothTransportUnion({ physics, transforms, a, b, intersection: link.intersection });
+                reserveTransportJunction({
+                    physics, surface: a, point: { x: link.intersection.x, z: link.intersection.z },
+                    width: Math.max(0.90, Math.min(link.intersection.hx * 2, link.intersection.hz * 2, 1.65)),
+                    id: `${link.id}:junction`, peerSurfaceId: b.id,
+                });
+                edgeRegistry.push({ ...link, source: 'surface-union' });
+                unions++;
+                realized++;
+                continue;
+            }
+            if (link.kind === 'walkway-link') {
+                const from = Math.min(link.aEdge, link.bEdge), to = Math.max(link.aEdge, link.bEdge);
+                const span = to - from;
+                if (!(span > 0.08)) continue;
+                const surfaceId = `${link.id}:surface`;
+                const rawSurface = link.axis === 'x'
+                    ? { id: surfaceId, kind: 'street-layer-link', x: (from + to) * 0.5, z: link.fixedCoord, hx: span * 0.5, hz: link.halfWidth, y: link.y0,
+                        routeId: link.id, networkKey: link.id, reachable: true, physicalTruth: a.physicalTruth ?? b.physicalTruth }
+                    : { id: surfaceId, kind: 'street-layer-link', x: link.fixedCoord, z: (from + to) * 0.5, hx: link.halfWidth, hz: span * 0.5, y: link.y0,
+                        routeId: link.id, networkKey: link.id, reachable: true, physicalTruth: a.physicalTruth ?? b.physicalTruth };
+                const published = publishTransportSurfaceSlab({ physics, transforms, rawSurface, supportKind: 'street-layer-link' });
+                const s = published.surface;
+                const railH = 0.86, railT = 0.08;
+                if (link.axis === 'x') {
+                    for (const z of [s.z - s.hz, s.z + s.hz]) emitTransportRail({ physics, wallList: transforms.wallGroups[0], surfaceId: s.id, x1: s.x - s.hx, z1: z, x2: s.x + s.hx, z2: z, y: s.y, height: railH, thickness: railT });
+                } else {
+                    for (const x of [s.x - s.hx, s.x + s.hx]) emitTransportRail({ physics, wallList: transforms.wallGroups[0], surfaceId: s.id, x1: x, z1: s.z - s.hz, x2: x, z2: s.z + s.hz, y: s.y, height: railH, thickness: railT });
+                }
+                carveTransportRailGap({ physics, transforms, surfaceId: a.id, point: link.aPoint, width: link.clearWidth + 0.18 });
+                carveTransportRailGap({ physics, transforms, surfaceId: b.id, point: link.bPoint, width: link.clearWidth + 0.18 });
+                reserveTransportJunction({ physics, surface: a, point: link.aPoint, width: link.clearWidth,
+                    id: `${link.id}:a-junction`, peerSurfaceId: b.id });
+                reserveTransportJunction({ physics, surface: b, point: link.bPoint, width: link.clearWidth,
+                    id: `${link.id}:b-junction`, peerSurfaceId: a.id });
+                for (const overlap of published.overlaps) smoothTransportUnion({ physics, transforms, a: s, b: overlap });
+                registerSemanticConnector(physics, createBridgeConnector({
+                    id: `${link.id}:connector`, axis: link.axis, from: link.aEdge, to: link.bEdge,
+                    fixedCoord: link.fixedCoord, halfWidth: link.halfWidth, y: link.y0,
+                    source: 'exterior-transport-network', visualRole: 'street-layer-link',
+                    physicalTruth: a.physicalTruth ?? b.physicalTruth,
+                    metadata: { transportLinkId: link.id, aSurfaceId: a.id, bSurfaceId: b.id },
+                }));
+                edgeRegistry.push({ ...link, surfaceId: s.id, source: 'walkway-link' });
+                walkwayLinks++;
+                realized++;
+                continue;
+            }
+            if (link.kind === 'stair-link') {
+                const lower = byId.get(link.lowerId), upper = byId.get(link.upperId);
+                if (!lower || !upper) continue;
+                physics.ramps.push({
+                    axis: link.axis, from: link.from, to: link.to, fixedCoord: link.fixedCoord,
+                    halfWidth: link.halfWidth, y0: link.y0, y1: link.y1,
+                    supportKind: 'exterior-transport-stair', transportLinkId: link.id,
+                });
+                registerSemanticConnector(physics, createRampConnector({
+                    id: `${link.id}:connector`, kind: 'stair', reservationKind: 'exterior-transport-stair-sweep',
+                    axis: link.axis, from: link.from, to: link.to, fixedCoord: link.fixedCoord,
+                    halfWidth: link.halfWidth, y0: link.y0, y1: link.y1,
+                    headroom: link.physicalTruth?.stair?.headroomSI,
+                    source: 'exterior-transport-network', visualRole: 'street-layer-to-street-layer-stair',
+                    physicalTruth: link.physicalTruth, stairFlight: link.stairFlight,
+                    metadata: { transportLinkId: link.id, lowerSurfaceId: lower.id, upperSurfaceId: upper.id },
+                }));
+                const steps = link.stairFlight.stepCount;
+                const stepThickness = Math.min(0.14, Math.max(0.075, link.stairFlight.riserHeight * 0.62));
+                for (let i = 0; i < steps; i++) {
+                    const t = (i + 0.5) / steps;
+                    const along = link.from + (link.to - link.from) * t;
+                    const stepY = link.y0 + link.stairFlight.riserHeight * (i + 1) - stepThickness * 0.5;
+                    transforms.steps.push(link.axis === 'x'
+                        ? { x: along, y: stepY, z: link.fixedCoord, sx: link.gap / steps * 1.06, sy: stepThickness, sz: link.clearWidth, transportLinkId: link.id }
+                        : { x: link.fixedCoord, y: stepY, z: along, sx: link.clearWidth, sy: stepThickness, sz: link.gap / steps * 1.06, transportLinkId: link.id });
+                }
+                carveTransportRailGap({ physics, transforms, surfaceId: lower.id, point: link.lowerPoint, width: link.clearWidth + 0.20 });
+                carveTransportRailGap({ physics, transforms, surfaceId: upper.id, point: link.upperPoint, width: link.clearWidth + 0.20 });
+                reserveTransportJunction({ physics, surface: lower, point: link.lowerPoint, width: link.clearWidth,
+                    id: `${link.id}:lower-junction`, peerSurfaceId: upper.id });
+                reserveTransportJunction({ physics, surface: upper, point: link.upperPoint, width: link.clearWidth,
+                    id: `${link.id}:upper-junction`, peerSurfaceId: lower.id });
+                edgeRegistry.push({ ...link, source: 'stair-link' });
+                stairLinks++;
+                realized++;
+            }
+        }
+        physics.exteriorTransportNetwork = { ...plan, realized, stairLinks, walkwayLinks, unions };
+        return physics.exteriorTransportNetwork;
+    }
+
     function realizeFastVerticalRoute({ physics, transforms, wallList, plan }) {
         assertFastVerticalRoute(plan);
         const routeRegistry = physics.fastVerticalRoutes ?? (physics.fastVerticalRoutes = []);
@@ -776,19 +1033,37 @@ export function createKowloonFabricEngine({
         for (const landing of plan.generatedLandings) {
             const geometry = landing.geometry;
             const throat = landing.stairThroat ?? null;
-            const pieces = rectPiecesMinusGap(geometry, throat);
-            if (!pieces.length) throw new Error(`${plan.id}:${landing.id}: stair throat consumed the entire street-layer deck`);
+            const rawDeckUnionSurface = {
+                id: `${landing.id}:deck`, kind: 'balcony-street-layer',
+                x: geometry.x, z: geometry.z, hx: geometry.hx, hz: geometry.hz, y: landing.y,
+                siteId: plan.siteId ?? null, moduleKey: plan.moduleKey, routeId: plan.id, networkKey: plan.id,
+                reachable: true, priority: 'circulation-owned', physicalTruth: plan.physicalTruth,
+                stairThroat: throat,
+            };
+            const deckOverlapCuts = exteriorTransportSurfaces(physics)
+                .filter(surface => Math.abs(surface.y - landing.y) <= 0.12)
+                .map(surface => ({ surface, cut: transportRectIntersection(surface, rawDeckUnionSurface) }))
+                .filter(item => item.cut);
+            const pieces = piecesMinusCuts(
+                { x: geometry.x, z: geometry.z, hx: geometry.hx, hz: geometry.hz },
+                [ ...(throat ? [throat] : []), ...deckOverlapCuts.map(item => item.cut) ],
+            );
+            if (!pieces.length && deckOverlapCuts.length === 0) {
+                throw new Error(`${plan.id}:${landing.id}: stair throat consumed the entire street-layer deck`);
+            }
             for (let pieceIndex = 0; pieceIndex < pieces.length; pieceIndex++) {
                 const piece = pieces[pieceIndex];
                 physics.platforms.push({
                     x: piece.x, z: piece.z, hx: piece.hx, hz: piece.hz, y: landing.y,
                     supportKind: 'broad-vertical-landing', deckKind: 'exterior-street-layer',
                     routeId: plan.id, landingId: landing.id, pieceIndex,
+                    surfaceId: `${landing.id}:deck`,
                 });
                 transforms.slabs.push({
                     x: piece.x, y: landing.y - 0.07, z: piece.z,
                     sx: piece.hx * 2, sy: 0.14, sz: piece.hz * 2,
                     routeId: plan.id, landingId: landing.id, pieceIndex, deckKind: 'exterior-street-layer',
+                    surfaceId: `${landing.id}:deck`,
                 });
             }
             if (throat) {
@@ -802,19 +1077,34 @@ export function createKowloonFabricEngine({
                 });
             }
 
-            // Guard only the exterior edge. Door thresholds and tangent stair throats
-            // remain unguarded openings in the transport surface.
+            const deckSurfaceId = `${landing.id}:deck`;
+            const deckSurface = registerExteriorTransportSurface(physics, {
+                id: deckSurfaceId,
+                kind: 'balcony-street-layer',
+                x: geometry.x, z: geometry.z, hx: geometry.hx, hz: geometry.hz, y: landing.y,
+                siteId: plan.siteId ?? null, moduleKey: plan.moduleKey, routeId: plan.id, networkKey: plan.id,
+                reachable: true, priority: 'circulation-owned', physicalTruth: plan.physicalTruth,
+                stairThroat: throat,
+            });
+
+            // Guard only the exterior edge. The rail is tagged to the transport
+            // surface so later balcony/catwalk/roof unions can cut a real junction.
             const railH = 0.92;
             const railT = 0.08;
             const outward = plan.orientation?.outward ?? 0;
             if (wallList && outward && plan.orientation?.normalAxis === 'z') {
                 const outerZ = geometry.z + outward * geometry.hz;
-                wallTransform(wallList, geometry.x, landing.y + railH * 0.5, outerZ, geometry.hx * 2, railH, railT);
-                physics.mazeWalls.push({ x1: geometry.x - geometry.hx, z1: outerZ, x2: geometry.x + geometry.hx, z2: outerZ, yMin: landing.y, yMax: landing.y + railH });
+                emitTransportRail({ physics, wallList, surfaceId: deckSurface.id,
+                    x1: geometry.x - geometry.hx, z1: outerZ, x2: geometry.x + geometry.hx, z2: outerZ,
+                    y: landing.y, height: railH, thickness: railT });
             } else if (wallList && outward && plan.orientation?.normalAxis === 'x') {
                 const outerX = geometry.x + outward * geometry.hx;
-                wallTransform(wallList, outerX, landing.y + railH * 0.5, geometry.z, railT, railH, geometry.hz * 2);
-                physics.mazeWalls.push({ x1: outerX, z1: geometry.z - geometry.hz, x2: outerX, z2: geometry.z + geometry.hz, yMin: landing.y, yMax: landing.y + railH });
+                emitTransportRail({ physics, wallList, surfaceId: deckSurface.id,
+                    x1: outerX, z1: geometry.z - geometry.hz, x2: outerX, z2: geometry.z + geometry.hz,
+                    y: landing.y, height: railH, thickness: railT });
+            }
+            for (const overlap of deckOverlapCuts) {
+                smoothTransportUnion({ physics, transforms, a: deckSurface, b: overlap.surface, intersection: overlap.cut });
             }
 
             const connector = createLandingConnector({
@@ -840,10 +1130,11 @@ export function createKowloonFabricEngine({
             const portalIds = layer?.portalIds ?? (plan.portalStops ?? [])
                 .filter(stop => Number(stop.floor) === floor).map(stop => stop.portal?.id).filter(Boolean);
             deckRegistry.push({
-                id: `${landing.id}:deck`, routeId: plan.id, landingId: landing.id,
+                id: deckSurface.id, surfaceId: deckSurface.id, routeId: plan.id, landingId: landing.id,
                 faceKey: `${plan.moduleKey}:${plan.dirKey}`, floor,
                 kind: 'exterior-street-layer', priority: 'circulation-owned', portalIds,
                 stairThroat: throat, pieceCount: pieces.length,
+                x: geometry.x, z: geometry.z, hx: geometry.hx, hz: geometry.hz, y: landing.y,
             });
             realizedLandings++;
             realizedDecks++;
@@ -901,17 +1192,39 @@ export function createKowloonFabricEngine({
         }
     }
 
-    function addCompoundRoofParapetSide({ physics, wallList, rect, roofY, side }) {
+    function addCompoundRoofParapetSide({ physics, wallList, rect, roofY, side, surfaceId = null, opening = null }) {
         const h = 0.68, t = 0.12;
-        if (side === 'north' || side === 'south') {
-            const z = rect.cz + (side === 'north' ? -rect.halfZ : rect.halfZ);
-            wallTransform(wallList, rect.cx, roofY + h * 0.5, z, rect.halfX * 2, h, t);
-            physics.mazeWalls.push({ x1: rect.cx - rect.halfX, z1: z, x2: rect.cx + rect.halfX, z2: z, yMin: roofY, yMax: roofY + h, thickness: t, supportKind: 'parapet' });
-        } else {
-            const x = rect.cx + (side === 'west' ? -rect.halfX : rect.halfX);
-            wallTransform(wallList, x, roofY + h * 0.5, rect.cz, t, h, rect.halfZ * 2);
-            physics.mazeWalls.push({ x1: x, z1: rect.cz - rect.halfZ, x2: x, z2: rect.cz + rect.halfZ, yMin: roofY, yMax: roofY + h, thickness: t, supportKind: 'parapet' });
-        }
+        const horizontal = side === 'north' || side === 'south';
+        const fixed = horizontal
+            ? rect.cz + (side === 'north' ? -rect.halfZ : rect.halfZ)
+            : rect.cx + (side === 'west' ? -rect.halfX : rect.halfX);
+        const lo = horizontal ? rect.cx - rect.halfX : rect.cz - rect.halfZ;
+        const hi = horizontal ? rect.cx + rect.halfX : rect.cz + rect.halfZ;
+        const requestedWidth = Math.max(0, Number(opening?.width) || 0);
+        const center = Number.isFinite(opening?.center) ? clamp(Number(opening.center), lo, hi) : (lo + hi) * 0.5;
+        const gap0 = Math.max(lo, center - requestedWidth * 0.5);
+        const gap1 = Math.min(hi, center + requestedWidth * 0.5);
+        const emit = (a, b) => {
+            if (!(b > a + 0.04)) return;
+            if (surfaceId) {
+                emitTransportRail({
+                    physics, wallList, surfaceId,
+                    x1: horizontal ? a : fixed, z1: horizontal ? fixed : a,
+                    x2: horizontal ? b : fixed, z2: horizontal ? fixed : b,
+                    y: roofY, height: h, thickness: t, supportKind: 'parapet',
+                });
+            } else if (horizontal) {
+                wallTransform(wallList, (a + b) * 0.5, roofY + h * 0.5, fixed, b - a, h, t);
+                physics.mazeWalls.push({ x1: a, z1: fixed, x2: b, z2: fixed, yMin: roofY, yMax: roofY + h, thickness: t, supportKind: 'parapet' });
+            } else {
+                wallTransform(wallList, fixed, roofY + h * 0.5, (a + b) * 0.5, t, h, b - a);
+                physics.mazeWalls.push({ x1: fixed, z1: a, x2: fixed, z2: b, yMin: roofY, yMax: roofY + h, thickness: t, supportKind: 'parapet' });
+            }
+        };
+        if (requestedWidth > 0 && gap1 > gap0 + 0.04) {
+            emit(lo, gap0);
+            emit(gap1, hi);
+        } else emit(lo, hi);
     }
 
     // SKELETON PROFILE: the broad-strokes builder deliberately stops before the
@@ -961,6 +1274,12 @@ export function createKowloonFabricEngine({
         const doorFace = forcedEntranceFaces[0]
             ?? (doorPool.length ? doorPool[siteSeed % doorPool.length] : null);
         const entranceFaces = forcedEntranceFaces.length ? forcedEntranceFaces : (doorFace ? [doorFace] : []);
+        const broadRoofTopper = archetype === 'vertical-stack' && (hashString32(`${siteSeed}:broad-roof-topper`) % 4 === 0)
+            ? 'spire'
+            : 'none';
+        const broadRoofTopperModuleKey = (doorFace?.module || primaryModule)?.key ?? null;
+        const roofClearForTransport = module => broadRoofTopper === 'none' || module.key !== broadRoofTopperModuleKey;
+        const fastRoofAccessByModuleSide = new Map();
 
         // STRUCTURAL FAST LANE: restore one deterministic exterior fire-escape/scaffold
         // route per eligible compound without enabling Building Plan, interiors, micro
@@ -981,6 +1300,7 @@ export function createKowloonFabricEngine({
                     const scaffoldEnvelopeDepth = Math.max(1.2, Math.min(2.4, moduleDepth * 0.72));
                     const plan = planExteriorScaffoldRoute({
                         fp: face.module.rect,
+                        siteId: site.id,
                         moduleKey: face.module.key,
                         floors: face.module.floors,
                         floorH,
@@ -990,11 +1310,10 @@ export function createKowloonFabricEngine({
                         maxExteriorDepth: scaffoldEnvelopeDepth,
                         routeId: `${chunk.key}:${siteSignature}:${face.module.key}:scaffold:${face.dir.side}`,
                     });
-                    // Known debt: the switchback planner remains available for later repair,
-                    // but the browser skeleton deliberately uses one fire-escape family. The
-                    // tiled switchback orientation seam stays parked; vertical variety comes
-                    // from distinct stair destinations instead of a second fire-escape style.
-                    if (!plan || plan.topology !== 'alternating-straight') return null;
+                    // Canonical scaffold concept: A uses the street half, B the building half,
+                    // and full-width landings live beyond the run. No parity/mirroring author exists.
+                    if (!plan || plan.topology !== 'canonical-scaffold-switchback') return null;
+                    assertCanonicalScaffoldSwitchback(plan);
                     const openingConflict = plan.openings.some(opening => {
                         const openingKey = `${face.module.key}:${face.dir.key}:${opening.level}`;
                         return bridgeOpeningKeys.has(openingKey)
@@ -1006,8 +1325,8 @@ export function createKowloonFabricEngine({
                 validScaffolds.sort((a, b) => {
                     const heightRank = b.face.module.floors - a.face.module.floors;
                     if (heightRank) return heightRank;
-                    const topologyRank = (a.plan.topology === 'alternating-straight' ? 0 : 1)
-                        - (b.plan.topology === 'alternating-straight' ? 0 : 1);
+                    const topologyRank = (a.plan.topology === 'canonical-scaffold-switchback' ? 0 : 1)
+                        - (b.plan.topology === 'canonical-scaffold-switchback' ? 0 : 1);
                     if (topologyRank) return topologyRank;
                     const aMargin = a.plan.facadeTangentAvailable - a.plan.tangentSpan;
                     const bMargin = b.plan.facadeTangentAvailable - b.plan.tangentSpan;
@@ -1116,7 +1435,7 @@ export function createKowloonFabricEngine({
             const bridgePortal = bridgePortalForFaceFloor(face, floor);
             const portals = [];
             let support = null;
-            let transportKind = 'balcony-street-layer';
+            let transportKind = policy.roofFloor === floor ? 'clear-roof-edge-layer' : 'balcony-street-layer';
             if (bridgePortal) {
                 portals.push(makeRoomPortalStop(face, floor, { source: 'bridge-portal' }));
                 // The walkway owns the portal/anchor, but the facade street layer still
@@ -1136,6 +1455,7 @@ export function createKowloonFabricEngine({
                 routeId,
                 family,
                 fp: face.module.rect,
+                siteId: site.id,
                 moduleKey: face.module.key,
                 dirKey: face.dir.key,
                 side: face.dir.side,
@@ -1150,6 +1470,16 @@ export function createKowloonFabricEngine({
             usedBroadVerticalFaces.add(broadVerticalFaceKey(face));
             broadVerticalRoutes.push(plan);
             for (const stop of plan.portalStops) commitRoomPortal(stop, plan);
+            if (policy.roofFloor) {
+                const roofLanding = plan.landings.find(landing => Number(landing.support?.floor) === Number(policy.roofFloor));
+                const roofFlight = roofLanding ? plan.flights.find(flight => flight.toLandingId === roofLanding.id) : null;
+                if (roofFlight) fastRoofAccessByModuleSide.set(`${face.module.key}:${face.dir.key}`, {
+                    floor: policy.roofFloor,
+                    center: roofFlight.to,
+                    width: Math.max(0.90, Number(plan.physicalTruth?.stair?.widthSI) * 1.35 || 1.10),
+                    routeId: plan.id,
+                });
+            }
             return true;
         };
 
@@ -1167,8 +1497,9 @@ export function createKowloonFabricEngine({
             const policy = planExteriorStreetLayerPolicy({
                 floors: face.module.floors,
                 existingPortalFloors: existingFloors,
-                maxLayers: 4,
+                maxLayers: 5,
                 maxExteriorConnections: 2,
+                includeRoof: roofClearForTransport(face.module),
             });
             if (acceptStreetLayerRoute(face, policy, 'walkway-anchored-street-trunk')) {
                 streetLayerRouteAccepted = true;
@@ -1184,8 +1515,9 @@ export function createKowloonFabricEngine({
                 const policy = planExteriorStreetLayerPolicy({
                     floors: face.module.floors,
                     existingPortalFloors: [],
-                    maxLayers: 4,
+                    maxLayers: 5,
                     maxExteriorConnections: 2,
+                    includeRoof: roofClearForTransport(face.module),
                 });
                 if (acceptStreetLayerRoute(face, policy, 'shared-exterior-street-trunk')) {
                     streetLayerRouteAccepted = true;
@@ -1267,18 +1599,44 @@ export function createKowloonFabricEngine({
 
             const roofY = module.floors * floorH;
             const roofRect = computeKowloonSlabRect(module, moduleByKey, module.floors, { roof: true });
-            addRectPlatform(physics.platforms, roofRect.cx, roofRect.cz, roofRect.width, roofRect.depth, roofY, 'roof');
-            transforms.slabs.push({
-                x: roofRect.cx, y: roofY - 0.06, z: roofRect.cz,
-                sx: roofRect.width, sy: 0.12, sz: roofRect.depth,
-            });
+            const localRoofAccess = [...fastRoofAccessByModuleSide.entries()]
+                .filter(([key]) => key.startsWith(`${module.key}:`))
+                .map(([key, value]) => ({ dirKey: key.slice(module.key.length + 1), ...value }));
+            let roofSurface = null;
+            if (roofClearForTransport(module)) {
+                const publishedRoof = publishTransportSurfaceSlab({
+                    physics, transforms,
+                    rawSurface: {
+                        id: `${chunk.key}:${siteSignature}:${module.key}:roof-street-layer`,
+                        kind: 'clear-roof-street-layer',
+                        x: roofRect.cx, z: roofRect.cz, hx: roofRect.width * 0.5, hz: roofRect.depth * 0.5, y: roofY,
+                        siteId: site.id, moduleKey: module.key, routeId: null,
+                        networkKey: `roof:${site.id}:${module.key}`,
+                        reachable: localRoofAccess.length > 0,
+                        priority: 'circulation-candidate', physicalTruth: servicePhysicalTruth,
+                    },
+                    supportKind: 'roof', slabT: 0.12,
+                });
+                roofSurface = publishedRoof.surface;
+                for (const overlap of publishedRoof.overlaps) smoothTransportUnion({ physics, transforms, a: roofSurface, b: overlap });
+            } else {
+                addRectPlatform(physics.platforms, roofRect.cx, roofRect.cz, roofRect.width, roofRect.depth, roofY, 'roof');
+                transforms.slabs.push({
+                    x: roofRect.cx, y: roofY - 0.06, z: roofRect.cz,
+                    sx: roofRect.width, sy: 0.12, sz: roofRect.depth,
+                });
+            }
             for (const dir of KOWLOON_DIRS) {
                 let exposed = module.edgeKinds[dir.key] !== 'internal';
                 if (!exposed) {
                     const neighbor = moduleByKey.get(kowloonCellKey(module.cell.col + dir.dc, module.cell.row + dir.dr));
                     exposed = !neighbor || neighbor.floors < module.floors;
                 }
-                if (exposed) addCompoundRoofParapetSide({ physics, wallList, rect: module.rect, roofY, side: dir.side });
+                if (exposed) addCompoundRoofParapetSide({
+                    physics, wallList, rect: module.rect, roofY, side: dir.side,
+                    surfaceId: roofSurface?.id ?? null,
+                    opening: localRoofAccess.find(access => access.dirKey === dir.key) ?? null,
+                });
             }
             yield {
                 phase: 'broad-roof-shell',
@@ -1329,9 +1687,7 @@ export function createKowloonFabricEngine({
         }), { minX: Infinity, maxX: -Infinity, minZ: Infinity, maxZ: -Infinity });
         const anchor = doorFace?.module || primaryModule;
         const floorCounts = modulePlans.map(module => module.floors);
-        const roofTopper = archetype === 'vertical-stack' && (hashString32(`${siteSeed}:broad-roof-topper`) % 4 === 0)
-            ? 'spire'
-            : 'none';
+        const roofTopper = broadRoofTopper;
 
         return {
             x: anchor.rect.cx, z: anchor.rect.cz,
@@ -1717,6 +2073,7 @@ export function createKowloonFabricEngine({
                     const seed = hashString32(`${siteSeed}:scaffold:${face.module.key}:${face.dir.side}`);
                     const plan = planExteriorScaffoldRoute({
                         fp: face.module.rect,
+                        siteId: site.id,
                         moduleKey: face.module.key,
                         floors: face.module.floors,
                         floorH,
@@ -1765,7 +2122,7 @@ export function createKowloonFabricEngine({
                 validScaffolds.sort((a, b) => {
                     const heightRank = b.face.module.floors - a.face.module.floors;
                     if (heightRank) return heightRank;
-                    const topologyRank = (a.plan.topology === 'alternating-straight' ? 0 : 1) - (b.plan.topology === 'alternating-straight' ? 0 : 1);
+                    const topologyRank = (a.plan.topology === 'canonical-scaffold-switchback' ? 0 : 1) - (b.plan.topology === 'canonical-scaffold-switchback' ? 0 : 1);
                     if (topologyRank) return topologyRank;
                     const aMargin = a.plan.facadeTangentAvailable - a.plan.tangentSpan;
                     const bMargin = b.plan.facadeTangentAvailable - b.plan.tangentSpan;
@@ -2542,66 +2899,68 @@ export function createKowloonFabricEngine({
         const width = hanging ? Math.max(0.72, Math.min(0.96, truthWidth * 0.90)) : Math.max(0.90, Math.min(1.22, truthWidth));
         const railH = hanging ? 0.70 : 0.86;
         const railT = hanging ? 0.065 : 0.10;
+        let from, to, fixedCoord, rawSurface;
         if (bridge.axis === 'x') {
-            const x0 = aModule.cx + aModule.halfX + 0.02;
-            const x1 = bModule.cx - bModule.halfX - 0.02;
-            const z = (aModule.cz + bModule.cz) * 0.5;
-            if (x1 <= x0) return false;
-            const span = x1 - x0;
-            const x = (x0 + x1) * 0.5;
-            registerSemanticConnector(physics, createBridgeConnector({
-                id: `${bridge.id}:connector`,
-                axis: 'x', from: x0, to: x1, fixedCoord: z, halfWidth: width * 0.5, y,
-                source: 'skybridge', visualRole: bridge.variant || 'skybridge',
-                fromSpaceId: semanticSpaceIdForEntity(aEntity, bridge.aModuleKey, bridge.floor, { x: x0, z }),
-                toSpaceId: semanticSpaceIdForEntity(bEntity, bridge.bModuleKey, bridge.floor, { x: x1, z }),
-                physicalTruth: bridgeTruth,
-                metadata: { bridgeId: bridge.id, variant: bridge.variant || 'skybridge', floor: bridge.floor, physicalUse: bridgeTruth?.physicalUse ?? null },
-            }));
-            transforms.slabs.push({ x, y: y - 0.06, z, sx: span, sy: 0.12, sz: width });
-            addRectPlatform(physics.platforms, x, z, span, width, y, bridge.variant || 'skybridge');
-            for (const sideZ of [z - width * 0.5, z + width * 0.5]) {
-                wallTransform(transforms.wallGroups[0], x, y + railH * 0.5, sideZ, span, railH, railT);
-                physics.mazeWalls.push({ x1: x0, z1: sideZ, x2: x1, z2: sideZ, yMin: y, yMax: y + railH });
-            }
-            if (hanging) {
-                const postCount = Math.max(2, Math.floor(span / 1.7));
-                for (let i = 0; i <= postCount; i++) {
-                    const px = x0 + span * (i / postCount);
-                    const sag = Math.sin(Math.PI * (i / postCount)) * 0.38;
-                    transforms.props.push({ x: px, y: y + 1.02 - sag, z: z - width * 0.5, sx: 0.055, sy: 1.08 - sag, sz: 0.055 });
-                    transforms.props.push({ x: px, y: y + 1.02 - sag, z: z + width * 0.5, sx: 0.055, sy: 1.08 - sag, sz: 0.055 });
-                }
-            }
+            from = aModule.cx + aModule.halfX + 0.02;
+            to = bModule.cx - bModule.halfX - 0.02;
+            fixedCoord = (aModule.cz + bModule.cz) * 0.5;
+            if (to <= from) return false;
+            rawSurface = {
+                id: `${bridge.id}:surface`, kind: bridge.variant || 'skybridge',
+                x: (from + to) * 0.5, z: fixedCoord, hx: (to - from) * 0.5, hz: width * 0.5, y,
+                bridgeId: bridge.id, networkKey: bridge.id, reachable: true, priority: 'walkway-authority', physicalTruth: bridgeTruth,
+            };
         } else {
-            const z0 = aModule.cz + aModule.halfZ + 0.02;
-            const z1 = bModule.cz - bModule.halfZ - 0.02;
-            const x = (aModule.cx + bModule.cx) * 0.5;
-            if (z1 <= z0) return false;
-            const span = z1 - z0;
-            const z = (z0 + z1) * 0.5;
-            registerSemanticConnector(physics, createBridgeConnector({
-                id: `${bridge.id}:connector`,
-                axis: 'z', from: z0, to: z1, fixedCoord: x, halfWidth: width * 0.5, y,
-                source: 'skybridge', visualRole: bridge.variant || 'skybridge',
-                fromSpaceId: semanticSpaceIdForEntity(aEntity, bridge.aModuleKey, bridge.floor, { x, z: z0 }),
-                toSpaceId: semanticSpaceIdForEntity(bEntity, bridge.bModuleKey, bridge.floor, { x, z: z1 }),
-                physicalTruth: bridgeTruth,
-                metadata: { bridgeId: bridge.id, variant: bridge.variant || 'skybridge', floor: bridge.floor, physicalUse: bridgeTruth?.physicalUse ?? null },
-            }));
-            transforms.slabs.push({ x, y: y - 0.06, z, sx: width, sy: 0.12, sz: span });
-            addRectPlatform(physics.platforms, x, z, width, span, y, bridge.variant || 'skybridge');
-            for (const sideX of [x - width * 0.5, x + width * 0.5]) {
-                wallTransform(transforms.wallGroups[0], sideX, y + railH * 0.5, z, railT, railH, span);
-                physics.mazeWalls.push({ x1: sideX, z1: z0, x2: sideX, z2: z1, yMin: y, yMax: y + railH });
-            }
-            if (hanging) {
-                const postCount = Math.max(2, Math.floor(span / 1.7));
-                for (let i = 0; i <= postCount; i++) {
-                    const pz = z0 + span * (i / postCount);
-                    const sag = Math.sin(Math.PI * (i / postCount)) * 0.38;
-                    transforms.props.push({ x: x - width * 0.5, y: y + 1.02 - sag, z: pz, sx: 0.055, sy: 1.08 - sag, sz: 0.055 });
-                    transforms.props.push({ x: x + width * 0.5, y: y + 1.02 - sag, z: pz, sx: 0.055, sy: 1.08 - sag, sz: 0.055 });
+            from = aModule.cz + aModule.halfZ + 0.02;
+            to = bModule.cz - bModule.halfZ - 0.02;
+            fixedCoord = (aModule.cx + bModule.cx) * 0.5;
+            if (to <= from) return false;
+            rawSurface = {
+                id: `${bridge.id}:surface`, kind: bridge.variant || 'skybridge',
+                x: fixedCoord, z: (from + to) * 0.5, hx: width * 0.5, hz: (to - from) * 0.5, y,
+                bridgeId: bridge.id, networkKey: bridge.id, reachable: true, priority: 'walkway-authority', physicalTruth: bridgeTruth,
+            };
+        }
+        registerSemanticConnector(physics, createBridgeConnector({
+            id: `${bridge.id}:connector`, axis: bridge.axis, from, to, fixedCoord, halfWidth: width * 0.5, y,
+            source: 'skybridge', visualRole: bridge.variant || 'skybridge',
+            fromSpaceId: bridge.axis === 'x'
+                ? semanticSpaceIdForEntity(aEntity, bridge.aModuleKey, bridge.floor, { x: from, z: fixedCoord })
+                : semanticSpaceIdForEntity(aEntity, bridge.aModuleKey, bridge.floor, { x: fixedCoord, z: from }),
+            toSpaceId: bridge.axis === 'x'
+                ? semanticSpaceIdForEntity(bEntity, bridge.bModuleKey, bridge.floor, { x: to, z: fixedCoord })
+                : semanticSpaceIdForEntity(bEntity, bridge.bModuleKey, bridge.floor, { x: fixedCoord, z: to }),
+            physicalTruth: bridgeTruth,
+            metadata: { bridgeId: bridge.id, variant: bridge.variant || 'skybridge', floor: bridge.floor, physicalUse: bridgeTruth?.physicalUse ?? null },
+        }));
+        const published = publishTransportSurfaceSlab({ physics, transforms, rawSurface, supportKind: bridge.variant || 'skybridge' });
+        const surface = published.surface;
+        if (bridge.axis === 'x') {
+            for (const z of [surface.z - surface.hz, surface.z + surface.hz]) emitTransportRail({
+                physics, wallList: transforms.wallGroups[0], surfaceId: surface.id,
+                x1: surface.x - surface.hx, z1: z, x2: surface.x + surface.hx, z2: z,
+                y, height: railH, thickness: railT,
+            });
+        } else {
+            for (const x of [surface.x - surface.hx, surface.x + surface.hx]) emitTransportRail({
+                physics, wallList: transforms.wallGroups[0], surfaceId: surface.id,
+                x1: x, z1: surface.z - surface.hz, x2: x, z2: surface.z + surface.hz,
+                y, height: railH, thickness: railT,
+            });
+        }
+        for (const overlap of published.overlaps) smoothTransportUnion({ physics, transforms, a: surface, b: overlap });
+        if (hanging) {
+            const span = Math.abs(to - from);
+            const postCount = Math.max(2, Math.floor(span / 1.7));
+            for (let i = 0; i <= postCount; i++) {
+                const along = from + (to - from) * (i / postCount);
+                const sag = Math.sin(Math.PI * (i / postCount)) * 0.38;
+                if (bridge.axis === 'x') {
+                    transforms.props.push({ x: along, y: y + 1.02 - sag, z: fixedCoord - width * 0.5, sx: 0.055, sy: 1.08 - sag, sz: 0.055 });
+                    transforms.props.push({ x: along, y: y + 1.02 - sag, z: fixedCoord + width * 0.5, sx: 0.055, sy: 1.08 - sag, sz: 0.055 });
+                } else {
+                    transforms.props.push({ x: fixedCoord - width * 0.5, y: y + 1.02 - sag, z: along, sx: 0.055, sy: 1.08 - sag, sz: 0.055 });
+                    transforms.props.push({ x: fixedCoord + width * 0.5, y: y + 1.02 - sag, z: along, sx: 0.055, sy: 1.08 - sag, sz: 0.055 });
                 }
             }
         }
@@ -3318,6 +3677,10 @@ export function createKowloonFabricEngine({
             skybridges++;
         }
 
+        const exteriorTransportNetwork = realizeExteriorTransportNetwork({
+            physics, transforms, stableKey: `${worldSeed}:${chunk.key}:exterior-transport`,
+        });
+
         attachFabricMeshes(root, transforms, `chunk:${chunk.key}`);
 
         const payload = {
@@ -3330,6 +3693,7 @@ export function createKowloonFabricEngine({
             buildings,
             plazas,
             skybridges,
+            exteriorTransportNetwork,
             buildingFootprintInvariant,
             portals: { ...roadPlan.portals },
             roadCells: roadPlan.roads.size,

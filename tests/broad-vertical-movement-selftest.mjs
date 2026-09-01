@@ -31,7 +31,9 @@ const bridgePolicy = policyMod.planExteriorStreetLayerPolicy({ floors: 5, existi
 assert.deepEqual([...bridgePolicy.layerFloors], [1, 2, 3, 4]);
 assert.deepEqual([...bridgePolicy.occupancyPortalFloors], [4], 'existing walkway portal consumes the exterior-connection budget first');
 assert.ok(policyMod.EXTERIOR_CIRCULATION_DEBT.some(item => item.tag === 'CIRC_DEBT_REAL_ROOM_AUTHORITY'));
-assert.ok(policyMod.EXTERIOR_CIRCULATION_DEBT.some(item => item.tag === 'CIRC_DEBT_STANDALONE_FIRE_ESCAPE_HEADROOM'));
+assert.ok(!policyMod.EXTERIOR_CIRCULATION_DEBT.some(item => item.tag === 'CIRC_DEBT_STANDALONE_FIRE_ESCAPE_HEADROOM'),
+  '06 resolves standalone scaffold headroom by replacing the old landing geometry');
+assert.ok(policyMod.EXTERIOR_CIRCULATION_DEBT.some(item => item.tag === 'CIRC_DEBT_CROSS_CHUNK_STREETS'));
 
 const truth = physical.resolvePhysicalTruth({
   physicalUse: 'industrial-service', role: 'maintenance-access', weirdness: 0.35,
@@ -155,8 +157,8 @@ for (const [x, z] of samples) {
 
   for (const scaffoldRoute of scaffoldRoutes) {
     scaffoldRoutesSeen++;
-    assert.equal(scaffoldRoute.topology, 'alternating-straight',
-      `${c.key}:${scaffoldRoute.id}: switchback composition debt remains parked`);
+    assert.equal(scaffoldRoute.topology, 'canonical-scaffold-switchback',
+      `${c.key}:${scaffoldRoute.id}: scaffold must use the fixed A=street/B=building half-lane switchback`);
   }
 
   for (const route of routes) {

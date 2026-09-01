@@ -1,4 +1,4 @@
-export const EXTERIOR_STREET_LAYER_POLICY_SCHEMA = 'jweb.exterior-street-layer-policy.v1';
+export const EXTERIOR_STREET_LAYER_POLICY_SCHEMA = 'jweb.exterior-street-layer-policy.v2';
 
 export const EXTERIOR_CIRCULATION_DEBT = Object.freeze([
   Object.freeze({
@@ -6,12 +6,8 @@ export const EXTERIOR_CIRCULATION_DEBT = Object.freeze([
     meaning: 'skeleton still models module-floor pseudo-occupancies instead of full room ownership',
   }),
   Object.freeze({
-    tag: 'CIRC_DEBT_CROSS_COMPOUND_STREETS',
-    meaning: 'street-layer v1 shares transport inside one compound facade; cross-compound balcony streets remain future work',
-  }),
-  Object.freeze({
-    tag: 'CIRC_DEBT_SWITCHBACK_REALIZER',
-    meaning: 'switchback fire-escape composition remains parked; v1 uses straight alternating wall trunks',
+    tag: 'CIRC_DEBT_CROSS_CHUNK_STREETS',
+    meaning: 'street-layer v2 stitches transport surfaces inside one generated chunk; cross-chunk elevated street continuity remains future work',
   }),
   Object.freeze({
     tag: 'CIRC_DEBT_INTERIOR_EGRESS',
@@ -19,15 +15,11 @@ export const EXTERIOR_CIRCULATION_DEBT = Object.freeze([
   }),
   Object.freeze({
     tag: 'CIRC_DEBT_GLOBAL_ROUTE_OPTIMIZATION',
-    meaning: 'street-layer v1 makes deterministic local choices rather than globally minimizing block connector count',
-  }),
-  Object.freeze({
-    tag: 'CIRC_DEBT_STANDALONE_FIRE_ESCAPE_HEADROOM',
-    meaning: 'street-layer trunks carve headroom throats; standalone legacy fire escapes still need the same landing-void migration',
+    meaning: 'transport v2 uses deterministic greedy component stitching rather than globally minimizing the whole district connector graph',
   }),
   Object.freeze({
     tag: 'CIRC_DEBT_FULL_BUILDER_PARITY',
-    meaning: 'browser skeleton is the restored path; the richer full builder still has independent circulation composition',
+    meaning: 'browser skeleton owns the stacked exterior street graph; richer full-builder balcony composition still has independent feature authoring',
   }),
 ]);
 
@@ -41,40 +33,46 @@ function sortedUniqueFloors(values, minFloor, maxFloor) {
 /**
  * Exterior circulation is planned as stacked street layers, not one staircase per door.
  * Existing bridge/catwalk portals consume the exterior-connection budget first.
- * Remaining occupancy doors are sparse attachments to the transport layers.
+ * A clear roof may be promoted to the top street layer when it fits the local trunk.
  */
 export function planExteriorStreetLayerPolicy({
   floors,
   existingPortalFloors = [],
-  maxLayers = 4,
+  maxLayers = 5,
   maxExteriorConnections = 2,
+  includeRoof = false,
 } = {}) {
   const floorCount = Math.max(1, Math.floor(Number(floors) || 1));
-  const upperFloor = Math.max(0, floorCount - 1);
-  if (upperFloor < 1) {
+  const highestOccupancyFloor = Math.max(0, floorCount - 1);
+  const layerCap = Math.max(1, Math.floor(Number(maxLayers) || 5));
+  const roofFitsLocalTrunk = includeRoof === true && floorCount <= layerCap;
+  const requestedTop = roofFitsLocalTrunk ? floorCount : highestOccupancyFloor;
+  const layerTop = Math.min(requestedTop, layerCap);
+  if (layerTop < 1) {
     return Object.freeze({
       schema: EXTERIOR_STREET_LAYER_POLICY_SCHEMA,
       layerFloors: Object.freeze([]),
       existingPortalFloors: Object.freeze([]),
       occupancyPortalFloors: Object.freeze([]),
+      roofFloor: null,
       maxExteriorConnections: Math.max(1, Math.floor(Number(maxExteriorConnections) || 2)),
       debtTags: Object.freeze(EXTERIOR_CIRCULATION_DEBT.map(item => item.tag)),
     });
   }
 
-  const layerTop = Math.min(upperFloor, Math.max(1, Math.floor(Number(maxLayers) || 4)));
-  // v1 intentionally keeps neighboring layers contiguous. Vertical edges connect
-  // street layer N only to N-1 / N+1 rather than jumping directly to occupancies.
   const layerFloors = Array.from({ length: layerTop }, (_, index) => index + 1);
-  const existing = sortedUniqueFloors(existingPortalFloors, 1, layerTop);
+  const roofFloor = roofFitsLocalTrunk && layerTop === floorCount ? floorCount : null;
+  const existing = sortedUniqueFloors(existingPortalFloors, 1, Math.min(highestOccupancyFloor, layerTop));
   const connectionBudget = Math.max(1, Math.floor(Number(maxExteriorConnections) || 2));
   const remainingDoorBudget = Math.max(0, connectionBudget - existing.length);
 
+  const eligibleDoorFloors = layerFloors.filter(floor => floor <= highestOccupancyFloor && floor !== roofFloor);
   const candidateDoors = [];
-  if (!existing.includes(1)) candidateDoors.push(1);
-  if (layerTop > 1 && !existing.includes(layerTop)) candidateDoors.push(layerTop);
-  for (let floor = 2; floor < layerTop; floor++) {
-    if (!existing.includes(floor)) candidateDoors.push(floor);
+  if (eligibleDoorFloors.includes(1) && !existing.includes(1)) candidateDoors.push(1);
+  const highestDoorFloor = eligibleDoorFloors[eligibleDoorFloors.length - 1];
+  if (highestDoorFloor > 1 && !existing.includes(highestDoorFloor)) candidateDoors.push(highestDoorFloor);
+  for (const floor of eligibleDoorFloors) {
+    if (floor !== 1 && floor !== highestDoorFloor && !existing.includes(floor)) candidateDoors.push(floor);
   }
   const occupancyPortalFloors = candidateDoors.slice(0, remainingDoorBudget);
 
@@ -83,6 +81,7 @@ export function planExteriorStreetLayerPolicy({
     layerFloors: Object.freeze(layerFloors),
     existingPortalFloors: Object.freeze(existing),
     occupancyPortalFloors: Object.freeze(occupancyPortalFloors),
+    roofFloor,
     maxExteriorConnections: connectionBudget,
     debtTags: Object.freeze(EXTERIOR_CIRCULATION_DEBT.map(item => item.tag)),
   });

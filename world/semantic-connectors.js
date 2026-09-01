@@ -4,6 +4,7 @@ import {
     createStairShaftReservation,
 } from './circulation-reservations.js';
 import { spacePlanTouchesPoint, spacePlanTouchesReservation } from './space-plan.js';
+import { assertStairShaftContainsFlight } from './stair-volume-contract.js';
 import {
     accessPortalFromConnector,
     normalizeAccessPortalSet,
@@ -192,6 +193,17 @@ export function createStairConnector({
         id: `${id}:shaft`,
         x, z, openingWidth, openingDepth, baseY, roofY, exitHeadroom: resolvedHeadroom,
         rampAxis, rampFrom, rampTo, rampHalfWidth, source,
+    });
+    assertStairShaftContainsFlight({
+        id,
+        reservation: shaft,
+        axis: rampAxis,
+        from: rampFrom,
+        to: rampTo,
+        fixedCoord: rampAxis === 'x' ? z : x,
+        halfWidth: rampHalfWidth,
+        y0: baseY,
+        y1: roofY,
     });
     return {
         schema: SEMANTIC_CONNECTOR_SCHEMA,

@@ -72,6 +72,16 @@ function freeIntervals(surface, apertures, padding = 0.22) {
     return result.filter(([lo, hi]) => hi - lo >= 0.5);
 }
 
+function indexAperturesBySurface(apertures) {
+    const bySurface = new Map();
+    for (const aperture of apertures ?? []) {
+        const list = bySurface.get(aperture.surfaceId) ?? [];
+        list.push(aperture);
+        bySurface.set(aperture.surfaceId, list);
+    }
+    return bySurface;
+}
+
 function pointForSurface(surface, u, y, outward = 0.03) {
     const t = surfaceTangent(surface);
     return {
@@ -133,11 +143,12 @@ function facadeHardwareSlots(surface, lo, hi, intervalIndex) {
     return slots;
 }
 
-function facadeOpportunities(surfaces, apertures, contextByEntity) {
+function facadeOpportunities(surfaces, aperturesBySurfaceId, contextByEntity) {
     const opportunities = [];
     for (const surface of surfaces) {
         const context = contextByEntity.get(surface.entityId);
-        const intervals = freeIntervals(surface, apertures);
+        const surfaceApertures = aperturesBySurfaceId.get(surface.id) ?? [];
+        const intervals = freeIntervals(surface, surfaceApertures);
         const tangent = surfaceTangent(surface);
         const surfaceFrame = {
             tangentX: tangent.x, tangentZ: tangent.z,
@@ -225,7 +236,7 @@ function facadeOpportunities(surfaces, apertures, contextByEntity) {
             }
         });
 
-        for (const aperture of apertures.filter(item => item.surfaceId === surface.id && item.traversable)) {
+        for (const aperture of surfaceApertures.filter(item => item.traversable)) {
             const reservationIds = [...(aperture.clearance ?? [])];
             const connectorHost = aperture.connectorId ?? surface.id;
             const left = aperture.uMin - 0.58;
@@ -326,7 +337,7 @@ function cornerDistance(a, b) {
     return best;
 }
 
-function spectacleOpportunities(chunk, payload, surfaces, apertures, contextByEntity) {
+function spectacleOpportunities(chunk, payload, surfaces, aperturesBySurfaceId, contextByEntity) {
     const candidatesByEntity = new Map();
     const pushCandidate = (entityId, candidate) => {
         const list = candidatesByEntity.get(entityId) ?? [];
@@ -337,7 +348,7 @@ function spectacleOpportunities(chunk, payload, surfaces, apertures, contextByEn
     for (const surface of surfaces) {
         const wallHeight = Math.max(0, finite(surface.yMax) - finite(surface.yMin));
         if (wallHeight < 3.4) continue;
-        for (const [lo, hi] of freeIntervals(surface, apertures, 0.34)) {
+        for (const [lo, hi] of freeIntervals(surface, aperturesBySurfaceId.get(surface.id) ?? [], 0.34)) {
             const width = hi - lo;
             if (width < 3.2) continue;
             const segment = spectacleSegment(surface, lo, hi);
@@ -630,11 +641,14 @@ export function compileSemanticContext({ chunk, payload, tasks = [], debugWeight
     const spatialTopology = compileSpatialTopologyGraph({ chunk, payload });
     const surfaces = spatialTopology.surfaces;
     const apertures = spatialTopology.apertures;
-    for (const surface of surfaces) surface.apertureIds = apertures.filter(item => item.surfaceId === surface.id).map(item => item.id);
+    // Apertures are reused by facade, portal and spectacle discovery. Index once
+    // instead of rescanning the full aperture corpus for every surface.
+    const aperturesBySurfaceId = indexAperturesBySurface(apertures);
+    for (const surface of surfaces) surface.apertureIds = (aperturesBySurfaceId.get(surface.id) ?? []).map(item => item.id);
 
-    const facade = facadeOpportunities(surfaces, apertures, contextByEntity);
+    const facade = facadeOpportunities(surfaces, aperturesBySurfaceId, contextByEntity);
     const roof = roofOpportunities(payload, contextByEntity);
-    const spectacle = spectacleOpportunities(chunk, payload, surfaces, apertures, contextByEntity);
+    const spectacle = spectacleOpportunities(chunk, payload, surfaces, aperturesBySurfaceId, contextByEntity);
     // Candidate discovery is deliberately non-destructive. The building-level
     // composition authority decides which spectacle host actually claims a surface;
     // ordinary sign/service/hardware opportunities remain available until then.

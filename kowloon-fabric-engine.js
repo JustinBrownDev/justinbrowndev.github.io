@@ -806,6 +806,68 @@ export function createKowloonFabricEngine({
             ?? (doorPool.length ? doorPool[siteSeed % doorPool.length] : null);
         const entranceFaces = forcedEntranceFaces.length ? forcedEntranceFaces : (doorFace ? [doorFace] : []);
 
+        // STRUCTURAL FAST LANE: restore one deterministic exterior fire-escape/scaffold
+        // route per eligible compound without enabling Building Plan, interiors, micro
+        // enrichment, or authored decoration. This uses the same planner + realizer as
+        // the full structural path and reserves its facade apertures before wall emission.
+        const broadCirculationStartCount = physics.circulationReservations?.length ?? 0;
+        const scaffoldCandidates = streetFaces.filter(face => !face.courtyard && face.module.floors >= 2);
+        const scaffoldOpeningByKey = new Map();
+        let scaffoldPlan = null;
+        let scaffoldSide = null;
+        if (scaffoldCandidates.length) {
+            const scaffoldPresenceRng = mulberry32(hashString32(`${siteSeed}:scaffold-presence`));
+            const scaffoldChance = kowloonIntensity(chunk.weirdness?.sampled ?? 0).scaffoldChance;
+            if (scaffoldPresenceRng() < scaffoldChance) {
+                const validScaffolds = scaffoldCandidates.map(face => {
+                    const seed = hashString32(`${siteSeed}:scaffold:${face.module.key}:${face.dir.side}`);
+                    const moduleDepth = Math.min(face.module.rect.halfX, face.module.rect.halfZ);
+                    const scaffoldEnvelopeDepth = Math.max(1.2, Math.min(2.4, moduleDepth * 0.72));
+                    const plan = planExteriorScaffoldRoute({
+                        fp: face.module.rect,
+                        moduleKey: face.module.key,
+                        floors: face.module.floors,
+                        floorH,
+                        side: face.dir.side,
+                        seed,
+                        physicalTruth: servicePhysicalTruth,
+                        maxExteriorDepth: scaffoldEnvelopeDepth,
+                        routeId: `${chunk.key}:${siteSignature}:${face.module.key}:scaffold:${face.dir.side}`,
+                    });
+                    if (!plan) return null;
+                    const openingConflict = plan.openings.some(opening => {
+                        const openingKey = `${face.module.key}:${face.dir.key}:${opening.level}`;
+                        return bridgeOpeningKeys.has(openingKey)
+                            || (opening.level === 0 && entranceFaces.some(entrance =>
+                                entrance.module === face.module && entrance.dir.key === face.dir.key));
+                    });
+                    return openingConflict ? null : { face, plan };
+                }).filter(Boolean);
+                validScaffolds.sort((a, b) => {
+                    const heightRank = b.face.module.floors - a.face.module.floors;
+                    if (heightRank) return heightRank;
+                    const topologyRank = (a.plan.topology === 'alternating-straight' ? 0 : 1)
+                        - (b.plan.topology === 'alternating-straight' ? 0 : 1);
+                    if (topologyRank) return topologyRank;
+                    const aMargin = a.plan.facadeTangentAvailable - a.plan.tangentSpan;
+                    const bMargin = b.plan.facadeTangentAvailable - b.plan.tangentSpan;
+                    if (Math.abs(aMargin - bMargin) > 1e-9) return bMargin - aMargin;
+                    return `${a.face.module.key}:${a.face.dir.side}`.localeCompare(`${b.face.module.key}:${b.face.dir.side}`);
+                });
+                const accepted = validScaffolds[0] ?? null;
+                if (accepted) {
+                    scaffoldPlan = accepted.plan;
+                    scaffoldSide = accepted.face.dir.side;
+                    for (const opening of scaffoldPlan.openings) {
+                        scaffoldOpeningByKey.set(
+                            `${accepted.face.module.key}:${accepted.face.dir.key}:${opening.level}`,
+                            { width: opening.width, height: opening.height, center: opening.tangent, routeId: scaffoldPlan.id, openingId: opening.id },
+                        );
+                    }
+                }
+            }
+        }
+
         for (let broadModuleIndex = 0; broadModuleIndex < modulePlans.length; broadModuleIndex++) {
             const module = modulePlans[broadModuleIndex];
             transforms.slabs.push({
@@ -836,6 +898,8 @@ export function createKowloonFabricEngine({
                     let opening = 0;
                     if (bridgeOpeningKeys.has(openingKey)) {
                         opening = servicePhysicalTruth?.door?.clearWidth?.realizedSI ?? 1.35;
+                    } else if (scaffoldOpeningByKey.has(openingKey)) {
+                        opening = scaffoldOpeningByKey.get(openingKey);
                     } else if (floor === 0 && entranceFaces.some(face => face.module === module && face.dir.key === dir.key)) {
                         opening = physicalTruth?.door?.clearWidth?.realizedSI ?? 1.35;
                     }
@@ -896,6 +960,18 @@ export function createKowloonFabricEngine({
             };
         }
 
+        let scaffoldLandings = 0;
+        if (scaffoldPlan) {
+            scaffoldLandings = realizeExteriorScaffold({ physics, transforms, plan: scaffoldPlan });
+            yield {
+                phase: 'broad-scaffold',
+                current: 1,
+                total: 1,
+                moduleKey: scaffoldPlan.moduleKey,
+                routeId: scaffoldPlan.id,
+            };
+        }
+
         const bounds = modulePlans.reduce((acc, module) => ({
             minX: Math.min(acc.minX, module.rect.cx - module.rect.halfX),
             maxX: Math.max(acc.maxX, module.rect.cx + module.rect.halfX),
@@ -944,8 +1020,8 @@ export function createKowloonFabricEngine({
             exposedSetbackFaces,
             partyFaces,
             balconySide: null,
-            scaffoldSide: null,
-            scaffoldLandings: 0,
+            scaffoldSide,
+            scaffoldLandings,
             serviceCages: 0,
             cantileverRooms: 0,
             mezzanines: 0,
@@ -954,7 +1030,7 @@ export function createKowloonFabricEngine({
             rooftopMechanical: 0,
             roofCrowns: roofTopper === 'none' ? 0 : 1,
             roofTopper,
-            circulationReservationCount: 0,
+            circulationReservationCount: Math.max(0, (physics.circulationReservations?.length ?? 0) - broadCirculationStartCount),
             singularRecipe: structureProfile?.singularRecipe ?? null,
             exteriorIdentity: structureProfile?.exteriorIdentity ? { ...structureProfile.exteriorIdentity } : null,
             exteriorMacroPreference: structureProfile?.exteriorMacroPreference ? { ...structureProfile.exteriorMacroPreference } : null,

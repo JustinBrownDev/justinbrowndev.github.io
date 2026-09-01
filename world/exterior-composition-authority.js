@@ -623,7 +623,7 @@ function planForEntity(chunkKey, entityId, entity, selectedSpectacleEntry, build
     const profile = STYLE_PROFILES[style] ?? STYLE_PROFILES[EXTERIOR_COMPOSITION_STYLES.MIXED];
     const signageStress = GENERATION_LANES.signageStress === true;
     const caps = signageStress
-        ? { spectacle: 2, identity: 8, macro: 4, medium: 1, micro: 0 }
+        ? { spectacle: 2, identity: 8, macro: 2, medium: 1, micro: 0 }
         : { ...profile.caps };
     if (selectedSpectacleEntry && !signageStress) caps.spectacle = 1;
     return {
@@ -1189,7 +1189,7 @@ function buildPlannerServiceCandidates({ chunk, payload, buildings, groups, sele
         // content common without turning opportunity count into density.
         const facadeMacro = bestOpportunity(chunkKey, entityId, opportunities, ['facade-service-band', 'wall-mounted-prop-zone'], reserved);
         const allowFacadeMacro = !GENERATION_LANES.signageStress
-            || hash32(`${chunkKey}:${entityId}:signage-stress:facade-prop`) % 100 < 82;
+            || hash32(`${chunkKey}:${entityId}:signage-stress:facade-prop`) % 100 < 28;
         if (facadeMacro && allowFacadeMacro) {
             addServiceTask(entity, facadeMacro, {
                 semanticFamily: entity.exteriorMacroPreference?.facadeSemanticFamily

@@ -66,14 +66,17 @@ const shared = vertical.planExteriorStreetLayerTrunk({
 });
 assert.ok(shared, 'three stacked transport layers should fit the unit facade');
 assert.equal(vertical.assertFastVerticalRoute(shared), true);
-assert.equal(shared.graphAuthority, 'exterior-street-layer-first');
-assert.equal(shared.shape, 'street-layer-trunk');
+assert.equal(shared.graphAuthority, 'landing-before-flight');
+assert.equal(shared.shape, 'landing-routed-street-layer-trunk');
 assert.equal(shared.streetLayers.length, 3, 'transport layers are independent of the number of occupancy doors');
 assert.equal(shared.portalStops.length, 2, 'one occupancy should not receive a door at every transport layer');
 assert.equal(shared.flights.length, 3, 'ground->1->2->3 uses one vertical edge per neighboring street layer');
 assert.equal(shared.graph.edges.filter(edge => edge.kind === 'vertical-layer-neighbor').length, 3);
 assert.equal(shared.graph.edges.filter(edge => edge.kind === 'occupancy-threshold').length, 2);
-assert.ok(shared.generatedLandings.every(landing => landing.stairThroat), 'every generated street layer must carve a stair-headroom throat');
+assert.ok(shared.generatedLandings.every(landing => landing.stairThroat === null && landing.stairCarveAllowed === false),
+  'generated street-layer landings must remain intact horizontal circulation slabs');
+assert.equal(shared.flightHeadroomClearances.length, shared.flights.length,
+  'every flight must reserve headroom independently of the landing');
 for (const flight of shared.flights) {
   assert.equal(flight.axis, 'x', 'north facade street trunk must run along the wall');
   assert.ok(flight.fixedCoord + flight.halfWidth < -fp.halfZ,
@@ -164,8 +167,8 @@ for (const [x, z] of samples) {
   for (const route of routes) {
     routesSeen++;
     assert.equal(vertical.assertFastVerticalRoute(route), true);
-    assert.equal(route.graphAuthority, 'exterior-street-layer-first');
-    assert.equal(route.shape, 'street-layer-trunk');
+    assert.equal(route.graphAuthority, 'landing-before-flight');
+    assert.equal(route.shape, 'landing-routed-street-layer-trunk');
     assert.ok(route.streetLayers.length >= 1);
     assert.equal(route.flights.length, route.streetLayers.length,
       `${c.key}:${route.id}: vertical movement must connect neighboring street layers, not individual doors`);
@@ -204,12 +207,13 @@ for (const [x, z] of samples) {
       assert.ok(pieces.length > 0, `${c.key}:${route.id}:${landing.id}: street layer must retain walkable deck pieces`);
       assert.ok(decks.some(deck => deck.routeId === route.id && deck.landingId === landing.id && deck.kind === 'exterior-street-layer'),
         `${c.key}:${route.id}:${landing.id}: generated balcony must publish as a transport layer`);
-      assert.ok(landing.stairThroat, `${c.key}:${route.id}:${landing.id}: stair throat missing`);
-      const throat = throats.find(item => item.routeId === route.id && item.landingId === landing.id);
-      assert.ok(throat, `${c.key}:${route.id}:${landing.id}: realized throat registry missing`);
+      assert.equal(landing.stairThroat, null, `${c.key}:${route.id}:${landing.id}: stair may not carve a landing`);
+      assert.equal(landing.stairCarveAllowed, false, `${c.key}:${route.id}:${landing.id}: landing carve policy drift`);
+      const throat = throats.find(item => item.routeId === route.id && item.landingId === landing.id && item.clearanceKind === 'flight-headroom');
+      assert.ok(throat, `${c.key}:${route.id}:${landing.id}: incoming flight headroom reservation missing`);
       throatsSeen++;
       assert.equal(pieces.some(piece => rectOverlap(piece, throat)), false,
-        `${c.key}:${route.id}:${landing.id}: deck slab still caps the stair headroom throat`);
+        `${c.key}:${route.id}:${landing.id}: intact landing overlaps the incoming flight headroom`);
     }
   }
   await factory.unload(c, payload);
@@ -219,7 +223,7 @@ assert.ok(routesSeen > 0, 'browser skeleton sample must publish exterior street-
 assert.ok(multiLayerRoutesSeen > 0, 'sample must get off the one-floor pattern and publish stacked exterior street layers');
 assert.ok(occupancyPortalsSeen > 0, 'sample must attach sparse occupancy doors to street layers');
 assert.ok(streetLayerDecksSeen > 0, 'sample must publish balconies/decks as horizontal transport');
-assert.ok(throatsSeen > 0, 'generated street layers must expose stair headroom throats');
+assert.ok(throatsSeen > 0, 'generated street layers must preserve independent flight headroom clearances');
 assert.ok(consumedScaffoldChecks > 0, 'sample must verify street-layer trunks consume redundant same-module fire escapes');
 console.log('[broad-vertical-movement-selftest] PASS', {
   samples: samples.length,
@@ -231,5 +235,5 @@ console.log('[broad-vertical-movement-selftest] PASS', {
   throatsSeen,
   scaffoldRoutesSeen,
   debtTags: policyMod.EXTERIOR_CIRCULATION_DEBT.map(item => item.tag),
-  invariant: 'occupancy demand -> sparse portals -> stacked street layers -> neighbor flights; balconies are transport, not per-door decoration',
+  invariant: 'occupancy demand -> target -> intact landing -> stair mouth -> separated flight; balconies remain horizontal transport',
 });

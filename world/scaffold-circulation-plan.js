@@ -1,8 +1,7 @@
 import { FACADE_STAIR_AUTHORITY_SCHEMA, planAlternatingFacadeStair } from './facade-stair-authority.js';
 import { assertCanonicalFacadeZigzag } from './stair-volume-contract.js';
 
-export const SCAFFOLD_CIRCULATION_PLAN_SCHEMA = 'jweb.scaffold-circulation-plan.v3';
-const EPS = 1e-7;
+export const SCAFFOLD_CIRCULATION_PLAN_SCHEMA = 'jweb.scaffold-circulation-plan.v4';
 
 function finitePositive(value, fallback = 0) {
   return Number.isFinite(Number(value)) && Number(value) > 0 ? Number(value) : fallback;
@@ -89,9 +88,9 @@ export function planExteriorScaffoldRoute({
   const doorWidth = finitePositive(physicalTruth?.door?.clearWidth?.realizedSI, 0.9);
   const doorHeight = finitePositive(physicalTruth?.door?.clearHeight?.realizedSI, 2.0);
   const landingTangentSize = Math.max(
-    clearWidth * 1.20,
+    clearWidth * 1.30,
     finitePositive(physicalTruth.stair.landingDepthSI, clearWidth),
-    doorWidth + 0.28,
+    doorWidth + 0.30,
   );
 
   const geometry = planAlternatingFacadeStair({
@@ -105,31 +104,24 @@ export function planExteriorScaffoldRoute({
     maxRun: Infinity,
     facadeMargin: Math.max(0.10, Number(facadeMargin) || 0),
     wallGap: Math.max(0.08, Number(wallGap) || 0),
+    landingTangentSize,
   });
   if (!geometry) return null;
 
-  // The graph-paper scheme is one full-story flight between alternating end
-  // landings. Both end landings live beyond the run, never over the flight below.
-  const tangentNeed = geometry.run + landingTangentSize * 2;
-  if (tangentNeed > geometry.tangentAvailable + EPS) return null;
-  const lowLandingCenter = geometry.runLow - landingTangentSize * 0.5;
-  const highLandingCenter = geometry.runHigh + landingTangentSize * 0.5;
-
-  const innerCoord = geometry.orientation.faceCoord + geometry.orientation.outward * 0.03;
-  const outerCoord = geometry.orientation.fixedCoord + geometry.orientation.outward * (geometry.halfWidth + 0.16);
-  const normalCenter = (innerCoord + outerCoord) * 0.5;
-  const normalDepth = Math.abs(outerCoord - innerCoord);
-  const exteriorDepth = geometry.orientation.outward * (outerCoord - geometry.orientation.faceCoord);
-  if (!(normalDepth > clearWidth * 0.75) || exteriorDepth > Number(maxExteriorDepth) + EPS) return null;
+  const exteriorDepth = geometry.orientation.outward * (
+    geometry.landingNormalCenter + geometry.orientation.outward * geometry.landingNormalSize * 0.5
+    - geometry.orientation.faceCoord
+  );
+  if (exteriorDepth > Number(maxExteriorDepth) + 1e-7) return null;
 
   const nodes = [];
-  const landings = [];
-  for (let level = 0; level <= count; level++) {
-    const anchor = geometry.landingAnchors[level];
-    const runLowSide = anchor.sideRole === 'run-low';
-    const tangentCenter = runLowSide ? lowLandingCenter : highLandingCenter;
-    const landingCenter = pointFor(geometry.orientation.tangentAxis, tangentCenter, normalCenter, level * rise);
-    const nodePoint = pointFor(geometry.orientation.tangentAxis, anchor.tangent, geometry.orientation.fixedCoord, level * rise);
+  const landings = geometry.landings.map((source, level) => {
+    const nodePoint = pointFor(
+      geometry.orientation.tangentAxis,
+      source.tangentCenter,
+      geometry.landingNormalCenter,
+      source.y,
+    );
     const landingId = `${id}:landing:floor:${level}`;
     const node = Object.freeze({
       id: `${id}:node:floor:${level}`,
@@ -137,42 +129,48 @@ export function planExteriorScaffoldRoute({
       ...nodePoint,
       kind: level === 0 ? 'ground' : level === count ? 'top' : 'floor',
       level,
-      laneRole: 'wall-flight',
+      laneRole: 'horizontal-landing-circulation',
     });
     nodes.push(node);
-    landings.push(Object.freeze({
+    return Object.freeze({
       id: landingId,
-      ...landingCenter,
-      sx: geometry.orientation.tangentAxis === 'x' ? landingTangentSize : normalDepth,
-      sz: geometry.orientation.tangentAxis === 'x' ? normalDepth : landingTangentSize,
-      tangentCenter,
-      normalCenter,
-      tangentSize: landingTangentSize,
-      normalSize: normalDepth,
-      y: level * rise,
+      x: source.geometry.x,
+      z: source.geometry.z,
+      sx: source.geometry.hx * 2,
+      sz: source.geometry.hz * 2,
+      tangentCenter: source.tangentCenter,
+      normalCenter: source.normalCenter,
+      tangentSize: source.tangentSize,
+      normalSize: source.normalSize,
+      y: source.y,
       nodeIds: Object.freeze([node.id]),
       kind: level === 0 ? 'ground-landing' : level === count ? 'top-landing' : 'floor-landing',
       level,
-      landingPosition: runLowSide ? 'run-low-beyond' : 'run-high-beyond',
-      stairEndpointTangent: anchor.tangent,
+      landingPosition: source.sideRole === 'run-low' ? 'run-low-beyond' : 'run-high-beyond',
+      stairEndpointTangent: source.stairMouthTangent,
+      incomingMouth: source.incomingMouth,
+      outgoingMouth: source.outgoingMouth,
+      targetPoint: source.targetPoint,
       geometryAuthority: FACADE_STAIR_AUTHORITY_SCHEMA,
-    }));
-  }
+      circulationRole: 'horizontal-access-space',
+      stairCarveAllowed: false,
+    });
+  });
 
   const flights = geometry.flights.map((flight, level) => Object.freeze({
     ...flight,
     id: `${id}:flight:${level}`,
     level,
     segment: 0,
-    laneRole: 'wall-flight',
+    laneRole: `stair-lane-${flight.laneIndex}`,
     fromNodeId: nodes[level].id,
     toNodeId: nodes[level + 1].id,
     fromLandingId: landings[level].id,
     toLandingId: landings[level + 1].id,
+    fromMouth: landings[level].outgoingMouth,
+    toMouth: landings[level + 1].incomingMouth,
   }));
 
-  // Preserve the existing wall-opening contract: one route-owned opening per
-  // served floor, including ground, and no invented extra doorway at the roof top.
   const openings = landings
     .filter(landing => landing.level < count)
     .map(landing => makeOpening({
@@ -187,22 +185,21 @@ export function planExteriorScaffoldRoute({
     }));
 
   const scaffoldEnvelope = Object.freeze({
-    schema: 'jweb.scaffold-envelope.v2',
+    schema: 'jweb.scaffold-envelope.v3',
     geometryAuthority: FACADE_STAIR_AUTHORITY_SCHEMA,
     faceNormal: geometry.orientation.faceCoord,
     outward: geometry.orientation.outward,
-    fixedCoord: geometry.orientation.fixedCoord,
-    normalCenter,
-    normalDepth,
+    normalCenter: geometry.landingNormalCenter,
+    normalDepth: geometry.landingNormalSize,
     exteriorDepth,
-    clearWidth,
+    clearWidth: geometry.clearWidth,
+    laneGap: geometry.laneGap,
+    laneCoords: geometry.laneCoords,
     runLow: geometry.runLow,
     runHigh: geometry.runHigh,
     run: geometry.run,
-    landingTangentSize,
-    lowLandingCenter,
-    highLandingCenter,
-    tangentSpan: tangentNeed,
+    landingTangentSize: geometry.landingTangentSize,
+    tangentSpan: geometry.totalTangentNeed,
   });
 
   const plan = Object.freeze({
@@ -217,11 +214,14 @@ export function planExteriorScaffoldRoute({
     axis: geometry.orientation.tangentAxis,
     floors: count,
     floorH: rise,
-    clearWidth,
-    landingDepth: landingTangentSize,
-    landingTangentSize,
+    clearWidth: geometry.clearWidth,
+    landingDepth: geometry.landingTangentSize,
+    landingTangentSize: geometry.landingTangentSize,
+    landingNormalSize: geometry.landingNormalSize,
+    laneGap: geometry.laneGap,
+    laneCoords: geometry.laneCoords,
     exteriorDepth,
-    tangentSpan: tangentNeed,
+    tangentSpan: geometry.totalTangentNeed,
     facadeTangentAvailable: geometry.tangentAvailable,
     scaffoldEnvelope,
     physicalTruth,

@@ -670,7 +670,18 @@ export function createKowloonFabricEngine({
             registerSemanticConnector(physics, connector);
         }
 
+        const scaffoldFlightClearances = physics.fastStairThroats ?? (physics.fastStairThroats = []);
         for (const flight of plan.flights) {
+            if (!flight.headroomClearance) throw new Error(`${plan.id}:${flight.id}: scaffold flight headroom clearance missing`);
+            scaffoldFlightClearances.push({
+                ...flight.headroomClearance,
+                routeId: plan.id,
+                flightId: flight.id,
+                landingId: flight.toLandingId,
+                y: flight.y1,
+                requiredHeadroom: flight.headroom,
+                clearanceKind: 'flight-headroom',
+            });
             const ramp = {
                 axis: flight.axis,
                 from: flight.from,
@@ -1150,6 +1161,7 @@ export function createKowloonFabricEngine({
         assertFastVerticalRoute(plan);
         const routeRegistry = physics.fastVerticalRoutes ?? (physics.fastVerticalRoutes = []);
         if (!routeRegistry.some(route => route.id === plan.id)) routeRegistry.push(plan);
+        const clearanceRegistry = physics.fastStairThroats ?? (physics.fastStairThroats = []);
 
         let realizedFlights = 0;
         let realizedLandings = 0;
@@ -1203,14 +1215,24 @@ export function createKowloonFabricEngine({
                 supportKind: 'broad-vertical-stair-guard',
                 metadata: { routeId: plan.id, flightId: flight.id, physicalUse: plan.physicalTruth?.physicalUse, visualRole: plan.family },
             });
+            if (!flight.headroomClearance) throw new Error(`${plan.id}:${flight.id}: flight headroom clearance missing`);
+            clearanceRegistry.push({
+                ...flight.headroomClearance,
+                routeId: plan.id,
+                flightId: flight.id,
+                landingId: flight.toLandingId,
+                y: flight.y1,
+                requiredHeadroom: flight.headroom,
+                clearanceKind: 'flight-headroom',
+            });
             realizedFlights++;
         }
 
         const deckRegistry = physics.fastExteriorDecks ?? (physics.fastExteriorDecks = []);
-        const throatRegistry = physics.fastStairThroats ?? (physics.fastStairThroats = []);
         for (const landing of plan.generatedLandings) {
             const geometry = landing.geometry;
-            const throat = landing.stairThroat ?? null;
+            if (landing.stairThroat) throw new Error(`${plan.id}:${landing.id}: landing carve is forbidden`);
+            const throat = null;
             const rawDeckUnionSurface = {
                 id: `${landing.id}:deck`, kind: 'balcony-street-layer',
                 x: geometry.x, z: geometry.z, hx: geometry.hx, hz: geometry.hz, y: landing.y,
@@ -1244,17 +1266,6 @@ export function createKowloonFabricEngine({
                     surfaceId: `${landing.id}:deck`,
                 });
             }
-            if (throat) {
-                throatRegistry.push({
-                    ...throat,
-                    routeId: plan.id,
-                    landingId: landing.id,
-                    floor: Number(landing.support?.floor) || Math.round(landing.y / Math.max(0.001, Number(plan.floorH))),
-                    y: landing.y,
-                    requiredHeadroom: plan.flights.find(flight => flight.toLandingId === landing.id)?.headroom ?? null,
-                });
-            }
-
             const deckSurfaceId = `${landing.id}:deck`;
             const deckSurface = registerExteriorTransportSurface(physics, {
                 id: deckSurfaceId,

@@ -1,68 +1,44 @@
 import assert from 'node:assert/strict';
 import { resolvePhysicalTruth } from '../world/physical-truth.js';
-import {
-  FACADE_STAIR_AUTHORITY_SCHEMA,
-  assertFacadeStairAuthority,
-  planAlternatingFacadeStair,
-} from '../world/facade-stair-authority.js';
+import { FACADE_STAIR_AUTHORITY_SCHEMA, assertFacadeStairAuthority, planAlternatingFacadeStair } from '../world/facade-stair-authority.js';
 
-const truth = resolvePhysicalTruth({
-  physicalUse: 'industrial-service', role: 'maintenance-access', weirdness: 0.42,
-  stableKey: 'facade-stair-authority-selftest',
-});
+const truth = resolvePhysicalTruth({ physicalUse: 'industrial-service', role: 'maintenance-access', weirdness: 0.42, stableKey: 'facade-stair-authority-selftest' });
+const overlaps = (a, b) => Math.abs(a.x - b.x) < a.hx + b.hx - 1e-7 && Math.abs(a.z - b.z) < a.hz + b.hz - 1e-7;
+const flightRect = f => f.axis === 'x'
+  ? { x: (f.from + f.to) * 0.5, z: f.fixedCoord, hx: Math.abs(f.to - f.from) * 0.5, hz: f.halfWidth }
+  : { x: f.fixedCoord, z: (f.from + f.to) * 0.5, hx: f.halfWidth, hz: Math.abs(f.to - f.from) * 0.5 };
 
 for (const side of ['north', 'south', 'west', 'east']) {
-  const plan = planAlternatingFacadeStair({
-    routeId: `authority:${side}`,
-    fp: { cx: 0, cz: 0, halfX: 8, halfZ: 8 },
-    side,
-    floors: 4,
-    floorH: 3.2,
-    physicalTruth: truth,
-    stableKey: `authority:${side}`,
-    maxRun: 6.5,
-  });
-  assert.ok(plan, `${side}: generous facade must accept one shared wall stair`);
+  const plan = planAlternatingFacadeStair({ routeId: `authority:${side}`, fp: { cx: 0, cz: 0, halfX: 10, halfZ: 8 }, side, floors: 4, floorH: 3.2, physicalTruth: truth, stableKey: `authority:${side}`, maxRun: 6.5 });
+  assert.ok(plan, `${side}: generous facade must accept landing-routed stair`);
   assert.equal(plan.schema, FACADE_STAIR_AUTHORITY_SCHEMA);
-  assert.equal(plan.topology, 'alternating-facade-zigzag');
+  assert.equal(plan.topology, 'landing-routed-facade-zigzag');
   assert.equal(plan.flights.length, 4);
-  assert.equal(plan.landingAnchors.length, 5);
+  assert.equal(plan.landings.length, 5);
+  assert.ok(plan.landingNormalSize > plan.clearWidth * 2, 'landing is horizontal circulation space, not stair width');
   assert.equal(assertFacadeStairAuthority(plan), true);
   for (let i = 0; i < plan.flights.length; i++) {
-    const flight = plan.flights[i];
-    assert.equal(flight.rise, 3.2, `${side}:${i}: each flight is a full floor, not a half-rise prism`);
-    assert.equal(flight.fixedCoord, plan.orientation.fixedCoord);
+    const f = plan.flights[i];
+    assert.equal(f.rise, 3.2);
+    assert.equal(f.laneIndex, i % 2);
+    assert.equal(f.fixedCoord, plan.laneCoords[i % 2]);
+    assert.equal(f.fromMouth.laneIndex, i % 2);
+    assert.equal(f.toMouth.laneIndex, i % 2);
+    assert.equal(overlaps(flightRect(f), plan.landings[i].geometry), false, 'flight cannot carve lower landing');
+    assert.equal(overlaps(flightRect(f), plan.landings[i + 1].geometry), false, 'flight cannot carve upper landing');
+    assert.equal(overlaps(f.headroomClearance, plan.landings[i + 1].geometry), false, 'headroom reservation must stop at upper landing edge');
     if (i > 0) {
-      const previous = plan.flights[i - 1];
-      assert.equal(previous.to, flight.from, `${side}:${i}: adjacent flights share the end landing`);
-      assert.notEqual(Math.sign(previous.to - previous.from), Math.sign(flight.to - flight.from), `${side}:${i}: direction must reverse`);
+      assert.notEqual(Math.sign(plan.flights[i - 1].to - plan.flights[i - 1].from), Math.sign(f.to - f.from));
+      assert.equal(overlaps(flightRect(plan.flights[i - 1]), flightRect(f)), false, 'return flight must sit beside prior flight, never overhead');
+      assert.notEqual(plan.landings[i].incomingMouth.laneIndex, plan.landings[i].outgoingMouth.laneIndex, 'turn landing transfers horizontally between lanes');
     }
-    assert.ok(flight.arrivalThroat.hx > 0 && flight.arrivalThroat.hz > 0);
   }
 }
 
-const portalBiased = planAlternatingFacadeStair({
-  routeId: 'authority:portal-bias',
-  fp: { cx: 0, cz: 0, halfX: 9, halfZ: 4 },
-  side: 'north', floors: 3, floorH: 3.2, physicalTruth: truth, stableKey: 'portal-bias',
-  preferredLandingTangents: { 1: [4.2], 2: [-4.0], 3: [4.1] },
-});
+const portalBiased = planAlternatingFacadeStair({ routeId: 'authority:portal-bias', fp: { cx: 0, cz: 0, halfX: 12, halfZ: 4 }, side: 'north', floors: 3, floorH: 3.2, physicalTruth: truth, stableKey: 'portal-bias', preferredLandingTangents: { 1: [5.5], 2: [-5.5], 3: [5.5] } });
 assert.ok(portalBiased);
 assert.equal(portalBiased.placement.portalBiased, true);
-assert.equal(portalBiased.placement.preferredLandingCount, 3);
-assert.ok(portalBiased.placement.demandScore <= portalBiased.placement.alternateDemandScore + 1e-9,
-  'portal-first demand must select the lower-error alternating placement rather than inventing a second stair author');
-assert.ok(portalBiased.landingAnchors[1].tangent > portalBiased.tangentCenter
-  && portalBiased.landingAnchors[2].tangent < portalBiased.tangentCenter
-  && portalBiased.landingAnchors[3].tangent > portalBiased.tangentCenter,
-  'preferred + / - / + portal demand should choose the matching alternating landing ends');
+assert.ok(portalBiased.placement.demandScore <= portalBiased.placement.alternateDemandScore + 1e-9);
+assert.equal(planAlternatingFacadeStair({ routeId: 'authority:too-small', fp: { cx: 0, cz: 0, halfX: 2.0, halfZ: 1.0 }, side: 'north', floors: 3, floorH: 3.2, physicalTruth: truth }), null);
 
-assert.equal(planAlternatingFacadeStair({
-  routeId: 'authority:too-small', fp: { cx: 0, cz: 0, halfX: 1.0, halfZ: 1.0 },
-  side: 'north', floors: 3, floorH: 3.2, physicalTruth: truth,
-}), null, 'impossible facade must omit the stair rather than compress its truth');
-
-console.log('[facade-stair-authority-selftest] PASS', {
-  topology: 'alternating-facade-zigzag',
-  invariant: 'one full-story wall flight per rise; end landings alternate; portal demand may bias the shared run',
-});
+console.log('[facade-stair-authority-selftest] PASS', { topology: 'landing-routed-facade-zigzag', invariant: 'targets create horizontal landings first; stairs hook to landing edges; alternating flights use separate lanes' });

@@ -1,6 +1,7 @@
 import { reservationContainsRamp } from './circulation-reservations.js';
+import { FACADE_STAIR_AUTHORITY_SCHEMA } from './facade-stair-authority.js';
 
-export const STAIR_VOLUME_CONTRACT_SCHEMA = 'jweb.stair-volume-contract.v1';
+export const STAIR_VOLUME_CONTRACT_SCHEMA = 'jweb.stair-volume-contract.v2';
 const EPS = 1e-6;
 
 function fail(id, message) {
@@ -60,57 +61,50 @@ export function assertLandingThroatClearsFlight({ id = 'stair-throat', landing, 
   return true;
 }
 
-export function assertCanonicalScaffoldSwitchback(plan) {
+export function assertCanonicalFacadeZigzag(plan) {
   const id = plan?.id || 'scaffold';
-  if (!plan || plan.topology !== 'canonical-scaffold-switchback') fail(id, 'scaffold staircase must use the canonical two-half-lane switchback');
+  if (!plan || plan.topology !== 'canonical-facade-zigzag') fail(id, 'scaffold staircase must use the canonical full-story facade zigzag');
+  if (plan.geometryAuthority !== FACADE_STAIR_AUTHORITY_SCHEMA) fail(id, 'scaffold staircase escaped the shared facade stair authority');
   const env = plan.scaffoldEnvelope;
-  if (!env || env.schema !== 'jweb.scaffold-envelope.v1') fail(id, 'canonical scaffold envelope metadata missing');
-  if (!(env.normalDepth > 0) || !(env.laneWidth > 0) || !(env.landingTangentSize > 0)) fail(id, 'invalid scaffold envelope dimensions');
-  if (!near(env.normalDepth, env.laneWidth * 2 + env.laneGap)) fail(id, 'scaffold prism depth must equal two stair lanes plus the lane gap');
-  const expectedStreet = env.normalCenter + env.outward * env.laneOffset;
-  const expectedBuilding = env.normalCenter - env.outward * env.laneOffset;
-  if (!near(env.streetLaneCoord, expectedStreet) || !near(env.buildingLaneCoord, expectedBuilding)) fail(id, 'street/building half-lanes drifted from the prism');
-  const streetDistance = env.outward * (env.streetLaneCoord - env.faceNormal);
-  const buildingDistance = env.outward * (env.buildingLaneCoord - env.faceNormal);
-  if (!(streetDistance > buildingDistance + EPS)) fail(id, 'A lane must be the half closer to the street and B the half closer to the building');
+  if (!env || env.schema !== 'jweb.scaffold-envelope.v2') fail(id, 'canonical facade scaffold envelope metadata missing');
+  if (!(env.normalDepth > 0) || !(env.clearWidth > 0) || !(env.landingTangentSize > 0)) fail(id, 'invalid scaffold envelope dimensions');
+  if (!(env.runHigh > env.runLow + EPS) || !near(env.run, env.runHigh - env.runLow)) fail(id, 'invalid facade stair run');
+  if (plan.flights.length !== plan.floors) fail(id, 'each scaffold story requires exactly one full-story flight');
+  if (plan.landings.length !== plan.floors + 1) fail(id, 'each floor elevation requires one end landing');
 
-  if (plan.flights.length !== plan.floors * 2) fail(id, 'each scaffold story requires exactly two flights');
   for (let level = 0; level < plan.floors; level++) {
-    const a = plan.flights.find(flight => flight.level === level && flight.segment === 0);
-    const b = plan.flights.find(flight => flight.level === level && flight.segment === 1);
-    if (!a || !b) fail(id, `story ${level} is missing A/B switchback flights`);
-    if (a.laneRole !== 'street-half' || b.laneRole !== 'building-half') fail(id, `story ${level} A/B lane roles are reversed`);
-    if (!near(a.fixedCoord, env.streetLaneCoord) || !near(b.fixedCoord, env.buildingLaneCoord)) fail(id, `story ${level} flight escaped its assigned half of the scaffold prism`);
-    if (!near(a.from, env.runLow) || !near(a.to, env.runHigh)) fail(id, `story ${level} A flight must run low->high`);
-    if (!near(b.from, env.runHigh) || !near(b.to, env.runLow)) fail(id, `story ${level} B flight must run high->low`);
-
-    const floorLanding = plan.landings.find(landing => landing.kind === 'floor-landing' && landing.level === level);
-    const midLanding = plan.landings.find(landing => landing.kind === 'switchback-landing' && landing.level === level);
-    const nextLanding = plan.landings.find(landing => landing.kind === 'floor-landing' && landing.level === level + 1);
-    if (!floorLanding || !midLanding || !nextLanding) fail(id, `story ${level} landing chain incomplete`);
-    if (!near(floorLanding.tangentCenter, env.floorLandingCenter) || !near(midLanding.tangentCenter, env.turnLandingCenter) || !near(nextLanding.tangentCenter, env.floorLandingCenter)) {
-      fail(id, `story ${level} landings are not at the two ends of the run`);
+    const flight = plan.flights[level];
+    const lower = plan.landings[level];
+    const upper = plan.landings[level + 1];
+    if (!flight || !lower || !upper) fail(id, `story ${level} route chain incomplete`);
+    if (!near(flight.rise, plan.floorH)) fail(id, `story ${level} must climb exactly one floor`);
+    if (!near(flight.fixedCoord, env.fixedCoord)) fail(id, `story ${level} left the wall-hugging stair line`);
+    if (!near(Math.abs(flight.to - flight.from), env.run)) fail(id, `story ${level} flight run drifted`);
+    if (level > 0) {
+      const previous = plan.flights[level - 1];
+      if (!near(previous.to, flight.from)) fail(id, `story ${level} does not start at the prior end landing`);
+      if (Math.sign(previous.to - previous.from) === Math.sign(flight.to - flight.from)) fail(id, `story ${level} did not reverse direction`);
     }
-    for (const landing of [floorLanding, midLanding, nextLanding]) {
-      if (!near(landing.normalSize, env.normalDepth)) fail(id, `${landing.id} must span the full scaffold width`);
-    }
+    const lowerExpected = lower.landingPosition === 'run-low-beyond' ? env.runLow : env.runHigh;
+    const upperExpected = upper.landingPosition === 'run-low-beyond' ? env.runLow : env.runHigh;
+    if (!near(flight.from, lowerExpected) || !near(flight.to, upperExpected)) fail(id, `story ${level} does not connect its alternating end landings`);
 
-    // The slab may touch a flight exactly at its endpoint, but must never cover
-    // positive run distance. That is the head-through-ceiling/descent killer.
-    for (const [flight, landing] of [[a, midLanding], [b, nextLanding]]) {
-      const flightAlong0 = Math.min(flight.from, flight.to);
-      const flightAlong1 = Math.max(flight.from, flight.to);
-      const landingAlong0 = landing.tangentCenter - landing.tangentSize * 0.5;
-      const landingAlong1 = landing.tangentCenter + landing.tangentSize * 0.5;
-      const flightCross0 = flight.fixedCoord - flight.halfWidth;
-      const flightCross1 = flight.fixedCoord + flight.halfWidth;
-      const landingCross0 = env.normalCenter - env.normalDepth * 0.5;
-      const landingCross1 = env.normalCenter + env.normalDepth * 0.5;
-      if (positiveOverlap(flightAlong0, flightAlong1, landingAlong0, landingAlong1)
-          && positiveOverlap(flightCross0, flightCross1, landingCross0, landingCross1)) {
-        fail(id, `${landing.id} overlaps the incoming flight instead of beginning after its run`);
-      }
+    // End landings may touch the flight endpoint but may never extend back over
+    // positive run distance. This is the graph-paper X / diagonal / X invariant.
+    for (const [landing, endpoint] of [[lower, flight.from], [upper, flight.to]]) {
+      const landing0 = landing.tangentCenter - landing.tangentSize * 0.5;
+      const landing1 = landing.tangentCenter + landing.tangentSize * 0.5;
+      const flight0 = Math.min(flight.from, flight.to);
+      const flight1 = Math.max(flight.from, flight.to);
+      if (positiveOverlap(landing0, landing1, flight0, flight1)) fail(id, `${landing.id} overlaps the flight run instead of living beyond its endpoint`);
+      if (near(endpoint, env.runLow) && !near(landing1, env.runLow)) fail(id, `${landing.id} must terminate exactly at run-low`);
+      if (near(endpoint, env.runHigh) && !near(landing0, env.runHigh)) fail(id, `${landing.id} must begin exactly at run-high`);
+      if (!(landing.normalSize >= flight.clearWidth - EPS)) fail(id, `${landing.id} is narrower than the stair clear width`);
     }
   }
   return true;
 }
+
+// Compatibility export for older engine callsites. The semantics are intentionally
+// upgraded: there is no two-half-lane prism anymore.
+export const assertCanonicalScaffoldSwitchback = assertCanonicalFacadeZigzag;

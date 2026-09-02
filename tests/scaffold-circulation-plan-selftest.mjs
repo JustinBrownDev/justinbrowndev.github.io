@@ -1,98 +1,58 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import { resolvePhysicalTruth } from '../world/physical-truth.js';
+import { FACADE_STAIR_AUTHORITY_SCHEMA } from '../world/facade-stair-authority.js';
 import { planExteriorScaffoldRoute, scaffoldRouteIsContinuous } from '../world/scaffold-circulation-plan.js';
+import { assertCanonicalFacadeZigzag } from '../world/stair-volume-contract.js';
 
 const truth = resolvePhysicalTruth({
-  physicalUse: 'industrial-service',
-  role: 'maintenance-access',
-  weirdness: 0.72,
-  stableKey: 'scaffold-circulation-selftest',
+  physicalUse: 'industrial-service', role: 'maintenance-access', weirdness: 0.42,
+  stableKey: 'scaffold-graph-paper-selftest',
 });
 
-function assertPlan(plan, topology, floors) {
-  assert.ok(plan, `${topology} route must exist`);
-  assert.equal(plan.topology, topology);
-  assert.equal(plan.fitStatus, 'fits-resolved-truth');
-  assert.equal(plan.side, plan.face.side);
-  assert.equal(plan.moduleKey, plan.face.moduleKey);
-  assert.equal(plan.openings.length, floors, 'each occupied floor must get one route-derived facade opening');
-  assert.equal(scaffoldRouteIsContinuous(plan), true);
-  assert.equal(plan.flights.length, topology === 'two-flight-switchback' ? floors * 2 : floors);
-  const nodes = new Map(plan.nodes.map(node => [node.id, node]));
-  const landings = new Map(plan.landings.map(landing => [landing.id, landing]));
-  assert.ok(nodes.has(plan.groundNodeId));
-  assert.ok(nodes.has(plan.topNodeId));
-  assert.equal(nodes.get(plan.groundNodeId).y, 0);
-  assert.equal(nodes.get(plan.topNodeId).y, floors * plan.floorH);
-
-  for (const node of plan.nodes) {
-    assert.ok(landings.has(node.landingId), `node ${node.id} must belong to a real landing`);
-    assert.ok(landings.get(node.landingId).nodeIds.includes(node.id), `landing must claim node ${node.id}`);
-  }
-  for (const opening of plan.openings) {
-    assert.equal(opening.moduleKey, plan.moduleKey);
-    assert.equal(opening.side, plan.side);
-    assert.ok(landings.has(opening.landingId));
-    assert.ok(opening.nodeIds.every(id => nodes.has(id)));
-    assert.ok(opening.width + 1e-9 >= truth.door.clearWidth.realizedSI);
-    assert.ok(opening.height + 1e-9 >= truth.door.clearHeight.realizedSI);
-  }
-  for (const flight of plan.flights) {
-    assert.equal(flight.fitClassification, 'fits-resolved-truth');
-    assert.ok(flight.stairFlight.realizedTreadDepth + 1e-9 >= truth.stair.tread.sourceMinimum.canonicalSI,
-      `flight ${flight.id} must preserve source-minimum tread depth`);
-    assert.ok(flight.stairFlight.riserHeight <= truth.stair.riser.realizedSI + 1e-9,
-      `flight ${flight.id} must preserve resolved maximum riser height`);
-    assert.equal(flight.clearWidth, truth.stair.widthSI);
-    assert.equal(flight.headroom, truth.stair.headroomSI);
-    const from = nodes.get(flight.fromNodeId);
-    const to = nodes.get(flight.toNodeId);
-    assert.ok(from && to);
-    assert.equal(from.y, flight.y0);
-    assert.equal(to.y, flight.y1);
-    if (flight.axis === 'x') {
-      assert.equal(from.x, flight.from); assert.equal(to.x, flight.to);
-      assert.equal(from.z, flight.fixedCoord); assert.equal(to.z, flight.fixedCoord);
-    } else {
-      assert.equal(from.z, flight.from); assert.equal(to.z, flight.to);
-      assert.equal(from.x, flight.fixedCoord); assert.equal(to.x, flight.fixedCoord);
-    }
-  }
-}
-
-const nominal = planExteriorScaffoldRoute({
-  fp: { cx: 0, cz: 0, halfX: 4.2, halfZ: 2.4 }, moduleKey: 'straight-module', floors: 4, floorH: 3.2,
-  side: 'north', seed: 101, physicalTruth: truth, maxExteriorDepth: 2.8,
-});
-assertPlan(nominal, 'alternating-straight', 4);
-assert.deepEqual(planExteriorScaffoldRoute({
-  fp: { cx: 0, cz: 0, halfX: 4.2, halfZ: 2.4 }, moduleKey: 'straight-module', floors: 4, floorH: 3.2,
-  side: 'north', seed: 101, physicalTruth: truth, maxExteriorDepth: 2.8,
-}), nominal, 'planner output must be deterministic');
-
-let switchback = null;
-for (let half = 1.45; half <= 3.4 && !switchback; half += 0.05) {
-  const candidate = planExteriorScaffoldRoute({
-    fp: { cx: 12, cz: -4, halfX: half, halfZ: 2.2 }, moduleKey: 'switch-module', floors: 3, floorH: 3.2,
-    side: 'south', seed: 202, physicalTruth: truth, maxExteriorDepth: 2.8,
+for (const side of ['north', 'south', 'west', 'east']) {
+  const plan = planExteriorScaffoldRoute({
+    fp: { cx: 0, cz: 0, halfX: 8.5, halfZ: 8.5 }, siteId: 4, moduleKey: `module:${side}`,
+    floors: 4, floorH: 3.2, side, seed: 808, physicalTruth: truth, maxExteriorDepth: 3.0,
+    routeId: `canonical:${side}`,
   });
-  if (candidate?.topology === 'two-flight-switchback') switchback = candidate;
+  assert.ok(plan, `${side}: graph-paper scaffold must fit the generous facade`);
+  assert.equal(plan.topology, 'canonical-facade-zigzag');
+  assert.equal(plan.geometryAuthority, FACADE_STAIR_AUTHORITY_SCHEMA);
+  assert.equal(plan.flights.length, 4, 'one full-story flight per floor rise');
+  assert.equal(plan.landings.length, 5, 'one end landing at each floor elevation');
+  assert.equal(plan.openings.length, 4);
+  assert.equal(scaffoldRouteIsContinuous(plan), true);
+  assert.equal(assertCanonicalFacadeZigzag(plan), true);
+  for (let i = 0; i < plan.flights.length; i++) {
+    const flight = plan.flights[i];
+    assert.equal(flight.segment, 0);
+    assert.equal(flight.rise, 3.2);
+    assert.equal(flight.fixedCoord, plan.scaffoldEnvelope.fixedCoord);
+    const lower = plan.landings[i];
+    const upper = plan.landings[i + 1];
+    assert.notEqual(lower.landingPosition, upper.landingPosition, 'end landing must alternate left/right along the facade');
+  }
+  const repeat = planExteriorScaffoldRoute({
+    fp: { cx: 0, cz: 0, halfX: 8.5, halfZ: 8.5 }, siteId: 4, moduleKey: `module:${side}`,
+    floors: 4, floorH: 3.2, side, seed: 808, physicalTruth: truth, maxExteriorDepth: 3.0,
+    routeId: `canonical:${side}`,
+  });
+  assert.deepEqual(repeat, plan, `${side}: route must remain deterministic`);
 }
-assertPlan(switchback, 'two-flight-switchback', 3);
-assert.ok(switchback.landings.some(landing => landing.nodeIds.length === 2), 'switchback must expose a real intermediate turn landing');
 
 assert.equal(planExteriorScaffoldRoute({
-  fp: { cx: 0, cz: 0, halfX: 0.85, halfZ: 2.2 }, floors: 5, floorH: 3.2,
-  side: 'north', seed: 303, physicalTruth: truth, maxExteriorDepth: 2.8,
-}), null, 'narrow facade must be omitted instead of compressing tread depth');
+  fp: { cx: 0, cz: 0, halfX: 1.2, halfZ: 1.2 }, floors: 4, floorH: 3.2,
+  side: 'north', seed: 809, physicalTruth: truth, maxExteriorDepth: 3.0,
+}), null, 'impossible facade is omitted instead of reverting to the old compact prism');
 
-assert.equal(planExteriorScaffoldRoute({
-  fp: { cx: 0, cz: 0, halfX: switchback.facadeTangentAvailable * 0.5 + 0.18, halfZ: 2.2 }, floors: 3, floorH: 3.2,
-  side: 'north', seed: 404, physicalTruth: truth, maxExteriorDepth: Math.max(0.1, switchback.exteriorDepth - 0.25),
-}), null, 'switchback must not exceed the exterior depth envelope');
+const source = fs.readFileSync(new URL('../world/scaffold-circulation-plan.js', import.meta.url), 'utf8');
+assert.match(source, /planAlternatingFacadeStair/);
+assert.doesNotMatch(source, /splitRiseA|streetLaneCoord|buildingLaneCoord|two-half-lane/,
+  'the retired half-rise/two-lane scaffold author must not survive in the planner');
 
 console.log('[scaffold-circulation-plan-selftest] PASS', {
-  straightFlights: nominal.flights.length,
-  switchbackFlights: switchback.flights.length,
-  impossible: 'omitted',
+  sides: 4,
+  topology: 'canonical-facade-zigzag',
+  concept: 'X landing -> full-story A diagonal -> X landing -> full-story B diagonal -> X landing',
 });

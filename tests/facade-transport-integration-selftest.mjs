@@ -46,9 +46,11 @@ for (const [x, z] of [[0,0], [1,0], [0,1], [-1,0]]) {
   assert.ok(snapshot, `${c.key}: exterior debug snapshot must publish`);
   snapshots++;
   loggedTransportIssues += snapshot.issues?.length ?? 0;
-  // Transport anomalies are deliberately logged rather than made a new 07 gate.
-  // The existing 06 transport-engine + stair-volume tests remain the blocking guards;
-  // this broader snapshot is retained so the next visual check-in can diagnose both passes.
+  // 08C closes the diagnostic-only gap: this deterministic integration sample
+  // is now a blocking circulation gate as well as a facade-authority check.
+  assert.equal(snapshot.transport.duplicatePlatformOverlaps, 0, `${c.key}: transport platforms overlap`);
+  assert.equal(snapshot.transport.stairThroatConflicts, 0, `${c.key}: late transport consumes a stair throat`);
+  assert.equal(snapshot.transport.nonCanonicalScaffolds, 0, `${c.key}: noncanonical scaffold route`);
   assert.equal(snapshot.facade.newPortalCount, 0, `${c.key}: facade architecture invented a circulation portal`);
 
   const treatments = payload.physics.fastFacadeArchitecture ?? [];
@@ -69,7 +71,8 @@ assert.ok(frontage > 0, 'sample must regain closed storefront/service frontage')
 assert.ok(windows > 0, 'sample must regain inhabited window rhythm');
 assert.ok(Array.isArray(globalThis.__JWEB_EXTERIOR_DEBUG__) && globalThis.__JWEB_EXTERIOR_DEBUG__.length >= snapshots,
   'browser diagnostics must retain snapshots for next check-in');
+assert.equal(loggedTransportIssues, 0, '08C integration sample must be circulation-clean');
 console.log('[facade-transport-integration-selftest] PASS', {
   snapshots, portalFrames, frontage, windows, loggedTransportIssues,
-  invariant: '07 facade architecture consumes leftover wall space while 06 transport remains authoritative and logged',
+  invariant: 'facade architecture creates no portals and deterministic circulation integration remains overlap/throat clean',
 });

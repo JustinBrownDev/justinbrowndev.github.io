@@ -110,9 +110,10 @@ function reservationHitsFloor(reservation, y0, y1) {
   return reservation.yMin < y1 - EPS && reservation.yMax > y0 + EPS;
 }
 
-function cellInsideReservation(cell, reservation) {
-  return Math.abs(cell.x - reservation.x) <= reservation.halfX + EPS
-    && Math.abs(cell.z - reservation.z) <= reservation.halfZ + EPS;
+function cellIntersectsReservation(cell, reservation, cellHalfExtent = 0) {
+  const half = Math.max(0, Number(cellHalfExtent) || 0);
+  return Math.abs(cell.x - reservation.x) <= reservation.halfX + half + EPS
+    && Math.abs(cell.z - reservation.z) <= reservation.halfZ + half + EPS;
 }
 
 function invertExteriorPreference(preference, profile) {
@@ -386,7 +387,8 @@ function buildFloorGrid({ modules, floor, floorH, reservations, minimumClearWidt
       const x = (ix + 0.5) * cellSize;
       const z = (iz + 0.5) * cellSize;
       if (!pointInsideAnyModule(x, z, activeModules)) continue;
-      const reservation = floorReservations.find(r => cellInsideReservation({ x, z }, r));
+      const reservation = floorReservations.find(r =>
+        cellIntersectsReservation({ x, z }, r, cellSize * 0.5));
       const cell = {
         key: `${ix},${iz}`,
         ix, iz, x, z,

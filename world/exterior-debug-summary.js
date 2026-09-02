@@ -67,9 +67,10 @@ export function buildExteriorDebugSnapshot({ chunk, physics = {}, entities = [],
   const edges = physics.exteriorTransportEdges ?? [];
   const scaffoldRoutes = physics.scaffoldCirculationRoutes ?? [];
   const fastRoutes = physics.fastVerticalRoutes ?? [];
+  const guardSpans = physics.guardSpans ?? [];
   const duplicatePairs = duplicateTransportOverlaps(physics);
   const headroomPairs = throatConflicts(physics);
-  const nonCanonicalScaffolds = scaffoldRoutes.filter(route => route.topology !== 'canonical-scaffold-switchback').map(route => route.id).slice(0, 8);
+  const nonCanonicalScaffolds = scaffoldRoutes.filter(route => route.topology !== 'canonical-facade-zigzag').map(route => route.id).slice(0, 8);
   const facade = aggregateFacade(entities);
   const issues = [];
   if (duplicatePairs.length) issues.push(`duplicate-transport-overlaps:${duplicatePairs.length}`);
@@ -92,9 +93,17 @@ export function buildExteriorDebugSnapshot({ chunk, physics = {}, entities = [],
       unions: Number(network.unions) || 0,
       walkways: Number(network.walkwayLinks) || 0,
       stairLinks: Number(network.stairLinks) || 0,
+      rejectedBlockedLinks: Number(network.rejectionCounts?.blocked) || 0,
+      rejectedOverlappingLinks: Number(network.rejectionCounts?.overlapping) || 0,
+      reconciledTransportPlatformsBefore: Number(network.surfaceOwnership?.before) || 0,
+      reconciledTransportPlatformsAfter: Number(network.surfaceOwnership?.after) || 0,
+      reconciledTransportSplitPieces: Number(network.surfaceOwnership?.splitPieces) || 0,
       localStreetRoutes: fastRoutes.length,
       scaffoldRoutes: scaffoldRoutes.length,
       stairThroats: (physics.fastStairThroats ?? []).length,
+      guardSpans: guardSpans.length,
+      guardFamilies: countBy(guardSpans, item => item.family),
+      flightGuards: guardSpans.filter(item => item.role === 'flight-side').length,
       duplicatePlatformOverlaps: duplicatePairs.length,
       duplicatePlatformSamples: Object.freeze(duplicatePairs),
       stairThroatConflicts: headroomPairs.length,

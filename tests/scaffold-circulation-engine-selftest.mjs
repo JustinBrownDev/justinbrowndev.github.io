@@ -80,6 +80,8 @@ for (const [x, z] of sampledChunks) {
     const scaffoldConnectors = (physics.semanticConnectors ?? []).filter(connector => connector.source === 'exterior-scaffold');
     const scaffoldRamps = (physics.ramps ?? []).filter(ramp => ramp.supportKind === 'scaffold');
     const scaffoldRails = (physics.mazeWalls ?? []).filter(wall => wall.supportKind === 'scaffold-rail');
+    const guardSpans = physics.guardSpans ?? [];
+    const scaffoldFlightGuards = guardSpans.filter(span => span.supportKind === 'scaffold-flight-guard');
     const scaffoldPlatforms = (physics.platforms ?? []).filter(platform => platform.supportKind === 'scaffold');
     const stairShafts = (physics.circulationReservations ?? []).filter(reservation => reservation.kind === 'stair-shaft');
 
@@ -98,6 +100,7 @@ for (const [x, z] of sampledChunks) {
       assert.equal(scaffoldConnectors.length, 0, `${c.key}: no accepted route means no scaffold connector publication`);
       assert.equal(scaffoldRamps.length, 0, `${c.key}: no accepted route means no scaffold ramp publication`);
       assert.equal(scaffoldRails.length, 0, `${c.key}: no accepted route means no scaffold rail publication`);
+      assert.equal(scaffoldFlightGuards.length, 0, `${c.key}: no accepted route means no scaffold flight guard publication`);
     }
 
     for (const route of routes) {
@@ -122,8 +125,11 @@ for (const [x, z] of sampledChunks) {
         }
       }
       for (const landing of route.landings) {
-        assert.ok(scaffoldRails.some(rail => rail.routeId === route.id && rail.landingId === landing.id),
-          `${c.key}:${landing.id} must derive an exposed guard rail from the accepted landing`);
+        const landingRails = scaffoldRails.filter(rail => rail.routeId === route.id && rail.landingId === landing.id);
+        assert.ok(landingRails.length >= 2,
+          `${c.key}:${landing.id} must own street-edge + dead-end fire-escape guard spans`);
+        assert.ok(landingRails.every(rail => rail.guardFamily === 'fire-escape-pipe'),
+          `${c.key}:${landing.id} landing guard must stay in the skinny fire-escape family`);
       }
       for (const flight of route.flights) {
         flightsSeen++;
@@ -133,6 +139,11 @@ for (const [x, z] of sampledChunks) {
         assert.ok(nodeIds.has(flight.toNodeId), `${c.key}:${flight.id} missing target node`);
         const ramp = scaffoldRamps.find(item => item.routeId === route.id && item.flightId === flight.id);
         assert.ok(ramp, `${c.key}:${flight.id} must own exactly one physics ramp`);
+        const sideGuards = scaffoldFlightGuards.filter(span => span.routeId === route.id && span.flightId === flight.id);
+        assert.equal(sideGuards.length, 2, `${c.key}:${flight.id} needs one skinny guard on each stair side`);
+        assert.ok(sideGuards.every(span => span.family === 'fire-escape-pipe' && span.role === 'flight-side'));
+        assert.ok(sideGuards.every(span => span.visualPrimitiveCount >= 4),
+          `${c.key}:${flight.id} flight guard must contain rails plus posts, not one solid blocker`);
       }
     }
 

@@ -5,7 +5,7 @@ import { createKowloonFabricEnrichment } from './world/kowloon-fabric-enrichment
 import { assertBuildingFootprintsDoNotOverlap } from './world/building-footprint-invariant.js';
 import { createKowloonMazeTopology } from './world/kowloon-district-plan.js';
 import { classifyPhysicalUse } from './world/physical-use.js';
-import { deriveStairFlight, resolvePhysicalTruth } from './world/physical-truth.js';
+import { deriveStairFlight, gameplayTraversalEnvelope, resolvePhysicalTruth } from './world/physical-truth.js';
 import { planBuildingSidecar } from './world/architecture/building-plan-sidecar.js';
 import { assertBuildingPlanAuthority, promoteBuildingPlanAuthority } from './world/architecture/building-plan-authority.js';
 import { createSemanticPlanCache, semanticPlanCacheKey } from './world/architecture/semantic-plan-runtime.js';
@@ -13,6 +13,7 @@ import { accessAnchorsForBuildingPortals, compileAccessPortals } from './world/a
 import { compileDistrictBlockComposition, districtBuildingPolicyForEntity, districtContextForEntity } from './world/district-block-composition.js';
 import { planExteriorScaffoldRoute } from './world/scaffold-circulation-plan.js';
 import { assertCanonicalScaffoldSwitchback } from './world/stair-volume-contract.js';
+import { guardFamilyForContext, guardOpeningWidth, planFlightGuardPair, planHorizontalGuardSpan, splitHorizontalGuardSpan } from './world/guardrail-authority.js';
 import { normalizeTransportSurface, planExteriorTransportNetwork, transportSurfaceIntersection } from './world/exterior-transport-network.js';
 import { planFastFacadeArchitecture } from './world/fast-facade-architecture.js';
 import { buildExteriorDebugSnapshot, emitExteriorDebugSnapshot } from './world/exterior-debug-summary.js';
@@ -281,8 +282,11 @@ export function createKowloonFabricEngine({
     const slabMat = new THREE.MeshStandardMaterial({ color: 0x85817a, roughness: 0.9 });
     const stepMat = new THREE.MeshStandardMaterial({ color: 0x77736d, roughness: 0.9 });
     const propMat = new THREE.MeshStandardMaterial({ color: 0x4b4f4d, roughness: 0.82, metalness: 0.18 });
+    const guardMetalMat = new THREE.MeshStandardMaterial({ color: 0x34383a, roughness: 0.68, metalness: 0.52 });
+    const guardConcreteMat = new THREE.MeshStandardMaterial({ color: 0x8b8982, roughness: 0.96, metalness: 0.0 });
     const doorMat = new THREE.MeshStandardMaterial({ color: 0x24211f, roughness: 0.9, metalness: 0.05 });
     const windowMat = new THREE.MeshStandardMaterial({ color: 0x8fa9a8, emissive: 0x182827, emissiveIntensity: 0.5, roughness: 0.35 });
+    const traversalEnvelope = gameplayTraversalEnvelope();
     const wallMats = [
         new THREE.MeshStandardMaterial({ color: 0xb6ae9c, roughness: 0.82 }),
         new THREE.MeshStandardMaterial({ color: 0x9ca99d, roughness: 0.84 }),
@@ -296,6 +300,7 @@ export function createKowloonFabricEngine({
     const scale = new THREE.Vector3();
     const upAxis = new THREE.Vector3(0, 1, 0);
     const planeQuat = new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2, 0, 0));
+    const boxEuler = new THREE.Euler();
 
     function makeInstanced(name, geometry, material, transforms) {
         if (!transforms.length) return null;
@@ -309,6 +314,7 @@ export function createKowloonFabricEngine({
             pos.set(t.x, t.y, t.z);
             scale.set(t.sx, t.sy, t.sz);
             if (t.plane) quat.copy(planeQuat);
+            else if (t.rx || t.rz) quat.setFromEuler(boxEuler.set(t.rx || 0, t.ry || 0, t.rz || 0));
             else if (t.ry) quat.setFromAxisAngle(upAxis, t.ry);
             else quat.identity();
             matrix.compose(pos, quat, scale);
@@ -517,33 +523,32 @@ export function createKowloonFabricEngine({
     }
 
     function addBalcony({ physics, transforms, wallList, fp, y, side }) {
+        void wallList;
         const slabT = 0.12;
         const depth = 0.92;
-        const railH = 0.82;
-        const railT = 0.09;
+        const family = 'residential-civic-bar';
+        const baseId = `balcony:${side}:${fp.cx}:${fp.cz}:${y}`;
         if (side === 'north' || side === 'south') {
             const width = Math.max(1.8, fp.halfX * 1.45);
             const z = fp.cz + (side === 'north' ? -fp.halfZ - depth * 0.5 : fp.halfZ + depth * 0.5);
             transforms.slabs.push({ x: fp.cx, y: y - slabT * 0.5, z, sx: width, sy: slabT, sz: depth });
             addRectPlatform(physics.platforms, fp.cx, z, width, depth, y, 'balcony');
+            const innerZ = z + (side === 'north' ? depth * 0.5 : -depth * 0.5);
             const outerZ = z + (side === 'north' ? -depth * 0.5 : depth * 0.5);
-            wallTransform(wallList, fp.cx, y + railH * 0.5, outerZ, width, railH, railT);
-            physics.mazeWalls.push({ x1: fp.cx - width * 0.5, z1: outerZ, x2: fp.cx + width * 0.5, z2: outerZ, yMin: y, yMax: y + railH });
-            for (const x of [fp.cx - width * 0.5, fp.cx + width * 0.5]) {
-                wallTransform(wallList, x, y + railH * 0.5, z, railT, railH, depth);
-                physics.mazeWalls.push({ x1: x, z1: z - depth * 0.5, x2: x, z2: z + depth * 0.5, yMin: y, yMax: y + railH });
+            emitGuardSpanFromAuthority({ physics, transforms, id: `${baseId}:outer`, x1: fp.cx - width * 0.5, z1: outerZ, x2: fp.cx + width * 0.5, z2: outerZ, y, family, supportKind: 'balcony-rail' });
+            for (const [index, x] of [fp.cx - width * 0.5, fp.cx + width * 0.5].entries()) {
+                emitGuardSpanFromAuthority({ physics, transforms, id: `${baseId}:side:${index}`, x1: x, z1: innerZ, x2: x, z2: outerZ, y, family, supportKind: 'balcony-rail' });
             }
         } else {
             const width = Math.max(1.8, fp.halfZ * 1.45);
             const x = fp.cx + (side === 'west' ? -fp.halfX - depth * 0.5 : fp.halfX + depth * 0.5);
             transforms.slabs.push({ x, y: y - slabT * 0.5, z: fp.cz, sx: depth, sy: slabT, sz: width });
             addRectPlatform(physics.platforms, x, fp.cz, depth, width, y, 'balcony');
+            const innerX = x + (side === 'west' ? depth * 0.5 : -depth * 0.5);
             const outerX = x + (side === 'west' ? -depth * 0.5 : depth * 0.5);
-            wallTransform(wallList, outerX, y + railH * 0.5, fp.cz, railT, railH, width);
-            physics.mazeWalls.push({ x1: outerX, z1: fp.cz - width * 0.5, x2: outerX, z2: fp.cz + width * 0.5, yMin: y, yMax: y + railH });
-            for (const z of [fp.cz - width * 0.5, fp.cz + width * 0.5]) {
-                wallTransform(wallList, x, y + railH * 0.5, z, depth, railH, railT);
-                physics.mazeWalls.push({ x1: x - depth * 0.5, z1: z, x2: x + depth * 0.5, z2: z, yMin: y, yMax: y + railH });
+            emitGuardSpanFromAuthority({ physics, transforms, id: `${baseId}:outer`, x1: outerX, z1: fp.cz - width * 0.5, x2: outerX, z2: fp.cz + width * 0.5, y, family, supportKind: 'balcony-rail' });
+            for (const [index, z] of [fp.cz - width * 0.5, fp.cz + width * 0.5].entries()) {
+                emitGuardSpanFromAuthority({ physics, transforms, id: `${baseId}:side:${index}`, x1: innerX, z1: z, x2: outerX, z2: z, y, family, supportKind: 'balcony-rail' });
             }
         }
     }
@@ -557,8 +562,6 @@ export function createKowloonFabricEngine({
         const routes = physics.scaffoldCirculationRoutes ?? (physics.scaffoldCirculationRoutes = []);
         if (!routes.some(route => route.id === plan.id)) routes.push(plan);
         const slabT = 0.12;
-        const railH = 0.82;
-        const railT = 0.08;
         const horizontalFace = plan.side === 'north' || plan.side === 'south';
         const outward = plan.side === 'north' || plan.side === 'west' ? -1 : 1;
 
@@ -592,26 +595,50 @@ export function createKowloonFabricEngine({
                 reachable: true, priority: 'circulation-owned', physicalTruth: plan.physicalTruth,
             });
             platform.surfaceId = scaffoldSurface.id;
+            const scaffoldSlabTransform = transforms.slabs[transforms.slabs.length - 1];
+            if (scaffoldSlabTransform?.routeId === plan.id && scaffoldSlabTransform?.landingId === landing.id) {
+                scaffoldSlabTransform.surfaceId = scaffoldSurface.id;
+            }
 
-            // Guard only the exposed edge; facade-side and flight-entry edges remain
-            // open. The rail position is a direct function of the route landing.
+            // The good scaffold geometry is the authority. Guard the street edge plus
+            // the dead-end edge of each full-width landing; leave the facade and run
+            // entry open. This turns the old short blocker into the intended L-shaped
+            // fire-escape landing guard without ever crossing the A<->B turn path.
             if (horizontalFace) {
                 const outerZ = landing.z + outward * landing.sz * 0.5;
                 emitTransportRail({
-                    physics, wallList: transforms.wallGroups[0], surfaceId: scaffoldSurface.id,
+                    physics, transforms, wallList: transforms.wallGroups[0], surfaceId: scaffoldSurface.id,
                     x1: landing.x - landing.sx * 0.5, z1: outerZ,
                     x2: landing.x + landing.sx * 0.5, z2: outerZ,
-                    y: landing.y, height: railH, thickness: railT, supportKind: 'scaffold-rail',
-                    metadata: { routeId: plan.id, landingId: landing.id },
+                    y: landing.y, supportKind: 'scaffold-rail', guardFamily: 'fire-escape-pipe',
+                    metadata: { routeId: plan.id, landingId: landing.id, physicalUse: plan.physicalTruth?.physicalUse, visualRole: 'fire-escape-landing', guardSegmentRole: 'street-edge' },
+                });
+                const farX = landing.landingPosition === 'run-low-beyond'
+                    ? landing.x - landing.sx * 0.5 : landing.x + landing.sx * 0.5;
+                emitTransportRail({
+                    physics, transforms, wallList: transforms.wallGroups[0], surfaceId: scaffoldSurface.id,
+                    x1: farX, z1: landing.z - landing.sz * 0.5,
+                    x2: farX, z2: landing.z + landing.sz * 0.5,
+                    y: landing.y, supportKind: 'scaffold-rail', guardFamily: 'fire-escape-pipe',
+                    metadata: { routeId: plan.id, landingId: landing.id, physicalUse: plan.physicalTruth?.physicalUse, visualRole: 'fire-escape-landing', guardSegmentRole: 'dead-end' },
                 });
             } else {
                 const outerX = landing.x + outward * landing.sx * 0.5;
                 emitTransportRail({
-                    physics, wallList: transforms.wallGroups[0], surfaceId: scaffoldSurface.id,
+                    physics, transforms, wallList: transforms.wallGroups[0], surfaceId: scaffoldSurface.id,
                     x1: outerX, z1: landing.z - landing.sz * 0.5,
                     x2: outerX, z2: landing.z + landing.sz * 0.5,
-                    y: landing.y, height: railH, thickness: railT, supportKind: 'scaffold-rail',
-                    metadata: { routeId: plan.id, landingId: landing.id },
+                    y: landing.y, supportKind: 'scaffold-rail', guardFamily: 'fire-escape-pipe',
+                    metadata: { routeId: plan.id, landingId: landing.id, physicalUse: plan.physicalTruth?.physicalUse, visualRole: 'fire-escape-landing', guardSegmentRole: 'street-edge' },
+                });
+                const farZ = landing.landingPosition === 'run-low-beyond'
+                    ? landing.z - landing.sz * 0.5 : landing.z + landing.sz * 0.5;
+                emitTransportRail({
+                    physics, transforms, wallList: transforms.wallGroups[0], surfaceId: scaffoldSurface.id,
+                    x1: landing.x - landing.sx * 0.5, z1: farZ,
+                    x2: landing.x + landing.sx * 0.5, z2: farZ,
+                    y: landing.y, supportKind: 'scaffold-rail', guardFamily: 'fire-escape-pipe',
+                    metadata: { routeId: plan.id, landingId: landing.id, physicalUse: plan.physicalTruth?.physicalUse, visualRole: 'fire-escape-landing', guardSegmentRole: 'dead-end' },
                 });
             }
 
@@ -657,6 +684,13 @@ export function createKowloonFabricEngine({
                 flightId: flight.id,
             };
             physics.ramps.push(ramp);
+            emitFlightGuardPairFromAuthority({
+                physics, transforms, idPrefix: `${flight.id}:guard`,
+                axis: flight.axis, from: flight.from, to: flight.to, fixedCoord: flight.fixedCoord,
+                halfWidth: flight.halfWidth, y0: flight.y0, y1: flight.y1,
+                family: 'fire-escape-pipe', supportKind: 'scaffold-flight-guard',
+                metadata: { routeId: plan.id, flightId: flight.id, physicalUse: plan.physicalTruth?.physicalUse, visualRole: 'fire-escape-flight' },
+            });
             const connector = createRampConnector({
                 id: `${flight.id}:connector`,
                 kind: 'fire-escape',
@@ -759,79 +793,191 @@ export function createKowloonFabricEngine({
         return pieces;
     }
 
-    function emitTransportRail({ physics, wallList, surfaceId, x1, z1, x2, z2, y, height, thickness, supportKind = 'transport-rail', metadata = null }) {
-        if (!wallList || !surfaceId) return null;
-        const horizontal = Math.abs(z1 - z2) <= 1e-7;
-        const vertical = Math.abs(x1 - x2) <= 1e-7;
-        if (!horizontal && !vertical) return null;
-        const serial = (physics.transportRailSerial = (physics.transportRailSerial ?? 0) + 1);
-        const railId = `transport-rail:${surfaceId}:${serial}`;
-        const midX = (x1 + x2) * 0.5;
-        const midZ = (z1 + z2) * 0.5;
-        wallTransform(wallList, midX, y + height * 0.5, midZ,
-            horizontal ? Math.abs(x2 - x1) : thickness,
-            height,
-            vertical ? Math.abs(z2 - z1) : thickness,
-            { transportRailId: railId, surfaceId, supportKind, ...(metadata || {}) });
-        physics.mazeWalls.push({
-            x1, z1, x2, z2, yMin: y, yMax: y + height, thickness,
-            supportKind, surfaceId, transportRailId: railId, ...(metadata || {}),
-        });
-        return railId;
+    function guardSpanRegistry(physics) {
+        return physics.guardSpans ?? (physics.guardSpans = []);
     }
 
-    function removeRailTransform(transforms, railId) {
-        for (const group of transforms.wallGroups ?? []) {
-            const index = group.findIndex(item => item.transportRailId === railId);
-            if (index >= 0) {
-                group.splice(index, 1);
-                return group;
+    function publishGuardPlan({ physics, transforms, plan, supportKind, surfaceId = null, metadata = null }) {
+        if (!plan) return null;
+        if (!physics || !transforms || !Array.isArray(transforms.guardMetal) || !Array.isArray(transforms.guardConcrete)) {
+            throw new Error(String(plan.id ?? 'guard') + ': guard render transforms are required');
+        }
+        const shared = {
+            guardSpanId: plan.id,
+            guardFamily: plan.family,
+            guardConstruction: plan.construction,
+            supportKind,
+            surfaceId,
+            ...(metadata || {}),
+        };
+        for (const primitive of plan.visual ?? []) {
+            const bucket = primitive.material === 'concrete' ? transforms.guardConcrete : transforms.guardMetal;
+            bucket.push({ ...primitive, ...shared });
+        }
+        physics.mazeWalls.push({ ...plan.collision, ...shared, transportRailId: surfaceId ? plan.id : null });
+        guardSpanRegistry(physics).push({
+            id: plan.id,
+            family: plan.family,
+            construction: plan.construction,
+            role: plan.role ?? metadata?.guardRole ?? 'edge',
+            axis: plan.axis,
+            from: plan.from,
+            to: plan.to,
+            fixedCoord: plan.fixedCoord,
+            y0: plan.y0,
+            y1: plan.y1,
+            visualPrimitiveCount: plan.visual?.length ?? 0,
+            ...shared,
+        });
+        return plan.id;
+    }
+
+    function emitGuardSpanFromAuthority({
+        physics, transforms, id, x1, z1, x2, z2, y,
+        family = 'residential-civic-bar', supportKind = 'guard', surfaceId = null, metadata = null,
+    }) {
+        return publishGuardPlan({
+            physics, transforms,
+            plan: planHorizontalGuardSpan({ id, x1, z1, x2, z2, y, family }),
+            supportKind, surfaceId, metadata,
+        });
+    }
+
+    function reconcileTransportPlatformOwnership({ physics, transforms }) {
+        const surfaceIds = new Set(exteriorTransportSurfaces(physics).map(surface => surface.id));
+        const platforms = physics.platforms ?? [];
+        const transport = platforms.filter(platform => platform.surfaceId && surfaceIds.has(platform.surfaceId));
+        if (!transport.length) return { before: 0, after: 0, splitPieces: 0 };
+        const untouched = platforms.filter(platform => !(platform.surfaceId && surfaceIds.has(platform.surfaceId)));
+        const accepted = [];
+        const rebuilt = [];
+        let splitPieces = 0;
+        for (const platform of transport) {
+            const cuts = accepted
+                .filter(other => Math.abs(Number(other.y) - Number(platform.y)) <= 0.06)
+                .map(other => transportRectIntersection(other, platform))
+                .filter(Boolean);
+            const pieces = piecesMinusCuts(
+                { x: platform.x, z: platform.z, hx: platform.hx, hz: platform.hz },
+                cuts,
+            );
+            if (pieces.length > 1 || (cuts.length && pieces.length !== 1)) splitPieces += pieces.length;
+            for (let pieceIndex = 0; pieceIndex < pieces.length; pieceIndex++) {
+                const piece = pieces[pieceIndex];
+                const next = { ...platform, ...piece, pieceIndex };
+                rebuilt.push(next);
+                accepted.push(next);
             }
         }
-        return null;
+        physics.platforms = [...untouched, ...rebuilt];
+
+        const slabTemplates = new Map();
+        for (const slab of transforms.slabs ?? []) {
+            if (slab.surfaceId && surfaceIds.has(slab.surfaceId) && !slabTemplates.has(slab.surfaceId)) {
+                slabTemplates.set(slab.surfaceId, slab);
+            }
+        }
+        transforms.slabs = (transforms.slabs ?? []).filter(slab => !(slab.surfaceId && surfaceIds.has(slab.surfaceId)));
+        for (const platform of rebuilt) {
+            const template = slabTemplates.get(platform.surfaceId);
+            if (!template) continue;
+            const thickness = Number(template.sy) || 0.12;
+            transforms.slabs.push({
+                ...template,
+                x: platform.x,
+                y: Number(platform.y) - thickness * 0.5,
+                z: platform.z,
+                sx: platform.hx * 2,
+                sy: thickness,
+                sz: platform.hz * 2,
+                pieceIndex: platform.pieceIndex,
+            });
+        }
+        return { before: transport.length, after: rebuilt.length, splitPieces };
+    }
+
+    function emitTransportRail({
+        physics, transforms, wallList, surfaceId, x1, z1, x2, z2, y,
+        height = null, thickness = null, supportKind = 'transport-rail', guardFamily = null, metadata = null,
+    }) {
+        void wallList; void height; void thickness;
+        if (!surfaceId) return null;
+        const serial = (physics.transportRailSerial = (physics.transportRailSerial ?? 0) + 1);
+        const id = `transport-rail:${surfaceId}:${serial}`;
+        const family = guardFamily ?? guardFamilyForContext({
+            supportKind,
+            visualRole: metadata?.visualRole,
+            physicalUse: metadata?.physicalUse,
+            kind: metadata?.transportKind,
+        });
+        return emitGuardSpanFromAuthority({
+            physics, transforms, id, surfaceId, x1, z1, x2, z2, y,
+            family, supportKind, metadata,
+        });
+    }
+
+    function emitFlightGuardPairFromAuthority({
+        physics, transforms, idPrefix, axis, from, to, fixedCoord, halfWidth, y0, y1,
+        family, supportKind = 'stair-guard', metadata = null,
+    }) {
+        const resolvedFamily = family ?? guardFamilyForContext({
+            supportKind,
+            visualRole: metadata?.visualRole,
+            physicalUse: metadata?.physicalUse,
+        });
+        const plans = planFlightGuardPair({
+            id: idPrefix, axis, from, to, fixedCoord, halfWidth, y0, y1,
+            family: resolvedFamily,
+        });
+        for (const plan of plans) publishGuardPlan({
+            physics, transforms, plan, supportKind, surfaceId: null,
+            metadata: { guardRole: 'flight-side', ...(metadata || {}) },
+        });
+        return plans.length;
+    }
+
+    function removeGuardArtifacts({ physics, transforms, guardSpanId }) {
+        if (!guardSpanId) return;
+        transforms.guardMetal = (transforms.guardMetal ?? []).filter(item => item.guardSpanId !== guardSpanId);
+        transforms.guardConcrete = (transforms.guardConcrete ?? []).filter(item => item.guardSpanId !== guardSpanId);
+        physics.guardSpans = (physics.guardSpans ?? []).filter(item => item.id !== guardSpanId);
     }
 
     function carveTransportRailGap({ physics, transforms, surfaceId, point, width }) {
         if (!surfaceId || !point || !(width > 0)) return 0;
-        const matches = (physics.mazeWalls ?? []).filter(wall => wall.surfaceId === surfaceId && wall.transportRailId);
+        const openingWidth = guardOpeningWidth(width, { playerRadius: traversalEnvelope.playerRadius });
+        const matches = [...(physics.mazeWalls ?? [])].filter(wall => wall.surfaceId === surfaceId && wall.transportRailId);
         let carved = 0;
         for (const wall of matches) {
-            const horizontal = Math.abs(wall.z1 - wall.z2) <= 1e-7;
-            const vertical = Math.abs(wall.x1 - wall.x2) <= 1e-7;
-            if (!horizontal && !vertical) continue;
-            const lineDistance = horizontal ? Math.abs(point.z - wall.z1) : Math.abs(point.x - wall.x1);
-            if (lineDistance > Math.max(0.20, width * 0.30)) continue;
-            const lo = horizontal ? Math.min(wall.x1, wall.x2) : Math.min(wall.z1, wall.z2);
-            const hi = horizontal ? Math.max(wall.x1, wall.x2) : Math.max(wall.z1, wall.z2);
-            const at = horizontal ? point.x : point.z;
-            if (at < lo - 0.15 || at > hi + 0.15) continue;
-            const gap0 = Math.max(lo, at - width * 0.5);
-            const gap1 = Math.min(hi, at + width * 0.5);
-            if (!(gap1 > gap0 + 0.04)) continue;
+            const sourcePlan = planHorizontalGuardSpan({
+                id: wall.transportRailId,
+                x1: wall.x1, z1: wall.z1, x2: wall.x2, z2: wall.z2,
+                y: wall.yMin,
+                family: wall.guardFamily ?? guardFamilyForContext({ supportKind: wall.supportKind, physicalUse: wall.physicalUse }),
+            });
+            const pieces = splitHorizontalGuardSpan({ span: sourcePlan, point, width: openingWidth });
+            if (pieces.length === 1 && pieces[0] === sourcePlan) continue;
             const wallIndex = physics.mazeWalls.indexOf(wall);
             if (wallIndex >= 0) physics.mazeWalls.splice(wallIndex, 1);
-            const wallList = removeRailTransform(transforms, wall.transportRailId);
-            if (!wallList) continue;
-            const emitPart = (a, b) => {
-                if (!(b > a + 0.05)) return;
-                emitTransportRail({
-                    physics, wallList, surfaceId,
-                    x1: horizontal ? a : wall.x1,
-                    z1: horizontal ? wall.z1 : a,
-                    x2: horizontal ? b : wall.x2,
-                    z2: horizontal ? wall.z2 : b,
-                    y: wall.yMin,
-                    height: wall.yMax - wall.yMin,
-                    thickness: wall.thickness ?? 0.08,
-                    supportKind: wall.supportKind ?? 'transport-rail',
-                    metadata: {
-                        routeId: wall.routeId ?? null, landingId: wall.landingId ?? null,
-                        bridgeId: wall.bridgeId ?? null, moduleKey: wall.moduleKey ?? null, side: wall.side ?? null,
-                    },
-                });
+            removeGuardArtifacts({ physics, transforms, guardSpanId: wall.transportRailId });
+            const metadata = {
+                routeId: wall.routeId ?? null,
+                landingId: wall.landingId ?? null,
+                bridgeId: wall.bridgeId ?? null,
+                moduleKey: wall.moduleKey ?? null,
+                side: wall.side ?? null,
+                physicalUse: wall.physicalUse ?? null,
+                visualRole: wall.visualRole ?? null,
+                transportKind: wall.transportKind ?? null,
+                transportLinkId: wall.transportLinkId ?? null,
+                guardSegmentRole: wall.guardSegmentRole ?? null,
             };
-            emitPart(lo, gap0);
-            emitPart(gap1, hi);
+            for (const piece of pieces) publishGuardPlan({
+                physics, transforms, plan: piece,
+                supportKind: wall.supportKind ?? 'transport-rail',
+                surfaceId,
+                metadata,
+            });
             carved++;
         }
         return carved;
@@ -842,7 +988,18 @@ export function createKowloonFabricEngine({
         const overlaps = registry.filter(surface => Math.abs(surface.y - rawSurface.y) <= 0.12)
             .map(surface => ({ surface, cut: transportRectIntersection(surface, rawSurface) }))
             .filter(item => item.cut);
-        const pieces = piecesMinusCuts({ x: rawSurface.x, z: rawSurface.z, hx: rawSurface.hx, hz: rawSurface.hz }, overlaps.map(item => item.cut));
+        const throatCuts = (physics.fastStairThroats ?? [])
+            .filter(throat => Math.abs(Number(throat.y) - Number(rawSurface.y)) <= 0.06)
+            .map(throat => transportRectIntersection({
+                ...throat,
+                hx: Number(throat.hx) + 0.08,
+                hz: Number(throat.hz) + 0.08,
+            }, rawSurface))
+            .filter(Boolean);
+        const pieces = piecesMinusCuts(
+            { x: rawSurface.x, z: rawSurface.z, hx: rawSurface.hx, hz: rawSurface.hz },
+            [...overlaps.map(item => item.cut), ...throatCuts],
+        );
         const surface = registerExteriorTransportSurface(physics, rawSurface);
         for (let i = 0; i < pieces.length; i++) {
             const piece = pieces[i];
@@ -876,8 +1033,12 @@ export function createKowloonFabricEngine({
     }
 
     function realizeExteriorTransportNetwork({ physics, transforms, stableKey }) {
+        const surfaceOwnership = reconcileTransportPlatformOwnership({ physics, transforms });
         const surfaces = exteriorTransportSurfaces(physics);
-        const plan = planExteriorTransportNetwork({ surfaces, maxLinks: 10, maxStairLinks: 6, stableKey });
+        const plan = planExteriorTransportNetwork({
+            surfaces, blockedRects: physics.fastStairThroats ?? [],
+            maxLinks: 10, maxStairLinks: 6, stableKey,
+        });
         const byId = new Map(surfaces.map(surface => [surface.id, surface]));
         const edgeRegistry = physics.exteriorTransportEdges ?? (physics.exteriorTransportEdges = []);
         let realized = 0;
@@ -911,11 +1072,10 @@ export function createKowloonFabricEngine({
                         routeId: link.id, networkKey: link.id, reachable: true, physicalTruth: a.physicalTruth ?? b.physicalTruth };
                 const published = publishTransportSurfaceSlab({ physics, transforms, rawSurface, supportKind: 'street-layer-link' });
                 const s = published.surface;
-                const railH = 0.86, railT = 0.08;
                 if (link.axis === 'x') {
-                    for (const z of [s.z - s.hz, s.z + s.hz]) emitTransportRail({ physics, wallList: transforms.wallGroups[0], surfaceId: s.id, x1: s.x - s.hx, z1: z, x2: s.x + s.hx, z2: z, y: s.y, height: railH, thickness: railT });
+                    for (const z of [s.z - s.hz, s.z + s.hz]) emitTransportRail({ physics, transforms, wallList: transforms.wallGroups[0], surfaceId: s.id, x1: s.x - s.hx, z1: z, x2: s.x + s.hx, z2: z, y: s.y });
                 } else {
-                    for (const x of [s.x - s.hx, s.x + s.hx]) emitTransportRail({ physics, wallList: transforms.wallGroups[0], surfaceId: s.id, x1: x, z1: s.z - s.hz, x2: x, z2: s.z + s.hz, y: s.y, height: railH, thickness: railT });
+                    for (const x of [s.x - s.hx, s.x + s.hx]) emitTransportRail({ physics, transforms, wallList: transforms.wallGroups[0], surfaceId: s.id, x1: x, z1: s.z - s.hz, x2: x, z2: s.z + s.hz, y: s.y });
                 }
                 carveTransportRailGap({ physics, transforms, surfaceId: a.id, point: link.aPoint, width: link.clearWidth + 0.18 });
                 carveTransportRailGap({ physics, transforms, surfaceId: b.id, point: link.bPoint, width: link.clearWidth + 0.18 });
@@ -963,6 +1123,14 @@ export function createKowloonFabricEngine({
                         ? { x: along, y: stepY, z: link.fixedCoord, sx: link.gap / steps * 1.06, sy: stepThickness, sz: link.clearWidth, transportLinkId: link.id }
                         : { x: link.fixedCoord, y: stepY, z: along, sx: link.clearWidth, sy: stepThickness, sz: link.gap / steps * 1.06, transportLinkId: link.id });
                 }
+                emitFlightGuardPairFromAuthority({
+                    physics, transforms, idPrefix: `${link.id}:guard`,
+                    axis: link.axis, from: link.from, to: link.to, fixedCoord: link.fixedCoord,
+                    halfWidth: link.halfWidth, y0: link.y0, y1: link.y1,
+                    family: guardFamilyForContext({ supportKind: 'exterior-transport-stair', visualRole: 'street-layer-to-street-layer-stair', physicalUse: link.physicalTruth?.physicalUse }),
+                    supportKind: 'exterior-transport-stair-guard',
+                    metadata: { transportLinkId: link.id, physicalUse: link.physicalTruth?.physicalUse, visualRole: 'street-layer-to-street-layer-stair' },
+                });
                 carveTransportRailGap({ physics, transforms, surfaceId: lower.id, point: link.lowerPoint, width: link.clearWidth + 0.20 });
                 carveTransportRailGap({ physics, transforms, surfaceId: upper.id, point: link.upperPoint, width: link.clearWidth + 0.20 });
                 reserveTransportJunction({ physics, surface: lower, point: link.lowerPoint, width: link.clearWidth,
@@ -974,7 +1142,7 @@ export function createKowloonFabricEngine({
                 realized++;
             }
         }
-        physics.exteriorTransportNetwork = { ...plan, realized, stairLinks, walkwayLinks, unions };
+        physics.exteriorTransportNetwork = { ...plan, realized, stairLinks, walkwayLinks, unions, surfaceOwnership };
         return physics.exteriorTransportNetwork;
     }
 
@@ -1027,6 +1195,14 @@ export function createKowloonFabricEngine({
                     ? { x: along, y: stepY, z: flight.fixedCoord, sx: flight.run / steps * 1.08, sy: stepThickness, sz: flight.clearWidth, routeId: plan.id, flightId: flight.id }
                     : { x: flight.fixedCoord, y: stepY, z: along, sx: flight.clearWidth, sy: stepThickness, sz: flight.run / steps * 1.08, routeId: plan.id, flightId: flight.id });
             }
+            emitFlightGuardPairFromAuthority({
+                physics, transforms, idPrefix: `${flight.id}:guard`,
+                axis: flight.axis, from: flight.from, to: flight.to, fixedCoord: flight.fixedCoord,
+                halfWidth: flight.halfWidth, y0: flight.y0, y1: flight.y1,
+                family: guardFamilyForContext({ supportKind: 'broad-vertical-stair', visualRole: plan.family, physicalUse: plan.physicalTruth?.physicalUse }),
+                supportKind: 'broad-vertical-stair-guard',
+                metadata: { routeId: plan.id, flightId: flight.id, physicalUse: plan.physicalTruth?.physicalUse, visualRole: plan.family },
+            });
             realizedFlights++;
         }
 
@@ -1089,21 +1265,46 @@ export function createKowloonFabricEngine({
                 stairThroat: throat,
             });
 
-            // Guard only the exterior edge. The rail is tagged to the transport
-            // surface so later balcony/catwalk/roof unions can cut a real junction.
-            const railH = 0.92;
-            const railT = 0.08;
+            // Balcony/street layers get three outward guards. The building edge stays
+            // open for doors; any real stair/catwalk/roof junction cuts these semantic
+            // spans and regenerates clean rail ends/posts.
+            const deckGuardFamily = guardFamilyForContext({
+                supportKind: 'transport-rail', visualRole: 'balcony-street-layer', physicalUse: plan.physicalTruth?.physicalUse,
+            });
             const outward = plan.orientation?.outward ?? 0;
-            if (wallList && outward && plan.orientation?.normalAxis === 'z') {
+            if (outward && plan.orientation?.normalAxis === 'z') {
+                const innerZ = geometry.z - outward * geometry.hz;
                 const outerZ = geometry.z + outward * geometry.hz;
-                emitTransportRail({ physics, wallList, surfaceId: deckSurface.id,
+                emitTransportRail({ physics, transforms, wallList, surfaceId: deckSurface.id,
                     x1: geometry.x - geometry.hx, z1: outerZ, x2: geometry.x + geometry.hx, z2: outerZ,
-                    y: landing.y, height: railH, thickness: railT });
-            } else if (wallList && outward && plan.orientation?.normalAxis === 'x') {
+                    y: landing.y, supportKind: 'transport-rail', guardFamily: deckGuardFamily,
+                    metadata: { routeId: plan.id, landingId: landing.id, physicalUse: plan.physicalTruth?.physicalUse, visualRole: 'balcony-street-layer', guardSegmentRole: 'outer' } });
+                for (const [index, x] of [geometry.x - geometry.hx, geometry.x + geometry.hx].entries()) {
+                    emitTransportRail({ physics, transforms, wallList, surfaceId: deckSurface.id,
+                        x1: x, z1: innerZ, x2: x, z2: outerZ,
+                        y: landing.y, supportKind: 'transport-rail', guardFamily: deckGuardFamily,
+                        metadata: { routeId: plan.id, landingId: landing.id, physicalUse: plan.physicalTruth?.physicalUse, visualRole: 'balcony-street-layer', guardSegmentRole: `side:${index}` } });
+                }
+            } else if (outward && plan.orientation?.normalAxis === 'x') {
+                const innerX = geometry.x - outward * geometry.hx;
                 const outerX = geometry.x + outward * geometry.hx;
-                emitTransportRail({ physics, wallList, surfaceId: deckSurface.id,
+                emitTransportRail({ physics, transforms, wallList, surfaceId: deckSurface.id,
                     x1: outerX, z1: geometry.z - geometry.hz, x2: outerX, z2: geometry.z + geometry.hz,
-                    y: landing.y, height: railH, thickness: railT });
+                    y: landing.y, supportKind: 'transport-rail', guardFamily: deckGuardFamily,
+                    metadata: { routeId: plan.id, landingId: landing.id, physicalUse: plan.physicalTruth?.physicalUse, visualRole: 'balcony-street-layer', guardSegmentRole: 'outer' } });
+                for (const [index, z] of [geometry.z - geometry.hz, geometry.z + geometry.hz].entries()) {
+                    emitTransportRail({ physics, transforms, wallList, surfaceId: deckSurface.id,
+                        x1: innerX, z1: z, x2: outerX, z2: z,
+                        y: landing.y, supportKind: 'transport-rail', guardFamily: deckGuardFamily,
+                        metadata: { routeId: plan.id, landingId: landing.id, physicalUse: plan.physicalTruth?.physicalUse, visualRole: 'balcony-street-layer', guardSegmentRole: `side:${index}` } });
+                }
+            }
+            const incomingFlight = plan.flights.find(flight => flight.toLandingId === landing.id);
+            if (incomingFlight) {
+                const arrivalPoint = incomingFlight.axis === 'x'
+                    ? { x: incomingFlight.to, z: incomingFlight.fixedCoord }
+                    : { x: incomingFlight.fixedCoord, z: incomingFlight.to };
+                carveTransportRailGap({ physics, transforms, surfaceId: deckSurface.id, point: arrivalPoint, width: incomingFlight.clearWidth + 0.18 });
             }
             for (const overlap of deckOverlapCuts) {
                 smoothTransportUnion({ physics, transforms, a: deckSurface, b: overlap.surface, intersection: overlap.cut });
@@ -1194,8 +1395,8 @@ export function createKowloonFabricEngine({
         }
     }
 
-    function addCompoundRoofParapetSide({ physics, wallList, rect, roofY, side, surfaceId = null, opening = null }) {
-        const h = 0.68, t = 0.12;
+    function addCompoundRoofParapetSide({ physics, transforms, wallList, rect, roofY, side, surfaceId = null, opening = null, physicalUse = null }) {
+        void wallList;
         const horizontal = side === 'north' || side === 'south';
         const fixed = horizontal
             ? rect.cz + (side === 'north' ? -rect.halfZ : rect.halfZ)
@@ -1206,22 +1407,19 @@ export function createKowloonFabricEngine({
         const center = Number.isFinite(opening?.center) ? clamp(Number(opening.center), lo, hi) : (lo + hi) * 0.5;
         const gap0 = Math.max(lo, center - requestedWidth * 0.5);
         const gap1 = Math.min(hi, center + requestedWidth * 0.5);
+        const family = guardFamilyForContext({ supportKind: 'parapet', visualRole: 'roof-parapet', physicalUse });
+        let serial = 0;
         const emit = (a, b) => {
             if (!(b > a + 0.04)) return;
-            if (surfaceId) {
-                emitTransportRail({
-                    physics, wallList, surfaceId,
-                    x1: horizontal ? a : fixed, z1: horizontal ? fixed : a,
-                    x2: horizontal ? b : fixed, z2: horizontal ? fixed : b,
-                    y: roofY, height: h, thickness: t, supportKind: 'parapet',
-                });
-            } else if (horizontal) {
-                wallTransform(wallList, (a + b) * 0.5, roofY + h * 0.5, fixed, b - a, h, t);
-                physics.mazeWalls.push({ x1: a, z1: fixed, x2: b, z2: fixed, yMin: roofY, yMax: roofY + h, thickness: t, supportKind: 'parapet' });
-            } else {
-                wallTransform(wallList, fixed, roofY + h * 0.5, (a + b) * 0.5, t, h, b - a);
-                physics.mazeWalls.push({ x1: fixed, z1: a, x2: fixed, z2: b, yMin: roofY, yMax: roofY + h, thickness: t, supportKind: 'parapet' });
-            }
+            const args = {
+                physics, transforms,
+                x1: horizontal ? a : fixed, z1: horizontal ? fixed : a,
+                x2: horizontal ? b : fixed, z2: horizontal ? fixed : b,
+                y: roofY, family, supportKind: 'parapet',
+                metadata: { side, physicalUse, visualRole: 'roof-parapet' },
+            };
+            if (surfaceId) emitTransportRail({ ...args, wallList: null, surfaceId, guardFamily: family });
+            else emitGuardSpanFromAuthority({ ...args, id: `roof-parapet:${side}:${rect.cx}:${rect.cz}:${roofY}:${serial++}` });
         };
         if (requestedWidth > 0 && gap1 > gap0 + 0.04) {
             emit(lo, gap0);
@@ -1314,7 +1512,7 @@ export function createKowloonFabricEngine({
                     });
                     // Canonical scaffold concept: A uses the street half, B the building half,
                     // and full-width landings live beyond the run. No parity/mirroring author exists.
-                    if (!plan || plan.topology !== 'canonical-scaffold-switchback') return null;
+                    if (!plan || plan.topology !== 'canonical-facade-zigzag') return null;
                     assertCanonicalScaffoldSwitchback(plan);
                     const openingConflict = plan.openings.some(opening => {
                         const openingKey = `${face.module.key}:${face.dir.key}:${opening.level}`;
@@ -1327,8 +1525,8 @@ export function createKowloonFabricEngine({
                 validScaffolds.sort((a, b) => {
                     const heightRank = b.face.module.floors - a.face.module.floors;
                     if (heightRank) return heightRank;
-                    const topologyRank = (a.plan.topology === 'canonical-scaffold-switchback' ? 0 : 1)
-                        - (b.plan.topology === 'canonical-scaffold-switchback' ? 0 : 1);
+                    const topologyRank = (a.plan.topology === 'canonical-facade-zigzag' ? 0 : 1)
+                        - (b.plan.topology === 'canonical-facade-zigzag' ? 0 : 1);
                     if (topologyRank) return topologyRank;
                     const aMargin = a.plan.facadeTangentAvailable - a.plan.tangentSpan;
                     const bMargin = b.plan.facadeTangentAvailable - b.plan.tangentSpan;
@@ -1635,9 +1833,10 @@ export function createKowloonFabricEngine({
                     exposed = !neighbor || neighbor.floors < module.floors;
                 }
                 if (exposed) addCompoundRoofParapetSide({
-                    physics, wallList, rect: module.rect, roofY, side: dir.side,
+                    physics, transforms, wallList, rect: module.rect, roofY, side: dir.side,
                     surfaceId: roofSurface?.id ?? null,
                     opening: localRoofAccess.find(access => access.dirKey === dir.key) ?? null,
+                    physicalUse: servicePhysicalTruth?.physicalUse ?? null,
                 });
             }
             yield {
@@ -2192,7 +2391,7 @@ export function createKowloonFabricEngine({
                 validScaffolds.sort((a, b) => {
                     const heightRank = b.face.module.floors - a.face.module.floors;
                     if (heightRank) return heightRank;
-                    const topologyRank = (a.plan.topology === 'canonical-scaffold-switchback' ? 0 : 1) - (b.plan.topology === 'canonical-scaffold-switchback' ? 0 : 1);
+                    const topologyRank = (a.plan.topology === 'canonical-facade-zigzag' ? 0 : 1) - (b.plan.topology === 'canonical-facade-zigzag' ? 0 : 1);
                     if (topologyRank) return topologyRank;
                     const aMargin = a.plan.facadeTangentAvailable - a.plan.tangentSpan;
                     const bMargin = b.plan.facadeTangentAvailable - b.plan.tangentSpan;
@@ -2502,6 +2701,15 @@ export function createKowloonFabricEngine({
                             ? { x: stairCx, y: stepY, z: along, sx: actualStairClearWidth, sy: stepThickness, sz: Math.abs(stairTo - stairFrom) / steps * 1.06 }
                             : { x: along, y: stepY, z: stairCz, sx: Math.abs(stairTo - stairFrom) / steps * 1.06, sy: stepThickness, sz: actualStairClearWidth });
                     }
+                    emitFlightGuardPairFromAuthority({
+                        physics, transforms, idPrefix: `${chunk.key}:${siteSignature}:${module.key}:compound-stair:${floor}:guard`,
+                        axis: stairRunAxis, from: stairFrom, to: stairTo,
+                        fixedCoord: stairRunAxis === 'z' ? stairCx : stairCz,
+                        halfWidth: stairHalfWidth, y0, y1,
+                        family: guardFamilyForContext({ supportKind: 'compound-stair', visualRole: 'interior-stair', physicalUse: stairPhysicalTruth?.physicalUse }),
+                        supportKind: 'compound-stair-guard',
+                        metadata: { moduleKey: module.key, floor, physicalUse: stairPhysicalTruth?.physicalUse, visualRole: 'interior-stair' },
+                    });
                 }
             }
 
@@ -2534,7 +2742,7 @@ export function createKowloonFabricEngine({
                     const neighbor = moduleByKey.get(kowloonCellKey(module.cell.col + dir.dc, module.cell.row + dir.dr));
                     exposed = !neighbor || neighbor.floors < module.floors;
                 }
-                if (exposed) addCompoundRoofParapetSide({ physics, wallList, rect: module.rect, roofY, side: dir.side });
+                if (exposed) addCompoundRoofParapetSide({ physics, transforms, wallList, rect: module.rect, roofY, side: dir.side });
             }
             yield { phase: 'compound-module-shell', moduleKey: module.key, current: modulePlans.indexOf(module) + 1, total: modulePlans.length };
         }
@@ -2740,6 +2948,13 @@ export function createKowloonFabricEngine({
                             ? { x: along, y: stepY, z: fixedCoord, sx: Math.abs(to - from) / stepCount * 1.06, sy: stepThickness, sz: rampWidth }
                             : { x: fixedCoord, y: stepY, z: along, sx: rampWidth, sy: stepThickness, sz: Math.abs(to - from) / stepCount * 1.06 });
                     }
+                    emitFlightGuardPairFromAuthority({
+                        physics, transforms, idPrefix: `${chunk.key}:${siteSignature}:${module.key}:mezzanine:${mezzanines}:guard`,
+                        axis, from, to, fixedCoord, halfWidth: rampWidth * 0.5, y0: 0, y1: y,
+                        family: guardFamilyForContext({ supportKind: 'mezzanine-stair', visualRole: 'mezzanine-access', physicalUse: servicePhysicalTruth?.physicalUse }),
+                        supportKind: 'mezzanine-stair-guard',
+                        metadata: { moduleKey: module.key, index: mezzanines, physicalUse: servicePhysicalTruth?.physicalUse, visualRole: 'mezzanine-access' },
+                    });
                     mezzanines++;
                 }
             }
@@ -2967,8 +3182,6 @@ export function createKowloonFabricEngine({
         const bridgeTruth = aEntity.servicePhysicalTruth ?? aEntity.physicalTruth ?? bEntity.servicePhysicalTruth ?? bEntity.physicalTruth ?? null;
         const truthWidth = bridgeTruth?.stair?.widthSI ?? 0.86;
         const width = hanging ? Math.max(0.72, Math.min(0.96, truthWidth * 0.90)) : Math.max(0.90, Math.min(1.22, truthWidth));
-        const railH = hanging ? 0.70 : 0.86;
-        const railT = hanging ? 0.065 : 0.10;
         let from, to, fixedCoord, rawSurface;
         if (bridge.axis === 'x') {
             from = aModule.cx + aModule.halfX + 0.02;
@@ -3007,15 +3220,15 @@ export function createKowloonFabricEngine({
         const surface = published.surface;
         if (bridge.axis === 'x') {
             for (const z of [surface.z - surface.hz, surface.z + surface.hz]) emitTransportRail({
-                physics, wallList: transforms.wallGroups[0], surfaceId: surface.id,
+                physics, transforms, wallList: transforms.wallGroups[0], surfaceId: surface.id,
                 x1: surface.x - surface.hx, z1: z, x2: surface.x + surface.hx, z2: z,
-                y, height: railH, thickness: railT,
+                y,
             });
         } else {
             for (const x of [surface.x - surface.hx, surface.x + surface.hx]) emitTransportRail({
-                physics, wallList: transforms.wallGroups[0], surfaceId: surface.id,
+                physics, transforms, wallList: transforms.wallGroups[0], surfaceId: surface.id,
                 x1: x, z1: surface.z - surface.hz, x2: x, z2: surface.z + surface.hz,
-                y, height: railH, thickness: railT,
+                y,
             });
         }
         for (const overlap of published.overlaps) smoothTransportUnion({ physics, transforms, a: surface, b: overlap });
@@ -3212,8 +3425,8 @@ export function createKowloonFabricEngine({
 
     function createFabricBuffers() {
         return {
-            transforms: { wallGroups: wallMats.map(() => []), slabs: [], steps: [], props: [], roads: [], windows: [], doors: [] },
-            physics: { mazeWalls: [], platforms: [], ramps: [], ceilings: [], props: [], circulationReservations: [], semanticConnectors: [] },
+            transforms: { wallGroups: wallMats.map(() => []), slabs: [], steps: [], props: [], guardMetal: [], guardConcrete: [], roads: [], windows: [], doors: [] },
+            physics: { mazeWalls: [], platforms: [], ramps: [], ceilings: [], props: [], guardSpans: [], circulationReservations: [], semanticConnectors: [] },
         };
     }
 
@@ -3227,9 +3440,11 @@ export function createKowloonFabricEngine({
         const slabMesh = makeInstanced(`${namePrefix}-slabs`, unitBox, slabMat, transforms.slabs);
         const stepMesh = makeInstanced(`${namePrefix}-steps`, unitBox, stepMat, transforms.steps);
         const propMesh = makeInstanced(`${namePrefix}-props`, unitBox, propMat, transforms.props);
+        const guardMetalMesh = makeInstanced(`${namePrefix}-guard-metal`, unitBox, guardMetalMat, transforms.guardMetal);
+        const guardConcreteMesh = makeInstanced(`${namePrefix}-guard-concrete`, unitBox, guardConcreteMat, transforms.guardConcrete);
         const windowMesh = makeInstanced(`${namePrefix}-windows`, unitBox, windowMat, transforms.windows);
         const doorMesh = makeInstanced(`${namePrefix}-doors`, unitBox, doorMat, transforms.doors);
-        for (const mesh of [slabMesh, stepMesh, propMesh, windowMesh, doorMesh]) if (mesh) root.add(mesh);
+        for (const mesh of [slabMesh, stepMesh, propMesh, guardMetalMesh, guardConcreteMesh, windowMesh, doorMesh]) if (mesh) root.add(mesh);
         return root.children.length;
     }
 
@@ -3905,6 +4120,8 @@ export function createKowloonFabricEngine({
         slabMat.dispose();
         stepMat.dispose();
         propMat.dispose();
+        guardMetalMat.dispose();
+        guardConcreteMat.dispose();
         doorMat.dispose();
         windowMat.dispose();
         for (const mat of wallMats) mat.dispose();

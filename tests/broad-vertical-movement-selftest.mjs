@@ -157,8 +157,8 @@ for (const [x, z] of samples) {
 
   for (const scaffoldRoute of scaffoldRoutes) {
     scaffoldRoutesSeen++;
-    assert.equal(scaffoldRoute.topology, 'canonical-scaffold-switchback',
-      `${c.key}:${scaffoldRoute.id}: scaffold must use the fixed A=street/B=building half-lane switchback`);
+    assert.equal(scaffoldRoute.topology, 'canonical-facade-zigzag',
+      `${c.key}:${scaffoldRoute.id}: scaffold must use the shared full-story facade zigzag`);
   }
 
   for (const route of routes) {

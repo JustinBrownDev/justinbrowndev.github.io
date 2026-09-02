@@ -4,7 +4,7 @@ import { resolvePhysicalTruth } from '../world/physical-truth.js';
 import { createStairShaftReservation } from '../world/circulation-reservations.js';
 import { planExteriorScaffoldRoute, scaffoldRouteIsContinuous } from '../world/scaffold-circulation-plan.js';
 import {
-  assertCanonicalScaffoldSwitchback,
+  assertCanonicalFacadeZigzag,
   assertLandingThroatClearsFlight,
   assertStairShaftContainsFlight,
 } from '../world/stair-volume-contract.js';
@@ -15,42 +15,42 @@ const truth = resolvePhysicalTruth({
 });
 
 const plan = planExteriorScaffoldRoute({
-  fp: { cx: 0, cz: 0, halfX: 7.5, halfZ: 3.2 },
+  fp: { cx: 0, cz: 0, halfX: 8.5, halfZ: 3.2 },
   siteId: 7, moduleKey: 'm', floors: 3, floorH: 3.2, side: 'north', seed: 123,
-  physicalTruth: truth, maxExteriorDepth: 4.0, routeId: 'unit:scaffold',
+  physicalTruth: truth, maxExteriorDepth: 3.0, routeId: 'unit:scaffold',
 });
-assert.ok(plan, 'canonical scaffold switchback should fit the unit facade');
-assert.equal(plan.topology, 'canonical-scaffold-switchback');
-assert.equal(assertCanonicalScaffoldSwitchback(plan), true);
+assert.ok(plan, 'canonical facade zigzag should fit the unit facade');
+assert.equal(plan.topology, 'canonical-facade-zigzag');
+assert.equal(assertCanonicalFacadeZigzag(plan), true);
 assert.equal(scaffoldRouteIsContinuous(plan), true);
-assert.equal(plan.flights.length, 6, 'three stories require A+B on every story');
-assert.equal(plan.scaffoldEnvelope.normalDepth,
-  plan.scaffoldEnvelope.laneWidth * 2 + plan.scaffoldEnvelope.laneGap);
-assert.ok(plan.scaffoldEnvelope.streetLaneCoord < plan.scaffoldEnvelope.buildingLaneCoord,
-  'north-face A lane must be farther streetward than B');
+assert.equal(plan.flights.length, 3, 'three stories require exactly three full-story flights');
 for (let level = 0; level < plan.floors; level++) {
-  const a = plan.flights.find(flight => flight.level === level && flight.segment === 0);
-  const b = plan.flights.find(flight => flight.level === level && flight.segment === 1);
-  assert.equal(a.laneRole, 'street-half');
-  assert.equal(b.laneRole, 'building-half');
-  assert.equal(a.fixedCoord, plan.scaffoldEnvelope.streetLaneCoord);
-  assert.equal(b.fixedCoord, plan.scaffoldEnvelope.buildingLaneCoord);
-  assert.equal(a.from, plan.scaffoldEnvelope.runLow);
-  assert.equal(a.to, plan.scaffoldEnvelope.runHigh);
-  assert.equal(b.from, plan.scaffoldEnvelope.runHigh);
-  assert.equal(b.to, plan.scaffoldEnvelope.runLow);
+  const flight = plan.flights[level];
+  assert.equal(flight.fixedCoord, plan.scaffoldEnvelope.fixedCoord);
+  assert.equal(flight.rise, plan.floorH);
+  if (level > 0) {
+    const previous = plan.flights[level - 1];
+    assert.equal(previous.to, flight.from);
+    assert.notEqual(Math.sign(previous.to - previous.from), Math.sign(flight.to - flight.from));
+  }
+}
+for (const landing of plan.landings) {
+  const lo = landing.tangentCenter - landing.tangentSize * 0.5;
+  const hi = landing.tangentCenter + landing.tangentSize * 0.5;
+  if (landing.landingPosition === 'run-low-beyond') assert.ok(Math.abs(hi - plan.scaffoldEnvelope.runLow) < 1e-6);
+  else assert.ok(Math.abs(lo - plan.scaffoldEnvelope.runHigh) < 1e-6);
 }
 
 const scaffoldSource = fs.readFileSync(new URL('../world/scaffold-circulation-plan.js', import.meta.url), 'utf8');
-assert.doesNotMatch(scaffoldSource, /function\s+planStraight\s*\(/,
-  'the old straight/parity scaffold planner must not remain as an alternate active author');
-assert.doesNotMatch(scaffoldSource, /level\s*%\s*2/,
-  'canonical scaffold A/B lane assignment must never depend on story parity/mirroring');
 const fastSource = fs.readFileSync(new URL('../world/fast-vertical-route.js', import.meta.url), 'utf8');
+assert.match(scaffoldSource, /planAlternatingFacadeStair/);
+assert.match(fastSource, /planAlternatingFacadeStair/);
+assert.doesNotMatch(scaffoldSource, /splitRiseA|streetLaneCoord|buildingLaneCoord/,
+  'retired two-half-lane scaffold geometry must not remain active');
 assert.doesNotMatch(fastSource, /export function planFastVerticalRoute\s*\(/,
-  'obsolete 03 direct/side-run stair author must not remain available after the street-layer cutover');
+  'obsolete 03 direct/side-run stair author must not return');
 assert.doesNotMatch(fastSource, /export function planSharedVerticalTrunk\s*\(/,
-  'obsolete 04 per-door stair author must not remain available after the street-layer cutover');
+  'obsolete 04 per-door stair author must not return');
 
 const mainSource = fs.readFileSync(new URL('../main.js', import.meta.url), 'utf8');
 assert.doesNotMatch(mainSource, /vertical-circulation\.js|building-construction\.js/,
@@ -91,5 +91,5 @@ console.log('[stair-volume-contract-selftest] PASS', {
   topology: plan.topology,
   stories: plan.floors,
   flights: plan.flights.length,
-  invariant: 'A=street half, B=building half, end landings beyond run, active stair paths carry explicit clearance volumes',
+  invariant: 'one shared full-story wall zigzag; end landings live beyond the run; generated decks carry explicit headroom throats',
 });

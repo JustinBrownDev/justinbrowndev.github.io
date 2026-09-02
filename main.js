@@ -6,6 +6,7 @@ import { RenderPass } from './vendor/three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from './vendor/three/addons/postprocessing/UnrealBloomPass.js';
 import { createPlayerPhysics } from './player-physics.js';
 import { SpatialHash2D, createProgressiveStaticWorldOptimizer } from './city-performance.js';
+import { cylindricalFarPlaneDistance } from './world/cylindrical-render-distance.js';
 import { announceParameterOverrides, registerConfigLiveParameter, registerConfigLivePrefix, registerConfigRoot } from './numeric-parameters.js';
 import { QP } from './runtime/main-quantitative-literals.js';
 import { CONFIG } from './config/game-config.js';
@@ -585,7 +586,7 @@ const camera = new THREE.PerspectiveCamera(
     CONFIG.camera.fov,
     window.innerWidth / window.innerHeight,
     CONFIG.camera.near,
-    QUALITY.drawDistance
+    cylindricalFarPlaneDistance(QUALITY.drawDistance)
 );
 camera.rotation.order = 'YXZ';
 
@@ -1135,7 +1136,11 @@ function updateWebGradient(worldZ, worldY, elapsed) {
      
      
     scene.fog.density = baseDensity * THREE.MathUtils.lerp(QP[278], QP[279], vt);
-    const nextFar = THREE.MathUtils.lerp(Math.min(QP[280], QUALITY.drawDistance), QUALITY.drawDistance, vt);
+    // Horizontal streaming/detail culling is already cylindrical (XZ only).
+    // Keep the camera far plane outside that cylinder so a tall building cannot
+    // lose its upper or lower section merely because Y increased eye distance.
+    const horizontalDrawDistance = THREE.MathUtils.lerp(Math.min(QP[280], QUALITY.drawDistance), QUALITY.drawDistance, vt);
+    const nextFar = cylindricalFarPlaneDistance(horizontalDrawDistance);
     if (Math.abs(nextFar - _lastCameraFar) > QP[281]) {
         camera.far = nextFar;
         camera.updateProjectionMatrix();

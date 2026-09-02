@@ -18,7 +18,7 @@ assert.match(engineSource, /stair tower with no usable floor[\s\S]*companion\.fl
   'top occupied floor must keep usable plate beside the vertical spine');
 assert.match(engineSource, /addRectPlatform\([^\n]+supportKind, 0\);/,
   'notched floor pieces must opt out of invisible platform edge forgiveness');
-assert.match(sidecarSource, /stairClearWidth \* 1\.35, 1\.20, 1\.55/,
+assert.match(sidecarSource, /stairWalkAroundClearance\(stairClearWidth\)/,
   'interior stair apron must reserve visual wiggle room');
 assert.match(sidecarSource, /coalesce one non-root route role/,
   'constrained floor plans must coalesce redundant entry\/circulation before squeezing rooms');

@@ -8,6 +8,7 @@ import {
   SPAWN_AUTHORED_INTENTS,
 } from './plan-grammar-catalog.js';
 import { claimUnassignedRasterToEligibleSpaces, chooseHumanScaleProgramDrop, minimumEligibleCellsReservedForRemaining } from './human-scale-capacity.js';
+import { stairWalkAroundClearance } from '../interior-geometry-policy.js';
 
 const SCHEMA = 'jweb.building-plan-sidecar.v1';
 const EPS = 1e-9;
@@ -119,7 +120,7 @@ function normalizeReservations(reservations = []) {
     );
     // Technical passability is not enough: reserve enough apron for a person to
     // turn, read the stair, and approach a doorway without the plan feeling pinched.
-    const walkAround = clamp(stairClearWidth * 1.35, 1.20, 1.55);
+    const walkAround = stairWalkAroundClearance(stairClearWidth);
     const apron = {
       ...base,
       id: `${base.id}:walk-around-apron`,

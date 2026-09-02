@@ -6,6 +6,7 @@ import { assertBuildingFootprintsDoNotOverlap } from './world/building-footprint
 import { createKowloonMazeTopology } from './world/kowloon-district-plan.js';
 import { classifyPhysicalUse } from './world/physical-use.js';
 import { deriveStairFlight, gameplayTraversalEnvelope, resolvePhysicalTruth } from './world/physical-truth.js';
+import { BUILDING_SLAB_THICKNESS, centeredStairCorePosition, storyCeilingLocalY } from './world/interior-geometry-policy.js';
 import { planBuildingSidecar } from './world/architecture/building-plan-sidecar.js';
 import { assertBuildingPlanAuthority, promoteBuildingPlanAuthority } from './world/architecture/building-plan-authority.js';
 import { createSemanticPlanCache, semanticPlanCacheKey } from './world/architecture/semantic-plan-runtime.js';
@@ -444,7 +445,7 @@ export function createKowloonFabricEngine({
         const z0 = cz - depth * 0.5, z1 = cz + depth * 0.5;
         const gx0 = Math.max(x0, gapCx - gapW * 0.5), gx1 = Math.min(x1, gapCx + gapW * 0.5);
         const gz0 = Math.max(z0, gapCz - gapD * 0.5), gz1 = Math.min(z1, gapCz + gapD * 0.5);
-        const slabT = 0.12;
+        const slabT = BUILDING_SLAB_THICKNESS;
         if (gx0 > x0) transforms.slabs.push({ x: (x0 + gx0) * 0.5, y: y - slabT * 0.5, z: cz, sx: gx0 - x0, sy: slabT, sz: z1 - z0 });
         if (gx1 < x1) transforms.slabs.push({ x: (gx1 + x1) * 0.5, y: y - slabT * 0.5, z: cz, sx: x1 - gx1, sy: slabT, sz: z1 - z0 });
         if (gz0 > z0) transforms.slabs.push({ x: (gx0 + gx1) * 0.5, y: y - slabT * 0.5, z: (z0 + gz0) * 0.5, sx: gx1 - gx0, sy: slabT, sz: gz0 - z0 });
@@ -456,6 +457,8 @@ export function createKowloonFabricEngine({
         const coreReservation = plan?.verticalCore?.reservation ?? null;
         let segments = 0;
         const emitRaw = (run, a, b, yMin = run.yBase, yMax = run.yBase + run.height) => {
+            const ceilingY = run.yBase + storyCeilingLocalY(run.height);
+            yMax = Math.min(yMax, ceilingY);
             if (b - a <= 0.04 || yMax - yMin <= 0.04) return;
             const wallH = yMax - yMin;
             const wallY = yMin + wallH * 0.5;
@@ -1422,6 +1425,7 @@ export function createKowloonFabricEngine({
     function addCompoundSideWall({ physics, wallList, rect, floorH, floor, side, opening = 0 }) {
         const storyY0 = floor * floorH;
         const wallT = KOWLOON_EXTERIOR_WALL_THICKNESS;
+        const ceilingLocalY = storyCeilingLocalY(floorH);
         const horizontal = side === 'north' || side === 'south';
         const fixed = horizontal
             ? rect.cz + (side === 'north' ? -rect.halfZ : rect.halfZ)
@@ -1454,6 +1458,7 @@ export function createKowloonFabricEngine({
         }).filter(Boolean);
 
         const addSegment = (a, b, localY0 = 0, localY1 = floorH) => {
+            localY1 = Math.min(localY1, ceilingLocalY);
             if (b - a <= 0.04 || localY1 - localY0 <= 0.04) return;
             const mid = (a + b) * 0.5;
             const yMin = storyY0 + localY0;
@@ -1630,8 +1635,14 @@ export function createKowloonFabricEngine({
         }
 
         const primaryCoreRng = mulberry32(hashString32(`${siteSeed}:vertical-core`));
-        const primaryStairCx = primaryModule.rect.cx + (primaryCoreRng() - 0.5) * primaryModule.rect.halfX * 0.18;
-        const primaryStairCz = primaryModule.rect.cz + (primaryCoreRng() - 0.5) * primaryModule.rect.halfZ * 0.18;
+        const primaryCoreOffsetX = (primaryCoreRng() - 0.5) * primaryModule.rect.halfX * 0.18;
+        const primaryCoreOffsetZ = (primaryCoreRng() - 0.5) * primaryModule.rect.halfZ * 0.18;
+        const primaryStairCenter = centeredStairCorePosition({
+            axis: primaryStairAxis, rect: primaryModule.rect,
+            offsetX: primaryCoreOffsetX, offsetZ: primaryCoreOffsetZ,
+        });
+        const primaryStairCx = primaryStairCenter.x;
+        const primaryStairCz = primaryStairCenter.z;
         const primaryStairFrom = primaryStairAxis === 'z'
             ? primaryStairCz - primaryStairAvailableRun * 0.5
             : primaryStairCx - primaryStairAvailableRun * 0.5;
@@ -2977,8 +2988,14 @@ export function createKowloonFabricEngine({
         // persistent vertical core are known now.  Author the semantic floor graph
         // before any partition geometry is published, then make geometry consume it.
         const primaryCoreRng = mulberry32(hashString32(`${siteSeed}:vertical-core`));
-        const primaryStairCx = primaryModule.rect.cx + (primaryCoreRng() - 0.5) * primaryModule.rect.halfX * 0.18;
-        const primaryStairCz = primaryModule.rect.cz + (primaryCoreRng() - 0.5) * primaryModule.rect.halfZ * 0.18;
+        const primaryCoreOffsetX = (primaryCoreRng() - 0.5) * primaryModule.rect.halfX * 0.18;
+        const primaryCoreOffsetZ = (primaryCoreRng() - 0.5) * primaryModule.rect.halfZ * 0.18;
+        const primaryStairCenter = centeredStairCorePosition({
+            axis: primaryStairAxis, rect: primaryModule.rect,
+            offsetX: primaryCoreOffsetX, offsetZ: primaryCoreOffsetZ,
+        });
+        const primaryStairCx = primaryStairCenter.x;
+        const primaryStairCz = primaryStairCenter.z;
         const primaryStairFrom = primaryStairAxis === 'z'
             ? primaryStairCz - primaryStairAvailableRun * 0.5
             : primaryStairCx - primaryStairAvailableRun * 0.5;

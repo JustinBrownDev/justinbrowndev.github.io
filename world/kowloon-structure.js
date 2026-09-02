@@ -209,8 +209,11 @@ export function chooseKowloonCompoundTargetSize(rng, weirdness = 0) {
     // subdivided until every room and stair is compromised. Keep the alley grid
     // unchanged, but let each building accrete more of the solid cells between
     // those alleys. Single-module buildings are now an edge-case fallback.
+    // Do not intentionally target tiny one- or two-cell buildings. The maze may
+    // still leave a constrained leftover smaller than this target, but ordinary
+    // compounds now start wide enough to read as buildings instead of stair towers.
     const base = [
-        [1, 2], [2, 5], [3, 10], [4, 18], [5, 24], [6, 20], [7, 13], [8, 8],
+        [3, 10], [4, 20], [5, 26], [6, 22], [7, 14], [8, 8],
     ];
     const adjusted = base.map(([size, weight]) => {
         const bonus = size >= 4 ? intensity.siteTargetBonus * (size - 2) * 2.5 : 0;

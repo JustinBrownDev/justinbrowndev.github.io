@@ -167,9 +167,6 @@ export function planFastFacadeArchitecture({
       for (let i = 0; i < windowCount; i++) {
         const u = windowCount === 1 ? 0 : (i === 0 ? -0.30 : 0.30);
         const tangent = geometry.tangentCenter + u * geometry.tangentHalf;
-        const normal = geometry.faceCoord + geometry.outward * 0.027;
-        const meta = { facadeRole: 'inhabited-window', moduleKey: face.moduleKey, dirKey: face.dirKey, floor, windowIndex: i };
-        windows.push(facadePlane(face, tangent, normal, y, width, height, meta));
         apertures.push(freezeRecord({
           id: `${stableKey}:${face.moduleKey}:${face.dirKey}:window-aperture:${floor}:${i}`,
           kind: 'window', moduleKey: face.moduleKey, dirKey: face.dirKey, side: face.side,

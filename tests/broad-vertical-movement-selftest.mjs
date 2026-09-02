@@ -30,7 +30,8 @@ assert.deepEqual([...noBridgePolicy.occupancyPortalFloors], [1, 4], 'four transp
 const bridgePolicy = policyMod.planExteriorStreetLayerPolicy({ floors: 5, existingPortalFloors: [1], maxLayers: 4, maxExteriorConnections: 2 });
 assert.deepEqual([...bridgePolicy.layerFloors], [1, 2, 3, 4]);
 assert.deepEqual([...bridgePolicy.occupancyPortalFloors], [4], 'existing walkway portal consumes the exterior-connection budget first');
-assert.ok(policyMod.EXTERIOR_CIRCULATION_DEBT.some(item => item.tag === 'CIRC_DEBT_REAL_ROOM_AUTHORITY'));
+assert.ok(!policyMod.EXTERIOR_CIRCULATION_DEBT.some(item => item.tag === 'CIRC_DEBT_REAL_ROOM_AUTHORITY'),
+  '11 closes real-room authority by binding skeleton exterior demands to Building Plan spaces');
 assert.ok(!policyMod.EXTERIOR_CIRCULATION_DEBT.some(item => item.tag === 'CIRC_DEBT_STANDALONE_FIRE_ESCAPE_HEADROOM'),
   '06 resolves standalone scaffold headroom by replacing the old landing geometry');
 assert.ok(policyMod.EXTERIOR_CIRCULATION_DEBT.some(item => item.tag === 'CIRC_DEBT_CROSS_CHUNK_STREETS'));
@@ -145,6 +146,9 @@ let streetLayerDecksSeen = 0;
 let throatsSeen = 0;
 let scaffoldRoutesSeen = 0;
 let consumedScaffoldChecks = 0;
+let buildingPlansSeen = 0;
+let partitionSegmentsSeen = 0;
+let interiorStairRampsSeen = 0;
 
 for (const [x, z] of samples) {
   const c = chunk(x, z);
@@ -157,6 +161,22 @@ for (const [x, z] of samples) {
   const semanticConnectors = payload.physics.semanticConnectors ?? [];
   const scaffoldRoutes = payload.physics.scaffoldCirculationRoutes ?? [];
   const walls = payload.physics.mazeWalls ?? [];
+  const structuralEntities = (payload.entities ?? []).filter(entity => entity?.broadStrokesOnly === true);
+  const topologySpaceIds = new Set();
+  for (const entity of structuralEntities) {
+    assert.equal(entity.buildingPlan?.authoritySchema, 'jweb.building-plan-authority.v1',
+      `${c.key}: skeleton building must carry Building Plan authority`);
+    assert.ok((entity.buildingPlan?.topologySpaces?.length ?? 0) > 0,
+      `${c.key}: skeleton Building Plan must publish real topology spaces`);
+    assert.equal(entity.suppressInteriorEnrichment, true,
+      `${c.key}: structural reintegration must not reactivate rich interior enrichment`);
+    assert.equal(entity.interiorClutter, 0);
+    assert.equal(entity.mezzanines, 0);
+    buildingPlansSeen++;
+    partitionSegmentsSeen += entity.partitionSegments ?? 0;
+    for (const space of entity.buildingPlan.topologySpaces ?? []) topologySpaceIds.add(space.id);
+  }
+  interiorStairRampsSeen += (payload.physics.ramps ?? []).filter(ramp => ramp.supportKind === 'compound-stair').length;
 
   for (const scaffoldRoute of scaffoldRoutes) {
     scaffoldRoutesSeen++;
@@ -194,6 +214,8 @@ for (const [x, z] of samples) {
         continue;
       }
       occupancyPortalsSeen++;
+      assert.ok(topologySpaceIds.has(stop.roomSpaceId),
+        `${c.key}:${route.id}:${stop.portal.id}: exterior occupancy demand must reference a real Building Plan space`);
       assert.ok(semanticConnectors.some(connector => connector.source === 'fast-vertical-room-portal'
           && connector.metadata?.routeId === route.id && connector.metadata?.portalId === stop.portal.id),
         `${c.key}:${route.id}:${stop.portal.id}: selected occupancy portal must publish`);
@@ -225,6 +247,9 @@ assert.ok(occupancyPortalsSeen > 0, 'sample must attach sparse occupancy doors t
 assert.ok(streetLayerDecksSeen > 0, 'sample must publish balconies/decks as horizontal transport');
 assert.ok(throatsSeen > 0, 'generated street layers must preserve independent flight headroom clearances');
 assert.ok(consumedScaffoldChecks > 0, 'sample must verify street-layer trunks consume redundant same-module fire escapes');
+assert.ok(buildingPlansSeen > 0, 'skeleton sample must restore structural Building Plans');
+assert.ok(partitionSegmentsSeen > 0, 'skeleton sample must publish interior partition walls');
+assert.ok(interiorStairRampsSeen > 0, 'skeleton sample must publish persistent interior core stairs');
 console.log('[broad-vertical-movement-selftest] PASS', {
   samples: samples.length,
   routesSeen,
@@ -234,6 +259,9 @@ console.log('[broad-vertical-movement-selftest] PASS', {
   streetLayerDecksSeen,
   throatsSeen,
   scaffoldRoutesSeen,
+  buildingPlansSeen,
+  partitionSegmentsSeen,
+  interiorStairRampsSeen,
   debtTags: policyMod.EXTERIOR_CIRCULATION_DEBT.map(item => item.tag),
   invariant: 'occupancy demand -> target -> intact landing -> stair mouth -> separated flight; balconies remain horizontal transport',
 });

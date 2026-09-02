@@ -41,6 +41,20 @@ function portalTangent(portal, side) {
   return Number.isFinite(value) ? value : null;
 }
 
+function accessDemandTangent(demand, side, { legacyExplicitPortal = false } = {}) {
+  const rawPreferred = demand?.preferredTangent;
+  const preferred = rawPreferred === null || rawPreferred === undefined ? NaN : Number(rawPreferred);
+  if (Number.isFinite(preferred)) return preferred;
+  if (demand?.placementAuthority === 'external-anchor' || legacyExplicitPortal) return portalTangent(demand?.portal, side);
+  return null;
+}
+
+function facePointForTangent(geometry, tangent, y) {
+  return Object.freeze(geometry.horizontal
+    ? { x: tangent, y, z: geometry.faceCoord }
+    : { x: geometry.faceCoord, y, z: tangent });
+}
+
 function rectPositiveOverlap(a, b) {
   return Math.abs(Number(a.x) - Number(b.x)) < Number(a.hx) + Number(b.hx) - EPS
     && Math.abs(Number(a.z) - Number(b.z)) < Number(a.hz) + Number(b.hz) - EPS;
@@ -122,7 +136,11 @@ export function planExteriorStreetLayerTrunk({
 
   const preferredLandingTangents = {};
   for (const layer of layers) {
-    const values = [...(layer.portals ?? [])].map(item => portalTangent(item?.portal, side)).filter(Number.isFinite);
+    const usingAccessDemands = Array.isArray(layer.accessDemands);
+    const demands = [...(usingAccessDemands ? layer.accessDemands : (layer.portals ?? []))];
+    const values = demands
+      .map(item => accessDemandTangent(item, side, { legacyExplicitPortal: !usingAccessDemands }))
+      .filter(Number.isFinite);
     if (values.length) preferredLandingTangents[Number(layer.floor)] = values;
   }
   const topFloor = Number(layers[layers.length - 1].floor);
@@ -227,15 +245,36 @@ export function planExteriorStreetLayerTrunk({
       flightId: flight.id,
     }));
 
-    const layerPortals = [...(layer.portals ?? [])].filter(stop => stop?.portal && stop?.roomSpaceId);
-    for (let portalIndex = 0; portalIndex < layerPortals.length; portalIndex++) {
-      const stop = Object.freeze({ ...layerPortals[portalIndex], floor });
+    const usingAccessDemands = Array.isArray(layer.accessDemands);
+    const layerDemands = [...(usingAccessDemands ? layer.accessDemands : (layer.portals ?? []))]
+      .filter(stop => stop?.roomSpaceId && (stop?.portalId || stop?.portal?.id));
+    const placedPortalIds = [];
+    for (let portalIndex = 0; portalIndex < layerDemands.length; portalIndex++) {
+      const demand = layerDemands[portalIndex];
+      const preferredTangent = accessDemandTangent(demand, side, { legacyExplicitPortal: !usingAccessDemands });
+      const tangent = Number.isFinite(preferredTangent) ? preferredTangent : sourceLanding.tangentCenter;
+      const portalId = String(demand.portalId ?? demand.portal?.id);
+      const point = facePointForTangent(geometry, tangent, y);
+      const portal = Object.freeze({
+        id: portalId,
+        kind: 'circulation-placed-portal',
+        ...point,
+        tangent,
+        side,
+        width: Number(demand.width ?? demand.portal?.width) || Number(physicalTruth?.door?.clearWidth?.realizedSI) || stair.clearWidth,
+        height: Number(demand.height ?? demand.portal?.height) || Number(physicalTruth?.door?.clearHeight?.realizedSI) || 2.20,
+        depth: Number(demand.depth ?? demand.portal?.depth) || Number(physicalTruth?.door?.approachDepthSI) || 1.20,
+        landingId: landing.id,
+        placementAuthority: Number.isFinite(preferredTangent) ? 'explicit-anchor' : 'circulation-landing',
+      });
+      const stop = Object.freeze({ ...demand, floor, portalId, portal, portalPlacement: portal });
       portalStops.push(stop);
+      placedPortalIds.push(portalId);
       const roomNodeId = `${routeId}:graph:room:${floor}:${portalIndex}`;
       const portalNodeId = `${routeId}:graph:portal:${floor}:${portalIndex}`;
       graphNodes.push(
         Object.freeze({ id: roomNodeId, kind: 'occupancy', spaceId: stop.roomSpaceId, floor }),
-        Object.freeze({ id: portalNodeId, kind: 'portal', portalId: stop.portal.id, floor, source: stop.source ?? 'room-door' }),
+        Object.freeze({ id: portalNodeId, kind: 'portal', portalId, floor, source: stop.source ?? 'room-door', placementAuthority: portal.placementAuthority }),
       );
       graphEdges.push(
         Object.freeze({ from: roomNodeId, to: portalNodeId, kind: 'occupancy-threshold' }),
@@ -245,7 +284,7 @@ export function planExteriorStreetLayerTrunk({
     streetLayers.push(Object.freeze({
       floor, y, landingId: landing.id, generated: true, transportKind: landing.transportKind,
       targetSupportId: targetSupport?.id ?? null,
-      portalIds: Object.freeze(layerPortals.map(stop => stop.portal.id)),
+      portalIds: Object.freeze(placedPortalIds),
     }));
   }
 

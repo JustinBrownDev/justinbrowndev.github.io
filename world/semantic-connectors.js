@@ -79,6 +79,7 @@ export function semanticPortalForRect({
     width = null,
     height = null,
     depth = null,
+    tangent = null,
     physicalTruth = null,
     source = 'compound-portal',
     fromSpaceId = null,
@@ -93,12 +94,22 @@ export function semanticPortalForRect({
     const truth = physicalTruthOrFallback(physicalTruth, 'portal', { width: resolvedWidth, height: resolvedHeight, depth: resolvedDepth, floorH: resolvedFloorH });
     const v = SIDE_VECTOR[side];
     const y = floor * resolvedFloorH;
-    const x = rect.cx + v.x * (side === 'west' || side === 'east' ? rect.halfX : 0);
-    const z = rect.cz + v.z * (side === 'north' || side === 'south' ? rect.halfZ : 0);
+    const horizontal = side === 'north' || side === 'south';
+    const faceCenter = horizontal ? Number(rect.cx) : Number(rect.cz);
+    const faceHalf = horizontal ? Number(rect.halfX) : Number(rect.halfZ);
+    const requestedTangent = tangent === null || tangent === undefined ? NaN : Number(tangent);
+    const minTangent = faceCenter - faceHalf + resolvedWidth * 0.5;
+    const maxTangent = faceCenter + faceHalf - resolvedWidth * 0.5;
+    const resolvedTangent = Number.isFinite(requestedTangent)
+        ? Math.max(minTangent, Math.min(maxTangent, requestedTangent))
+        : faceCenter;
+    const x = horizontal ? resolvedTangent : Number(rect.cx) + v.x * Number(rect.halfX);
+    const z = horizontal ? Number(rect.cz) + v.z * Number(rect.halfZ) : resolvedTangent;
     return {
         id,
         kind: 'portal-endpoint',
         x, y, z,
+        tangent: resolvedTangent,
         width: resolvedWidth, height: resolvedHeight, depth: resolvedDepth, floorH: resolvedFloorH,
         side,
         normalX: v.x,

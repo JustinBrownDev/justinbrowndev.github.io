@@ -44,6 +44,7 @@ export function planFastFacadeArchitecture({
 } = {}) {
   const props = [];
   const windows = [];
+  const apertures = [];
   const treatments = [];
   const metrics = {
     faces: 0,
@@ -169,6 +170,11 @@ export function planFastFacadeArchitecture({
         const normal = geometry.faceCoord + geometry.outward * 0.027;
         const meta = { facadeRole: 'inhabited-window', moduleKey: face.moduleKey, dirKey: face.dirKey, floor, windowIndex: i };
         windows.push(facadePlane(face, tangent, normal, y, width, height, meta));
+        apertures.push(freezeRecord({
+          id: `${stableKey}:${face.moduleKey}:${face.dirKey}:window-aperture:${floor}:${i}`,
+          kind: 'window', moduleKey: face.moduleKey, dirKey: face.dirKey, side: face.side,
+          floor, center: tangent, width, height, bottom: floorH * 0.56 - height * 0.5,
+        }));
         props.push(orientedBox(face, tangent, geometry.faceCoord + geometry.outward * 0.055, y - height * 0.5 - 0.055, width + 0.16, 0.12, 0.10,
           { facadeRole: 'window-sill', moduleKey: face.moduleKey, dirKey: face.dirKey, floor, windowIndex: i }));
         treatments.push(freezeRecord({
@@ -185,6 +191,7 @@ export function planFastFacadeArchitecture({
     schema: FAST_FACADE_ARCHITECTURE_SCHEMA,
     stableKey: String(stableKey),
     treatments: Object.freeze(treatments),
+    apertures: Object.freeze(apertures),
     render: Object.freeze({ props: Object.freeze(props), windows: Object.freeze(windows) }),
     metrics: Object.freeze(metrics),
   });

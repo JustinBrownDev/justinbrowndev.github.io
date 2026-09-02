@@ -613,15 +613,15 @@ export function createKowloonFabricEngine({
                     y: landing.y, supportKind: 'scaffold-rail', guardFamily: 'fire-escape-pipe',
                     metadata: { routeId: plan.id, landingId: landing.id, physicalUse: plan.physicalTruth?.physicalUse, visualRole: 'fire-escape-landing', guardSegmentRole: 'street-edge' },
                 });
-                const farX = landing.landingPosition === 'run-low-beyond'
-                    ? landing.x - landing.sx * 0.5 : landing.x + landing.sx * 0.5;
-                emitTransportRail({
-                    physics, transforms, wallList: transforms.wallGroups[0], surfaceId: scaffoldSurface.id,
-                    x1: farX, z1: landing.z - landing.sz * 0.5,
-                    x2: farX, z2: landing.z + landing.sz * 0.5,
-                    y: landing.y, supportKind: 'scaffold-rail', guardFamily: 'fire-escape-pipe',
-                    metadata: { routeId: plan.id, landingId: landing.id, physicalUse: plan.physicalTruth?.physicalUse, visualRole: 'fire-escape-landing', guardSegmentRole: 'dead-end' },
-                });
+                for (const [index, x] of [landing.x - landing.sx * 0.5, landing.x + landing.sx * 0.5].entries()) {
+                    emitTransportRail({
+                        physics, transforms, wallList: transforms.wallGroups[0], surfaceId: scaffoldSurface.id,
+                        x1: x, z1: landing.z - landing.sz * 0.5,
+                        x2: x, z2: landing.z + landing.sz * 0.5,
+                        y: landing.y, supportKind: 'scaffold-rail', guardFamily: 'fire-escape-pipe',
+                        metadata: { routeId: plan.id, landingId: landing.id, physicalUse: plan.physicalTruth?.physicalUse, visualRole: 'fire-escape-landing', guardSegmentRole: `end:${index}` },
+                    });
+                }
             } else {
                 const outerX = landing.x + outward * landing.sx * 0.5;
                 emitTransportRail({
@@ -631,14 +631,22 @@ export function createKowloonFabricEngine({
                     y: landing.y, supportKind: 'scaffold-rail', guardFamily: 'fire-escape-pipe',
                     metadata: { routeId: plan.id, landingId: landing.id, physicalUse: plan.physicalTruth?.physicalUse, visualRole: 'fire-escape-landing', guardSegmentRole: 'street-edge' },
                 });
-                const farZ = landing.landingPosition === 'run-low-beyond'
-                    ? landing.z - landing.sz * 0.5 : landing.z + landing.sz * 0.5;
-                emitTransportRail({
-                    physics, transforms, wallList: transforms.wallGroups[0], surfaceId: scaffoldSurface.id,
-                    x1: landing.x - landing.sx * 0.5, z1: farZ,
-                    x2: landing.x + landing.sx * 0.5, z2: farZ,
-                    y: landing.y, supportKind: 'scaffold-rail', guardFamily: 'fire-escape-pipe',
-                    metadata: { routeId: plan.id, landingId: landing.id, physicalUse: plan.physicalTruth?.physicalUse, visualRole: 'fire-escape-landing', guardSegmentRole: 'dead-end' },
+                for (const [index, z] of [landing.z - landing.sz * 0.5, landing.z + landing.sz * 0.5].entries()) {
+                    emitTransportRail({
+                        physics, transforms, wallList: transforms.wallGroups[0], surfaceId: scaffoldSurface.id,
+                        x1: landing.x - landing.sx * 0.5, z1: z,
+                        x2: landing.x + landing.sx * 0.5, z2: z,
+                        y: landing.y, supportKind: 'scaffold-rail', guardFamily: 'fire-escape-pipe',
+                        metadata: { routeId: plan.id, landingId: landing.id, physicalUse: plan.physicalTruth?.physicalUse, visualRole: 'fire-escape-landing', guardSegmentRole: `end:${index}` },
+                    });
+                }
+            }
+
+            for (const mouth of [landing.incomingMouth, landing.outgoingMouth]) {
+                if (!mouth?.point) continue;
+                carveTransportRailGap({
+                    physics, transforms, surfaceId: scaffoldSurface.id,
+                    point: mouth.point, width: plan.clearWidth + 0.18,
                 });
             }
 
@@ -1310,12 +1318,14 @@ export function createKowloonFabricEngine({
                         metadata: { routeId: plan.id, landingId: landing.id, physicalUse: plan.physicalTruth?.physicalUse, visualRole: 'balcony-street-layer', guardSegmentRole: `side:${index}` } });
                 }
             }
-            const incomingFlight = plan.flights.find(flight => flight.toLandingId === landing.id);
-            if (incomingFlight) {
-                const arrivalPoint = incomingFlight.axis === 'x'
-                    ? { x: incomingFlight.to, z: incomingFlight.fixedCoord }
-                    : { x: incomingFlight.fixedCoord, z: incomingFlight.to };
-                carveTransportRailGap({ physics, transforms, surfaceId: deckSurface.id, point: arrivalPoint, width: incomingFlight.clearWidth + 0.18 });
+            // PERF: mouth coordinates are already O(1) planner outputs; do not rescan
+            // every route flight for every landing just to rediscover an endpoint.
+            for (const mouth of [landing.incomingMouth, landing.outgoingMouth]) {
+                if (!mouth?.point) continue;
+                carveTransportRailGap({
+                    physics, transforms, surfaceId: deckSurface.id,
+                    point: mouth.point, width: (Number(plan.physicalTruth?.stair?.widthSI) || 0.9) + 0.18,
+                });
             }
             for (const overlap of deckOverlapCuts) {
                 smoothTransportUnion({ physics, transforms, a: deckSurface, b: overlap.surface, intersection: overlap.cut });
@@ -1342,7 +1352,7 @@ export function createKowloonFabricEngine({
             const floor = Number(landing.support?.floor) || Math.round(landing.y / Math.max(0.001, Number(plan.floorH)));
             const layer = (plan.streetLayers ?? []).find(item => Number(item.floor) === floor);
             const portalIds = layer?.portalIds ?? (plan.portalStops ?? [])
-                .filter(stop => Number(stop.floor) === floor).map(stop => stop.portal?.id).filter(Boolean);
+                .filter(stop => Number(stop.floor) === floor).map(stop => stop.portalId ?? stop.portal?.id).filter(Boolean);
             deckRegistry.push({
                 id: deckSurface.id, surfaceId: deckSurface.id, routeId: plan.id, landingId: landing.id,
                 faceKey: `${plan.moduleKey}:${plan.dirKey}`, floor,
@@ -1357,9 +1367,7 @@ export function createKowloonFabricEngine({
     }
 
     function addCompoundSideWall({ physics, wallList, rect, floorH, floor, side, opening = 0 }) {
-        const y0 = floor * floorH;
-        const y1 = y0 + floorH;
-        const wallY = (y0 + y1) * 0.5;
+        const storyY0 = floor * floorH;
         const wallT = KOWLOON_EXTERIOR_WALL_THICKNESS;
         const horizontal = side === 'north' || side === 'south';
         const fixed = horizontal
@@ -1368,41 +1376,69 @@ export function createKowloonFabricEngine({
         const lo = horizontal ? rect.cx - rect.halfX : rect.cz - rect.halfZ;
         const hi = horizontal ? rect.cx + rect.halfX : rect.cz + rect.halfZ;
         const span = hi - lo;
-        const openingWidth = typeof opening === 'object' ? Number(opening?.width) || 0 : Number(opening) || 0;
-        const gap = Math.max(0, Math.min(span - 0.12, openingWidth));
-        const addSegment = (a, b) => {
-            if (b - a <= 0.04) return;
+        const rawOpenings = Array.isArray(opening) ? opening : [opening];
+        const apertures = rawOpenings.map(raw => {
+            const spec = raw && typeof raw === 'object' ? raw : null;
+            const requestedWidth = spec ? Number(spec.width) || 0 : Number(raw) || 0;
+            const width = Math.max(0, Math.min(span - 0.12, requestedWidth));
+            if (!(width > 0.04)) return null;
+            const defaultMid = (lo + hi) * 0.5;
+            const requestedCenter = spec?.center;
+            const requestedMid = requestedCenter !== null && requestedCenter !== undefined && Number.isFinite(Number(requestedCenter))
+                ? Number(requestedCenter)
+                : defaultMid;
+            const center = clamp(requestedMid, lo + width * 0.5, hi - width * 0.5);
+            const bottom = spec && Number.isFinite(Number(spec.bottom))
+                ? clamp(Number(spec.bottom), 0, floorH) : 0;
+            const requestedHeight = spec ? Number(spec.height) || 0 : 0;
+            // Width-only legacy callers are door apertures, never permission to erase
+            // an entire story-height wall bay. Explicit authority still wins when present.
+            const height = requestedHeight > 0 ? requestedHeight : Math.min(2.20, floorH);
+            const top = clamp(bottom + height, bottom, floorH);
+            return top > bottom + 0.04
+                ? { lo: center - width * 0.5, hi: center + width * 0.5, bottom, top }
+                : null;
+        }).filter(Boolean);
+
+        const addSegment = (a, b, localY0 = 0, localY1 = floorH) => {
+            if (b - a <= 0.04 || localY1 - localY0 <= 0.04) return;
             const mid = (a + b) * 0.5;
+            const yMin = storyY0 + localY0;
+            const yMax = storyY0 + localY1;
+            const wallY = (yMin + yMax) * 0.5;
+            const wallH = yMax - yMin;
             if (horizontal) {
-                wallTransform(wallList, mid, wallY, fixed, b - a, floorH, wallT);
-                physics.mazeWalls.push({ x1: a, z1: fixed, x2: b, z2: fixed, yMin: y0, yMax: y1, thickness: wallT });
+                wallTransform(wallList, mid, wallY, fixed, b - a, wallH, wallT);
+                physics.mazeWalls.push({ x1: a, z1: fixed, x2: b, z2: fixed, yMin, yMax, thickness: wallT });
             } else {
-                wallTransform(wallList, fixed, wallY, mid, wallT, floorH, b - a);
-                physics.mazeWalls.push({ x1: fixed, z1: a, x2: fixed, z2: b, yMin: y0, yMax: y1, thickness: wallT });
+                wallTransform(wallList, fixed, wallY, mid, wallT, wallH, b - a);
+                physics.mazeWalls.push({ x1: fixed, z1: a, x2: fixed, z2: b, yMin, yMax, thickness: wallT });
             }
         };
-        if (!gap) {
+        if (!apertures.length) {
             addSegment(lo, hi);
             return;
         }
-        const defaultMid = (lo + hi) * 0.5;
-        const requestedMid = typeof opening === 'object' && Number.isFinite(opening?.center) ? opening.center : defaultMid;
-        const mid = clamp(requestedMid, lo + gap * 0.5, hi - gap * 0.5);
-        addSegment(lo, mid - gap * 0.5);
-        addSegment(mid + gap * 0.5, hi);
-        const requestedHeight = typeof opening === 'object' ? Number(opening?.height) || 0 : 0;
-        if (requestedHeight > 0) {
-            const openingTop = Math.min(y1, y0 + requestedHeight);
-            const lintelH = y1 - openingTop;
-            if (lintelH > 0.04) {
-                if (horizontal) {
-                    wallTransform(wallList, mid, openingTop + lintelH * 0.5, fixed, gap, lintelH, wallT);
-                    physics.mazeWalls.push({ x1: mid - gap * 0.5, z1: fixed, x2: mid + gap * 0.5, z2: fixed, yMin: openingTop, yMax: y1, thickness: wallT });
-                } else {
-                    wallTransform(wallList, fixed, openingTop + lintelH * 0.5, mid, wallT, lintelH, gap);
-                    physics.mazeWalls.push({ x1: fixed, z1: mid - gap * 0.5, x2: fixed, z2: mid + gap * 0.5, yMin: openingTop, yMax: y1, thickness: wallT });
-                }
+
+        // PERF: facade stories have only a handful of apertures. Banding them once
+        // avoids boolean geometry and keeps wall collision/render segmentation O(A log A).
+        const cuts = [...new Set([0, floorH, ...apertures.flatMap(item => [item.bottom, item.top])])].sort((a, b) => a - b);
+        for (let band = 0; band < cuts.length - 1; band++) {
+            const y0 = cuts[band], y1 = cuts[band + 1];
+            if (!(y1 > y0 + 0.04)) continue;
+            const gaps = apertures
+                .filter(item => item.bottom < y1 - 1e-7 && item.top > y0 + 1e-7)
+                .map(item => [item.lo, item.hi])
+                .sort((a, b) => a[0] - b[0]);
+            let cursor = lo;
+            for (const gap of gaps) {
+                const gapLo = Math.max(lo, gap[0]);
+                const gapHi = Math.min(hi, gap[1]);
+                if (gapHi <= cursor) continue;
+                addSegment(cursor, gapLo, y0, y1);
+                cursor = Math.max(cursor, gapHi);
             }
+            addSegment(cursor, hi, y0, y1);
         }
     }
 
@@ -1588,47 +1624,74 @@ export function createKowloonFabricEngine({
             height: Number(portal.height) || (servicePhysicalTruth?.door?.clearHeight?.realizedSI ?? 2.20),
             center: portal.side === 'north' || portal.side === 'south' ? Number(portal.x) : Number(portal.z),
         });
-        const makeRoomPortalStop = (face, floor, { source = 'fast-vertical-room-portal' } = {}) => {
+        const makeRoomAccessDemand = (face, floor, { source = 'fast-vertical-room-portal', anchorPortal = null } = {}) => {
             const roomSpaceId = `${chunk.key}:${siteSignature}:${face.module.key}:floor:${floor}`;
             const layerSpaceId = `${chunk.key}:${siteSignature}:${face.module.key}:street-layer:${floor}`;
-            const portal = semanticPortalForRect({
-                id: `${chunk.key}:${siteSignature}:${face.module.key}:${face.dir.key}:street-layer-portal:${floor}`,
-                rect: face.module.rect,
-                side: face.dir.side,
-                floor,
-                floorH,
-                physicalTruth: servicePhysicalTruth,
-                source,
-                fromSpaceId: roomSpaceId,
-                toSpaceId: layerSpaceId,
-                metadata: { moduleKey: face.module.key, dirKey: face.dir.key, floor },
-            });
+            const horizontal = face.dir.side === 'north' || face.dir.side === 'south';
+            const rawAnchorTangent = anchorPortal?.tangent;
+            const rawAnchorCoordinate = horizontal ? anchorPortal?.x : anchorPortal?.z;
+            const anchorTangent = rawAnchorTangent === null || rawAnchorTangent === undefined ? NaN : Number(rawAnchorTangent);
+            const anchorCoordinate = rawAnchorCoordinate === null || rawAnchorCoordinate === undefined ? NaN : Number(rawAnchorCoordinate);
+            const fallbackTangent = horizontal ? Number(face.module.rect.cx) : Number(face.module.rect.cz);
+            const bridgeTangent = Number.isFinite(anchorTangent)
+                ? anchorTangent
+                : (Number.isFinite(anchorCoordinate) ? anchorCoordinate : fallbackTangent);
             return {
                 floor,
                 roomSpaceId,
                 landingSpaceId: layerSpaceId,
                 source,
                 openingKey: `${face.module.key}:${face.dir.key}:${floor}`,
-                portal,
+                portalId: `${chunk.key}:${siteSignature}:${face.module.key}:${face.dir.key}:street-layer-portal:${floor}`,
+                width: servicePhysicalTruth?.door?.clearWidth?.realizedSI ?? 1.35,
+                height: servicePhysicalTruth?.door?.clearHeight?.realizedSI ?? 2.20,
+                depth: servicePhysicalTruth?.door?.approachDepthSI ?? 1.20,
+                preferredTangent: source === 'bridge-portal' ? bridgeTangent : null,
+                placementAuthority: source === 'bridge-portal' ? 'external-anchor' : 'occupancy-access-demand',
+                metadata: {
+                    moduleKey: face.module.key, dirKey: face.dir.key, floor,
+                    anchorPortalId: anchorPortal?.id ?? null,
+                },
             };
         };
         const commitRoomPortal = (stop, route) => {
+            const placement = stop.portalPlacement ?? stop.portal;
+            const rawTangent = placement?.tangent;
+            const tangent = rawTangent === null || rawTangent === undefined ? NaN : Number(rawTangent);
+            if (!Number.isFinite(tangent)) throw new Error(`${route.id}:${stop.openingKey}: circulation portal placement missing`);
+            const portal = semanticPortalForRect({
+                id: stop.portalId ?? placement.id,
+                rect: route.hostRect,
+                side: route.side,
+                floor: stop.floor,
+                floorH: route.floorH,
+                width: stop.width ?? placement.width,
+                height: stop.height ?? placement.height,
+                depth: stop.depth ?? placement.depth,
+                tangent,
+                physicalTruth: servicePhysicalTruth,
+                source: stop.source,
+                fromSpaceId: stop.roomSpaceId,
+                toSpaceId: stop.landingSpaceId,
+                metadata: { ...(stop.metadata || {}), routeId: route.id, landingId: placement.landingId },
+            });
+            fastVerticalOpeningByKey.set(stop.openingKey, portalOpening(portal));
             if (stop.source === 'bridge-portal') return;
-            fastVerticalOpeningByKey.set(stop.openingKey, portalOpening(stop.portal));
             const connector = createPortalConnector({
-                id: `${stop.portal.id}:connector`,
-                portal: stop.portal,
+                id: `${portal.id}:connector`,
+                portal,
                 kind: 'door',
                 source: 'fast-vertical-room-portal',
                 visualRole: 'street-layer-occupancy-door',
                 physicalTruth: servicePhysicalTruth,
                 metadata: {
                     routeId: route.id,
-                    portalId: stop.portal.id,
+                    portalId: portal.id,
                     moduleKey: route.moduleKey,
                     dirKey: route.dirKey,
                     floor: stop.floor,
                     graphAuthority: route.graphAuthority,
+                    placementAuthority: placement.placementAuthority,
                 },
             });
             registerSemanticConnector(physics, connector);
@@ -1644,20 +1707,20 @@ export function createKowloonFabricEngine({
             portal.moduleKey === face.module.key && portal.dirKey === face.dir.key && Number(portal.floor) === Number(floor));
         const buildStreetLayerStops = (face, policy) => policy.layerFloors.map(floor => {
             const bridgePortal = bridgePortalForFaceFloor(face, floor);
-            const portals = [];
+            const accessDemands = [];
             let support = null;
             let transportKind = policy.roofFloor === floor ? 'clear-roof-edge-layer' : 'balcony-street-layer';
             if (bridgePortal) {
-                portals.push(makeRoomPortalStop(face, floor, { source: 'bridge-portal' }));
+                accessDemands.push(makeRoomAccessDemand(face, floor, { source: 'bridge-portal', anchorPortal: bridgePortal }));
                 // The walkway owns the portal/anchor, but the facade street layer still
                 // supplies its own notched stair-arrival deck. That prevents the bridge
                 // deck itself from becoming a ceiling over the top of the stair flight.
                 transportKind = 'bridge-anchored-street-layer';
             }
             if (policy.occupancyPortalFloors.includes(floor) && !bridgePortal) {
-                portals.push(makeRoomPortalStop(face, floor));
+                accessDemands.push(makeRoomAccessDemand(face, floor));
             }
-            return { floor, support, portals, transportKind };
+            return { floor, support, accessDemands, transportKind };
         });
         const acceptStreetLayerRoute = (face, policy, family) => {
             if (!face || !canUseBroadVerticalFace(face) || !policy?.layerFloors?.length) return false;
@@ -1737,6 +1800,76 @@ export function createKowloonFabricEngine({
             }
         }
 
+        // FACADE ARCHITECTURE V1: circulation openings already exist. This layer can
+        // frame those voids and consume leftover wall area, but it never creates a door.
+        // Transport remains above facade treatment in the authority hierarchy.
+        const defaultFacadeDoorWidth = servicePhysicalTruth?.door?.clearWidth?.realizedSI
+            ?? physicalTruth?.door?.clearWidth?.realizedSI ?? 1.35;
+        const defaultFacadeDoorHeight = servicePhysicalTruth?.door?.clearHeight?.realizedSI
+            ?? physicalTruth?.door?.clearHeight?.realizedSI ?? 2.20;
+        const facadeArchitectureFaces = streetFaces.filter(face => !face.courtyard).map(face => {
+            const tangentCenter = face.dir.side === 'north' || face.dir.side === 'south'
+                ? face.module.rect.cx : face.module.rect.cz;
+            const openings = [];
+            for (let floor = 0; floor < face.module.floors; floor++) {
+                const openingKey = `${face.module.key}:${face.dir.key}:${floor}`;
+                if (bridgeOpeningKeys.has(openingKey)) {
+                    const raw = fastVerticalOpeningByKey.get(openingKey);
+                    openings.push({
+                        floor, kind: 'bridge-portal', openingKey,
+                        center: Number.isFinite(raw?.center) ? Number(raw.center) : tangentCenter,
+                        width: Number(raw?.width) || defaultFacadeDoorWidth,
+                        height: Number(raw?.height) || defaultFacadeDoorHeight,
+                    });
+                    continue;
+                }
+                if (fastVerticalOpeningByKey.has(openingKey)) {
+                    const raw = fastVerticalOpeningByKey.get(openingKey);
+                    openings.push({
+                        floor, kind: 'street-layer-portal', openingKey, openingId: raw?.openingId ?? null,
+                        center: Number.isFinite(raw?.center) ? Number(raw.center) : tangentCenter,
+                        width: Number(raw?.width) || defaultFacadeDoorWidth,
+                        height: Number(raw?.height) || defaultFacadeDoorHeight,
+                    });
+                    continue;
+                }
+                if (scaffoldOpeningByKey.has(openingKey)) {
+                    const raw = scaffoldOpeningByKey.get(openingKey);
+                    openings.push({
+                        floor, kind: 'scaffold-portal', openingKey, openingId: raw?.openingId ?? null,
+                        center: Number.isFinite(raw?.center) ? Number(raw.center) : tangentCenter,
+                        width: Number(raw?.width) || defaultFacadeDoorWidth,
+                        height: Number(raw?.height) || defaultFacadeDoorHeight,
+                    });
+                    continue;
+                }
+                if (floor === 0 && entranceFaces.some(entry => entry.module === face.module && entry.dir.key === face.dir.key)) {
+                    openings.push({
+                        floor, kind: 'primary-entrance', openingKey, center: tangentCenter,
+                        width: physicalTruth?.door?.clearWidth?.realizedSI ?? defaultFacadeDoorWidth,
+                        height: physicalTruth?.door?.clearHeight?.realizedSI ?? defaultFacadeDoorHeight,
+                    });
+                }
+            }
+            return {
+                moduleKey: face.module.key, dirKey: face.dir.key, side: face.dir.side,
+                floors: face.module.floors, rect: { ...face.module.rect }, openings,
+            };
+        });
+        const facadeArchitecture = planFastFacadeArchitecture({
+            stableKey: `${chunk.key}:${siteSignature}:facade-07`,
+            faces: facadeArchitectureFaces, floorH,
+            defaultDoorWidth: defaultFacadeDoorWidth,
+            defaultDoorHeight: defaultFacadeDoorHeight,
+        });
+        const facadeAperturesByKey = new Map();
+        for (const aperture of facadeArchitecture.apertures ?? []) {
+            const key = `${aperture.moduleKey}:${aperture.dirKey}:${aperture.floor}`;
+            const list = facadeAperturesByKey.get(key) ?? [];
+            list.push(aperture);
+            facadeAperturesByKey.set(key, list);
+        }
+
         for (let broadModuleIndex = 0; broadModuleIndex < modulePlans.length; broadModuleIndex++) {
             const module = modulePlans[broadModuleIndex];
             transforms.slabs.push({
@@ -1764,17 +1897,25 @@ export function createKowloonFabricEngine({
                     if (!shouldWall) continue;
 
                     const openingKey = `${module.key}:${dir.key}:${floor}`;
-                    let opening = 0;
-                    if (bridgeOpeningKeys.has(openingKey)) {
-                        opening = servicePhysicalTruth?.door?.clearWidth?.realizedSI ?? 1.35;
-                    } else if (fastVerticalOpeningByKey.has(openingKey)) {
-                        opening = fastVerticalOpeningByKey.get(openingKey);
+                    const openings = [...(facadeAperturesByKey.get(openingKey) ?? [])];
+                    if (fastVerticalOpeningByKey.has(openingKey)) {
+                        openings.push(fastVerticalOpeningByKey.get(openingKey));
+                    } else if (bridgeOpeningKeys.has(openingKey)) {
+                        openings.push({
+                            center: dir.side === 'north' || dir.side === 'south' ? module.rect.cx : module.rect.cz,
+                            width: servicePhysicalTruth?.door?.clearWidth?.realizedSI ?? 1.35,
+                            height: servicePhysicalTruth?.door?.clearHeight?.realizedSI ?? 2.20,
+                        });
                     } else if (scaffoldOpeningByKey.has(openingKey)) {
-                        opening = scaffoldOpeningByKey.get(openingKey);
+                        openings.push(scaffoldOpeningByKey.get(openingKey));
                     } else if (floor === 0 && entranceFaces.some(face => face.module === module && face.dir.key === dir.key)) {
-                        opening = physicalTruth?.door?.clearWidth?.realizedSI ?? 1.35;
+                        openings.push({
+                            center: dir.side === 'north' || dir.side === 'south' ? module.rect.cx : module.rect.cz,
+                            width: physicalTruth?.door?.clearWidth?.realizedSI ?? 1.35,
+                            height: physicalTruth?.door?.clearHeight?.realizedSI ?? 2.20,
+                        });
                     }
-                    addCompoundSideWall({ physics, wallList, rect: module.rect, floorH, floor, side: dir.side, opening });
+                    addCompoundSideWall({ physics, wallList, rect: module.rect, floorH, floor, side: dir.side, opening: openings });
                 }
                 yield {
                     phase: 'broad-shell-floor',
@@ -1899,65 +2040,6 @@ export function createKowloonFabricEngine({
         }), { minX: Infinity, maxX: -Infinity, minZ: Infinity, maxZ: -Infinity });
         const anchor = doorFace?.module || primaryModule;
         const floorCounts = modulePlans.map(module => module.floors);
-        // FACADE ARCHITECTURE V1: circulation openings already exist. This layer can
-        // frame those voids and consume leftover wall area, but it never creates a door.
-        // Transport remains above facade treatment in the authority hierarchy.
-        const defaultFacadeDoorWidth = servicePhysicalTruth?.door?.clearWidth?.realizedSI
-            ?? physicalTruth?.door?.clearWidth?.realizedSI ?? 1.35;
-        const defaultFacadeDoorHeight = servicePhysicalTruth?.door?.clearHeight?.realizedSI
-            ?? physicalTruth?.door?.clearHeight?.realizedSI ?? 2.20;
-        const facadeArchitectureFaces = streetFaces.filter(face => !face.courtyard).map(face => {
-            const tangentCenter = face.dir.side === 'north' || face.dir.side === 'south'
-                ? face.module.rect.cx : face.module.rect.cz;
-            const openings = [];
-            for (let floor = 0; floor < face.module.floors; floor++) {
-                const openingKey = `${face.module.key}:${face.dir.key}:${floor}`;
-                if (bridgeOpeningKeys.has(openingKey)) {
-                    openings.push({
-                        floor, kind: 'bridge-portal', openingKey, center: tangentCenter,
-                        width: defaultFacadeDoorWidth, height: defaultFacadeDoorHeight,
-                    });
-                    continue;
-                }
-                if (fastVerticalOpeningByKey.has(openingKey)) {
-                    const raw = fastVerticalOpeningByKey.get(openingKey);
-                    openings.push({
-                        floor, kind: 'street-layer-portal', openingKey, openingId: raw?.openingId ?? null,
-                        center: Number.isFinite(raw?.center) ? Number(raw.center) : tangentCenter,
-                        width: Number(raw?.width) || defaultFacadeDoorWidth,
-                        height: Number(raw?.height) || defaultFacadeDoorHeight,
-                    });
-                    continue;
-                }
-                if (scaffoldOpeningByKey.has(openingKey)) {
-                    const raw = scaffoldOpeningByKey.get(openingKey);
-                    openings.push({
-                        floor, kind: 'scaffold-portal', openingKey, openingId: raw?.openingId ?? null,
-                        center: Number.isFinite(raw?.center) ? Number(raw.center) : tangentCenter,
-                        width: Number(raw?.width) || defaultFacadeDoorWidth,
-                        height: Number(raw?.height) || defaultFacadeDoorHeight,
-                    });
-                    continue;
-                }
-                if (floor === 0 && entranceFaces.some(entry => entry.module === face.module && entry.dir.key === face.dir.key)) {
-                    openings.push({
-                        floor, kind: 'primary-entrance', openingKey, center: tangentCenter,
-                        width: physicalTruth?.door?.clearWidth?.realizedSI ?? defaultFacadeDoorWidth,
-                        height: physicalTruth?.door?.clearHeight?.realizedSI ?? defaultFacadeDoorHeight,
-                    });
-                }
-            }
-            return {
-                moduleKey: face.module.key, dirKey: face.dir.key, side: face.dir.side,
-                floors: face.module.floors, rect: { ...face.module.rect }, openings,
-            };
-        });
-        const facadeArchitecture = planFastFacadeArchitecture({
-            stableKey: `${chunk.key}:${siteSignature}:facade-07`,
-            faces: facadeArchitectureFaces, floorH,
-            defaultDoorWidth: defaultFacadeDoorWidth,
-            defaultDoorHeight: defaultFacadeDoorHeight,
-        });
         transforms.props.push(...facadeArchitecture.render.props);
         transforms.windows.push(...facadeArchitecture.render.windows);
         const facadeRegistry = physics.fastFacadeArchitecture ?? (physics.fastFacadeArchitecture = []);

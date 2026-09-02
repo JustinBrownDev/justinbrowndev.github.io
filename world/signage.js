@@ -5,6 +5,7 @@ import { SIGN_SHAPES, SIGN_FONTS, SIGN_BACKINGS, TEXT_FONTS, PAPER_COLORS, INK_C
 import { fitCanvasText, drawCanvasLines } from '../systems/canvas-text.js';
 import { hashDisplaySeed, resolveDisplayRecipe } from '../content/sign-visual-language.js';
 import { renderDisplayCanvas } from '../systems/sign-display-renderer.js';
+import { boundedBladePanelHeight } from './signage-geometry-policy.js';
 
 export function createSignageSystem(deps) {
     const {
@@ -56,7 +57,7 @@ export function createSignageSystem(deps) {
         if (!fittedWorld && Number.isFinite(safeDepth)) return null;
         if (fittedWorld) { width = fittedWorld.width; armLength = fittedWorld.armLength; }
         if (width < 1.02) return null;
-        const height = Math.max(0.52, width * (shape.h / shape.w));
+        const height = boundedBladePanelHeight(width, shape.h / shape.w);
         const panelDepth = randRange(QP[2893], QP[2894]);
 
         // Keep the authored sign's physical aspect ratio while giving Canvas2D enough
@@ -128,13 +129,25 @@ export function createSignageSystem(deps) {
          
          
         const edgeMat = signEdgeMaterial;
-        const faceMat = new THREE.MeshBasicMaterial({ map: tex, side: THREE.DoubleSide });
+        const faceMat = new THREE.MeshBasicMaterial({ map: tex, side: THREE.DoubleSide, toneMapped: false });
         const panel = new THREE.Mesh(skirtBoxGeo, [edgeMat, edgeMat, edgeMat, edgeMat, faceMat, faceMat]);
         panel.scale.set(width, height, panelDepth);
         panel.rotation.y = Math.PI / QP[2949];  
         const panelCenterZ = armLength + width / QP[2950];
         panel.position.set(QP[2951], QP[2952], panelCenterZ);
-        g.add(panel);
+
+        // Keep the structured display face, but restore the small neon sign as
+        // a luminous object. The oversized additive shell only shows around the
+        // silhouette; it does not replace the newer graphic language.
+        const haloMat = new THREE.MeshBasicMaterial({
+            color: colorHex, transparent: true, opacity: 0.20,
+            blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false,
+        });
+        const halo = new THREE.Mesh(skirtBoxGeo, haloMat);
+        halo.scale.set(width * 1.08, height * 1.14, Math.max(0.018, panelDepth * 1.7));
+        halo.rotation.y = panel.rotation.y;
+        halo.position.copy(panel.position);
+        g.add(halo, panel);
 
         g.rotation.y = rotY;
         g.position.set(x, y, z);

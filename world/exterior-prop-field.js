@@ -6,6 +6,7 @@ import { GENERATION_LANES } from '../config/performance-isolation.js';
 import { EXTERIOR_OPPORTUNITY_PRIORITY, EXTERIOR_VISUAL_TIER, exteriorOpportunityVisualTier, exteriorPlacementVisualImpact } from './exterior-spectacle-priority.js';
 import { recipeContextFromSemanticMedia, resolveDisplayRecipe } from '../content/sign-visual-language.js';
 import { renderDisplayCanvas } from '../systems/sign-display-renderer.js';
+import { boundedFacadeMediaPanel, boundedRoofMediaPanel } from './signage-geometry-policy.js';
 
 const SHAPES = Object.freeze(['box', 'cylinder', 'cone', 'sphere']);
 const COLORS = Object.freeze([0x4b5150, 0x62635e, 0x756956, 0x42585d, 0x6b5b61, 0x514c45]);
@@ -218,10 +219,13 @@ function emitFacadeSpectacle(opportunity, placements) {
         const signageStress = GENERATION_LANES.signageStress === true;
         const aligned = alignedCorner?.[index] ?? null;
         const width = aligned?.width ?? clamp(finite(segment.width, 3.2) * (signageStress ? 0.99 : 0.93), 3.0, signageStress ? 18.0 : 12.5);
-        const height = aligned?.height ?? clamp(
-            Math.min(finite(segment.height, 3.0) * (signageStress ? 0.94 : 0.82), width * (signageStress ? 1.35 : 0.62)),
-            1.55, signageStress ? 10.0 : 6.8,
+        const requestedHeight = aligned?.height ?? Math.min(
+            finite(segment.height, 3.0) * (signageStress ? 0.94 : 0.82),
+            width * 0.62,
         );
+        const height = aligned?.height == null
+            ? boundedFacadeMediaPanel(width, requestedHeight, signageStress ? 10.0 : 6.8).height
+            : Math.min(requestedHeight, width * 0.62);
         const p = aligned?.point ?? segmentPoint(segment, 0.17);
         const pseudo = {
             ...opportunity,
@@ -263,7 +267,7 @@ function emitRoofSpectacle(opportunity, placements) {
     const alongX = widthX >= widthZ;
     const usable = alongX ? widthX : widthZ;
     const panelW = clamp(usable * 0.86, 3.8, 12.5);
-    const panelH = clamp(panelW * (0.30 + rng() * 0.12), 1.7, 4.8);
+    const panelH = boundedRoofMediaPanel(panelW, panelW * (0.30 + rng() * 0.12), 4.8).height;
     const assemblyId = opportunity.id + ':roof-billboard';
     const assemblyKind = rng() < 0.72 ? 'roof-megascreen' : 'roof-industrial-crown';
     const rotY = alongX ? 0 : Math.PI * 0.5;

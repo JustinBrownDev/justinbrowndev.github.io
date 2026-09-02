@@ -159,7 +159,7 @@ function drawText(ctx, value, x, y, startPx, font, weight, color, align, maxWidt
     // Sign copy is a single-line display contract. Fit font size to the box instead
     // of using Canvas2D maxWidth, which horizontally crushes glyphs and makes short
     // phrases look tiny while long phrases become visibly raster-stretched.
-    const nominalPx = Math.max(7, startPx);
+    const nominalPx = Math.max(8, startPx * 1.16);
     const growth = textValue.length <= 12 ? 1.26 : textValue.length <= 24 ? 1.12 : 1;
     const maxPx = nominalPx * growth;
     const minPx = Math.max(7, nominalPx * .42);

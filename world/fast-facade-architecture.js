@@ -121,16 +121,23 @@ export function planFastFacadeArchitecture({
       const roll = stableHash(`${stableKey}:${face.moduleKey}:${face.dirKey}:ground-bay`) % 100;
       const bayKind = roll < 64 ? 'storefront' : 'service-shutter';
       const bayWidth = clamp(tangentSpan * (bayKind === 'storefront' ? 0.58 : 0.48), 1.55, Math.min(3.4, tangentSpan - 0.30));
-      const bayHeight = bayKind === 'storefront' ? Math.min(1.55, floorH * 0.48) : Math.min(2.25, floorH * 0.72);
+      const bayHeight = bayKind === 'storefront' ? Math.min(2.45, floorH - 0.18) : Math.min(2.25, floorH * 0.72);
       const center = geometry.tangentCenter;
       const panelNormal = geometry.faceCoord + geometry.outward * 0.035;
       const baseY = 0;
       if (bayKind === 'storefront') {
-        windows.push(facadePlane(face, center, panelNormal, baseY + 1.22, bayWidth, bayHeight,
+        // Storefront is a literal ground-level wall cut, like a broad doorway.
+        // It remains facade architecture rather than fabricating a circulation portal.
+        apertures.push(freezeRecord({
+          id: `${stableKey}:${face.moduleKey}:${face.dirKey}:storefront-aperture`,
+          kind: 'storefront', moduleKey: face.moduleKey, dirKey: face.dirKey, side: face.side,
+          floor: 0, center, width: bayWidth, height: bayHeight, bottom: 0,
+        }));
+        windows.push(facadePlane(face, center, panelNormal, baseY + bayHeight * 0.5, bayWidth, bayHeight,
           { facadeRole: 'storefront-glazing', moduleKey: face.moduleKey, dirKey: face.dirKey, floor: 0 }));
         const frameT = 0.10;
         const frameNormal = geometry.faceCoord + geometry.outward * 0.055;
-        const frameY = baseY + 1.22;
+        const frameY = baseY + bayHeight * 0.5;
         props.push(orientedBox(face, center - bayWidth * 0.5 - frameT * 0.5, frameNormal, frameY, frameT, 0.11, bayHeight + 0.18,
           { facadeRole: 'storefront-frame', moduleKey: face.moduleKey, dirKey: face.dirKey }));
         props.push(orientedBox(face, center + bayWidth * 0.5 + frameT * 0.5, frameNormal, frameY, frameT, 0.11, bayHeight + 0.18,

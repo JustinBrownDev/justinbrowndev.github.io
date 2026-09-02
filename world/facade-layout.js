@@ -4,6 +4,7 @@ import { SpatialHash2D } from '../city-performance.js';
 import { boxesIntersect } from '../systems/geometry-utils.js';
 import { CELL_SIDE_DEFS, outwardRotationY } from '../systems/cardinal.js';
 import { SIGN_SHAPES } from '../content/text-style.js';
+import { boundedBladePanelHeight, signAltitudeScale } from './signage-geometry-policy.js';
 
 export function createFacadeLayoutSystem(deps) {
     const {
@@ -172,14 +173,15 @@ export function createFacadeLayoutSystem(deps) {
      
      
      
-    function createSignSpec(maxProjectionDepth = Infinity) {
+    function createSignSpec(maxProjectionDepth = Infinity, altitudeScale = 1) {
         const shape = pick(SIGN_SHAPES);
-        const desiredWidth = randRange(QP[1716], Math.min(QP[1717], STREET * QP[1718]));
-        const desiredArm = randRange(QP[1719], Math.min(QP[1720], STREET * QP[1721]));
+        const baseWidth = randRange(QP[1716], Math.min(QP[1717], STREET * QP[1718]));
+        const desiredWidth = baseWidth * Math.max(1, altitudeScale);
+        const desiredArm = randRange(QP[1719], Math.min(QP[1720], STREET * QP[1721])) * Math.min(1.35, Math.sqrt(Math.max(1, altitudeScale)));
         const fitted = fitBladeDimensions(desiredWidth, desiredArm, maxProjectionDepth);
         if (!fitted) return null;
         const { width, armLength } = fitted;
-        const height = width * (shape.h / shape.w);
+        const height = boundedBladePanelHeight(width, shape.h / shape.w);
         return {
             shape, width, height, armLength,
             wallFootprintWidth: SIGN_WALL_MOUNT_WIDTH,
@@ -215,14 +217,18 @@ export function createFacadeLayoutSystem(deps) {
              
              
             for (let tries = QP[1724]; tries < QP[1725]; tries++) {
-                const spec = createSignSpec(safeBladeProjectionDepth(facade.cx, facade.cz, facade.rotY));
+                // Sample the whole vertical facade first, then make high signs
+                // physically larger so they remain legible from street level.
+                const targetCenterY = randRange(facade.yMin, facade.yMax);
+                const altitudeScale = signAltitudeScale(targetCenterY, facade.yMin);
+                const spec = createSignSpec(safeBladeProjectionDepth(facade.cx, facade.cz, facade.rotY), altitudeScale);
                 if (!spec) continue;
                 const halfMount = spec.wallFootprintWidth / QP[1726], halfH = spec.height / QP[1727];
                 if (facade.half * QP[1728] < spec.wallFootprintWidth + QP[1729]) continue;  
                 const minCenterY = facade.yMin + SIGN_BOTTOM_CLEARANCE + halfH;
                 const maxCenterY = facade.yMax - SIGN_TOP_MARGIN - halfH;
                 if (minCenterY > maxCenterY) continue;  
-                const centerY = randRange(minCenterY, maxCenterY);
+                const centerY = Math.min(maxCenterY, Math.max(minCenterY, targetCenterY));
                 const u = randRange(-facade.half + halfMount, facade.half - halfMount);
                 if (!facadeFits(facade, 'sign', u - halfMount, u + halfMount, centerY - halfH, centerY + halfH, QP[1730])) continue;
                  

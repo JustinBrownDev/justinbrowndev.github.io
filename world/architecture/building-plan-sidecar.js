@@ -117,7 +117,9 @@ function normalizeReservations(reservations = []) {
       Number(r?.rampHalfWidth) > 0 ? Number(r.rampHalfWidth) * 2 : 0,
       openingCross,
     );
-    const walkAround = clamp(stairClearWidth * 1.12, 1.0, 1.35);
+    // Technical passability is not enough: reserve enough apron for a person to
+    // turn, read the stair, and approach a doorway without the plan feeling pinched.
+    const walkAround = clamp(stairClearWidth * 1.35, 1.20, 1.55);
     const apron = {
       ...base,
       id: `${base.id}:walk-around-apron`,
@@ -736,11 +738,28 @@ function growExistingSpace({ space, target, grid, stableKey, profile }) {
 
 function chooseMinimumGeometryDropCandidate(spaces, shortfalls, floor) {
   const rootKey = chooseRootSpace(spaces, floor)?.key ?? null;
-  return chooseHumanScaleProgramDrop({
+  const ordinary = chooseHumanScaleProgramDrop({
     spaces,
     shortfalls,
     protectedKeys: rootKey ? [rootKey] : [],
   });
+  if (ordinary) return ordinary;
+
+  // Ground floors can legitimately contain both an entry room and a separate
+  // circulation room. On a constrained plate those are two semantic labels for
+  // one physical threshold/core. If every ordinary room has already yielded,
+  // coalesce one non-root route role rather than squeeze either route below its
+  // human-scale minimum. Never remove the last entry/circulation role.
+  const routeSpaces = spaces.filter(space => space.role === 'entry' || space.role === 'circulation');
+  if (routeSpaces.length <= 1) return null;
+  const shortfallKeys = new Set(shortfalls.map(item => String(item?.key ?? item)).filter(Boolean));
+  const redundant = routeSpaces.filter(space => space.key !== rootKey);
+  redundant.sort((a, b) => {
+    const aShort = shortfallKeys.has(String(a.key)) ? 0 : 1;
+    const bShort = shortfallKeys.has(String(b.key)) ? 0 : 1;
+    return aShort - bShort || String(a.key).localeCompare(String(b.key));
+  });
+  return redundant[0] ?? null;
 }
 
 function attemptMinimumProgramPlacement({
@@ -1123,8 +1142,9 @@ function planFloor({
   // room can own its real minimum. Room count yields before human scale.
   const geometryDroppedSpaceKeys = [];
   let minimumPlacement = null;
-  const maximumPlacementAttempts = Math.max(2, spaces.length * 2 + 2);
-  for (let attempt = 0; attempt < maximumPlacementAttempts; attempt++) {
+  let minimumPlacementAttempts = 0;
+  while (true) {
+    minimumPlacementAttempts++;
     minimumPlacement = attemptMinimumProgramPlacement({
       spaces,
       floor,
@@ -1140,6 +1160,9 @@ function planFloor({
     if (!drop) break;
     geometryDroppedSpaceKeys.push(drop.key);
     spaces = spaces.filter(space => space.key !== drop.key);
+    // The next pass always replans the raster from scratch for the reduced
+    // program. There is no bounded-loop edge where a just-dropped room can
+    // leave stale minimum-placement diagnostics behind.
   }
   if (!minimumPlacement) throw new Error(`building plan floor ${floor}: minimum placement was not attempted`);
 
@@ -1263,6 +1286,7 @@ function planFloor({
       nonReservedCapacityCells,
       minimumProgramShortfallCells,
       minimumPlacementShortfallCells,
+      minimumPlacementAttempts,
       minimumAreaHealthy: minimumPlacementShortfallCells === 0
         && realizedSpaces.every(space => space.realizedArea + EPS >= space.minimumArea),
       minimumVolumeHealthy: minimumPlacementShortfallCells === 0

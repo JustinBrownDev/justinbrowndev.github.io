@@ -184,13 +184,15 @@ export function planAlternatingFacadeStair({
   const clearWidth = clamp(Number(physicalTruth.stair.widthSI) || 0.9, 0.72, 1.45);
   const halfWidth = clearWidth * 0.5;
   const doorWidth = Number(physicalTruth?.door?.clearWidth?.realizedSI) || clearWidth;
+  // Preserve the proven zig-zag topology, but size its horizontal circulation
+  // like a place a person can turn and approach a door, not a minimum-width node.
   const landingSize = Math.max(
-    clearWidth * 1.30,
+    clearWidth * 1.55,
     Number(landingTangentSize) || 0,
     Number(physicalTruth.stair.landingDepthSI) || 0,
-    doorWidth + 0.30,
+    doorWidth + 0.48,
   );
-  const resolvedLaneGap = Math.max(0.14, Number(laneGap) || clearWidth * 0.18);
+  const resolvedLaneGap = Math.max(0.20, Number(laneGap) || clearWidth * 0.24);
   const landingNormalSize = clearWidth * 2 + resolvedLaneGap;
   const margin = Math.max(0.10, Number(facadeMargin) || 0);
   const tangentMin = geometry.tangentCenter - geometry.tangentHalf + margin;

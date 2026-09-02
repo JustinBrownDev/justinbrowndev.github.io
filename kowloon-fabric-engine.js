@@ -122,6 +122,7 @@ function normalizeModuleFloorConnectivity(modulePlans, primaryModule, bridgePort
     }
     const byCell = new Map(modulePlans.map(module => [key(module.cell.col, module.cell.row), module]));
     const raised = new Map();
+    const topPlateRaised = new Map();
     const trimmed = new Map();
 
     const neighborsOfModule = module => KOWLOON_DIRS
@@ -171,6 +172,24 @@ function normalizeModuleFloorConnectivity(modulePlans, primaryModule, bridgePort
         }
     }
 
+    // Do not let a real building terminate as a stair tower with no usable floor
+    // plate beside it. If the stair spine is the only module on its top occupied
+    // floor, raise exactly one directly adjacent companion module to that level.
+    // This preserves the irregular skyline without publishing a stair-only story.
+    if (primaryModule.floors > 1) {
+        const topFloorNeighbors = neighborsOfModule(primaryModule);
+        const sharesTopFloor = topFloorNeighbors.some(module => module.floors >= primaryModule.floors);
+        if (!sharesTopFloor && topFloorNeighbors.length) {
+            topFloorNeighbors.sort((a, b) => b.floors - a.floors
+                || (b.rect.halfX * b.rect.halfZ) - (a.rect.halfX * a.rect.halfZ)
+                || a.key.localeCompare(b.key));
+            const companion = topFloorNeighbors[0];
+            const before = companion.floors;
+            companion.floors = primaryModule.floors;
+            topPlateRaised.set(companion.key, companion.floors - before);
+        }
+    }
+
     // Random height variation may otherwise leave an upper-floor island with no
     // stair or bridge route. Trim only the inaccessible levels; never invent a
     // second vertical core and never grow the whole compound to match one tower.
@@ -199,6 +218,9 @@ function normalizeModuleFloorConnectivity(modulePlans, primaryModule, bridgePort
         raisedForBridgeModules: [...raised.entries()].sort((a, b) => a[0].localeCompare(b[0]))
             .map(([moduleKey, floorsAdded]) => ({ moduleKey, floorsAdded })),
         raisedFloorLevels: [...raised.values()].reduce((sum, count) => sum + count, 0),
+        raisedForTopPlateModules: [...topPlateRaised.entries()].sort((a, b) => a[0].localeCompare(b[0]))
+            .map(([moduleKey, floorsAdded]) => ({ moduleKey, floorsAdded })),
+        raisedTopPlateFloorLevels: [...topPlateRaised.values()].reduce((sum, count) => sum + count, 0),
         trimmedModules: [...trimmed.entries()].sort((a, b) => a[0].localeCompare(b[0]))
             .map(([moduleKey, floorsRemoved]) => ({ moduleKey, floorsRemoved })),
         trimmedFloorLevels: [...trimmed.values()].reduce((sum, count) => sum + count, 0),
@@ -235,9 +257,15 @@ function pushWallSegments(out, cx, cz, halfX, halfZ, yMin, yMax, doorSide = null
     split(z0, z1, x1, false, 'east');
 }
 
-function addRectPlatform(out, x, z, sx, sz, y, supportKind = 'floor') {
+function addRectPlatform(out, x, z, sx, sz, y, supportKind = 'floor', supportMargin = null) {
     if (sx <= 0.05 || sz <= 0.05) return;
-    out.push({ x, z, hx: sx * 0.5, hz: sz * 0.5, y, supportKind });
+    const explicitSupportMargin = supportMargin === null || supportMargin === undefined
+        ? null
+        : Math.max(0, Number(supportMargin) || 0);
+    out.push({
+        x, z, hx: sx * 0.5, hz: sz * 0.5, y, supportKind,
+        ...(explicitSupportMargin === null ? {} : { supportMargin: explicitSupportMargin }),
+    });
 }
 
 function addNotchedFloor(out, cx, cz, width, depth, y, gapCx, gapCz, gapW, gapD, supportKind = 'floor') {
@@ -245,10 +273,13 @@ function addNotchedFloor(out, cx, cz, width, depth, y, gapCx, gapCz, gapW, gapD,
     const z0 = cz - depth * 0.5, z1 = cz + depth * 0.5;
     const gx0 = Math.max(x0, gapCx - gapW * 0.5), gx1 = Math.min(x1, gapCx + gapW * 0.5);
     const gz0 = Math.max(z0, gapCz - gapD * 0.5), gz1 = Math.min(z1, gapCz + gapD * 0.5);
-    addRectPlatform(out, (x0 + gx0) * 0.5, cz, gx0 - x0, depth, y, supportKind);
-    addRectPlatform(out, (gx1 + x1) * 0.5, cz, x1 - gx1, depth, y, supportKind);
-    addRectPlatform(out, (gx0 + gx1) * 0.5, (z0 + gz0) * 0.5, gx1 - gx0, gz0 - z0, y, supportKind);
-    addRectPlatform(out, (gx0 + gx1) * 0.5, (gz1 + z1) * 0.5, gx1 - gx0, z1 - gz1, y, supportKind);
+    // Notched slabs must stop supporting the player exactly where the visible
+    // slab stops. The generic player-radius edge forgiveness would otherwise
+    // create an invisible lip across a stair/roof opening.
+    addRectPlatform(out, (x0 + gx0) * 0.5, cz, gx0 - x0, depth, y, supportKind, 0);
+    addRectPlatform(out, (gx1 + x1) * 0.5, cz, x1 - gx1, depth, y, supportKind, 0);
+    addRectPlatform(out, (gx0 + gx1) * 0.5, (z0 + gz0) * 0.5, gx1 - gx0, gz0 - z0, y, supportKind, 0);
+    addRectPlatform(out, (gx0 + gx1) * 0.5, (gz1 + z1) * 0.5, gx1 - gx0, z1 - gz1, y, supportKind, 0);
 }
 
 export function createKowloonFabricEngine({

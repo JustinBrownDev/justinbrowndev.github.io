@@ -221,10 +221,16 @@ export function createPlayerPhysics(options) {
 
     const EMPTY_BUCKET = Object.freeze([]);
     const physicsItemActive = item => item && item.__physicsDisabled !== true;
-    const platformBounds = p => ({
-        minX: p.x - p.hx - playerRadius, maxX: p.x + p.hx + playerRadius,
-        minZ: p.z - p.hz - playerRadius, maxZ: p.z + p.hz + playerRadius,
-    });
+    const platformSupportMargin = p => p?.supportMargin === null || p?.supportMargin === undefined
+        ? supportMargin
+        : Math.max(0, Number(p.supportMargin) || 0);
+    const platformBounds = p => {
+        const margin = platformSupportMargin(p);
+        return {
+            minX: p.x - p.hx - margin, maxX: p.x + p.hx + margin,
+            minZ: p.z - p.hz - margin, maxZ: p.z + p.hz + margin,
+        };
+    };
     const ceilingBounds = c => ({
         minX: c.x - c.hx - playerRadius, maxX: c.x + c.hx + playerRadius,
         minZ: c.z - c.hz - playerRadius, maxZ: c.z + c.hz + playerRadius,
@@ -263,7 +269,7 @@ export function createPlayerPhysics(options) {
     let indexedPropCount = propColliders.length;
 
     function platformSupportsAt(p, x, z) {
-        return rectContains(p, x, z, supportMargin);
+        return rectContains(p, x, z, platformSupportMargin(p));
     }
 
     function rampHeightAt(r, x, z, margin = supportMargin) {

@@ -209,14 +209,15 @@ export function chooseKowloonCompoundTargetSize(rng, weirdness = 0) {
     // subdivided until every room and stair is compromised. Keep the alley grid
     // unchanged, but let each building accrete more of the solid cells between
     // those alleys. Single-module buildings are now an edge-case fallback.
-    // Do not intentionally target tiny one- or two-cell buildings. The maze may
-    // still leave a constrained leftover smaller than this target, but ordinary
-    // compounds now start wide enough to read as buildings instead of stair towers.
+    // Real buildings need enough connected footprint to support rooms, corridors,
+    // cores, and vertical setbacks at the same time. Five cells is now the normal
+    // lower bound; constrained partition leftovers may still be smaller when the
+    // alley topology genuinely leaves no connected cells to claim.
     const base = [
-        [3, 10], [4, 20], [5, 26], [6, 22], [7, 14], [8, 8],
+        [5, 8], [6, 18], [7, 24], [8, 22], [9, 16], [10, 8], [11, 3], [12, 1],
     ];
     const adjusted = base.map(([size, weight]) => {
-        const bonus = size >= 4 ? intensity.siteTargetBonus * (size - 2) * 2.5 : 0;
+        const bonus = size >= 7 ? intensity.siteTargetBonus * (size - 5) * 3.0 : 0;
         return [size, weight + bonus];
     });
     const total = adjusted.reduce((sum, [, weight]) => sum + weight, 0);

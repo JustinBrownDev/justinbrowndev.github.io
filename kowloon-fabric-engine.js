@@ -173,21 +173,36 @@ function normalizeModuleFloorConnectivity(modulePlans, primaryModule, bridgePort
     }
 
     // Do not let a real building terminate as a stair tower with no usable floor
-    // plate beside it. If the stair spine is the only module on its top occupied
-    // floor, raise exactly one directly adjacent companion module to that level.
-    // This preserves the irregular skyline without publishing a stair-only story.
-    if (primaryModule.floors > 1) {
-        const topFloorNeighbors = neighborsOfModule(primaryModule);
-        const sharesTopFloor = topFloorNeighbors.some(module => module.floors >= primaryModule.floors);
-        if (!sharesTopFloor && topFloorNeighbors.length) {
-            topFloorNeighbors.sort((a, b) => b.floors - a.floors
+    // beside it. A tall building is not a stair shaft with a token room wrapped around it.
+    // Carry a connected multi-module tower plate all the way to the top occupied
+    // floor. Taller towers demand more plate so upper stories can own a real
+    // hallway plus multiple full occupancies while lower modules can still step
+    // down into roofs/terraces around that tower.
+    const requiredTopPlateModules = Math.min(
+        modulePlans.length,
+        primaryModule.floors >= 10 ? 5
+            : primaryModule.floors >= 7 ? 4
+                : primaryModule.floors >= 4 ? 3
+                    : primaryModule.floors >= 2 ? 2 : 1,
+    );
+    const towerPlateKeys = new Set([primaryModule.key]);
+    while (towerPlateKeys.size < requiredTopPlateModules) {
+        const candidates = modulePlans.filter(module => !towerPlateKeys.has(module.key)
+            && neighborsOfModule(module).some(neighbor => towerPlateKeys.has(neighbor.key)));
+        if (!candidates.length) break;
+        candidates.sort((a, b) => {
+            const aTouches = neighborsOfModule(a).filter(neighbor => towerPlateKeys.has(neighbor.key)).length;
+            const bTouches = neighborsOfModule(b).filter(neighbor => towerPlateKeys.has(neighbor.key)).length;
+            return bTouches - aTouches
+                || b.floors - a.floors
                 || (b.rect.halfX * b.rect.halfZ) - (a.rect.halfX * a.rect.halfZ)
-                || a.key.localeCompare(b.key));
-            const companion = topFloorNeighbors[0];
-            const before = companion.floors;
-            companion.floors = primaryModule.floors;
-            topPlateRaised.set(companion.key, companion.floors - before);
-        }
+                || a.key.localeCompare(b.key);
+        });
+        const companion = candidates[0];
+        towerPlateKeys.add(companion.key);
+        const before = companion.floors;
+        companion.floors = primaryModule.floors;
+        if (companion.floors > before) topPlateRaised.set(companion.key, companion.floors - before);
     }
 
     // Random height variation may otherwise leave an upper-floor island with no

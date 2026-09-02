@@ -251,6 +251,86 @@ function expandedTemplates({ grammar, floor, area, profile, authoredIntent, stab
   return result;
 }
 
+function configureUpperOccupancyHallway(spaces, grid, floor) {
+  if (floor <= 0 || !grid?.cells?.length) return null;
+  const occupancyRoles = new Set(['private', 'program', 'work']);
+  const occupancies = spaces.filter(space => space.repeat && occupancyRoles.has(space.role));
+  const hallway = spaces.find(space => space.role === 'circulation');
+  if (!hallway || occupancies.length < 4) return null;
+
+  const cellArea = grid.cellSize * grid.cellSize;
+  const reserved = grid.cells.filter(cell => cell.structuralReservationId);
+  const centerX = reserved.length
+    ? reserved.reduce((sum, cell) => sum + cell.x, 0) / reserved.length
+    : (grid.bounds.minX + grid.bounds.maxX) * 0.5;
+  const centerZ = reserved.length
+    ? reserved.reduce((sum, cell) => sum + cell.z, 0) / reserved.length
+    : (grid.bounds.minZ + grid.bounds.maxZ) * 0.5;
+  const spanX = grid.bounds.maxX - grid.bounds.minX;
+  const spanZ = grid.bounds.maxZ - grid.bounds.minZ;
+  const axis = spanX >= spanZ ? 'x' : 'z';
+  const wantedCross = axis === 'x' ? centerZ : centerX;
+  const crossCoords = [...new Set(grid.cells.map(cell => axis === 'x' ? cell.z : cell.x))]
+    .sort((a, b) => Math.abs(a - wantedCross) - Math.abs(b - wantedCross) || a - b);
+  const corridorCross = crossCoords[0] ?? wantedCross;
+  const corridorCellKeys = grid.cells
+    .filter(cell => Math.abs((axis === 'x' ? cell.z : cell.x) - corridorCross) <= EPS)
+    .map(cell => cell.key);
+  const hallwayCells = Math.max(6, corridorCellKeys.length);
+
+  hallway.minArea = Math.max(Number(hallway.minArea) || 0, hallwayCells * cellArea);
+  hallway.maxArea = Math.max(hallway.minArea, (hallwayCells + 2) * cellArea);
+  hallway.circulationShape = 'occupancy-hallway';
+  hallway.corridorAxis = axis;
+  hallway.corridorCenterX = centerX;
+  hallway.corridorCenterZ = centerZ;
+  hallway.corridorCross = corridorCross;
+  hallway.corridorCellSize = grid.cellSize;
+  hallway.corridorCellKeys = corridorCellKeys;
+  hallway.hallwayOccupancyCount = occupancies.length;
+
+  // Full occupancies yield in count before they yield in size. A lodging room
+  // should be a room, not a broom closet left over after circulation is solved.
+  for (const occupancy of occupancies) {
+    const desiredArea = Math.max(0, Number(occupancy.repeat?.desiredArea) || 0);
+    occupancy.minArea = Math.max(Number(occupancy.minArea) || 0, Math.min(14, desiredArea * 0.72));
+  }
+
+  return { hallway, occupancies, axis, hallwayCells, corridorCellKeys };
+}
+
+function preclaimOccupancyHallway(spaces, grid) {
+  const hallway = spaces.find(space => space.circulationShape === 'occupancy-hallway');
+  if (!hallway?.corridorCellKeys?.length) return { hallway, claimed: 0 };
+  const keys = new Set(hallway.corridorCellKeys);
+  let claimed = 0;
+  for (const cell of grid.cells) {
+    if (!keys.has(cell.key) || !cellEligibleForSpace(cell, hallway)) continue;
+    cell.spaceId = hallway.key;
+    claimed++;
+  }
+  return { hallway, claimed };
+}
+
+function occupancyHallwayFrontageShortfalls(spaces, grid, floor) {
+  if (floor <= 0 || !grid?.cells?.length) return [];
+  const hallway = spaces.find(space => space.circulationShape === 'occupancy-hallway');
+  if (!hallway) return [];
+  const occupancies = spaces.filter(space => space.repeat && ['private', 'program', 'work'].includes(space.role));
+  if (occupancies.length < 4) return [];
+  const boundaries = boundaryCandidates(grid);
+  return occupancies
+    .filter(space => !boundaries.has([hallway.key, space.key].sort().join('|')))
+    .map(space => ({
+      key: space.key,
+      role: space.role,
+      assignedCount: grid.cells.filter(cell => cell.spaceId === space.key).length,
+      minimumCount: 0,
+      shortfallCells: 1,
+      reason: 'missing-direct-hallway-frontage',
+    }));
+}
+
 function matchesTemplate(space, templateKey) {
   return space.templateKey === templateKey || space.key === templateKey;
 }
@@ -486,6 +566,14 @@ function preferenceScore(cell, space, profile, stableKey) {
   if (space.daylight === 'high') score += cell.exposure * (profile.rules.invertExteriorPreference ? 0.2 : 0.75);
   if (space.daylight === 'low') score += (4 - cell.exposure) * 0.45;
   if (space.role === 'circulation' && cell.structuralReservationId) score += 9;
+  if (space.circulationShape === 'occupancy-hallway') {
+    const crossDistance = space.corridorAxis === 'x'
+      ? Math.abs(cell.z - Number(space.corridorCenterZ || 0))
+      : Math.abs(cell.x - Number(space.corridorCenterX || 0));
+    const cellScale = Math.max(0.25, Number(space.corridorCellSize) || 1);
+    score -= (crossDistance / cellScale) * 6.5;
+    if (cell.structuralReservationId) score += 4;
+  }
   const grain = (hashString32(`${stableKey}:${space.key}:${cell.key}`) / 0xffffffff) - 0.5;
   return score + grain * (0.25 + profile.entropy * 1.5);
 }
@@ -774,13 +862,31 @@ function attemptMinimumProgramPlacement({
     space.key,
     minimumCellCountForSpace(space, grid, floorH),
   ]));
+  const hallwayClaim = preclaimOccupancyHallway(spaces, grid);
   const rootPoint = rootAnchor({ floor, rootSpace, grid, accessAnchors, reservations });
-  const rootSeed = nearestCell(grid.cells, rootPoint,
-    cell => !cell.spaceId && cellEligibleForSpace(cell, rootSpace));
+  const rootSeed = grid.cells.some(cell => cell.spaceId === rootSpace.key)
+    ? null
+    : nearestCell(grid.cells, rootPoint, cell => !cell.spaceId && cellEligibleForSpace(cell, rootSpace));
   const geometryNotes = [];
+  if (hallwayClaim.claimed) geometryNotes.push({
+    spaceKey: hallwayClaim.hallway.key,
+    kind: 'preclaimed-occupancy-hallway',
+    cellCount: hallwayClaim.claimed,
+  });
 
   for (let ordinal = 0; ordinal < order.length; ordinal++) {
     const space = order[ordinal];
+    const existingCount = grid.cells.filter(cell => cell.spaceId === space.key).length;
+    if (existingCount) {
+      growExistingSpace({
+        space,
+        target: minimumCellsByKey.get(space.key) ?? 1,
+        grid,
+        stableKey: `${stableKey}:floor:${floor}:minimum-preclaimed`,
+        profile,
+      });
+      continue;
+    }
     const seedInfo = ordinal === 0
       ? { seed: rootSeed, parentBoundaryRealized: true }
       : chooseChildSeed({
@@ -1129,6 +1235,7 @@ function planFloor({
   const grid = buildFloorGrid({ modules, floor, floorH, reservations, minimumClearWidth });
   if (!grid || !grid.cells.length) return null;
   let spaces = expandedTemplates({ grammar, floor, area, profile, authoredIntent, stableKey, semanticProgram });
+  configureUpperOccupancyHallway(spaces, grid, floor);
 
   // Do not subdivide a small floor plate into implausible slivers. Room count
   // yields before human-scale volume does. The city massing is biased larger, and
@@ -1155,8 +1262,12 @@ function planFloor({
       stableKey,
       floorH,
     });
-    if (!minimumPlacement.shortfalls.length) break;
-    const drop = chooseMinimumGeometryDropCandidate(spaces, minimumPlacement.shortfalls, floor);
+    const hallwayFrontageShortfalls = minimumPlacement.shortfalls.length
+      ? []
+      : occupancyHallwayFrontageShortfalls(spaces, grid, floor);
+    const placementShortfalls = [...minimumPlacement.shortfalls, ...hallwayFrontageShortfalls];
+    if (!placementShortfalls.length) break;
+    const drop = chooseMinimumGeometryDropCandidate(spaces, placementShortfalls, floor);
     if (!drop) break;
     geometryDroppedSpaceKeys.push(drop.key);
     spaces = spaces.filter(space => space.key !== drop.key);
@@ -1209,6 +1320,10 @@ function planFloor({
       daylight: s.daylight,
       exteriorPreference: s.exteriorPreference,
       conventionalExteriorPreference: s.conventionalExteriorPreference,
+      repeat: s.repeat ? { ...s.repeat } : null,
+      circulationShape: s.circulationShape ?? null,
+      corridorAxis: s.corridorAxis ?? null,
+      hallwayOccupancyCount: Number(s.hallwayOccupancyCount) || 0,
       targetArea: (targets.get(s.key) ?? 0) * cellArea,
       minimumArea: minimumAreaForSpace(s, floorH),
       minimumVolume: minimumVolumeForSpace(s),
@@ -1253,6 +1368,16 @@ function planFloor({
   });
   const reachable = realizedTopology.reachable;
   const unclaimedCells = grid.cells.filter(cell => !cell.spaceId);
+  const occupancyHallway = realizedSpaces.find(space => space.circulationShape === 'occupancy-hallway') ?? null;
+  const hallwayOccupancies = realizedSpaces.filter(space => space.repeat && ['private', 'program', 'work'].includes(space.role));
+  const hallwayNeighborKeys = new Set();
+  if (occupancyHallway) {
+    for (const edge of realizedEdges) {
+      if (edge.a === occupancyHallway.key) hallwayNeighborKeys.add(edge.b);
+      else if (edge.b === occupancyHallway.key) hallwayNeighborKeys.add(edge.a);
+    }
+  }
+  const directlyHallwayServedOccupancies = hallwayOccupancies.filter(space => hallwayNeighborKeys.has(space.key));
 
   return {
     floor,
@@ -1297,6 +1422,12 @@ function planFloor({
       circulationWidthHealthy: realizedSpaces
         .filter(space => space.role === 'circulation' || space.role === 'entry')
         .every(space => space.regions.some(region => Math.min(region.halfX * 2, region.halfZ * 2) + EPS >= minimumClearWidth)),
+      occupancyHallway: occupancyHallway ? {
+        spaceKey: occupancyHallway.key,
+        axis: occupancyHallway.corridorAxis,
+        occupancyCount: hallwayOccupancies.length,
+        directlyServedOccupancyCount: directlyHallwayServedOccupancies.length,
+      } : null,
     },
   };
 }

@@ -2371,6 +2371,7 @@ const authoredBuildingJobs = buildingSites.map(site => {
 const authoredBuildingJobBySiteId = new Map(authoredBuildingJobs.map(job => [job.site.id, job]));
 authoredCompletedSiteIds = new Set();
 authoredStructuralReadySiteIds = new Set();
+const authoredFailedSiteIds = new Set();
 let authoredSchedulerTurns = QP[1015];
 let authoredStructuralSyncs = QP[1015];
 let authoredBuildingsResolve;
@@ -2442,6 +2443,14 @@ function stepAuthoredBuildingJob(job) {
         step = site.signatureType
             ? runWithUnifiedSignatureSite(site, () => job.stepper.step())
             : job.stepper.step();
+    } catch (error) {
+        job.failed = true;
+        job.completed = true;
+        job.lastPhase = 'failed';
+        job.error = error;
+        authoredFailedSiteIds.add(site.id);
+        _testGenerationDone++;
+        console.error(`[building] site ${site.id} (${site.signatureType || 'ordinary'}) failed locally and was skipped; boot continues`, error);
     } finally {
         addedRoots = _generationAddedRoots;
         _generationAddedRoots = null;
@@ -2453,6 +2462,19 @@ function stepAuthoredBuildingJob(job) {
     }
 
     const stepMs = performance.now() - stepStarted;
+    if (job.failed) {
+        const idx = authoredBuildingJobs.indexOf(job);
+        if (idx >= QP[1015]) authoredBuildingJobs.splice(idx, QP[1024]);
+        runtimeLatency.record('generation.building-failed-local', stepMs, {
+            siteId: site.id, type: site.signatureType || 'ordinary', cells: site.cells.length,
+            error: String(job.error?.message || job.error || 'unknown building failure'),
+        });
+        if (!authoredBuildingJobs.length && !authoredBuildingsResolved) {
+            authoredBuildingsResolved = true;
+            authoredBuildingsResolve();
+        }
+        return { step: null, stepMs, phase: 'failed', addedRoots: addedRoots.length, completed: true, failed: true };
+    }
     const phase = step.value?.phase || 'complete';
     const structuralReadyPhase = phase === 'unified-fabric-structure'
         || phase === 'signature-unified-shell'
@@ -2540,18 +2562,19 @@ function pumpAuthoredBuildingJobs({ maxSteps = QP[0], maxMillis = QP[1], onlySit
 
 const minimumSafeAuthoredSiteIds = collectMinimumSafeAuthoredSiteIds();
 await testYieldNow('building minimum-safe authored structural shells', authoredStructuralReadySiteIds.size, minimumSafeAuthoredSiteIds.size);
-while ([...minimumSafeAuthoredSiteIds].some(id => !authoredStructuralReadySiteIds.has(id))) {
+while ([...minimumSafeAuthoredSiteIds].some(id => !authoredStructuralReadySiteIds.has(id) && !authoredFailedSiteIds.has(id))) {
     pumpAuthoredBuildingJobs({
         maxSteps: QP[0], maxMillis: TEST_FRAME_BUDGET_MS,
         onlySiteIds: minimumSafeAuthoredSiteIds, structuralOnly: true,
     });
     await testPublishAndYieldNow(
         'building minimum-safe authored structural shells',
-        [...minimumSafeAuthoredSiteIds].filter(id => authoredStructuralReadySiteIds.has(id)).length,
+        [...minimumSafeAuthoredSiteIds].filter(id => authoredStructuralReadySiteIds.has(id) || authoredFailedSiteIds.has(id)).length,
         minimumSafeAuthoredSiteIds.size
     );
 }
-console.log(`[stream-perf] minimum-safe authored neighborhood ready: ${minimumSafeAuthoredSiteIds.size} boundary structural shells collision-ready; ${authoredBuildingJobs.length}/${buildingSites.length} authored content jobs continue in live background`);
+const minimumSafeFailedCount = [...minimumSafeAuthoredSiteIds].filter(id => authoredFailedSiteIds.has(id)).length;
+console.log(`[stream-perf] minimum-safe authored neighborhood settled: ${minimumSafeAuthoredSiteIds.size - minimumSafeFailedCount} collision-ready, ${minimumSafeFailedCount} locally skipped; ${authoredBuildingJobs.length}/${buildingSites.length} authored content jobs continue in live background`);
 
  
  

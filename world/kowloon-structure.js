@@ -205,8 +205,12 @@ export function chooseKowloonCompoundTargetSize(rng, weirdness = 0) {
     // Dense fabric is the baseline now. Prefer multi-cell compounds so vertical
     // setbacks, intermediate roofs, overhang rooms, scaffolds, and bridges have
     // enough neighboring mass to form an occupied section instead of isolated boxes.
+    // Human-scale interior programs need real floor plate, not a one-cell box
+    // subdivided until every room and stair is compromised. Keep the alley grid
+    // unchanged, but let each building accrete more of the solid cells between
+    // those alleys. Single-module buildings are now an edge-case fallback.
     const base = [
-        [1, 8], [2, 15], [3, 22], [4, 24], [5, 15], [6, 10], [7, 6],
+        [1, 2], [2, 5], [3, 10], [4, 18], [5, 24], [6, 20], [7, 13], [8, 8],
     ];
     const adjusted = base.map(([size, weight]) => {
         const bonus = size >= 4 ? intensity.siteTargetBonus * (size - 2) * 2.5 : 0;

@@ -56,7 +56,7 @@ export const CONFIG = {
      
      
     streaming: {
-        renderRadiusChunks: 2,
+        renderRadiusChunks: 1,
         prefetchRadiusChunks: 3,
         retentionRadiusChunks: 4,
         landmarkSpacingChunks: 3,

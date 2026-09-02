@@ -2,8 +2,9 @@ import { spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-export const JWEB_PUSHZIP_RUNNER_SCHEMA = 'jweb.pushzip-runner.v1';
+export const JWEB_PUSHZIP_RUNNER_SCHEMA = 'jweb.pushzip-runner.v3';
 
 function die(message, work = null, code = 1) {
   console.error(`\n[jweb-pushzip] FAILED / ABORTED: ${message}`);
@@ -11,14 +12,14 @@ function die(message, work = null, code = 1) {
   process.exit(code);
 }
 
-function run(command, args, { cwd, inherit = true, encoding = null } = {}) {
-  const result = spawnSync(command, args, {
+function run(command, args, { cwd, inherit = true, encoding = null, maxBuffer = 16 * 1024 * 1024 } = {}) {
+  return spawnSync(command, args, {
     cwd,
     stdio: inherit ? 'inherit' : ['ignore', 'pipe', 'pipe'],
     encoding: encoding ?? (inherit ? undefined : 'utf8'),
     shell: false,
+    maxBuffer,
   });
-  return result;
 }
 
 function output(command, args, cwd) {
@@ -50,6 +51,12 @@ function parseStatusPaths(text) {
   });
 }
 
+function validateCheckList(value, label) {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) throw new Error(`${label} must be an array`);
+  return value.map(normalizeRepoPath);
+}
+
 function validatePackage(packageRoot) {
   const configPath = path.join(packageRoot, 'manifest', 'pushzip.json');
   const filesPath = path.join(packageRoot, 'manifest', 'files.json');
@@ -60,6 +67,10 @@ function validatePackage(packageRoot) {
     throw new Error('file manifest is missing or empty');
   }
   if (!/^[0-9a-f]{40}$/i.test(config.expectedSha ?? '')) throw new Error('expectedSha must be a 40-character commit SHA');
+  config.preflightSyntax = validateCheckList(config.preflightSyntax, 'preflightSyntax');
+  config.baselineTests = validateCheckList(config.baselineTests, 'baselineTests');
+  config.syntax = validateCheckList(config.syntax, 'syntax');
+  config.tests = validateCheckList(config.tests, 'tests');
   const seen = new Set();
   const files = manifest.files.map(entry => {
     const repoPath = normalizeRepoPath(entry.path);
@@ -67,18 +78,51 @@ function validatePackage(packageRoot) {
     seen.add(repoPath);
     if (!['payload', 'mutated'].includes(entry.mode)) throw new Error(`${repoPath}: mode must be payload or mutated`);
     if (entry.mode === 'payload' && !/^[0-9a-f]{64}$/i.test(entry.sha256 ?? '')) throw new Error(`${repoPath}: payload sha256 missing`);
-    return { ...entry, path: repoPath };
+    const baseContains = entry.baseContains === undefined ? [] : entry.baseContains;
+    if (!Array.isArray(baseContains) || baseContains.some(value => typeof value !== 'string' || !value.length)) {
+      throw new Error(`${repoPath}: baseContains must be an array of non-empty strings`);
+    }
+    if (entry.mode === 'mutated' && !entry.baseBlob && !baseContains.length) {
+      throw new Error(`${repoPath}: mutated files require baseBlob or baseContains guards`);
+    }
+    return { ...entry, path: repoPath, baseContains };
   });
   return { config, files };
 }
 
-function verifyBaseBlobs(repo, files) {
+function verifyBaseGuards(repo, files) {
   for (const entry of files) {
-    if (!entry.baseBlob) continue;
-    const actual = output('git', ['rev-parse', `HEAD:${entry.path}`], repo);
-    if (actual.toLowerCase() !== String(entry.baseBlob).toLowerCase()) {
-      throw new Error(`${entry.path}: base blob drifted (expected ${entry.baseBlob}, got ${actual})`);
+    if (entry.baseBlob) {
+      const actual = output('git', ['rev-parse', `HEAD:${entry.path}`], repo);
+      if (actual.toLowerCase() !== String(entry.baseBlob).toLowerCase()) {
+        throw new Error(`${entry.path}: base blob drifted (expected ${entry.baseBlob}, got ${actual})`);
+      }
     }
+    if (entry.baseContains?.length) {
+      const target = path.join(repo, ...entry.path.split('/'));
+      if (!fs.existsSync(target)) throw new Error(`${entry.path}: baseContains target missing`);
+      const source = fs.readFileSync(target, 'utf8');
+      for (const anchor of entry.baseContains) {
+        const count = source.split(anchor).length - 1;
+        if (count !== 1) throw new Error(`${entry.path}: base anchor expected exactly once, found ${count}: ${anchor}`);
+      }
+    }
+  }
+}
+
+function verifyBootstrapRunnerParity(packageRoot, files) {
+  const runnerEntry = files.find(entry => entry.mode === 'payload' && entry.path === 'tools/jweb-pushzip/runner.mjs');
+  if (!runnerEntry) return;
+  const bootstrap = fileURLToPath(import.meta.url);
+  const candidate = path.join(packageRoot, 'payload', 'tools', 'jweb-pushzip', 'runner.mjs');
+  if (!fs.existsSync(candidate)) throw new Error('runner upgrade declares payload but candidate runner bytes are missing');
+  const bootstrapHash = sha256(bootstrap);
+  const candidateHash = sha256(candidate);
+  if (bootstrapHash !== candidateHash) {
+    throw new Error(`runner upgrade bootstrap/payload fork detected\nBootstrap: ${bootstrapHash}\nPayload:   ${candidateHash}`);
+  }
+  if (candidateHash !== runnerEntry.sha256) {
+    throw new Error(`runner upgrade payload hash does not match manifest: ${candidateHash}`);
   }
 }
 
@@ -95,35 +139,128 @@ function verifyPayloadBytes(repo, packageRoot, files) {
   }
 }
 
-export function runAllChecks({ repo, label, syntax = [], tests = [] }) {
-  const failures = [];
+function normalizeFailureText(text, repo) {
+  let value = String(text ?? '').replace(/\x1b\[[0-9;]*m/g, '').replace(/\r\n/g, '\n').replace(/\\/g, '/');
+  const normalizedRepo = String(repo ?? '').replace(/\\/g, '/').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  if (normalizedRepo) value = value.replace(new RegExp(normalizedRepo, 'gi'), '<REPO>');
+  value = value.replace(/file:\/\/[A-Za-z]:\/[^\s:)]+/g, '<FILE>');
+  return value;
+}
+
+function failureIssues(text, repo, status) {
+  const normalized = normalizeFailureText(text, repo);
+  const issues = [];
+  for (const raw of normalized.split('\n')) {
+    const line = raw.trim();
+    if (!line) continue;
+    if (/^-\s+/.test(line)) issues.push(line.replace(/\s+/g, ' '));
+    else if (/^(?:AssertionError|TypeError|ReferenceError|SyntaxError|RangeError|Error)(?:\s+\[[^\]]+\])?:\s+/.test(line)) {
+      issues.push(line.replace(/\s+/g, ' '));
+    } else if (/^\[[^\]]+\]\s+FAIL(?:\s+\(\d+\))?\s*$/.test(line)) {
+      issues.push(line.replace(/\s+/g, ' '));
+    }
+  }
+  const unique = [...new Set(issues)];
+  if (unique.length) return unique;
+  const digest = crypto.createHash('sha256').update(normalized).digest('hex');
+  return [`fallback-exit-${status}:${digest}`];
+}
+
+function runCheckList({ repo, label, syntax = [], tests = [] }) {
   const checks = [
-    ...syntax.map(file => ({ kind: 'syntax', label: `node --check ${file}`, file, args: ['--check', file] })),
-    ...tests.map(file => ({ kind: 'test', label: `node ${file}`, file, args: [file] })),
+    ...syntax.map(file => ({ kind: 'syntax', file, args: ['--check', file] })),
+    ...tests.map(file => ({ kind: 'test', file, args: [file] })),
   ];
-  console.log(`\n[${label}] Running ${checks.length} checks. Failures are accumulated; abort happens only after the final check.`);
+  const results = new Map();
+  console.log(`\n[${label}] Running ${checks.length} checks. Every configured check runs before this phase gets a test-derived verdict.`);
   for (let i = 0; i < checks.length; i++) {
     const check = checks[i];
+    const key = `${check.kind}:${check.file}`;
     const target = path.join(repo, ...check.file.split('/'));
     console.log(`\n[${label}] ${i + 1}/${checks.length} ${check.kind.toUpperCase()} ${check.file}`);
     if (!fs.existsSync(target)) {
-      failures.push({ ...check, status: -1, reason: 'missing file' });
+      const result = { ...check, key, passed: false, status: -1, infrastructureFailure: true, issues: ['missing-file'] };
+      results.set(key, result);
       console.error(`[${label}] MISSING ${check.file}`);
       continue;
     }
-    const result = run(process.execPath, check.args, { cwd: repo, inherit: true });
-    if (result.status !== 0) {
-      failures.push({ ...check, status: result.status ?? -1, reason: result.error?.message ?? null });
-      console.error(`[${label}] FAIL ${check.file} (exit ${result.status ?? 'unknown'})`);
+    const child = run(process.execPath, check.args, { cwd: repo, inherit: false, encoding: 'utf8' });
+    if (child.stdout) process.stdout.write(child.stdout);
+    if (child.stderr) process.stderr.write(child.stderr);
+    const status = child.status ?? -1;
+    const infrastructureFailure = Boolean(child.error) || child.status === null;
+    const combined = `${child.stdout ?? ''}\n${child.stderr ?? ''}`;
+    const result = {
+      ...check,
+      key,
+      passed: status === 0 && !infrastructureFailure,
+      status,
+      infrastructureFailure,
+      reason: child.error?.message ?? null,
+      issues: status === 0 && !infrastructureFailure ? [] : failureIssues(combined, repo, status),
+    };
+    results.set(key, result);
+    if (result.passed) console.log(`[${label}] PASS ${check.file}`);
+    else console.error(`[${label}] FAIL ${check.file} (exit ${status})${result.reason ? `: ${result.reason}` : ''}`);
+  }
+  const failed = [...results.values()].filter(item => !item.passed);
+  console.log(`\n[${label}] CHECK SUMMARY: ${checks.length - failed.length}/${checks.length} passed`);
+  for (const failure of failed) console.error(`  - ${failure.kind}: ${failure.file} (exit ${failure.status})`);
+  return results;
+}
+
+function resultsForKind(results, kind) {
+  return [...results.values()].filter(result => result.kind === kind);
+}
+
+function compareBaseline(preResults, postResults, baselineTests, label) {
+  const blocking = [];
+  const debt = [];
+  const improved = [];
+  console.log(`\n[${label}] BASELINE DIFFERENTIAL`);
+  for (const file of baselineTests) {
+    const key = `test:${file}`;
+    const pre = preResults.get(key);
+    const post = postResults.get(key);
+    if (!pre || !post) {
+      blocking.push(`${file}: baseline result missing from PRE or POST`);
+      continue;
+    }
+    if (pre.infrastructureFailure || post.infrastructureFailure) {
+      blocking.push(`${file}: test infrastructure failure`);
+      continue;
+    }
+    if (pre.passed && post.passed) {
+      console.log(`  HEALTHY   ${file}`);
+      continue;
+    }
+    if (pre.passed && !post.passed) {
+      blocking.push(`${file}: NEW failure after cut (${post.issues.join(' | ')})`);
+      console.error(`  REGRESSED ${file}`);
+      continue;
+    }
+    if (!pre.passed && post.passed) {
+      improved.push(`${file}: baseline debt resolved`);
+      console.log(`  IMPROVED  ${file}`);
+      continue;
+    }
+    const preSet = new Set(pre.issues);
+    const postSet = new Set(post.issues);
+    const added = [...postSet].filter(issue => !preSet.has(issue));
+    const removed = [...preSet].filter(issue => !postSet.has(issue));
+    if (added.length) {
+      blocking.push(`${file}: baseline failure worsened/changed; new issue(s): ${added.join(' | ')}`);
+      console.error(`  WORSENED  ${file}`);
+    } else if (removed.length) {
+      improved.push(`${file}: fewer baseline failure assertions remain`);
+      debt.push(`${file}: baseline debt remains, but improved`);
+      console.log(`  IMPROVED  ${file} (still baseline debt)`);
     } else {
-      console.log(`[${label}] PASS ${check.file}`);
+      debt.push(`${file}: unchanged baseline debt`);
+      console.warn(`  DEBT      ${file} (unchanged; non-blocking)`);
     }
   }
-  console.log(`\n[${label}] CHECK SUMMARY: ${checks.length - failures.length}/${checks.length} passed`);
-  for (const failure of failures) {
-    console.error(`  - ${failure.kind}: ${failure.file} (exit ${failure.status})${failure.reason ? `: ${failure.reason}` : ''}`);
-  }
-  return failures;
+  return { blocking, debt, improved };
 }
 
 function assertWorkingSet(repo, expectedPaths) {
@@ -132,6 +269,12 @@ function assertWorkingSet(repo, expectedPaths) {
   const actual = [...new Set(parseStatusPaths(result.stdout))].sort();
   const unexpected = actual.filter(item => !expectedPaths.has(item));
   if (unexpected.length) throw new Error(`unexpected working-tree changes:\n  ${unexpected.join('\n  ')}`);
+  return actual;
+}
+
+function assertTransactionalApplyFailure(repo) {
+  const changed = assertWorkingSet(repo, new Set());
+  if (changed.length) throw new Error(`apply failed after modifying the worktree; apply scripts must be transactional:\n  ${changed.join('\n  ')}`);
 }
 
 function stageAndValidate(repo, files) {
@@ -153,9 +296,6 @@ function sleepSecond() {
 }
 
 function resolvePackageRootArg(value) {
-  // Windows CommandLineToArgvW-style parsing can leave a literal terminal quote
-  // when a quoted argument ends in a backslash (for example a raw %~dp0 value).
-  // New launchers avoid that shape, but keep the runner tolerant of old packages.
   let raw = String(value ?? process.cwd()).trim();
   raw = raw.replace(/^"+|"+$/g, '');
   return path.resolve(raw || process.cwd());
@@ -167,6 +307,8 @@ async function main() {
   try { packageData = validatePackage(packageRoot); }
   catch (error) { die(error.message); }
   const { config, files } = packageData;
+  try { verifyBootstrapRunnerParity(packageRoot, files); }
+  catch (error) { die(error.message); }
   const label = config.label ?? 'JWEB';
   const workParent = path.join(packageRoot, 'work');
   fs.mkdirSync(workParent, { recursive: true });
@@ -186,15 +328,35 @@ async function main() {
     const cname = fs.readFileSync(path.join(work, 'CNAME'), 'utf8').replace(/\r/g, '');
     if (cname !== 'jweb.dev' && cname !== 'jweb.dev\n') throw new Error('CNAME must be exactly jweb.dev');
     console.log(`[${label}] CNAME confirmed: jweb.dev`);
-    verifyBaseBlobs(work, files);
+    verifyBaseGuards(work, files);
   } catch (error) {
     die(error.message, work);
   }
 
+  const preResults = runCheckList({
+    repo: work,
+    label: `${label} PRE`,
+    syntax: config.preflightSyntax,
+    tests: config.baselineTests,
+  });
+  const preInfrastructure = [...preResults.values()].filter(result => result.infrastructureFailure);
+  const preSyntaxFailures = resultsForKind(preResults, 'syntax').filter(result => !result.passed);
+  if (preInfrastructure.length || preSyntaxFailures.length) {
+    die(`clean-base PRE infrastructure/syntax gate failed after every configured PRE check ran`, work);
+  }
+  const baselineDebtCount = resultsForKind(preResults, 'test').filter(result => !result.passed).length;
+  if (baselineDebtCount) {
+    console.warn(`\n[${label}] PRE baseline debt recorded: ${baselineDebtCount}/${config.baselineTests.length} baseline tests currently fail on the pinned clean base. This is evidence, not an automatic blocker.`);
+  }
+
   const applyScript = path.join(packageRoot, ...normalizeRepoPath(config.applyScript).split('/'));
-  console.log(`\n[${label}] Applying package payload...`);
+  console.log(`\n[${label}] Applying package payload transactionally...`);
   result = run(process.execPath, [applyScript, work], { cwd: packageRoot, inherit: true });
-  if (result.status !== 0) die('payload application failed; tests cannot safely run against a partial patch', work);
+  if (result.status !== 0) {
+    try { assertTransactionalApplyFailure(work); }
+    catch (error) { die(`${error.message}\nOriginal apply exit: ${result.status ?? 'unknown'}`, work); }
+    die(`payload application failed cleanly after PRE completed (exit ${result.status ?? 'unknown'}); POST is intentionally not run against a nonexistent candidate`, work);
+  }
 
   try {
     verifyPayloadBytes(work, packageRoot, files);
@@ -203,8 +365,33 @@ async function main() {
     die(error.message, work);
   }
 
-  const failures = runAllChecks({ repo: work, label, syntax: config.syntax ?? [], tests: config.tests ?? [] });
-  if (failures.length) die(`${failures.length} checks failed after the complete test list ran`, work);
+  const postResults = runCheckList({
+    repo: work,
+    label: `${label} POST`,
+    syntax: config.syntax,
+    tests: [...config.baselineTests, ...config.tests],
+  });
+
+  const postInfrastructure = [...postResults.values()].filter(result => result.infrastructureFailure);
+  const postSyntaxFailures = resultsForKind(postResults, 'syntax').filter(result => !result.passed);
+  const requiredFailures = config.tests
+    .map(file => postResults.get(`test:${file}`))
+    .filter(result => !result || !result.passed);
+  const differential = compareBaseline(preResults, postResults, config.baselineTests, label);
+  const blockers = [];
+  if (postInfrastructure.length) blockers.push(`${postInfrastructure.length} POST infrastructure failures`);
+  if (postSyntaxFailures.length) blockers.push(`${postSyntaxFailures.length} POST syntax failures`);
+  if (requiredFailures.length) blockers.push(`${requiredFailures.length} required Cut-specific tests failed`);
+  blockers.push(...differential.blocking);
+  if (blockers.length) {
+    console.error(`\n[${label}] BLOCKING POST VERDICT:`);
+    for (const blocker of blockers) console.error(`  - ${blocker}`);
+    die(`${blockers.length} blocking POST condition(s) after every configured POST check ran`, work);
+  }
+  if (differential.debt.length) {
+    console.warn(`\n[${label}] NON-BLOCKING BASELINE DEBT:`);
+    for (const item of differential.debt) console.warn(`  - ${item}`);
+  }
 
   let staged;
   try {
@@ -226,7 +413,7 @@ async function main() {
     die(`origin/main changed while checks were running\nExpected: ${config.expectedSha}\nActual:   ${remote}`, work);
   }
 
-  console.log(`\n[${label}] All checks passed. Ctrl+C is the only abort during countdown.`);
+  console.log(`\n[${label}] Differential gate passed. Ctrl+C is the only abort during countdown.`);
   for (const n of [5, 4, 3, 2, 1]) {
     console.log(`[${label}] pushing in ${n}...`);
     sleepSecond();

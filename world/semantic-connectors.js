@@ -494,7 +494,7 @@ export function ensureSemanticConnectorAuthority(physics, spacePlans = []) {
     }
     let synthesized = 0;
     for (const reservation of reservations) {
-        if (ownedReservationIds.has(reservation.id)) continue;
+        if (ownedReservationIds.has(reservation.id) || reservation.semanticConnectorEligible === false) continue;
         const connector = wrapOrphanReservation(reservation);
         connectors.push(connector);
         ownedReservationIds.add(reservation.id);
@@ -524,6 +524,6 @@ export function ensureSemanticConnectorAuthority(physics, spacePlans = []) {
         reservations: reservations.length,
         synthesized,
         resolvedEdges,
-        orphanReservations: reservations.filter(reservation => !reservation.connectorId).length,
+        orphanReservations: reservations.filter(reservation => reservation.semanticConnectorEligible !== false && !reservation.connectorId).length,
     };
 }

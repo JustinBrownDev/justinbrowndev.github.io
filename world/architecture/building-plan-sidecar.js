@@ -7,6 +7,7 @@ import {
   PROGRAM_GRAMMAR,
   SPAWN_AUTHORED_INTENTS,
 } from './plan-grammar-catalog.js';
+import { claimUnassignedRasterToEligibleSpaces, chooseHumanScaleProgramDrop, minimumEligibleCellsReservedForRemaining } from './human-scale-capacity.js';
 
 const SCHEMA = 'jweb.building-plan-sidecar.v1';
 const EPS = 1e-9;
@@ -90,10 +91,10 @@ function normalizeAccessAnchors(accessAnchors = []) {
 }
 
 function normalizeReservations(reservations = []) {
-  return reservations.map((r, index) => {
+  return reservations.flatMap((r, index) => {
     const halfX = Math.max(0, Number(r?.halfX ?? (r?.openingWidth ? r.openingWidth * 0.5 : 0)) || 0);
     const halfZ = Math.max(0, Number(r?.halfZ ?? (r?.openingDepth ? r.openingDepth * 0.5 : 0)) || 0);
-    return {
+    const base = {
       id: String(r?.id ?? `reservation-${index}`),
       kind: r?.kind ?? r?.reservationKind ?? 'circulation',
       x: Number(r?.x) || 0,
@@ -103,6 +104,30 @@ function normalizeReservations(reservations = []) {
       yMin: Number.isFinite(Number(r?.yMin)) ? Number(r.yMin) : 0,
       yMax: Number.isFinite(Number(r?.yMax)) ? Number(r.yMax) : Infinity,
     };
+    if (String(base.kind).toLowerCase() !== 'stair-shaft') return [base];
+
+    // A shaft reservation protects the hole, not the human route around it.
+    // Give every persistent core a separate circulation apron so doors may be
+    // reached around the stair instead of sharing the stair's own swept volume.
+    const openingCrossCandidates = [Number(r?.openingWidth), Number(r?.openingDepth)]
+      .filter(value => Number.isFinite(value) && value > 0);
+    const openingCross = openingCrossCandidates.length ? Math.min(...openingCrossCandidates) : 0;
+    const stairClearWidth = Math.max(
+      0.86,
+      Number(r?.rampHalfWidth) > 0 ? Number(r.rampHalfWidth) * 2 : 0,
+      openingCross,
+    );
+    const walkAround = clamp(stairClearWidth * 1.12, 1.0, 1.35);
+    const apron = {
+      ...base,
+      id: `${base.id}:walk-around-apron`,
+      kind: 'stair-circulation-apron',
+      halfX: base.halfX + walkAround,
+      halfZ: base.halfZ + walkAround,
+      sourceReservationId: base.id,
+      clearWalkAroundWidth: walkAround,
+    };
+    return [base, apron];
   });
 }
 
@@ -131,6 +156,27 @@ function roleMultiplier(role, profile) {
   return 1;
 }
 
+const MINIMUM_ENCLOSED_VOLUME_BY_ROLE = Object.freeze({
+  entry: 15,
+  circulation: 28,
+  service: 18,
+  storage: 18,
+  private: 28,
+  shared: 30,
+  public: 34,
+  work: 36,
+  program: 34,
+});
+
+function minimumVolumeForSpace(space) {
+  return Number(MINIMUM_ENCLOSED_VOLUME_BY_ROLE[space?.role] ?? 24);
+}
+
+function minimumAreaForSpace(space, floorH) {
+  const height = Math.max(2.4, Number(floorH) || 3.15);
+  return Math.max(Number(space?.minArea) || 0, minimumVolumeForSpace(space) / height);
+}
+
 function expandedTemplates({ grammar, floor, area, profile, authoredIntent, stableKey, semanticProgram }) {
   const templates = floor === 0 ? grammar.ground : grammar.upper;
   const result = [];
@@ -156,6 +202,7 @@ function expandedTemplates({ grammar, floor, area, profile, authoredIntent, stab
         areaWeight: (template.areaWeight / count) * roleMultiplier(template.role, profile),
         minArea: template.minArea,
         maxArea: template.maxArea,
+        repeat: template.repeat ? { ...template.repeat } : null,
         exteriorPreference: invertExteriorPreference(template.exteriorPreference, profile),
         conventionalExteriorPreference: template.exteriorPreference,
         privacy: template.privacy,
@@ -504,28 +551,117 @@ function graphBfsOrder(spaces, edges, rootKey) {
   return { order: order.filter(Boolean), parent };
 }
 
-function targetCellCounts(spaces, grid) {
+function minimumCellCountForSpace(space, grid, floorH) {
+  const cellArea = grid.cellSize * grid.cellSize;
+  return Math.max(1, Math.ceil((minimumAreaForSpace(space, floorH) - EPS) / Math.max(EPS, cellArea)));
+}
+
+function fitSpacesToFloorCapacity(spaces, grid, floorH, floor) {
+  const selected = [...spaces];
+  const droppedSpaceKeys = [];
+  const capacity = grid.cells.length;
+  const nonReservedCapacity = grid.cells.filter(cell => !cell.structuralReservationId).length;
+  const rootKey = chooseRootSpace(selected, floor)?.key ?? null;
+  const requiredCells = () => selected.reduce((sum, s) => sum + minimumCellCountForSpace(s, grid, floorH), 0);
+  const requiredNonCirculationCells = () => selected
+    .filter(s => s.role !== 'circulation' && s.role !== 'entry')
+    .reduce((sum, s) => sum + minimumCellCountForSpace(s, grid, floorH), 0);
+  const roleDropRank = role => {
+    if (role === 'shared') return 0;
+    if (role === 'storage') return 1;
+    if (role === 'service') return 2;
+    if (role === 'private' || role === 'program' || role === 'work') return 3;
+    if (role === 'public') return 4;
+    return 10;
+  };
+
+  while ((requiredCells() > capacity || requiredNonCirculationCells() > nonReservedCapacity) && selected.length > 1) {
+    const countsByTemplate = new Map();
+    for (const s of selected) countsByTemplate.set(s.templateKey, (countsByTemplate.get(s.templateKey) ?? 0) + 1);
+    let candidates = selected.filter(s => s.key !== rootKey
+      && s.role !== 'entry' && s.role !== 'circulation'
+      && (countsByTemplate.get(s.templateKey) ?? 0) > Math.max(1, Number(s.repeat?.min) || 1));
+    if (!candidates.length) {
+      candidates = selected.filter(s => s.key !== rootKey
+        && s.role !== 'entry' && s.role !== 'circulation'
+        && (countsByTemplate.get(s.templateKey) ?? 0) > 1);
+    }
+    if (!candidates.length) {
+      candidates = selected.filter(s => s.key !== rootKey && s.role !== 'entry' && s.role !== 'circulation');
+    }
+    if (!candidates.length) break;
+    candidates.sort((a, b) => {
+      const aEcho = String(a.source).includes('echo') ? 0 : 1;
+      const bEcho = String(b.source).includes('echo') ? 0 : 1;
+      if (aEcho !== bEcho) return aEcho - bEcho;
+      const role = roleDropRank(a.role) - roleDropRank(b.role);
+      if (role) return role;
+      return a.areaWeight - b.areaWeight || a.key.localeCompare(b.key);
+    });
+    const drop = candidates[0];
+    selected.splice(selected.indexOf(drop), 1);
+    droppedSpaceKeys.push(drop.key);
+  }
+
+  return {
+    spaces: selected,
+    droppedSpaceKeys,
+    minimumProgramCells: requiredCells(),
+    minimumNonCirculationCells: requiredNonCirculationCells(),
+    capacityCells: capacity,
+    nonReservedCapacityCells: nonReservedCapacity,
+    shortfallCells: Math.max(
+      0,
+      requiredCells() - capacity,
+      requiredNonCirculationCells() - nonReservedCapacity,
+    ),
+  };
+}
+
+function targetCellCounts(spaces, grid, floorH) {
   const nonReserved = grid.cells.filter(c => !c.structuralReservationId).length;
   const reserved = grid.cells.length - nonReserved;
   const circulationCount = spaces.filter(s => s.role === 'circulation' || s.role === 'entry').length;
   const allocatable = nonReserved + (circulationCount ? reserved : 0);
   const sumWeight = spaces.reduce((sum, s) => sum + Math.max(0.001, s.areaWeight), 0);
+  const cellArea = grid.cellSize * grid.cellSize;
+  const minimums = new Map();
+  const maximums = new Map();
   const targets = new Map();
   let total = 0;
+
   for (const s of spaces) {
-    const raw = Math.max(1, Math.round(allocatable * Math.max(0.001, s.areaWeight) / sumWeight));
+    const minimum = minimumCellCountForSpace(s, grid, floorH);
+    const maximum = Number.isFinite(Number(s.maxArea))
+      ? Math.max(minimum, Math.floor(Number(s.maxArea) / Math.max(EPS, cellArea)))
+      : Infinity;
+    const weighted = Math.round(allocatable * Math.max(0.001, s.areaWeight) / sumWeight);
+    const raw = Math.max(minimum, Math.min(maximum, Math.max(1, weighted)));
+    minimums.set(s.key, minimum);
+    maximums.set(s.key, maximum);
     targets.set(s.key, raw);
     total += raw;
   }
-  while (total > allocatable && total > spaces.length) {
-    const candidates = [...spaces].sort((a, b) => (targets.get(b.key) ?? 0) - (targets.get(a.key) ?? 0) || a.key.localeCompare(b.key));
-    const candidate = candidates.find(s => (targets.get(s.key) ?? 0) > 1);
-    if (!candidate) break;
+
+  while (total > allocatable) {
+    const candidates = [...spaces]
+      .filter(s => (targets.get(s.key) ?? 0) > (minimums.get(s.key) ?? 1))
+      .sort((a, b) => (targets.get(b.key) ?? 0) - (targets.get(a.key) ?? 0) || a.key.localeCompare(b.key));
+    if (!candidates.length) break;
+    const candidate = candidates[0];
     targets.set(candidate.key, targets.get(candidate.key) - 1);
     total--;
   }
   while (total < allocatable && spaces.length) {
-    const candidate = spaces[total % spaces.length];
+    const candidates = [...spaces]
+      .filter(s => (targets.get(s.key) ?? 0) < (maximums.get(s.key) ?? Infinity))
+      .sort((a, b) => {
+        const aNeed = allocatable * Math.max(0.001, a.areaWeight) / sumWeight - (targets.get(a.key) ?? 0);
+        const bNeed = allocatable * Math.max(0.001, b.areaWeight) / sumWeight - (targets.get(b.key) ?? 0);
+        return bNeed - aNeed || a.key.localeCompare(b.key);
+      });
+    if (!candidates.length) break;
+    const candidate = candidates[0];
     targets.set(candidate.key, targets.get(candidate.key) + 1);
     total++;
   }
@@ -561,6 +697,134 @@ function growSpace({ space, seed, target, grid, stableKey, profile, reserveForRe
   return assigned;
 }
 
+function growExistingSpace({ space, target, grid, stableKey, profile }) {
+  let assigned = grid.cells.filter(cell => cell.spaceId === space.key);
+  if (assigned.length >= target) return assigned;
+
+  if (!assigned.length) {
+    const seeds = grid.cells.filter(cell => !cell.spaceId && cellEligibleForSpace(cell, space));
+    seeds.sort((a, b) => preferenceScore(b, space, profile, `${stableKey}:repair-seed`) - preferenceScore(a, space, profile, `${stableKey}:repair-seed`)
+      || a.key.localeCompare(b.key));
+    const seed = seeds[0];
+    if (!seed) return assigned;
+    seed.spaceId = space.key;
+    assigned = [seed];
+  }
+
+  const frontier = new Map();
+  const considerNeighbors = cell => {
+    for (const neighbor of neighborsOf(cell, grid)) {
+      if (neighbor.spaceId || !cellEligibleForSpace(neighbor, space)) continue;
+      frontier.set(neighbor.key, neighbor);
+    }
+  };
+  for (const cell of assigned) considerNeighbors(cell);
+
+  while (assigned.length < target && frontier.size) {
+    const candidates = [...frontier.values()];
+    candidates.sort((a, b) => preferenceScore(b, space, profile, stableKey) - preferenceScore(a, space, profile, stableKey)
+      || a.key.localeCompare(b.key));
+    const next = candidates[0];
+    frontier.delete(next.key);
+    if (!next || next.spaceId) continue;
+    next.spaceId = space.key;
+    assigned.push(next);
+    considerNeighbors(next);
+  }
+  return assigned;
+}
+
+function chooseMinimumGeometryDropCandidate(spaces, shortfalls, floor) {
+  const rootKey = chooseRootSpace(spaces, floor)?.key ?? null;
+  return chooseHumanScaleProgramDrop({
+    spaces,
+    shortfalls,
+    protectedKeys: rootKey ? [rootKey] : [],
+  });
+}
+
+function attemptMinimumProgramPlacement({
+  spaces, floor, grid, reservations, accessAnchors, profile, stableKey, floorH,
+}) {
+  for (const cell of grid.cells) cell.spaceId = null;
+
+  const topology = buildTopology({ spaces, floor, profile, stableKey: `${stableKey}:floor:${floor}` });
+  const rootSpace = spaces.find(space => space.key === topology.rootKey) ?? spaces[0];
+  const { order, parent } = graphBfsOrder(spaces, topology.edges, rootSpace.key);
+  const minimumCellsByKey = new Map(spaces.map(space => [
+    space.key,
+    minimumCellCountForSpace(space, grid, floorH),
+  ]));
+  const rootPoint = rootAnchor({ floor, rootSpace, grid, accessAnchors, reservations });
+  const rootSeed = nearestCell(grid.cells, rootPoint,
+    cell => !cell.spaceId && cellEligibleForSpace(cell, rootSpace));
+  const geometryNotes = [];
+
+  for (let ordinal = 0; ordinal < order.length; ordinal++) {
+    const space = order[ordinal];
+    const seedInfo = ordinal === 0
+      ? { seed: rootSeed, parentBoundaryRealized: true }
+      : chooseChildSeed({
+          space,
+          parentKey: parent.get(space.key),
+          grid,
+          profile,
+          stableKey: `${stableKey}:floor:${floor}:seed`,
+        });
+    if (!seedInfo.seed) {
+      geometryNotes.push({ spaceKey: space.key, kind: 'no-geometric-seed' });
+      continue;
+    }
+    if (!seedInfo.parentBoundaryRealized && ordinal > 0) {
+      geometryNotes.push({ spaceKey: space.key, kind: 'parent-adjacency-fallback' });
+    }
+    const reserveForRemaining = minimumEligibleCellsReservedForRemaining({
+      currentSpace: space,
+      remainingSpaces: order.slice(ordinal + 1),
+      grid,
+      minimumCellsByKey,
+    });
+    growSpace({
+      space,
+      seed: seedInfo.seed,
+      target: minimumCellsByKey.get(space.key) ?? 1,
+      grid,
+      stableKey: `${stableKey}:floor:${floor}:minimum-grow`,
+      profile,
+      reserveForRemaining,
+    });
+  }
+
+  // A second pass may use free cells that were not reachable at the first seed.
+  // It never steals another room's minimum and never permits a room to shrink.
+  for (const space of order) {
+    const minimumTarget = minimumCellsByKey.get(space.key) ?? 1;
+    const assignedCount = grid.cells.filter(cell => cell.spaceId === space.key).length;
+    if (assignedCount >= minimumTarget) continue;
+    growExistingSpace({
+      space,
+      target: minimumTarget,
+      grid,
+      stableKey: `${stableKey}:floor:${floor}:minimum-repair`,
+      profile,
+    });
+  }
+
+  const shortfalls = spaces.map(space => {
+    const assignedCount = grid.cells.filter(cell => cell.spaceId === space.key).length;
+    const minimumCount = minimumCellsByKey.get(space.key) ?? 1;
+    return {
+      key: space.key,
+      role: space.role,
+      assignedCount,
+      minimumCount,
+      shortfallCells: Math.max(0, minimumCount - assignedCount),
+    };
+  }).filter(item => item.shortfallCells > 0);
+
+  return { topology, rootSpace, order, parent, minimumCellsByKey, geometryNotes, shortfalls };
+}
+
 function chooseChildSeed({ space, parentKey, grid, profile, stableKey }) {
   const boundary = [];
   if (parentKey) {
@@ -577,33 +841,14 @@ function chooseChildSeed({ space, parentKey, grid, profile, stableKey }) {
 }
 
 function assignLeftovers({ grid, spaces, profile, stableKey }) {
-  const spaceByKey = new Map(spaces.map(s => [s.key, s]));
-  let pending = grid.cells.filter(cell => !cell.spaceId);
-  let guard = 0;
-  while (pending.length && guard++ < grid.cells.length + 4) {
-    let progress = 0;
-    for (const cell of pending) {
-      const neighbors = neighborsOf(cell, grid).filter(n => n.spaceId);
-      if (!neighbors.length) continue;
-      const eligible = neighbors.filter(n => cellEligibleForSpace(cell, spaceByKey.get(n.spaceId)));
-      if (!eligible.length) continue;
-      eligible.sort((a, b) => preferenceScore(cell, spaceByKey.get(b.spaceId), profile, `${stableKey}:leftover`) - preferenceScore(cell, spaceByKey.get(a.spaceId), profile, `${stableKey}:leftover`)
-        || a.spaceId.localeCompare(b.spaceId));
-      cell.spaceId = eligible[0].spaceId;
-      progress++;
-    }
-    if (!progress) break;
-    pending = grid.cells.filter(cell => !cell.spaceId);
-  }
-
-  // Any isolated structural-reservation island belongs to circulation if one
-  // exists; otherwise it remains intentionally unclaimed and is reported.
-  const circulation = spaces.find(s => s.role === 'circulation') ?? spaces.find(s => s.role === 'entry') ?? null;
-  if (circulation) {
-    for (const cell of grid.cells) {
-      if (!cell.spaceId && cell.structuralReservationId) cell.spaceId = circulation.key;
-    }
-  }
+  const closure = claimUnassignedRasterToEligibleSpaces({
+    cells: grid.cells,
+    spaces,
+    neighborsOfCell: cell => neighborsOf(cell, grid),
+    cellEligibleForSpace,
+    preferenceScoreForSpace: (cell, space) => preferenceScore(cell, space, profile, `${stableKey}:leftover`),
+  });
+  return closure;
 }
 
 function spaceCentroid(cells) {
@@ -866,56 +1111,60 @@ function planFloor({
   if (!grid || !grid.cells.length) return null;
   let spaces = expandedTemplates({ grammar, floor, area, profile, authoredIntent, stableKey, semanticProgram });
 
-  // A plan with more named spaces than geometric substrate is a bad abstraction.
-  // Collapse lowest-weight cells before geometry instead of emitting impossible
-  // paper architecture.
-  const maxSpaces = Math.max(1, Math.floor(grid.cells.length / 3));
-  if (spaces.length > maxSpaces) {
-    const protectedKeys = new Set([chooseRootSpace(spaces, floor)?.key]);
-    spaces = [...spaces]
-      .sort((a, b) => Number(protectedKeys.has(b.key)) - Number(protectedKeys.has(a.key)) || b.areaWeight - a.areaWeight || a.key.localeCompare(b.key))
-      .slice(0, maxSpaces);
+  // Do not subdivide a small floor plate into implausible slivers. Room count
+  // yields before human-scale volume does. The city massing is biased larger, and
+  // this is the final fallback for constrained leftover sites.
+  const programFit = fitSpacesToFloorCapacity(spaces, grid, floorH, floor);
+  spaces = programFit.spaces;
+
+  // Capacity is necessary but not sufficient: a greedy region can geometrically
+  // wall off a later room even when total cell counts fit. Retry from a clean
+  // raster and reduce program instances deterministically until every selected
+  // room can own its real minimum. Room count yields before human scale.
+  const geometryDroppedSpaceKeys = [];
+  let minimumPlacement = null;
+  const maximumPlacementAttempts = Math.max(2, spaces.length * 2 + 2);
+  for (let attempt = 0; attempt < maximumPlacementAttempts; attempt++) {
+    minimumPlacement = attemptMinimumProgramPlacement({
+      spaces,
+      floor,
+      grid,
+      reservations,
+      accessAnchors,
+      profile,
+      stableKey,
+      floorH,
+    });
+    if (!minimumPlacement.shortfalls.length) break;
+    const drop = chooseMinimumGeometryDropCandidate(spaces, minimumPlacement.shortfalls, floor);
+    if (!drop) break;
+    geometryDroppedSpaceKeys.push(drop.key);
+    spaces = spaces.filter(space => space.key !== drop.key);
+  }
+  if (!minimumPlacement) throw new Error(`building plan floor ${floor}: minimum placement was not attempted`);
+
+  const { topology, rootSpace, order, minimumCellsByKey } = minimumPlacement;
+  const geometryNotes = [...minimumPlacement.geometryNotes];
+  if (minimumPlacement.shortfalls.length) {
+    geometryNotes.push({
+      kind: 'minimum-placement-shortfall-after-program-yield',
+      spaces: minimumPlacement.shortfalls.map(item => ({ ...item })),
+    });
   }
 
-  const topology = buildTopology({ spaces, floor, profile, stableKey: `${stableKey}:floor:${floor}` });
-  const rootSpace = spaces.find(s => s.key === topology.rootKey) ?? spaces[0];
-  const { order, parent } = graphBfsOrder(spaces, topology.edges, rootSpace.key);
-  const targets = targetCellCounts(spaces, grid);
-  const rootPoint = rootAnchor({ floor, rootSpace, grid, accessAnchors, reservations });
-  const rootSeed = nearestCell(grid.cells, rootPoint, cell => !cell.spaceId && cellEligibleForSpace(cell, rootSpace));
-  const geometryNotes = [];
-
-  for (let ordinal = 0; ordinal < order.length; ordinal++) {
-    const s = order[ordinal];
-    let seedInfo;
-    if (ordinal === 0) {
-      seedInfo = { seed: rootSeed, parentBoundaryRealized: true };
-    } else {
-      seedInfo = chooseChildSeed({
-        space: s,
-        parentKey: parent.get(s.key),
+  // Weighted area is surplus. It may only be spent after the whole selected
+  // program has acquired its physical minimum.
+  const targets = targetCellCounts(spaces, grid, floorH);
+  if (!minimumPlacement.shortfalls.length) {
+    for (const space of order) {
+      growExistingSpace({
+        space,
+        target: targets.get(space.key) ?? (minimumCellsByKey.get(space.key) ?? 1),
         grid,
+        stableKey: `${stableKey}:floor:${floor}:weighted-grow`,
         profile,
-        stableKey: `${stableKey}:floor:${floor}:seed`,
       });
     }
-    if (!seedInfo.seed) {
-      geometryNotes.push({ spaceKey: s.key, kind: 'no-geometric-seed' });
-      continue;
-    }
-    if (!seedInfo.parentBoundaryRealized && ordinal > 0) {
-      geometryNotes.push({ spaceKey: s.key, kind: 'parent-adjacency-fallback' });
-    }
-    const remaining = order.length - ordinal - 1;
-    growSpace({
-      space: s,
-      seed: seedInfo.seed,
-      target: targets.get(s.key) ?? 1,
-      grid,
-      stableKey: `${stableKey}:floor:${floor}:grow`,
-      profile,
-      reserveForRemaining: remaining,
-    });
   }
   assignLeftovers({ grid, spaces, profile, stableKey: `${stableKey}:floor:${floor}` });
 
@@ -938,7 +1187,10 @@ function planFloor({
       exteriorPreference: s.exteriorPreference,
       conventionalExteriorPreference: s.conventionalExteriorPreference,
       targetArea: (targets.get(s.key) ?? 0) * cellArea,
+      minimumArea: minimumAreaForSpace(s, floorH),
+      minimumVolume: minimumVolumeForSpace(s),
       realizedArea: cells.length * cellArea,
+      realizedVolume: cells.length * cellArea * floorH,
       cellCount: cells.length,
       centroid,
       regions: compactSpaceCells(cells, grid.cellSize),
@@ -947,6 +1199,20 @@ function planFloor({
     };
   }).filter(s => s.cellCount > 0);
 
+  const minimumPlacementShortfallCells = spaces.reduce((sum, space) => {
+    const assignedCount = grid.cells.filter(cell => cell.spaceId === space.key).length;
+    return sum + Math.max(0, (minimumCellsByKey.get(space.key) ?? 1) - assignedCount);
+  }, 0);
+  const minimumProgramCells = spaces.reduce((sum, space) => sum + (minimumCellsByKey.get(space.key) ?? 1), 0);
+  const minimumNonCirculationCells = spaces
+    .filter(space => space.role !== 'circulation' && space.role !== 'entry')
+    .reduce((sum, space) => sum + (minimumCellsByKey.get(space.key) ?? 1), 0);
+  const nonReservedCapacityCells = grid.cells.filter(cell => !cell.structuralReservationId).length;
+  const minimumProgramShortfallCells = Math.max(
+    0,
+    minimumProgramCells - grid.cells.length,
+    minimumNonCirculationCells - nonReservedCapacityCells,
+  );
   const realizedKeys = new Set(realizedSpaces.map(s => s.key));
   const desiredEdges = topology.edges.filter(edge => realizedKeys.has(edge.a) && realizedKeys.has(edge.b));
   const realizedTopology = realizeTopology({
@@ -989,6 +1255,19 @@ function planFloor({
       geometricAdjacencyPairCount: realizedTopology.geometricAdjacencyPairCount,
       unclaimedCellCount: unclaimedCells.length,
       geometryNotes,
+      droppedSpaceKeysForPhysicalArea: [...programFit.droppedSpaceKeys, ...geometryDroppedSpaceKeys],
+      droppedSpaceKeysForMinimumGeometry: geometryDroppedSpaceKeys,
+      minimumProgramCells,
+      minimumNonCirculationCells,
+      programCapacityCells: grid.cells.length,
+      nonReservedCapacityCells,
+      minimumProgramShortfallCells,
+      minimumPlacementShortfallCells,
+      minimumAreaHealthy: minimumPlacementShortfallCells === 0
+        && realizedSpaces.every(space => space.realizedArea + EPS >= space.minimumArea),
+      minimumVolumeHealthy: minimumPlacementShortfallCells === 0
+        && realizedSpaces.every(space => space.realizedVolume + EPS >= space.minimumVolume),
+      stairCirculationApronCellCount: grid.cells.filter(cell => cell.structuralReservationKind === 'stair-circulation-apron').length,
       structuralReservationCellCount: grid.cells.filter(cell => cell.structuralReservationId).length,
       minimumClearWidth,
       circulationWidthHealthy: realizedSpaces
@@ -1106,6 +1385,10 @@ export function planBuildingSidecar({
   const unrealizedDesiredEdges = floors.reduce((sum, f) => sum + f.diagnostics.unrealizedDesiredEdges.length, 0);
   const geometryRepairEdges = floors.reduce((sum, f) => sum + f.diagnostics.geometryRepairEdgeCount, 0);
   const unclaimedCells = floors.reduce((sum, f) => sum + f.diagnostics.unclaimedCellCount, 0);
+  const humanScaleHealthy = floors.every(f => f.diagnostics.minimumAreaHealthy
+    && f.diagnostics.minimumVolumeHealthy
+    && (f.diagnostics.minimumProgramShortfallCells ?? 0) === 0);
+  const droppedSpacesForPhysicalArea = floors.reduce((sum, f) => sum + (f.diagnostics.droppedSpaceKeysForPhysicalArea?.length ?? 0), 0);
 
   const result = {
     schema: SCHEMA,
@@ -1153,7 +1436,9 @@ export function planBuildingSidecar({
       totalSpaces: allSpaces.length,
       totalOpenings: allOpenings.length,
       physicalTruthPreserved: true,
-      readyForFabricEmission: topologyHealthy && unclaimedCells === 0,
+      humanScaleHealthy,
+      droppedSpacesForPhysicalArea,
+      readyForFabricEmission: topologyHealthy && unclaimedCells === 0 && humanScaleHealthy,
     },
   };
   result.fingerprint = hashString32(JSON.stringify({

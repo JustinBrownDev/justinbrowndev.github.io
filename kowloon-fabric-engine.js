@@ -27,6 +27,13 @@ import {
     reservationIntersectsBox,
 } from './world/circulation-reservations.js';
 import {
+    buildConservativeBuildingObstacles,
+    evaluateExteriorRouteCollision,
+    firstCirculationVolumeConflict,
+    publishedCirculationReservation,
+    wallSegmentBuildingObstacles,
+} from './world/circulation-collision-authority.js';
+import {
     connectorOpeningWidth,
     createBridgeConnector,
     createLandingConnector,
@@ -1478,12 +1485,13 @@ export function createKowloonFabricEngine({
     // rooms, partitions, doors and the persistent vertical core run here; expensive
     // clutter, mezzanines and authored enrichment remain deferred by the profile.
     function* buildBroadStrokesCompoundSteps({
-        chunk, site, topology, siteSignature, siteSeed, structureProfile,
+        chunk, site, siteIdOf, openSiteIds, topology, siteSignature, siteSeed, structureProfile,
         physics, transforms, materialIndex, modulePlans, moduleByKey, primaryModule,
         floorH, archetype, physicalUse, physicalTruth, servicePhysicalTruth, stairPhysicalTruth,
         districtBuildingPolicy, districtBuildingContext,
         floorConnectivityRepair, courtyard, courtyardSuppressedForConnectivity,
         bridgeOpeningKeys, bridgeOpeningByKey, bridgePortals,
+        cx0, cz0, half, cellSize,
     }) {
         const wallList = transforms.wallGroups[materialIndex];
         const facades = [];
@@ -1723,6 +1731,62 @@ export function createKowloonFabricEngine({
         };
         const roofClearForTransport = module => roofTopperAllowsTransport(module) && !roofIntersectsInteriorCore(module);
 
+        // CUT 12: exterior circulation is accepted against building mass before
+        // facade walls/slabs render. An aperture is only a semantic handoff point:
+        // no flight or landing clearance is ever allowed to cross the facade plane.
+        const exteriorBuildingObstacles = [
+            ...buildConservativeBuildingObstacles({
+                currentSiteId: site.id,
+                modulePlans,
+                floorH,
+                siteIdOf,
+                openSiteIds,
+                cx0, cz0, half, cellSize,
+            }),
+            // Earlier sites/landmarks already have exact wall geometry. This also
+            // covers cells intentionally absent from the compound partition.
+            ...wallSegmentBuildingObstacles(physics.mazeWalls),
+        ];
+        const acceptedExteriorClearances = physics.exteriorCirculationAcceptedClearances
+            ?? (physics.exteriorCirculationAcceptedClearances = []);
+        const collisionRejectRegistry = physics.exteriorCirculationCollisionRejects
+            ?? (physics.exteriorCirculationCollisionRejects = []);
+        const recordExteriorCollisionReject = (plan, face, family, evaluation, circulationConflict = null) => {
+            collisionRejectRegistry.push({
+                routeId: plan?.id ?? null,
+                family,
+                faceKey: face ? `${face.module.key}:${face.dir.key}` : null,
+                hostBoundaryViolationIds: (evaluation?.hostBoundaryViolations ?? []).map(item => item.id),
+                buildingBlockers: (evaluation?.blockers ?? []).map(item => ({
+                    reservationId: item.reservation?.id ?? null,
+                    obstacleId: item.obstacle?.id ?? null,
+                    obstacleSource: item.obstacle?.obstacleSource ?? null,
+                })),
+                circulationConflict: circulationConflict ? {
+                    reservationId: circulationConflict.reservation?.id ?? null,
+                    blockerId: circulationConflict.blocker?.id ?? null,
+                } : null,
+            });
+        };
+        const evaluateExteriorCandidate = (plan, face, family) => {
+            const evaluation = evaluateExteriorRouteCollision({
+                plan,
+                obstacles: exteriorBuildingObstacles,
+                hostRect: face?.module?.rect ?? plan?.hostRect ?? plan?.face?.rect,
+                side: face?.dir?.side ?? plan?.side,
+            });
+            if (!evaluation.accepted) recordExteriorCollisionReject(plan, face, family, evaluation);
+            return evaluation;
+        };
+        const publishExteriorRouteClearances = reservations => {
+            for (const reservation of reservations ?? []) {
+                if (!acceptedExteriorClearances.some(item => item.id === reservation.id)) acceptedExteriorClearances.push(reservation);
+                if (!physics.circulationReservations.some(item => item.id === reservation.id)) {
+                    physics.circulationReservations.push(publishedCirculationReservation(reservation));
+                }
+            }
+        };
+
         // EXTERIOR STRUCTURAL FAST LANE: preserve deterministic scaffold/fire-escape
         // planning around the restored interior/core reservations. Micro enrichment and
         // authored decoration stay disabled; facade apertures still publish before walls.
@@ -1730,6 +1794,7 @@ export function createKowloonFabricEngine({
         const scaffoldOpeningByKey = new Map();
         let scaffoldPlan = null;
         let scaffoldSide = null;
+        let scaffoldCollisionEvaluation = null;
         if (scaffoldCandidates.length) {
             const scaffoldPresenceRng = mulberry32(hashString32(`${siteSeed}:scaffold-presence`));
             const scaffoldChance = kowloonIntensity(chunk.weirdness?.sampled ?? 0).scaffoldChance;
@@ -1760,7 +1825,9 @@ export function createKowloonFabricEngine({
                             || (opening.level === 0 && entranceFaces.some(entrance =>
                                 entrance.module === face.module && entrance.dir.key === face.dir.key));
                     });
-                    return openingConflict ? null : { face, plan };
+                    if (openingConflict) return null;
+                    const collision = evaluateExteriorCandidate(plan, face, 'fire-escape-scaffold');
+                    return collision.accepted ? { face, plan, collision } : null;
                 }).filter(Boolean);
                 validScaffolds.sort((a, b) => {
                     const heightRank = b.face.module.floors - a.face.module.floors;
@@ -1777,6 +1844,7 @@ export function createKowloonFabricEngine({
                 if (accepted) {
                     scaffoldPlan = accepted.plan;
                     scaffoldSide = accepted.face.dir.side;
+                    scaffoldCollisionEvaluation = accepted.collision;
                     for (const opening of scaffoldPlan.openings) {
                         scaffoldOpeningByKey.set(
                             `${accepted.face.module.key}:${accepted.face.dir.key}:${opening.level}`,
@@ -1897,6 +1965,7 @@ export function createKowloonFabricEngine({
             if (!scaffoldPlan || scaffoldPlan.moduleKey !== face.module.key) return false;
             scaffoldPlan = null;
             scaffoldSide = null;
+            scaffoldCollisionEvaluation = null;
             scaffoldOpeningByKey.clear();
             return true;
         };
@@ -1937,6 +2006,14 @@ export function createKowloonFabricEngine({
                 maxRun: 6.2,
             });
             if (!plan) return false;
+            const collision = evaluateExteriorCandidate(plan, face, family);
+            if (!collision.accepted) return false;
+            const circulationConflict = firstCirculationVolumeConflict(collision.reservations, acceptedExteriorClearances, 0.02);
+            if (circulationConflict) {
+                recordExteriorCollisionReject(plan, face, family, collision, circulationConflict);
+                return false;
+            }
+            publishExteriorRouteClearances(collision.reservations);
             consumeScaffoldForModule(face);
             usedBroadVerticalFaces.add(broadVerticalFaceKey(face));
             broadVerticalRoutes.push(plan);
@@ -1994,6 +2071,33 @@ export function createKowloonFabricEngine({
                     streetLayerRouteAccepted = true;
                     break;
                 }
+            }
+        }
+
+
+        // A scaffold is only authoritative if it survived later shared-trunk
+        // selection and still has exclusive exterior clearance. Publish that
+        // reservation now, before facade wall emission.
+        if (scaffoldPlan && scaffoldCollisionEvaluation) {
+            const scaffoldCirculationConflict = firstCirculationVolumeConflict(
+                scaffoldCollisionEvaluation.reservations,
+                acceptedExteriorClearances,
+                0.02,
+            );
+            if (scaffoldCirculationConflict) {
+                recordExteriorCollisionReject(
+                    scaffoldPlan,
+                    scaffoldCandidates.find(face => face.module.key === scaffoldPlan.moduleKey && face.dir.side === scaffoldPlan.side) ?? null,
+                    'fire-escape-scaffold',
+                    scaffoldCollisionEvaluation,
+                    scaffoldCirculationConflict,
+                );
+                scaffoldPlan = null;
+                scaffoldSide = null;
+                scaffoldCollisionEvaluation = null;
+                scaffoldOpeningByKey.clear();
+            } else {
+                publishExteriorRouteClearances(scaffoldCollisionEvaluation.reservations);
             }
         }
 
@@ -2357,6 +2461,8 @@ export function createKowloonFabricEngine({
             fastVerticalRoomPortalCount: broadVerticalRoutes.reduce((sum, route) => sum + (route.portalStops?.filter(stop => stop.source !== 'bridge-portal').length ?? 0), 0),
             fastVerticalSharedTrunkCount: broadVerticalRoutes.filter(route => (route.streetLayers?.length ?? 0) > 1).length,
             fastVerticalRouteFamilies: broadVerticalRoutes.map(route => route.family),
+            exteriorCirculationAcceptedClearanceCount: acceptedExteriorClearances.length,
+            exteriorCirculationCollisionRejectCount: collisionRejectRegistry.length,
             fastFacadeArchitectureSchema: facadeArchitecture.schema,
             fastFacadeArchitectureMetrics: facadeArchitecture.metrics,
             exteriorCirculationDebtTags: EXTERIOR_CIRCULATION_DEBT.map(item => item.tag),
@@ -2599,12 +2705,13 @@ export function createKowloonFabricEngine({
 
         if (GENERATION_LANES.broadStrokesOnly) {
             return yield* buildBroadStrokesCompoundSteps({
-                chunk, site, topology, siteSignature, siteSeed, structureProfile,
+                chunk, site, siteIdOf, openSiteIds, topology, siteSignature, siteSeed, structureProfile,
                 physics, transforms, materialIndex, modulePlans, moduleByKey, primaryModule,
                 floorH, archetype, physicalUse, physicalTruth, servicePhysicalTruth, stairPhysicalTruth,
                 districtBuildingPolicy, districtBuildingContext,
                 floorConnectivityRepair, courtyard, courtyardSuppressedForConnectivity,
                 bridgeOpeningKeys, bridgeOpeningByKey, bridgePortals,
+                cx0, cz0, half, cellSize,
             });
         }
         yield { phase: 'compound-massing-plan', current: 0, total: modulePlans.length };

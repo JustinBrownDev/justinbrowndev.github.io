@@ -421,6 +421,12 @@ export function assertBuildingPlanAuthority(plan, { requirePersistentCore = true
     if (floor.diagnostics?.circulationWidthHealthy === false) {
       throw new Error(`building plan floor ${floor.floor} violates resolved circulation clear width`);
     }
+    if (floor.diagnostics?.minimumAreaHealthy === false || floor.diagnostics?.minimumVolumeHealthy === false) {
+      throw new Error(`building plan floor ${floor.floor} squeezed a space below human-scale area/volume`);
+    }
+    if ((floor.diagnostics?.minimumProgramShortfallCells ?? 0) > 0) {
+      throw new Error(`building plan floor ${floor.floor} cannot fit its minimum physical program`);
+    }
   }
   if (!Array.isArray(plan.wallRuns)) throw new Error('building plan wall runs missing');
   if (!Array.isArray(plan.topologySpaces) || !plan.topologySpaces.length) throw new Error('building plan semantic spaces missing');

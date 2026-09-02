@@ -1484,7 +1484,7 @@ export function createKowloonFabricEngine({
         physics, transforms, materialIndex, modulePlans, moduleByKey, primaryModule,
         floorH, archetype, physicalUse, physicalTruth, servicePhysicalTruth,
         floorConnectivityRepair, courtyard, courtyardSuppressedForConnectivity,
-        bridgeOpeningKeys, bridgePortals,
+        bridgeOpeningKeys, bridgeOpeningByKey, bridgePortals,
     }) {
         const wallList = transforms.wallGroups[materialIndex];
         const facades = [];
@@ -1632,10 +1632,12 @@ export function createKowloonFabricEngine({
             const rawAnchorCoordinate = horizontal ? anchorPortal?.x : anchorPortal?.z;
             const anchorTangent = rawAnchorTangent === null || rawAnchorTangent === undefined ? NaN : Number(rawAnchorTangent);
             const anchorCoordinate = rawAnchorCoordinate === null || rawAnchorCoordinate === undefined ? NaN : Number(rawAnchorCoordinate);
-            const fallbackTangent = horizontal ? Number(face.module.rect.cx) : Number(face.module.rect.cz);
             const bridgeTangent = Number.isFinite(anchorTangent)
                 ? anchorTangent
-                : (Number.isFinite(anchorCoordinate) ? anchorCoordinate : fallbackTangent);
+                : (Number.isFinite(anchorCoordinate) ? anchorCoordinate : NaN);
+            if (source === 'bridge-portal' && !Number.isFinite(bridgeTangent)) {
+                throw new Error(`${chunk.key}:${siteSignature}:${face.module.key}:${face.dir.key}:${floor}: unresolved bridge endpoint reached circulation planning`);
+            }
             return {
                 floor,
                 roomSpaceId,
@@ -1814,7 +1816,7 @@ export function createKowloonFabricEngine({
             for (let floor = 0; floor < face.module.floors; floor++) {
                 const openingKey = `${face.module.key}:${face.dir.key}:${floor}`;
                 if (bridgeOpeningKeys.has(openingKey)) {
-                    const raw = fastVerticalOpeningByKey.get(openingKey);
+                    const raw = fastVerticalOpeningByKey.get(openingKey) ?? bridgeOpeningByKey.get(openingKey);
                     openings.push({
                         floor, kind: 'bridge-portal', openingKey,
                         center: Number.isFinite(raw?.center) ? Number(raw.center) : tangentCenter,
@@ -1900,12 +1902,8 @@ export function createKowloonFabricEngine({
                     const openings = [...(facadeAperturesByKey.get(openingKey) ?? [])];
                     if (fastVerticalOpeningByKey.has(openingKey)) {
                         openings.push(fastVerticalOpeningByKey.get(openingKey));
-                    } else if (bridgeOpeningKeys.has(openingKey)) {
-                        openings.push({
-                            center: dir.side === 'north' || dir.side === 'south' ? module.rect.cx : module.rect.cz,
-                            width: servicePhysicalTruth?.door?.clearWidth?.realizedSI ?? 1.35,
-                            height: servicePhysicalTruth?.door?.clearHeight?.realizedSI ?? 2.20,
-                        });
+                    } else if (bridgeOpeningByKey.has(openingKey)) {
+                        openings.push(bridgeOpeningByKey.get(openingKey));
                     } else if (scaffoldOpeningByKey.has(openingKey)) {
                         openings.push(scaffoldOpeningByKey.get(openingKey));
                     } else if (floor === 0 && entranceFaces.some(face => face.module === module && face.dir.key === dir.key)) {
@@ -2275,11 +2273,54 @@ export function createKowloonFabricEngine({
 
         const bridgePortals = bridgePortalsBySite?.get(site.id) ?? [];
         const bridgeOpeningKeys = new Set();
+        const bridgeOpeningByKey = new Map();
         for (const portal of bridgePortals) {
             const module = modulePlans.find(candidate => candidate.key === portal.moduleKey);
             if (!module) continue;
+            const dir = KOWLOON_DIRS.find(candidate => candidate.key === portal.dirKey);
+            if (!dir) throw new Error(`bridge endpoint ${portal.id ?? portal.bridgeId ?? 'unknown'} has invalid facade direction ${portal.dirKey}`);
             module.floors = Math.max(module.floors, portal.floor + 1);
-            bridgeOpeningKeys.add(`${portal.moduleKey}:${portal.dirKey}:${portal.floor}`);
+            const metric = geometryAdapter?.metricForCell?.(module.cell) ?? {
+                x: cx0 - half + (module.cell.col + 0.5) * cellSize,
+                z: cz0 - half + (module.cell.row + 0.5) * cellSize,
+            };
+            const horizontal = dir.side === 'north' || dir.side === 'south';
+            const width = Number(servicePhysicalTruth?.door?.clearWidth?.realizedSI) || 1.35;
+            const height = Number(servicePhysicalTruth?.door?.clearHeight?.realizedSI) || 2.20;
+            const depth = Number(servicePhysicalTruth?.door?.approachDepthSI) || 1.20;
+            const tangentCenter = horizontal ? Number(module.rect.cx) : Number(module.rect.cz);
+            const tangentHalf = horizontal ? Number(module.rect.halfX) : Number(module.rect.halfZ);
+            const requestedTangent = horizontal ? Number(metric.x) : Number(metric.z);
+            if (![tangentCenter, tangentHalf, requestedTangent].every(Number.isFinite) || tangentHalf * 2 < width + 0.04) {
+                throw new Error(`${portal.id ?? portal.bridgeId ?? 'bridge-endpoint'}: facade cannot resolve a full-width bridge doorway`);
+            }
+            const endpointNormalAxis = horizontal ? 'z' : 'x';
+            if (portal.axis && portal.axis !== endpointNormalAxis) {
+                throw new Error(`${portal.id ?? portal.bridgeId ?? 'bridge-endpoint'}: bridge axis does not match endpoint facade normal`);
+            }
+            const usableHalf = tangentHalf - width * 0.5;
+            const tangent = clamp(requestedTangent, tangentCenter - usableHalf, tangentCenter + usableHalf);
+            const x = horizontal
+                ? tangent
+                : Number(module.rect.cx) + (dir.side === 'west' ? -Number(module.rect.halfX) : Number(module.rect.halfX));
+            const z = horizontal
+                ? Number(module.rect.cz) + (dir.side === 'north' ? -Number(module.rect.halfZ) : Number(module.rect.halfZ))
+                : tangent;
+            Object.assign(portal, {
+                side: dir.side, tangent, x, z, y: Number(portal.floor) * floorH,
+                width, height, depth,
+                resolved: true,
+                endpointAuthority: 'bridge-facade-endpoint-v1',
+                placementAuthority: 'external-anchor',
+            });
+            const openingKey = `${portal.moduleKey}:${portal.dirKey}:${portal.floor}`;
+            bridgeOpeningKeys.add(openingKey);
+            bridgeOpeningByKey.set(openingKey, {
+                center: tangent, width, height,
+                bridgeId: portal.bridgeId ?? null,
+                endpointId: portal.id ?? null,
+                endpointAuthority: portal.endpointAuthority,
+            });
         }
 
         // The vertical spine must be the tallest module so every other occupied
@@ -2298,7 +2339,7 @@ export function createKowloonFabricEngine({
                 physics, transforms, materialIndex, modulePlans, moduleByKey, primaryModule,
                 floorH, archetype, physicalUse, physicalTruth, servicePhysicalTruth,
                 floorConnectivityRepair, courtyard, courtyardSuppressedForConnectivity,
-                bridgeOpeningKeys, bridgePortals,
+                bridgeOpeningKeys, bridgeOpeningByKey, bridgePortals,
             });
         }
         yield { phase: 'compound-massing-plan', current: 0, total: modulePlans.length };
@@ -2736,7 +2777,7 @@ export function createKowloonFabricEngine({
                     }
                     if (!shouldWall) continue;
                     let opening = 0;
-                    if (bridgeOpeningKeys.has(`${module.key}:${dir.key}:${floor}`)) opening = servicePhysicalTruth.door.clearWidth.realizedSI;
+                    if (bridgeOpeningByKey.has(`${module.key}:${dir.key}:${floor}`)) opening = bridgeOpeningByKey.get(`${module.key}:${dir.key}:${floor}`);
                     else if (cantileverOpeningKeys.has(`${module.key}:${dir.key}:${floor}`)) opening = servicePhysicalTruth.door.clearWidth.realizedSI;
                     else if (scaffoldOpeningByKey.has(`${module.key}:${dir.key}:${floor}`)) opening = scaffoldOpeningByKey.get(`${module.key}:${dir.key}:${floor}`);
                     else if (serviceCageOpeningKeys.has(`${module.key}:${dir.key}:${floor}`)) opening = servicePhysicalTruth.door.clearWidth.realizedSI;
@@ -3275,26 +3316,41 @@ export function createKowloonFabricEngine({
         const bridgeTruth = aEntity.servicePhysicalTruth ?? aEntity.physicalTruth ?? bEntity.servicePhysicalTruth ?? bEntity.physicalTruth ?? null;
         const truthWidth = bridgeTruth?.stair?.widthSI ?? 0.86;
         const width = hanging ? Math.max(0.72, Math.min(0.96, truthWidth * 0.90)) : Math.max(0.90, Math.min(1.22, truthWidth));
+        const aEndpoint = bridge.aEndpoint?.resolved === true ? bridge.aEndpoint : null;
+        const bEndpoint = bridge.bEndpoint?.resolved === true ? bridge.bEndpoint : null;
+        const endpointAuthority = !!aEndpoint && !!bEndpoint;
+        if (endpointAuthority && (aEndpoint.bridgeId !== bridge.id || bEndpoint.bridgeId !== bridge.id
+            || aEndpoint.axis !== bridge.axis || bEndpoint.axis !== bridge.axis)) {
+            throw new Error(`${bridge.id}: resolved endpoint ownership drift`);
+        }
         let from, to, fixedCoord, rawSurface;
         if (bridge.axis === 'x') {
-            from = aModule.cx + aModule.halfX + 0.02;
-            to = bModule.cx - bModule.halfX - 0.02;
-            fixedCoord = (aModule.cz + bModule.cz) * 0.5;
+            from = endpointAuthority ? Number(aEndpoint.x) : aModule.cx + aModule.halfX + 0.02;
+            to = endpointAuthority ? Number(bEndpoint.x) : bModule.cx - bModule.halfX - 0.02;
+            if (endpointAuthority && Math.abs(Number(aEndpoint.z) - Number(bEndpoint.z)) > 0.02) {
+                throw new Error(`${bridge.id}: resolved bridge endpoint tangents disagree`);
+            }
+            fixedCoord = endpointAuthority ? (Number(aEndpoint.z) + Number(bEndpoint.z)) * 0.5 : (aModule.cz + bModule.cz) * 0.5;
             if (to <= from) return false;
             rawSurface = {
                 id: `${bridge.id}:surface`, kind: bridge.variant || 'skybridge',
                 x: (from + to) * 0.5, z: fixedCoord, hx: (to - from) * 0.5, hz: width * 0.5, y,
                 bridgeId: bridge.id, networkKey: bridge.id, reachable: true, priority: 'walkway-authority', physicalTruth: bridgeTruth,
+                endpointAuthority: endpointAuthority ? 'bridge-facade-endpoint-v1' : 'legacy-derived-endpoint',
             };
         } else {
-            from = aModule.cz + aModule.halfZ + 0.02;
-            to = bModule.cz - bModule.halfZ - 0.02;
-            fixedCoord = (aModule.cx + bModule.cx) * 0.5;
+            from = endpointAuthority ? Number(aEndpoint.z) : aModule.cz + aModule.halfZ + 0.02;
+            to = endpointAuthority ? Number(bEndpoint.z) : bModule.cz - bModule.halfZ - 0.02;
+            if (endpointAuthority && Math.abs(Number(aEndpoint.x) - Number(bEndpoint.x)) > 0.02) {
+                throw new Error(`${bridge.id}: resolved bridge endpoint tangents disagree`);
+            }
+            fixedCoord = endpointAuthority ? (Number(aEndpoint.x) + Number(bEndpoint.x)) * 0.5 : (aModule.cx + bModule.cx) * 0.5;
             if (to <= from) return false;
             rawSurface = {
                 id: `${bridge.id}:surface`, kind: bridge.variant || 'skybridge',
                 x: fixedCoord, z: (from + to) * 0.5, hx: width * 0.5, hz: (to - from) * 0.5, y,
                 bridgeId: bridge.id, networkKey: bridge.id, reachable: true, priority: 'walkway-authority', physicalTruth: bridgeTruth,
+                endpointAuthority: endpointAuthority ? 'bridge-facade-endpoint-v1' : 'legacy-derived-endpoint',
             };
         }
         registerSemanticConnector(physics, createBridgeConnector({
@@ -3307,7 +3363,13 @@ export function createKowloonFabricEngine({
                 ? semanticSpaceIdForEntity(bEntity, bridge.bModuleKey, bridge.floor, { x: to, z: fixedCoord })
                 : semanticSpaceIdForEntity(bEntity, bridge.bModuleKey, bridge.floor, { x: fixedCoord, z: to }),
             physicalTruth: bridgeTruth,
-            metadata: { bridgeId: bridge.id, variant: bridge.variant || 'skybridge', floor: bridge.floor, physicalUse: bridgeTruth?.physicalUse ?? null },
+            metadata: {
+                bridgeId: bridge.id, variant: bridge.variant || 'skybridge', floor: bridge.floor,
+                physicalUse: bridgeTruth?.physicalUse ?? null,
+                endpointAuthority: endpointAuthority ? 'bridge-facade-endpoint-v1' : 'legacy-derived-endpoint',
+                aEndpointId: aEndpoint?.id ?? null,
+                bEndpointId: bEndpoint?.id ?? null,
+            },
         }));
         const published = publishTransportSurfaceSlab({ physics, transforms, rawSurface, supportKind: bridge.variant || 'skybridge' });
         const surface = published.surface;
@@ -3700,15 +3762,26 @@ export function createKowloonFabricEngine({
             const brng = mulberry32(hashString32(`${worldSeed}:kowloon-bridge:${identity}`));
             if (brng() >= Math.min(0.74, intensity.bridgeChance + 0.12)) return;
             const floor = 1;
+            const bridgeId = worldEntityId(worldSeed, 0, 0, 'spawn-skybridge', identity);
+            const aEndpoint = {
+                id: `${bridgeId}:endpoint:a`, bridgeId, endpointRole: 'a', axis,
+                moduleKey: a.moduleKey, dirKey: a.dirKey, floor, resolved: false,
+            };
+            const bEndpoint = {
+                id: `${bridgeId}:endpoint:b`, bridgeId, endpointRole: 'b', axis,
+                moduleKey: b.moduleKey, dirKey: b.dirKey, floor, resolved: false,
+            };
             const plan = {
-                id: worldEntityId(worldSeed, 0, 0, 'spawn-skybridge', identity),
+                id: bridgeId,
                 axis, floor, roadC: c, roadR: r, aSiteId: a.siteId, bSiteId: b.siteId,
                 aModuleKey: a.moduleKey, bModuleKey: b.moduleKey, aDirKey: a.dirKey, bDirKey: b.dirKey,
+                aEndpoint, bEndpoint,
+                endpointAuthority: 'bridge-facade-endpoint-v1',
                 variant: brng() < 0.46 ? 'hanging-bridge' : 'guarded-catwalk',
             };
             bridgePlans.push(plan);
-            addPortal(a.siteId, { moduleKey: a.moduleKey, dirKey: a.dirKey, floor });
-            addPortal(b.siteId, { moduleKey: b.moduleKey, dirKey: b.dirKey, floor });
+            addPortal(a.siteId, aEndpoint);
+            addPortal(b.siteId, bEndpoint);
         };
         const rows = grid?.length || 0, cols = grid?.[0]?.length || 0;
         for (let r = 1; r < rows - 1; r++) {
@@ -3941,17 +4014,28 @@ export function createKowloonFabricEngine({
             const brng = mulberry32(hashString32(`${worldSeed}:kowloon-bridge:${identity}`));
             if (brng() >= bridgeIntensity.bridgeChance) return;
             const floor = 1;
+            const bridgeId = worldEntityId(worldSeed, chunk.x, chunk.z, 'skybridge', identity);
+            const aEndpoint = {
+                id: `${bridgeId}:endpoint:a`, bridgeId, endpointRole: 'a', axis,
+                moduleKey: a.moduleKey, dirKey: a.dirKey, floor, resolved: false,
+            };
+            const bEndpoint = {
+                id: `${bridgeId}:endpoint:b`, bridgeId, endpointRole: 'b', axis,
+                moduleKey: b.moduleKey, dirKey: b.dirKey, floor, resolved: false,
+            };
             const plan = {
-                id: worldEntityId(worldSeed, chunk.x, chunk.z, 'skybridge', identity),
+                id: bridgeId,
                 axis, floor, roadC, roadR,
                 aSiteId: a.siteId, bSiteId: b.siteId,
                 aModuleKey: a.moduleKey, bModuleKey: b.moduleKey,
                 aDirKey: a.dirKey, bDirKey: b.dirKey,
+                aEndpoint, bEndpoint,
+                endpointAuthority: 'bridge-facade-endpoint-v1',
                 variant: brng() < 0.34 + weird * 0.18 ? 'hanging-bridge' : 'guarded-catwalk',
             };
             bridgePlans.push(plan);
-            addBridgePortal(a.siteId, { moduleKey: a.moduleKey, dirKey: a.dirKey, floor });
-            addBridgePortal(b.siteId, { moduleKey: b.moduleKey, dirKey: b.dirKey, floor });
+            addBridgePortal(a.siteId, aEndpoint);
+            addBridgePortal(b.siteId, bEndpoint);
         };
         for (const roadKey of roadPlan.roads) {
             const [c, r] = roadKey.split(',').map(Number);

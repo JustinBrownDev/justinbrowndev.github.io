@@ -92,7 +92,7 @@ assert.ok(bridgeRoute, 'existing bridge anchor must remain a satisfiable circula
 assert.equal(bridgeRoute.portalStops.length, 1);
 assert.equal(bridgeRoute.portalStops[0].portal.tangent, bridgeAnchorTangent,
   'existing bridge/catwalk anchors must keep their explicit facade tangent');
-assert.equal(bridgeRoute.portalStops[0].portal.placementAuthority, 'explicit-anchor');
+assert.equal(bridgeRoute.portalStops[0].portal.placementAuthority, 'external-anchor');
 
 const facadePlan = facade.planFastFacadeArchitecture({
   stableKey: '09:facade', floorH: 3.2,

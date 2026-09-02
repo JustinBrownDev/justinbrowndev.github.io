@@ -55,6 +55,16 @@ function facePointForTangent(geometry, tangent, y) {
     : { x: geometry.faceCoord, y, z: tangent });
 }
 
+function landingContainsFacadeOpening(landing, geometry, tangent, width) {
+  const rect = landing?.geometry;
+  if (!rect || !Number.isFinite(tangent) || !(width > 0)) return false;
+  const center = geometry.horizontal ? Number(rect.x) : Number(rect.z);
+  const half = geometry.horizontal ? Number(rect.hx) : Number(rect.hz);
+  if (![center, half].every(Number.isFinite) || half <= 0) return false;
+  return tangent - width * 0.5 >= center - half - EPS
+    && tangent + width * 0.5 <= center + half + EPS;
+}
+
 function rectPositiveOverlap(a, b) {
   return Math.abs(Number(a.x) - Number(b.x)) < Number(a.hx) + Number(b.hx) - EPS
     && Math.abs(Number(a.z) - Number(b.z)) < Number(a.hz) + Number(b.hz) - EPS;
@@ -254,6 +264,9 @@ export function planExteriorStreetLayerTrunk({
       const preferredTangent = accessDemandTangent(demand, side, { legacyExplicitPortal: !usingAccessDemands });
       const tangent = Number.isFinite(preferredTangent) ? preferredTangent : sourceLanding.tangentCenter;
       const portalId = String(demand.portalId ?? demand.portal?.id);
+      const width = Number(demand.width ?? demand.portal?.width) || Number(physicalTruth?.door?.clearWidth?.realizedSI) || stair.clearWidth;
+      if (demand.placementAuthority === 'external-anchor'
+          && !landingContainsFacadeOpening(landing, geometry, tangent, width)) return null;
       const point = facePointForTangent(geometry, tangent, y);
       const portal = Object.freeze({
         id: portalId,
@@ -261,11 +274,13 @@ export function planExteriorStreetLayerTrunk({
         ...point,
         tangent,
         side,
-        width: Number(demand.width ?? demand.portal?.width) || Number(physicalTruth?.door?.clearWidth?.realizedSI) || stair.clearWidth,
+        width,
         height: Number(demand.height ?? demand.portal?.height) || Number(physicalTruth?.door?.clearHeight?.realizedSI) || 2.20,
         depth: Number(demand.depth ?? demand.portal?.depth) || Number(physicalTruth?.door?.approachDepthSI) || 1.20,
         landingId: landing.id,
-        placementAuthority: Number.isFinite(preferredTangent) ? 'explicit-anchor' : 'circulation-landing',
+        placementAuthority: demand.placementAuthority === 'external-anchor'
+          ? 'external-anchor'
+          : (Number.isFinite(preferredTangent) ? 'explicit-anchor' : 'circulation-landing'),
       });
       const stop = Object.freeze({ ...demand, floor, portalId, portal, portalPlacement: portal });
       portalStops.push(stop);

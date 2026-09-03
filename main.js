@@ -4,7 +4,7 @@ import { PointerLockControls } from './vendor/three/addons/controls/PointerLockC
 import { EffectComposer } from './vendor/three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from './vendor/three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from './vendor/three/addons/postprocessing/UnrealBloomPass.js';
-import { createDualPolarityPlayerPhysics } from './world/dual-polarity-player-physics.js';
+import { createPlayerPhysics } from './player-physics.js';
 import { SpatialHash2D, createProgressiveStaticWorldOptimizer } from './city-performance.js';
 import { cylindricalFarPlaneDistance } from './world/cylindrical-render-distance.js';
 import { announceParameterOverrides, registerConfigLiveParameter, registerConfigLivePrefix, registerConfigRoot } from './numeric-parameters.js';
@@ -2026,7 +2026,7 @@ const PHYSICS_TUNING = {
     maxVerticalSubstep: QP[5316],
     maxSubsteps: QP[5317],
 };
-playerPhysics = createDualPolarityPlayerPhysics({
+playerPhysics = createPlayerPhysics({
     position: camera.position,
     eyeHeight: CONFIG.camera.eyeHeight,
     playerRadius: CONFIG.camera.playerRadius,
@@ -2382,6 +2382,30 @@ let authoredStructuralSyncs = QP[1015];
 let authoredBuildingsResolve;
 const authoredBuildingsCompletePromise = new Promise(resolve => { authoredBuildingsResolve = resolve; });
 let authoredBuildingsResolved = false;
+let authoredCeilingOverlayComplete = false;
+let authoredCeilingOverlayPayload = null;
+authoredBuildingsCompletePromise.then(async () => {
+    try {
+        const groundEntities = [...unifiedSpawnFabricPayloads.values()]
+            .map(payload => payload?.entity)
+            .filter(entity => entity?.kind === 'building');
+        authoredCeilingOverlayPayload = await cityFabricEngine.buildAuthoredCeilingOverlay({
+            groundEntities,
+            ownerId: `spawn-ceiling:${SEED}`,
+        });
+        if (authoredCeilingOverlayPayload) {
+            await cityFabricEngine.commit(authoredCeilingOverlayPayload.chunk ?? { key: '0,0' }, authoredCeilingOverlayPayload);
+            if (cityFabricEngine.hasPendingRefinement(authoredCeilingOverlayPayload.chunk ?? { key: '0,0' }, authoredCeilingOverlayPayload)) {
+                unifiedSpawnFabricRefinementQueue.push(authoredCeilingOverlayPayload);
+            }
+        }
+        console.log(`[ceiling-city] authored origin phase overlay ready · groundClaims=${groundEntities.length}`);
+    } catch (error) {
+        console.error('[ceiling-city] authored origin phase overlay failed locally; lower city remains live', error);
+    } finally {
+        authoredCeilingOverlayComplete = true;
+    }
+});
 
 function collectMinimumSafeAuthoredSiteIds() {
     const wanted = new Set();
@@ -2794,6 +2818,7 @@ function maybeMarkSpawnDistrictStructuresComplete() {
     if (_spawnDistrictStructuresComplete) return true;
     if (authoredBuildingJobs.length) return false;
     if (!authoredPostStructureFinished) return false;
+    if (!authoredCeilingOverlayComplete) return false;
     if (groundSurfaceSystem.stats().pendingChunks) return false;
     _spawnDistrictStructuresComplete = true;
     const groundStats = groundSurfaceSystem.stats();
@@ -3687,10 +3712,12 @@ function animate(now = performance.now()) {
      
      
      
-    const traversalState = playerPhysics.step(delta, wishVelocityX, wishVelocityZ);
-    const invertedTraversal = traversalState.verticalPolarity === -1;
-    camera.up.set(0, invertedTraversal ? -1 : 1, 0);
-    camera.rotation.z = invertedTraversal ? Math.PI : 0;
+    playerPhysics.step(delta, wishVelocityX, wishVelocityZ);
+    // Cut 16: growth direction is architecture, not gravity.  The ceiling city
+    // hangs downward while the player/camera keep the single ordinary world-up
+    // frame everywhere.
+    camera.up.set(0, 1, 0);
+    camera.rotation.z = 0;
 
     updateWebGradient(camera.position.z, camera.position.y, elapsedTime);
     updateRain(delta);

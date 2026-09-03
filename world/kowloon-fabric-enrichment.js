@@ -47,6 +47,7 @@ const IVY_COLORS = Object.freeze([0x394f32, 0x465a35, 0x2f4634, 0x52603b]);
 
 function facadePoint(entity, side, along = 0, y = 2, facadeIndex = null) {
     const facade = Number.isInteger(facadeIndex) ? entity.facades?.[facadeIndex] : null;
+    y += Number(entity?.baseY) || 0;
     const x0 = facade?.x ?? entity.x;
     const z0 = facade?.z ?? entity.z;
     const halfX = facade?.halfX ?? entity.halfX ?? 2;
@@ -946,7 +947,7 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
                 y: 1.15, along: (rng() - 0.5) * 0.55, seed: taskSeed(chunk, entity.id, 'elevator-hardware'),
             });
         }
-        if (!entity.dualPolaritySeam) tasks.push({
+        if (!entity.ceilingRooted) tasks.push({
             kind: 'roof-clutter', entityId: entity.id, seed: taskSeed(chunk, entity.id, 'roof-clutter'),
             count: 2 + (rng() < 0.35 ? 1 : 0),
         });
@@ -1009,7 +1010,7 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
                 }
             }
         }
-        if (!entity.dualPolaritySeam && entity.roofTopper && entity.roofTopper !== 'none') tasks.push({
+        if (!entity.ceilingRooted && entity.roofTopper && entity.roofTopper !== 'none') tasks.push({
             kind: 'roof-topper', entityId: entity.id, topper: entity.roofTopper,
             seed: taskSeed(chunk, entity.id, 'roof-topper'),
         });
@@ -1361,8 +1362,9 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
     function primaryRoofSpec(entity) {
         const primaryKey = entity.primaryCell ? `${entity.primaryCell.col},${entity.primaryCell.row}` : null;
         const module = entity.footprintModules?.find(candidate => candidate.key === primaryKey) ?? entity.footprintModules?.[0];
-        if (!module) return { x: entity.x, z: entity.z, halfX: entity.halfX ?? 2, halfZ: entity.halfZ ?? 2, y: (entity.floors || 1) * (entity.floorH || 3.15) };
-        return { x: module.cx, z: module.cz, halfX: module.halfX, halfZ: module.halfZ, y: module.floors * (entity.floorH || 3.15) };
+        const baseY = Number(entity?.baseY) || 0;
+        if (!module) return { x: entity.x, z: entity.z, halfX: entity.halfX ?? 2, halfZ: entity.halfZ ?? 2, y: baseY + (entity.floors || 1) * (entity.floorH || 3.15) };
+        return { x: module.cx, z: module.cz, halfX: module.halfX, halfZ: module.halfZ, y: baseY + module.floors * (entity.floorH || 3.15) };
     }
 
         function createRoofClutter(payload, task) {

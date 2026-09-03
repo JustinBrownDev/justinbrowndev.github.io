@@ -65,5 +65,5 @@ console.log('[cut14-first-paint-budget-selftest] PASS', {
   oldSites,
   scaledSites,
   ratio: scaledSites / oldSites,
-  invariant: 'fewer independent ground core plans + bounded tread visuals + peer hanging city on the same compound topology',
+  invariant: 'fewer independent ground core plans + bounded tread visuals + independently phase-sampled ceiling city',
 });

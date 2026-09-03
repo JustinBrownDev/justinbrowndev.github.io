@@ -1,15 +1,19 @@
 import { GENERATION_LANES, GENERATION_PROFILE_NAME } from './config/performance-isolation.js';
-import { hashString32 } from './world-chunk-streamer.js';
+import { deterministicChunkSeed, hashString32 } from './world-chunk-streamer.js';
 import { WORLD_FORMAT_VERSION, worldChunkOwnerId, worldEntityId } from './world-contract.js';
 import { createKowloonFabricEnrichment } from './world/kowloon-fabric-enrichment.js';
 import { assertBuildingFootprintsDoNotOverlap } from './world/building-footprint-invariant.js';
 import { createKowloonMazeTopology } from './world/kowloon-district-plan.js';
 import {
+    HANGING_CITY_SCHEMA,
     HANGING_CITY_CEILING_Y,
+    HANGING_CITY_FLOOR_HEIGHT,
     bridgePortalMapForPlans,
-    cloneBridgePlansForHangingFrame,
-    planHangingCityCounterparts,
-    polarityPortalForCounterpart,
+    ceilingFrame,
+    ceilingSourceCoordinates,
+    cloneBridgePlansForCeilingCity,
+    maximumCavernFloors,
+    planCeilingBuildingHeight,
 } from './world/hanging-city-topology.js';
 import { classifyPhysicalUse } from './world/physical-use.js';
 import { deriveStairFlight, gameplayTraversalEnvelope, resolvePhysicalTruth } from './world/physical-truth.js';
@@ -340,7 +344,8 @@ export function createKowloonFabricEngine({
     const unitBox = new THREE.BoxGeometry(1, 1, 1);
     const unitPlane = new THREE.PlaneGeometry(1, 1);
     const roadMat = new THREE.MeshStandardMaterial({ color: 0x202124, roughness: 0.96 });
-    const groundMat = new THREE.MeshStandardMaterial({ color: 0x4e4b45, roughness: 1 });
+    const groundMat = new THREE.MeshStandardMaterial({ color: 0x050607, roughness: 1 });
+    const ceilingMat = new THREE.MeshStandardMaterial({ color: 0xf4f3ee, roughness: 0.96, side: THREE.DoubleSide });
     const slabMat = new THREE.MeshStandardMaterial({ color: 0x85817a, roughness: 0.9 });
     const stepMat = new THREE.MeshStandardMaterial({ color: 0x77736d, roughness: 0.9 });
     const propMat = new THREE.MeshStandardMaterial({ color: 0x4b4f4d, roughness: 0.82, metalness: 0.18 });
@@ -355,6 +360,33 @@ export function createKowloonFabricEngine({
         new THREE.MeshStandardMaterial({ color: 0xb18e75, roughness: 0.86 }),
         new THREE.MeshStandardMaterial({ color: 0x8fa6aa, roughness: 0.82 }),
     ];
+
+    // CAVERN PALETTE AUTHORITY: the macro surfaces stay exact black/white parallel
+    // planes.  Structural color is a world-height field: black at the floor,
+    // strongest authored/material color around the center band, white at the roof.
+    // Instance colors preserve batching; no terrain deformation or extra draw-call
+    // strata are needed to create the vertical composition.
+    const cavernMaterialCenter = new Map([
+        [roadMat, new THREE.Color(0x292b31)],
+        [slabMat, new THREE.Color(0x8d8179)],
+        [stepMat, new THREE.Color(0x77736d)],
+        [propMat, new THREE.Color(0x4b4f4d)],
+        [guardMetalMat, new THREE.Color(0x34383a)],
+        [guardConcreteMat, new THREE.Color(0x8b8982)],
+        [doorMat, new THREE.Color(0x3d2927)],
+        [windowMat, new THREE.Color(0x6aa6a8)],
+        ...wallMats.map((mat, index) => [mat, new THREE.Color([0xc08f69, 0x78a48d, 0xb86d72, 0x6e91b8][index])]),
+    ]);
+    for (const material of cavernMaterialCenter.keys()) material.color.set(0xffffff);
+    const cavernBlack = new THREE.Color(0x030405);
+    const cavernWhite = new THREE.Color(0xf4f3ee);
+    const cavernTintScratch = new THREE.Color();
+    function cavernTintAtY(y, material) {
+        const t = clamp((Number(y) || 0) / HANGING_CITY_CEILING_Y, 0, 1);
+        const center = cavernMaterialCenter.get(material) ?? new THREE.Color(0x8b8179);
+        if (t <= 0.5) return cavernTintScratch.copy(cavernBlack).lerp(center, Math.pow(t / 0.5, 0.72));
+        return cavernTintScratch.copy(center).lerp(cavernWhite, Math.pow((t - 0.5) / 0.5, 0.72));
+    }
 
     const matrix = new THREE.Matrix4();
     const pos = new THREE.Vector3();
@@ -381,8 +413,10 @@ export function createKowloonFabricEngine({
             else quat.identity();
             matrix.compose(pos, quat, scale);
             mesh.setMatrixAt(i, matrix);
+            mesh.setColorAt(i, cavernTintAtY(t.y, material));
         }
         mesh.instanceMatrix.needsUpdate = true;
+        if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
         mesh.computeBoundingBox?.();
         mesh.computeBoundingSphere?.();
         return mesh;
@@ -2732,6 +2766,12 @@ export function createKowloonFabricEngine({
         const floorH = Number.isFinite(structureProfile?.floorHeight)
             ? Math.max(2.4, Math.min(5.8, structureProfile.floorHeight))
             : Math.max(2.4, Math.min(5.8, physicalTruth.floorHeight.realizedSI));
+        // Two parallel planes are now a hard world contract.  Lower-city towers
+        // reserve enough air for rooftop/circulation accretion instead of being
+        // allowed to grow through the white ceiling before the opposing field is
+        // even considered.
+        const cavernFloorCap = maximumCavernFloors(floorH);
+        primaryFloors = Math.min(primaryFloors, cavernFloorCap);
         const modulePlans = [];
 
         for (const cell of activeCells) {
@@ -2769,7 +2809,7 @@ export function createKowloonFabricEngine({
             }
             const forcedFloors = structureProfile?.floorCountByCell?.[key]
                 ?? structureProfile?.floorCountForCell?.(cell, { key, topology, primaryFloors, archetype });
-            if (Number.isFinite(forcedFloors)) floors = Math.max(1, Math.min(12, Math.floor(forcedFloors)));
+            if (Number.isFinite(forcedFloors)) floors = Math.max(1, Math.min(12, cavernFloorCap, Math.floor(forcedFloors)));
             modulePlans.push({ key, cell, edgeKinds, floors, rect });
         }
 
@@ -4099,7 +4139,67 @@ export function createKowloonFabricEngine({
     }
 
 
-    function stripDualPolarityRoofIdentity(entity, transforms, physics) {
+    const CEILING_Y_KEYS = new Set(['y', 'y0', 'y1', 'yMin', 'yMax', 'yBase', 'roofY', 'topY', 'bottomY', 'feetY']);
+
+    function translateSemanticY(value, dy, seen = new WeakSet()) {
+        if (!value || typeof value !== 'object' || seen.has(value)) return value;
+        seen.add(value);
+        if (Array.isArray(value)) {
+            for (const item of value) translateSemanticY(item, dy, seen);
+            return value;
+        }
+        for (const [key, child] of Object.entries(value)) {
+            if (CEILING_Y_KEYS.has(key) && Number.isFinite(child)) { if (!Object.isFrozen(value)) value[key] = Number(child) + dy; }
+            else if (child && typeof child === 'object') translateSemanticY(child, dy, seen);
+        }
+        return value;
+    }
+
+    function translateFabricBuffersY(buffers, dy) {
+        const { transforms, physics } = buffers;
+        for (const list of [...(transforms.wallGroups ?? []), transforms.slabs, transforms.steps, transforms.props,
+            transforms.guardMetal, transforms.guardConcrete, transforms.roads, transforms.windows, transforms.doors]) {
+            for (const item of list ?? []) if (Number.isFinite(item?.y)) item.y += dy;
+        }
+        for (const item of physics.platforms ?? []) if (Number.isFinite(item?.y)) item.y += dy;
+        for (const item of physics.ceilings ?? []) if (Number.isFinite(item?.y)) item.y += dy;
+        for (const item of physics.ramps ?? []) {
+            if (Number.isFinite(item?.y0)) item.y0 += dy;
+            if (Number.isFinite(item?.y1)) item.y1 += dy;
+        }
+        for (const item of physics.props ?? []) {
+            const localMin = Number.isFinite(item?.yMin) ? Number(item.yMin) : 0;
+            item.yMin = localMin + dy;
+            if (Number.isFinite(item?.height)) item.height = Number(item.height) + dy;
+        }
+        for (const item of physics.mazeWalls ?? []) {
+            if (Number.isFinite(item?.yMin)) item.yMin += dy;
+            if (Number.isFinite(item?.yMax)) item.yMax += dy;
+        }
+        const seen = new WeakSet();
+        for (const list of [physics.guardSpans, physics.circulationReservations, physics.semanticConnectors,
+            physics.exteriorTransportSurfaces, physics.scaffoldCirculationRoutes]) {
+            translateSemanticY(list, dy, seen);
+        }
+        return buffers;
+    }
+
+    function mergeFabricBuffers(target, source) {
+        for (let i = 0; i < target.transforms.wallGroups.length; i++) {
+            target.transforms.wallGroups[i].push(...(source.transforms.wallGroups[i] ?? []));
+        }
+        for (const key of ['slabs', 'steps', 'props', 'guardMetal', 'guardConcrete', 'roads', 'windows', 'doors']) {
+            target.transforms[key].push(...(source.transforms[key] ?? []));
+        }
+        for (const [key, value] of Object.entries(source.physics ?? {})) {
+            if (!Array.isArray(value)) continue;
+            if (!Array.isArray(target.physics[key])) target.physics[key] = [];
+            target.physics[key].push(...value);
+        }
+        return target;
+    }
+
+    function stripCeilingSideRoofIdentity(entity, transforms, physics) {
         if (!entity?.compoundBounds || !Number.isFinite(entity?.floors) || !Number.isFinite(entity?.floorH)) return;
         const roofY = entity.floors * entity.floorH;
         const bounds = entity.compoundBounds;
@@ -4119,224 +4219,375 @@ export function createKowloonFabricEngine({
             return false;
         };
         for (const list of [...(transforms.wallGroups ?? []), transforms.props ?? [], transforms.guardMetal ?? [], transforms.guardConcrete ?? []]) {
-            if (!Array.isArray(list)) continue;
             const kept = list.filter(item => !startsAtRoof(item));
             list.splice(0, list.length, ...kept);
         }
         for (const list of [physics.props ?? [], physics.mazeWalls ?? []]) {
-            if (!Array.isArray(list)) continue;
             const kept = list.filter(item => !startsAtRoof(item));
             list.splice(0, list.length, ...kept);
         }
         entity.roofTopper = 'none';
         entity.rooftopMechanical = 0;
         entity.roofCrowns = 0;
-        entity.dualPolaritySeam = true;
+        entity.ceilingRooted = true;
     }
 
-    function addPolarityServiceShaft({ portal, physics, transforms }) {
-        const y0 = portal.groundFeetY;
-        const y1 = portal.hangingWorldFeetY;
-        if (!(y1 > y0 + 0.18)) return 0;
-        const span = y1 - y0;
-        const rungGap = 0.42;
-        const rungs = Math.max(2, Math.ceil(span / rungGap));
-        const hx = Math.min(0.38, portal.hx * 0.62);
-        const hz = Math.min(0.38, portal.hz * 0.62);
-        for (let i = 1; i <= rungs; i++) {
-            const y = y0 + span * (i / rungs);
-            physics.platforms.push({
-                x: portal.x, z: portal.z, hx, hz, y,
-                blocksFromBelow: false, supportKind: 'ladder', supportMargin: 0,
-                polarityPortalId: portal.id,
-            });
+    function addCeilingRootMass({ entity, physics, transforms, localTopY }) {
+        const floorH = Number(entity?.floorH) || HANGING_CITY_FLOOR_HEIGHT;
+        let roots = 0;
+        for (const module of entity?.footprintModules ?? []) {
+            const moduleRoofY = Math.min(localTopY, Number(module.floors) * floorH);
+            const h = localTopY - moduleRoofY;
+            if (!(h > 0.08)) continue;
+            const sx = Math.max(0.2, Number(module.halfX) * 2);
+            const sz = Math.max(0.2, Number(module.halfZ) * 2);
             transforms.props.push({
-                x: portal.x, y, z: portal.z,
-                sx: Math.max(0.58, hx * 1.7), sy: 0.055, sz: 0.075,
-                polarityPortalId: portal.id,
+                x: module.cx, y: moduleRoofY + h * 0.5, z: module.cz,
+                sx, sy: h, sz, ceilingRootMass: true,
+            });
+            const x0 = module.cx - module.halfX, x1 = module.cx + module.halfX;
+            const z0 = module.cz - module.halfZ, z1 = module.cz + module.halfZ;
+            physics.mazeWalls.push(
+                { x1: x0, z1: z0, x2: x1, z2: z0, yMin: moduleRoofY, yMax: localTopY, supportKind: 'ceiling-root-mass' },
+                { x1: x0, z1: z1, x2: x1, z2: z1, yMin: moduleRoofY, yMax: localTopY, supportKind: 'ceiling-root-mass' },
+                { x1: x0, z1: z0, x2: x0, z2: z1, yMin: moduleRoofY, yMax: localTopY, supportKind: 'ceiling-root-mass' },
+                { x1: x1, z1: z0, x2: x1, z2: z1, yMin: moduleRoofY, yMax: localTopY, supportKind: 'ceiling-root-mass' },
+            );
+            roots++;
+        }
+        entity.ceilingRootModules = roots;
+        return roots;
+    }
+
+    function addInvertedLowEndRoof({ entity, transforms, stableKey }) {
+        const modules = entity?.footprintModules ?? [];
+        if (!modules.length) return { rims: 0, crown: 0 };
+        const moduleKeys = new Set(modules.map(module => String(module.key)));
+        let rims = 0;
+        for (const module of modules) {
+            const [col, row] = String(module.key).split(',').map(Number);
+            const exposed = [
+                [col - 1, row], [col + 1, row], [col, row - 1], [col, row + 1],
+            ].some(([c, r]) => !moduleKeys.has(`${c},${r}`));
+            if (!exposed) continue;
+            transforms.slabs.push({
+                x: module.cx, y: -0.10, z: module.cz,
+                sx: module.halfX * 2 + 0.18, sy: 0.20, sz: module.halfZ * 2 + 0.18,
+                invertedRoofRim: true,
+            });
+            rims++;
+        }
+        const primaryKey = entity.primaryCell ? `${entity.primaryCell.col},${entity.primaryCell.row}` : null;
+        const primary = modules.find(module => module.key === primaryKey) ?? modules[0];
+        const rng = mulberry32(hashString32(`${stableKey}:underside-roof`));
+        const crownH = 0.55 + rng() * 0.58;
+        transforms.props.push({
+            x: primary.cx, y: -0.20 - crownH * 0.5, z: primary.cz,
+            sx: Math.max(0.65, primary.halfX * (0.78 + rng() * 0.28)),
+            sy: crownH,
+            sz: Math.max(0.65, primary.halfZ * (0.78 + rng() * 0.28)),
+            invertedRoofCrown: true,
+        });
+        if (rng() < 0.52) {
+            const spireH = 0.65 + rng() * 0.70;
+            transforms.props.push({
+                x: primary.cx, y: -0.20 - crownH - spireH * 0.5, z: primary.cz,
+                sx: 0.12 + rng() * 0.10, sy: spireH, sz: 0.12 + rng() * 0.10,
+                invertedRoofSpire: true,
             });
         }
-        for (const x of [portal.x - hx * 0.82, portal.x + hx * 0.82]) transforms.props.push({
-            x, y: y0 + span * 0.5, z: portal.z,
-            sx: 0.065, sy: span, sz: 0.065, polarityPortalId: portal.id,
-        });
-        return rungs;
+        entity.invertedLowEndRoof = true;
+        return { rims, crown: 1 };
     }
 
-    async function buildFullFatHangingCityLayer({
-        chunk, root, ownerId, sitePlans, siteIdOf, roadPlan, bridgePlans,
-        groundEntities, physics, transforms, cx0, cz0, half, cellSize, weird,
-    }) {
-        const topology = planHangingCityCounterparts({
-            worldSeed, chunkKey: chunk.key, sitePlans, groundEntities, weirdness: weird,
+    function addCavernLadder({ id, x, z, y0, y1, physics, transforms }) {
+        if (!(Number.isFinite(y0) && Number.isFinite(y1) && y1 > y0 + 0.42)) return 0;
+        const rungGap = 0.42;
+        const rungCount = Math.max(2, Math.ceil((y1 - y0) / rungGap));
+        const halfWidth = 0.34;
+        for (let i = 1; i <= rungCount; i++) {
+            const y = y0 + (y1 - y0) * (i / rungCount);
+            physics.platforms.push({ x, z, hx: halfWidth, hz: 0.18, y, blocksFromBelow: false, supportKind: 'ladder', supportMargin: 0, ladderId: id });
+            transforms.props.push({ x, y, z, sx: halfWidth * 1.8, sy: 0.055, sz: 0.075, ladderId: id });
+        }
+        for (const railX of [x - halfWidth * 0.82, x + halfWidth * 0.82]) transforms.props.push({
+            x: railX, y: y0 + (y1 - y0) * 0.5, z, sx: 0.065, sy: y1 - y0, sz: 0.065, ladderId: id,
         });
-        if (!topology.counterparts.length) return null;
+        return rungCount;
+    }
 
-        const hangingRoot = new THREE.Group();
-        hangingRoot.name = 'hanging-city:' + chunk.key;
-        hangingRoot.position.y = HANGING_CITY_CEILING_Y;
-        hangingRoot.scale.y = -1;
-        hangingRoot.userData.hangingCityFrame = topology.frame;
-        hangingRoot.userData.noSpatialChunk = true;
-        root.add(hangingRoot);
+    function ceilingSiteBounds(site, cx0, cz0, half, cellSize) {
+        let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+        for (const cell of site.cells ?? []) {
+            const x = cx0 - half + (cell.col + 0.5) * cellSize;
+            const z = cz0 - half + (cell.row + 0.5) * cellSize;
+            minX = Math.min(minX, x - cellSize * 0.5); maxX = Math.max(maxX, x + cellSize * 0.5);
+            minZ = Math.min(minZ, z - cellSize * 0.5); maxZ = Math.max(maxZ, z + cellSize * 0.5);
+        }
+        return { minX, maxX, minZ, maxZ };
+    }
 
-        const hangingGround = new THREE.Mesh(unitPlane, groundMat);
-        hangingGround.rotation.x = -Math.PI / 2;
-        hangingGround.scale.set(chunkSize, chunkSize, 1);
-        hangingGround.position.set(cx0, -0.025, cz0);
-        hangingGround.receiveShadow = true;
-        hangingRoot.add(hangingGround);
-
-        const { transforms: hangingTransforms, physics: hangingPhysics } = createFabricBuffers();
-        hangingPhysics.verticalFrame = topology.frame;
-        hangingPhysics.polarityPortals = [];
-        physics.polarityPortals ??= [];
-
+    function planCeilingBridgeNetwork({ phaseChunk, roadPlan, siteIdOf, buildingSiteIds, weird }) {
+        const bridgePlans = [];
+        const bridgePortalsBySite = new Map();
+        const intensity = kowloonIntensity(weird);
+        const addPortal = (siteId, portal) => {
+            if (!bridgePortalsBySite.has(siteId)) bridgePortalsBySite.set(siteId, []);
+            bridgePortalsBySite.get(siteId).push(portal);
+        };
+        const consider = (roadC, roadR, a, b, axis) => {
+            if (bridgePlans.length >= 4 || !a || !b || a.siteId < 0 || b.siteId < 0 || a.siteId === b.siteId) return;
+            if (!buildingSiteIds.has(a.siteId) || !buildingSiteIds.has(b.siteId)) return;
+            const identity = `ceiling:${phaseChunk.key}:${roadC},${roadR}:${Math.min(a.siteId,b.siteId)}:${Math.max(a.siteId,b.siteId)}:${axis}`;
+            const rng = mulberry32(hashString32(`${worldSeed}:kowloon-bridge:${identity}`));
+            if (rng() >= intensity.bridgeChance) return;
+            const floor = 1;
+            const id = worldEntityId(worldSeed, phaseChunk.x, phaseChunk.z, 'ceiling-skybridge', identity);
+            const aEndpoint = { id: `${id}:endpoint:a`, bridgeId: id, endpointRole: 'a', axis, moduleKey: a.moduleKey, dirKey: a.dirKey, floor, resolved: false };
+            const bEndpoint = { id: `${id}:endpoint:b`, bridgeId: id, endpointRole: 'b', axis, moduleKey: b.moduleKey, dirKey: b.dirKey, floor, resolved: false };
+            const plan = {
+                id, axis, floor, roadC, roadR,
+                aSiteId: a.siteId, bSiteId: b.siteId,
+                aModuleKey: a.moduleKey, bModuleKey: b.moduleKey,
+                aDirKey: a.dirKey, bDirKey: b.dirKey,
+                aEndpoint, bEndpoint,
+                endpointAuthority: 'bridge-facade-endpoint-v1',
+                variant: rng() < 0.42 ? 'hanging-bridge' : 'guarded-catwalk',
+                growthDirection: 'world-down', gravityDirection: 'world-down',
+            };
+            bridgePlans.push(plan); addPortal(a.siteId, aEndpoint); addPortal(b.siteId, bEndpoint);
+        };
         for (const roadKey of roadPlan.roads) {
             const [c, r] = roadKey.split(',').map(Number);
-            hangingTransforms.roads.push({
-                x: cx0 - half + (c + 0.5) * cellSize,
-                y: 0.002,
-                z: cz0 - half + (r + 0.5) * cellSize,
-                sx: cellSize * 1.015,
-                sy: cellSize * 1.015,
-                sz: 1,
-                plane: true,
-            });
+            if (c > 0 && c < microCells - 1) {
+                consider(c, r,
+                    { siteId: siteIdOf[r]?.[c - 1] ?? -1, moduleKey: key(c - 1, r), dirKey: 'E' },
+                    { siteId: siteIdOf[r]?.[c + 1] ?? -1, moduleKey: key(c + 1, r), dirKey: 'W' }, 'x');
+            }
+            if (r > 0 && r < microCells - 1) {
+                consider(c, r,
+                    { siteId: siteIdOf[r - 1]?.[c] ?? -1, moduleKey: key(c, r - 1), dirKey: 'S' },
+                    { siteId: siteIdOf[r + 1]?.[c] ?? -1, moduleKey: key(c, r + 1), dirKey: 'N' }, 'z');
+            }
         }
-        addOwnedBoundaryBarriers(chunk, roadPlan, hangingPhysics, hangingTransforms.wallGroups[0], cellSize);
+        return { bridgePlans, bridgePortalsBySite };
+    }
 
-        const counterpartBySite = new Map(topology.counterparts.map(item => [item.siteId, item]));
-        const groundBySite = new Map(groundEntities.filter(entity => entity.kind === 'building').map(entity => [entity.siteId, entity]));
-        const hangingBridgePlans = cloneBridgePlansForHangingFrame(bridgePlans);
-        const hangingBridgePortalsBySite = bridgePortalMapForPlans(hangingBridgePlans);
-        const hangingOpenSiteIds = new Set(sitePlans.filter(plan => plan.isPlaza).map(plan => plan.site.id));
-        const hangingEntities = [];
-        let hangingBuildings = 0;
-        let hangingPlazas = 0;
+    function* buildCeilingCityLayerSteps({
+        chunk, ownerId, groundEntities = [], parentRoot = null,
+        worldChunkKey = chunk.key, weirdness = chunk.weirdness?.sampled ?? 0,
+    }) {
+        const source = ceilingSourceCoordinates(chunk.x, chunk.z);
+        const weird = clamp(Number(weirdness) || 0, 0, 1);
+        const phaseChunk = {
+            ...chunk,
+            x: source.x, z: source.z, key: source.key,
+            seed: deterministicChunkSeed(worldSeed, source.x, source.z),
+            // The remote coordinates phase the deterministic generator, but the
+            // sampled topology is rebased onto this visible chunk's metric frame.
+            centerX: chunk.centerX, centerZ: chunk.centerZ,
+            weirdness: { sampled: weird },
+        };
+        const cx0 = chunk.centerX, cz0 = chunk.centerZ;
+        const half = chunkSize * 0.5, cellSize = chunkSize / microCells;
+        const roadPlan = planRoads(phaseChunk);
+        const solidKeys = new Set();
+        for (let r = 0; r < microCells; r++) for (let c = 0; c < microCells; c++) {
+            const k = key(c, r); if (!roadPlan.roads.has(k)) solidKeys.add(k);
+        }
+        const partitionRng = mulberry32(hashString32(`${worldSeed}:kowloon-partition:${phaseChunk.key}:${phaseChunk.seed}`));
+        const partition = partitionKowloonCompounds({
+            cols: microCells, rows: microCells, solidKeys,
+            chooseTargetSize: () => chooseKowloonCompoundTargetSize(partitionRng, weird),
+            pick: candidates => candidates[Math.floor(partitionRng() * candidates.length) % candidates.length],
+        });
+        const siteIdOf = partition.siteIdOf;
+        const sitePlans = partition.sites.map(site => {
+            const signature = site.cells.map(cell => key(cell.col, cell.row)).join('|');
+            const rng = mulberry32(hashString32(`${worldSeed}:kowloon-site-class:${phaseChunk.key}:${signature}`));
+            let realRoadFaces = 0;
+            for (const cell of site.cells) for (const dir of KOWLOON_DIRS) {
+                const nc = cell.col + dir.dc, nr = cell.row + dir.dr;
+                if (nc < 0 || nr < 0 || nc >= microCells || nr >= microCells || roadPlan.roads.has(key(nc, nr))) realRoadFaces++;
+            }
+            const plazaChance = Math.max(0.035, 0.135 - weird * 0.05 - Math.max(0, site.cells.length - 2) * 0.022);
+            return { site, signature, realRoadFaces, isPlaza: realRoadFaces === 0 || rng() < plazaChance };
+        });
+        if (sitePlans.length && sitePlans.every(plan => plan.isPlaza)) {
+            sitePlans.sort((a, b) => b.site.cells.length - a.site.cells.length || a.signature.localeCompare(b.signature));
+            sitePlans[0].isPlaza = false;
+        }
+        const openSiteIds = new Set(sitePlans.filter(plan => plan.isPlaza).map(plan => plan.site.id));
+        const buildingSiteIds = new Set(sitePlans.filter(plan => !plan.isPlaza).map(plan => plan.site.id));
+        const { bridgePlans, bridgePortalsBySite } = planCeilingBridgeNetwork({ phaseChunk, roadPlan, siteIdOf, buildingSiteIds, weird });
+
+        const root = new THREE.Group();
+        root.name = `ceiling-city:${chunk.key}`;
+        root.userData.noSpatialChunk = true;
+        root.userData.worldChunkRoot = parentRoot ? false : true;
+        root.userData.worldChunkKey = worldChunkKey;
+        root.userData.worldChunkOwnerId = ownerId;
+        root.userData.worldFormatVersion = WORLD_FORMAT_VERSION;
+        root.userData.renderAuthority = 'KowloonFabricEngine';
+        root.userData.streamAuthority = 'WorldChunkStreamer';
+        root.userData.ceilingCityFrame = ceilingFrame();
+        root.userData.ceilingSourceChunk = source;
+        if (parentRoot) parentRoot.add(root);
+
+        const ceiling = new THREE.Mesh(unitPlane, ceilingMat);
+        ceiling.name = `ceiling-plane:${chunk.key}`;
+        ceiling.rotation.x = Math.PI / 2;
+        ceiling.scale.set(chunkSize, chunkSize, 1);
+        ceiling.position.set(cx0, HANGING_CITY_CEILING_Y + 0.025, cz0);
+        ceiling.receiveShadow = true;
+        root.add(ceiling);
+
+        const aggregate = createFabricBuffers();
+        aggregate.physics.ceilingCity = { schema: HANGING_CITY_SCHEMA, frame: ceilingFrame(), source };
+        const entities = [];
+        let buildings = 0, plazas = 0, ladders = 0;
 
         for (const plan of sitePlans) {
             const { site, signature } = plan;
-            if (plan.isPlaza) {
-                let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
-                for (const cell of site.cells) {
-                    const x = cx0 - half + (cell.col + 0.5) * cellSize;
-                    const z = cz0 - half + (cell.row + 0.5) * cellSize;
-                    minX = Math.min(minX, x - cellSize * 0.5); maxX = Math.max(maxX, x + cellSize * 0.5);
-                    minZ = Math.min(minZ, z - cellSize * 0.5); maxZ = Math.max(maxZ, z + cellSize * 0.5);
-                }
-                hangingEntities.push({
-                    id: worldEntityId(worldSeed, chunk.x, chunk.z, 'hanging-plaza', signature),
-                    kind: 'plaza', verticalPolarity: -1, verticalFrame: topology.frame,
-                    x: (minX + maxX) * 0.5, z: (minZ + maxZ) * 0.5,
-                    halfX: (maxX - minX) * 0.5, halfZ: (maxZ - minZ) * 0.5,
-                    compoundCells: site.cells.map(cell => ({ col: cell.col, row: cell.row })),
-                    kowloonServiceVoid: plan.realRoadFaces === 0,
-                });
-                hangingPlazas++;
-                continue;
-            }
+            if (plan.isPlaza) { plazas++; continue; }
+            const bounds = ceilingSiteBounds(site, cx0, cz0, half, cellSize);
+            const heightRng = mulberry32(hashString32(`${worldSeed}:ceiling-height:${phaseChunk.key}:${signature}`));
+            const desiredFloors = 4 + Math.floor(heightRng() * 5);
+            const heightPlan = planCeilingBuildingHeight({ siteBounds: bounds, groundEntities, desiredFloors, floorHeight: HANGING_CITY_FLOOR_HEIGHT });
+            if (!heightPlan.accepted) continue;
 
-            const counterpart = counterpartBySite.get(site.id);
-            const groundEntity = groundBySite.get(site.id);
-            if (!counterpart || !groundEntity) continue;
-            const materialIndex = hashString32(chunk.seed + ':hanging-compound-facade:' + signature) % wallMats.length;
-            const groundFloorsByModule = new Map((groundEntity.footprintModules ?? []).map(module => [module.key, module.floors]));
-            const floorCountByCell = Object.fromEntries(site.cells.map(cell => {
-                const moduleKey = key(cell.col, cell.row);
-                const groundModuleFloors = groundFloorsByModule.get(moduleKey) ?? groundEntity.floors;
-                const setbackDrop = Math.max(0, groundEntity.floors - groundModuleFloors);
-                return [moduleKey, Math.max(1, counterpart.hangingFloors - setbackDrop)];
-            }));
-            const structural = await buildKowloonCompoundCooperative({
-                chunk, site, siteIdOf, roadPlan, openSiteIds: hangingOpenSiteIds,
-                bridgePortalsBySite: hangingBridgePortalsBySite,
-                physics: hangingPhysics, transforms: hangingTransforms,
+            const local = createFabricBuffers();
+            const materialIndex = hashString32(`${phaseChunk.seed}:ceiling-compound-facade:${signature}`) % wallMats.length;
+            const structural = yield* buildKowloonCompoundSteps({
+                chunk: phaseChunk, site, siteIdOf, roadPlan, openSiteIds, bridgePortalsBySite,
+                physics: local.physics, transforms: local.transforms,
                 cx0, cz0, half, cellSize, materialIndex,
                 structureProfile: {
-                    primaryFloors: counterpart.hangingFloors,
-                    floorHeight: counterpart.floorHeight,
-                    floorCountByCell,
-                    entityIdOverride: counterpart.planEntityId,
-                    singularRecipe: counterpart.dualPolarity ? 'dual-polarity-building' : 'hanging-city-building',
+                    primaryFloors: heightPlan.floors,
+                    floorHeight: HANGING_CITY_FLOOR_HEIGHT,
+                    entityIdOverride: worldEntityId(worldSeed, phaseChunk.x, phaseChunk.z, 'ceiling-building-plan', signature),
+                    singularRecipe: 'ceiling-stalactite-building',
                 },
             });
             if (!structural) continue;
-            const hangingEntity = {
-                id: counterpart.entityId,
+            const localTopY = structural.floors * structural.floorH;
+            stripCeilingSideRoofIdentity(structural, local.transforms, local.physics);
+            addCeilingRootMass({ entity: structural, physics: local.physics, transforms: local.transforms, localTopY });
+            addInvertedLowEndRoof({ entity: structural, transforms: local.transforms, stableKey: `${phaseChunk.key}:${signature}` });
+            const baseY = HANGING_CITY_CEILING_Y - localTopY;
+            translateFabricBuffersY(local, baseY);
+
+            const entity = {
+                id: worldEntityId(worldSeed, phaseChunk.x, phaseChunk.z, 'ceiling-building', signature),
                 kind: 'building', siteId: site.id, materialIndex,
-                verticalPolarity: -1, verticalFrame: topology.frame,
-                groundEntityId: groundEntity.id,
-                collisionDecision: counterpart.collisionDecision,
-                dualPolaritySeam: counterpart.dualPolarity,
-                sharedSeamY: counterpart.sharedSeamY,
+                growthDirection: 'world-down', gravityDirection: 'world-down',
+                baseY, ceilingY: HANGING_CITY_CEILING_Y,
+                ceilingSourceChunk: source,
+                collisionDecision: heightPlan.blockers.length ? 'height-budgeted-against-opposing-claims' : 'independent-phase-open-column',
+                architecturalClaim: heightPlan,
                 ...structural,
             };
-            hangingEntities.push(hangingEntity);
-            hangingBuildings++;
+            const sitePortals = bridgePortalsBySite.get(site.id) ?? [];
+            translateSemanticY({ entity, sitePortals }, baseY);
+            entity.baseY = baseY; // baseY is a placement datum, not a local coordinate to translate twice.
+            entity.ceilingY = HANGING_CITY_CEILING_Y;
+            mergeFabricBuffers(aggregate, local);
+            entities.push(entity); buildings++;
 
-            const portalBase = polarityPortalForCounterpart(counterpart, groundEntity);
-            if (portalBase) {
-                const portal = { ...portalBase, ownerId: ownerId + ':hanging' };
-                hangingPhysics.polarityPortals.push(portal);
-                physics.polarityPortals.push(portal);
-                addPolarityServiceShaft({ portal, physics, transforms });
+            if (heightPlan.blockers.length) {
+                let ground = null;
+                for (const candidate of groundEntities) {
+                    if (!heightPlan.blockers.includes(candidate?.id)) continue;
+                    const topY = (Number(candidate.baseY) || 0) + (Number(candidate.floors) || 1) * (Number(candidate.floorH) || HANGING_CITY_FLOOR_HEIGHT);
+                    if (!ground || topY > ground.topY) ground = { entity: candidate, topY };
+                }
+                if (ground && baseY > ground.topY + 0.5) {
+                    const x = clamp(entity.x, Math.max(entity.compoundBounds.minX, ground.entity.compoundBounds?.minX ?? entity.x), Math.min(entity.compoundBounds.maxX, ground.entity.compoundBounds?.maxX ?? entity.x));
+                    const z = clamp(entity.z, Math.max(entity.compoundBounds.minZ, ground.entity.compoundBounds?.minZ ?? entity.z), Math.min(entity.compoundBounds.maxZ, ground.entity.compoundBounds?.maxZ ?? entity.z));
+                    ladders += addCavernLadder({
+                        id: `${entity.id}:cavern-ladder`, x: Number.isFinite(x) ? x : entity.x, z: Number.isFinite(z) ? z : entity.z,
+                        y0: ground.topY, y1: baseY,
+                        physics: aggregate.physics, transforms: aggregate.transforms,
+                    });
+                }
             }
-
-            if (counterpart.dualPolarity) {
-                stripDualPolarityRoofIdentity(groundEntity, transforms, physics);
-                stripDualPolarityRoofIdentity(hangingEntity, hangingTransforms, hangingPhysics);
-                groundEntity.verticalFrames = [
-                    { id: groundEntity.id + ':ground-frame', verticalPolarity: 1, anchorY: 0 },
-                    topology.frame,
-                ];
-                groundEntity.hangingFrame = {
-                    floors: counterpart.hangingFloors,
-                    sharedSeamY: counterpart.sharedSeamY,
-                    collisionDecision: counterpart.collisionDecision,
-                };
-            }
+            yield { phase: 'ceiling-building', current: buildings, total: sitePlans.length, sourceKey: source.key };
         }
 
-        const footprintInvariant = assertBuildingFootprintsDoNotOverlap(hangingEntities);
-        const hangingEntityBySite = new Map(hangingEntities.filter(entity => entity.kind === 'building').map(entity => [entity.siteId, entity]));
-        let hangingSkybridges = 0;
-        for (const bridge of hangingBridgePlans) {
-            const aEntity = hangingEntityBySite.get(bridge.aSiteId);
-            const bEntity = hangingEntityBySite.get(bridge.bSiteId);
-            if (!emitSkybridge({ bridge, aEntity, bEntity, physics: hangingPhysics, transforms: hangingTransforms })) continue;
-            hangingEntities.push({ id: bridge.id, kind: 'skybridge', verticalPolarity: -1, verticalFrame: topology.frame, ...bridge });
-            hangingSkybridges++;
+        const entityBySite = new Map(entities.map(entity => [entity.siteId, entity]));
+        let skybridges = 0;
+        for (const bridge of cloneBridgePlansForCeilingCity(bridgePlans, source.key)) {
+            // The builder resolved the original phase endpoints in place.  Reuse
+            // those world-space endpoints while keeping a ceiling-specific bridge id.
+            const original = bridgePlans.find(candidate => candidate.aSiteId === bridge.aSiteId && candidate.bSiteId === bridge.bSiteId && candidate.axis === bridge.axis);
+            if (!original?.aEndpoint?.resolved || !original?.bEndpoint?.resolved) continue;
+            bridge.aEndpoint = { ...original.aEndpoint, id: `${bridge.id}:endpoint:a`, bridgeId: bridge.id };
+            bridge.bEndpoint = { ...original.bEndpoint, id: `${bridge.id}:endpoint:b`, bridgeId: bridge.id };
+            const aEntity = entityBySite.get(bridge.aSiteId), bEntity = entityBySite.get(bridge.bSiteId);
+            if (!aEntity || !bEntity) continue;
+            if (!emitSkybridge({ bridge, aEntity, bEntity, physics: aggregate.physics, transforms: aggregate.transforms })) continue;
+            entities.push({ id: bridge.id, kind: 'skybridge', growthDirection: 'world-down', gravityDirection: 'world-down', ...bridge });
+            skybridges++;
         }
 
-        attachFabricMeshes(hangingRoot, hangingTransforms, 'hanging:' + chunk.key);
-        const hangingPayload = {
+        attachFabricMeshes(root, aggregate.transforms, `ceiling:${chunk.key}`);
+        const payload = {
             formatVersion: WORLD_FORMAT_VERSION,
-            ownerId: ownerId + ':hanging',
-            root: hangingRoot,
-            physics: hangingPhysics,
-            entities: hangingEntities,
-            buildings: hangingBuildings,
-            plazas: hangingPlazas,
-            skybridges: hangingSkybridges,
-            buildingFootprintInvariant: footprintInvariant,
-            verticalFrame: topology.frame,
-            committed: false,
-            disposed: false,
+            ownerId, root, physics: aggregate.physics, entities,
+            buildings, plazas, skybridges, ladders,
+            ceilingCity: true,
+            ceilingSourceChunk: source,
+            frame: ceilingFrame(),
+            committed: false, disposed: false,
         };
-        const hangingChunk = { ...chunk, key: chunk.key + ':hanging', seed: hashString32(chunk.seed + ':hanging-city') };
-        await enrichment.initializePayloadCooperative(hangingChunk, hangingPayload, { yieldControl, maxUnitsPerSlice: 1 });
+        const enrichmentChunk = { ...phaseChunk, key: `ceiling:${source.key}` };
+        enrichment.initializePayload(enrichmentChunk, payload);
+        freezeChunkRoot(root);
         return {
-            schema: topology.schema,
-            frame: topology.frame,
-            topology,
-            payload: hangingPayload,
-            buildings: hangingBuildings,
-            plazas: hangingPlazas,
-            skybridges: hangingSkybridges,
-            dualPolarityCount: topology.dualPolarityCount,
-            independentCount: topology.independentCount,
+            schema: HANGING_CITY_SCHEMA,
+            frame: payload.frame,
+            source,
+            payload,
+            buildings, plazas, skybridges, ladders,
+            independentCount: buildings,
+            dualPolarityCount: 0,
         };
+    }
+
+    async function buildFullFatHangingCityLayer({ chunk, root, ownerId, groundEntities, weird }) {
+        const iterator = buildCeilingCityLayerSteps({
+            chunk, ownerId: `${ownerId}:ceiling`, groundEntities,
+            parentRoot: root, worldChunkKey: chunk.key, weirdness: weird,
+        });
+        let step = iterator.next();
+        while (!step.done) {
+            if (yieldControl) await yieldControl(`building ceiling city ${chunk.key}`, step.value?.current ?? 0, step.value?.total ?? 1);
+            step = iterator.next();
+        }
+        return step.value;
+    }
+
+    async function buildAuthoredCeilingOverlay({ groundEntities = [], ownerId = `spawn-ceiling:${worldSeed}` } = {}) {
+        const chunk = {
+            key: spawnChunkKey, x: 0, z: 0, centerX: 0, centerZ: 0,
+            seed: deterministicChunkSeed(worldSeed, 0, 0), ownerId,
+            weirdness: { sampled: 0.28 },
+        };
+        const iterator = buildCeilingCityLayerSteps({
+            chunk, ownerId, groundEntities, parentRoot: null,
+            worldChunkKey: spawnChunkKey, weirdness: 0.28,
+        });
+        let step = iterator.next();
+        while (!step.done) {
+            if (yieldControl) await yieldControl('building authored ceiling city', step.value?.current ?? 0, step.value?.total ?? 1);
+            step = iterator.next();
+        }
+        const result = step.value;
+        if (result?.payload?.root) {
+            result.payload.root.userData.authoredSpawnCeilingCity = true;
+            result.payload.chunk = chunk;
+        }
+        return result?.payload ?? null;
     }
 
     function attachFabricMeshes(root, transforms, namePrefix) {
@@ -4376,18 +4627,16 @@ export function createKowloonFabricEngine({
         root.userData.streamAuthority = 'WorldChunkStreamer';
         root.userData.authoredOriginComposite = true;
         root.visible = false;
-        const authoredHangingStreetRoot = new THREE.Group();
-        authoredHangingStreetRoot.name = 'hanging-city:authored-origin-street-plane';
-        authoredHangingStreetRoot.position.y = HANGING_CITY_CEILING_Y;
-        authoredHangingStreetRoot.scale.y = -1;
-        authoredHangingStreetRoot.userData.hangingCityFrame = { anchorY: HANGING_CITY_CEILING_Y, verticalPolarity: -1 };
-        const authoredHangingStreet = new THREE.Mesh(unitPlane, groundMat);
-        authoredHangingStreet.rotation.x = -Math.PI / 2;
-        authoredHangingStreet.scale.set(chunkSize, chunkSize, 1);
-        authoredHangingStreet.position.set(0, -0.025, 0);
-        authoredHangingStreet.receiveShadow = true;
-        authoredHangingStreetRoot.add(authoredHangingStreet);
-        root.add(authoredHangingStreetRoot);
+        // The authored origin owns the same exact flat white macro-roof as the
+        // streamed world.  It is a world-space ceiling, never an inverted local
+        // frame; ordinary gravity and camera-up remain authoritative everywhere.
+        const authoredCeiling = new THREE.Mesh(unitPlane, ceilingMat);
+        authoredCeiling.name = 'ceiling-plane:authored-origin';
+        authoredCeiling.rotation.x = Math.PI / 2;
+        authoredCeiling.scale.set(chunkSize, chunkSize, 1);
+        authoredCeiling.position.set(0, HANGING_CITY_CEILING_Y + 0.025, 0);
+        authoredCeiling.receiveShadow = true;
+        root.add(authoredCeiling);
         const { physics } = createFabricBuffers();
         authoredOriginChunkPayload = {
             formatVersion: WORLD_FORMAT_VERSION, key: spawnChunkKey, chunk, ownerId, root, physics,
@@ -4456,95 +4705,14 @@ export function createKowloonFabricEngine({
         if (!structural) return null;
 
         const entity = { id: worldEntityId(worldSeed, 0, 0, 'spawn-fabric-site', String(site.id)), kind: 'building', siteId: site.id, ...structural };
-        let authoredHangingLayer = null;
-        const groundRoofY = structural.floors * structural.floorH;
-        const hangingFloorH = 3.15;
-        const authoredDesiredFloors = 4 + (hashString32(String(worldSeed) + ':authored-hanging:' + String(site.id)) % 5);
-        const authoredMaxFloors = Math.max(1, Math.floor((HANGING_CITY_CEILING_Y - groundRoofY + 1e-8) / hangingFloorH));
-        const authoredHangingFloors = Math.min(authoredDesiredFloors, authoredMaxFloors);
-        if (authoredHangingFloors >= 2) {
-            const hangingRoot = new THREE.Group();
-            hangingRoot.name = 'hanging-city:spawn-site:' + String(site.id);
-            hangingRoot.position.y = HANGING_CITY_CEILING_Y;
-            hangingRoot.scale.y = -1;
-            hangingRoot.userData.hangingCityFrame = { anchorY: HANGING_CITY_CEILING_Y, verticalPolarity: -1 };
-            root.add(hangingRoot);
-            const { transforms: hangingTransforms, physics: hangingPhysics } = createFabricBuffers();
-            hangingPhysics.verticalFrame = { schema: 'jweb.vertical-traversal-frame.v2', anchorY: HANGING_CITY_CEILING_Y, verticalPolarity: -1 };
-            hangingPhysics.polarityPortals = [];
-            physics.polarityPortals ??= [];
-
-            const hangingEndpoints = (bridgePortalsBySite?.get(site.id) ?? []).map(endpoint => {
-                const hangingBridgeId = String(endpoint.bridgeId) + ':hanging';
-                const clone = { ...endpoint, id: hangingBridgeId + ':endpoint:' + String(endpoint.endpointRole), bridgeId: hangingBridgeId, resolved: false };
-                delete clone.x; delete clone.y; delete clone.z;
-                return clone;
-            });
-            const hangingBridgePortalsBySite = new Map();
-            if (hangingEndpoints.length) hangingBridgePortalsBySite.set(site.id, hangingEndpoints);
-            const groundFloorsByModule = new Map((structural.footprintModules ?? []).map(module => [module.key, module.floors]));
-            const floorCountByCell = Object.fromEntries(site.cells.map(cell => {
-                const moduleKey = key(cell.col, cell.row);
-                const groundModuleFloors = groundFloorsByModule.get(moduleKey) ?? structural.floors;
-                const setbackDrop = Math.max(0, structural.floors - groundModuleFloors);
-                return [moduleKey, Math.max(1, authoredHangingFloors - setbackDrop)];
-            }));
-            const hangingStructural = yield* buildKowloonCompoundSteps({
-                chunk, site, siteIdOf, roadPlan: { roads: new Set() }, openSiteIds: new Set(),
-                bridgePortalsBySite: hangingBridgePortalsBySite,
-                physics: hangingPhysics, transforms: hangingTransforms, cx0: 0, cz0: 0, half: 0, cellSize: 1,
-                materialIndex: materialIndex ?? (hashString32(String(worldSeed) + ':spawn-hanging-material:' + String(site.id)) % wallMats.length),
-                geometryAdapter,
-                streetCellOverride: (col, row) => grid[row]?.[col] !== true,
-                courtyardCellOverride: structureProfile?.courtyardCell,
-                structureProfile: {
-                    ...(structureProfile || {}),
-                    primaryFloors: authoredHangingFloors,
-                    floorHeight: hangingFloorH,
-                    floorCountByCell,
-                    entityIdOverride: entity.id + ':hanging-frame-plan',
-                    singularRecipe: 'hanging:' + String(structureProfile?.singularRecipe ?? 'spawn-fabric'),
-                },
-            });
-            if (hangingStructural) {
-                const hangingEntity = {
-                    id: entity.id + ':hanging', kind: 'building', siteId: site.id,
-                    verticalPolarity: -1, verticalFrame: hangingPhysics.verticalFrame,
-                    groundEntityId: entity.id, collisionDecision: 'independent-non-overlapping-building',
-                    ...hangingStructural,
-                };
-                const counterpart = {
-                    entityId: hangingEntity.id, groundEntityId: entity.id,
-                    hangingFloors: authoredHangingFloors, floorHeight: hangingFloorH,
-                    ceilingY: HANGING_CITY_CEILING_Y, groundRoofY,
-                    hangingTipY: HANGING_CITY_CEILING_Y - authoredHangingFloors * hangingFloorH,
-                    dualPolarity: false, sharedSeamY: null,
-                };
-                const portalBase = polarityPortalForCounterpart(counterpart, entity);
-                if (portalBase) {
-                    const portal = { ...portalBase, ownerId: ownerId + ':hanging' };
-                    hangingPhysics.polarityPortals.push(portal);
-                    physics.polarityPortals.push(portal);
-                    addPolarityServiceShaft({ portal, physics, transforms });
-                }
-                attachFabricMeshes(hangingRoot, hangingTransforms, 'spawn-hanging-' + String(site.id));
-                const hangingChunk = { ...chunk, key: chunk.key + ':hanging' };
-                const hangingPayload = {
-                    formatVersion: WORLD_FORMAT_VERSION, ownerId: ownerId + ':hanging', root: hangingRoot,
-                    physics: hangingPhysics, chunk: hangingChunk, entity: hangingEntity, entities: [hangingEntity],
-                    buildings: 1, plazas: 0, skybridges: 0, verticalFrame: hangingPhysics.verticalFrame,
-                    committed: false, disposed: false, authoredSpawnFabric: true,
-                };
-                enrichment.initializePayload(hangingChunk, hangingPayload);
-                const bridgeEndpointsById = new Map(hangingEndpoints.map(endpoint => [endpoint.bridgeId, endpoint]));
-                authoredHangingLayer = { payload: hangingPayload, bridgeEndpointsById };
-            }
-        }
+        // Cut 16 deliberately does not mirror each authored parcel overhead.
+        // The origin ceiling city is sampled once from the remote deterministic
+        // phase after all authored ground claims exist, so it can interlock rather
+        // than registering the same site footprint twice.
         attachFabricMeshes(root, transforms, `spawn-fabric-${site.id}`);
         const payload = {
             formatVersion: WORLD_FORMAT_VERSION, ownerId, root, physics, chunk,
             entity, entities: [entity], buildings: 1, plazas: 0, skybridges: 0,
-            hangingLayer: authoredHangingLayer,
             committed: false, disposed: false, authoredSpawnFabric: true,
         };
         enrichment.initializePayload(chunk, payload);
@@ -4692,43 +4860,11 @@ export function createKowloonFabricEngine({
         root.userData.authoredSpawnRelationship = true;
         attachFabricMeshes(root, transforms, 'spawn-link-' + String(bridge.id));
 
-        let hangingLayer = null;
-        const aHangingEntity = aPayload?.hangingLayer?.payload?.entity;
-        const bHangingEntity = bPayload?.hangingLayer?.payload?.entity;
-        const hangingBridgeId = String(bridge.id) + ':hanging';
-        const aEndpoint = aPayload?.hangingLayer?.bridgeEndpointsById?.get(hangingBridgeId) ?? null;
-        const bEndpoint = bPayload?.hangingLayer?.bridgeEndpointsById?.get(hangingBridgeId) ?? null;
-        if (aHangingEntity && bHangingEntity && aEndpoint?.resolved === true && bEndpoint?.resolved === true) {
-            const hangingBridge = {
-                ...bridge,
-                id: hangingBridgeId,
-                aEndpoint,
-                bEndpoint,
-                framePolarity: -1,
-            };
-            const { transforms: hangingTransforms, physics: hangingPhysics } = createFabricBuffers();
-            hangingPhysics.verticalFrame = { schema: 'jweb.vertical-traversal-frame.v2', anchorY: HANGING_CITY_CEILING_Y, verticalPolarity: -1 };
-            if (emitSkybridge({ bridge: hangingBridge, aEntity: aHangingEntity, bEntity: bHangingEntity, physics: hangingPhysics, transforms: hangingTransforms })) {
-                const hangingRoot = new THREE.Group();
-                hangingRoot.name = 'kowloon-link:hanging:' + String(bridge.id);
-                hangingRoot.position.y = HANGING_CITY_CEILING_Y;
-                hangingRoot.scale.y = -1;
-                hangingRoot.userData.hangingCityFrame = hangingPhysics.verticalFrame;
-                attachFabricMeshes(hangingRoot, hangingTransforms, 'spawn-link-hanging-' + String(bridge.id));
-                root.add(hangingRoot);
-                const hangingPayload = {
-                    ownerId: ownerId + ':hanging', root: hangingRoot, physics: hangingPhysics,
-                    bridge: hangingBridge, entity: { id: hangingBridge.id, kind: 'skybridge', verticalPolarity: -1, ...hangingBridge },
-                    committed: false, disposed: false, authoredSpawnRelationship: true,
-                };
-                hangingLayer = { payload: hangingPayload };
-            }
-        }
+        // Ceiling bridges are generated by the independent phase-sampled ceiling network.
         freezeChunkRoot(root);
         return {
             ownerId, root, physics, bridge,
             entity: { id: bridge.id, kind: 'skybridge', ...bridge },
-            hangingLayer,
             committed: false, disposed: false, authoredSpawnRelationship: true,
         };
     }
@@ -5222,6 +5358,7 @@ export function createKowloonFabricEngine({
         unitPlane.dispose();
         roadMat.dispose();
         groundMat.dispose();
+        ceilingMat.dispose();
         slabMat.dispose();
         stepMat.dispose();
         propMat.dispose();
@@ -5248,5 +5385,5 @@ export function createKowloonFabricEngine({
     };
     const planningCacheStats = () => buildingPlanCache.stats();
 
-    return { build, buildAuthoredOriginChunk, buildAuthoredSite, buildAuthoredSiteSteps, buildAuthoredPlaza, buildAuthoredSurfacePatch, buildAuthoredBridge, planAuthoredBridgeNetwork, commit, setVisible, verifyReady, unload, refine, hasPendingRefinement, planChunk, districtLandmarkFor, planningCacheStats, disposeShared };
+    return { build, buildAuthoredOriginChunk, buildAuthoredCeilingOverlay, buildAuthoredSite, buildAuthoredSiteSteps, buildAuthoredPlaza, buildAuthoredSurfacePatch, buildAuthoredBridge, planAuthoredBridgeNetwork, commit, setVisible, verifyReady, unload, refine, hasPendingRefinement, planChunk, districtLandmarkFor, planningCacheStats, disposeShared };
 }

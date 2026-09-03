@@ -198,3 +198,18 @@ There is one shipping chunk scheduler API: `createWorldChunkStreamer()`. The obs
 `createWorldChunkScheduler()` compatibility wrapper was removed. Do not reintroduce a second
 scheduler abstraction for streamed terrain; specialized producers should feed descriptors/payloads
 into the streamer ownership lifecycle instead.
+
+## Two-plane cavern invariant — Cut 16
+
+The macro geometry is intentionally simple and must stay legible underneath procedural accumulation:
+
+- The world is bounded by **two exact flat parallel planes**: a black lower plane and a white upper plane.
+- The nominal plane separation is **34.02 m**, exactly 60% of the Cut 15 56.7 m separation. Do not manufacture richness by deforming either macro plane.
+- Ground architecture grows upward. Ceiling architecture grows downward. **Growth direction is not gravity direction**: the player, camera, furniture, doors, rooms, stairs and props all remain in the one ordinary world-down gravity frame.
+- The ceiling city is not a registered mirror of the ground city. It samples the **same deterministic infinite generator and world seed at one fixed far-away chunk phase** and rebases that sampled topology over the visible chunk. Neighboring ceiling chunks sample neighboring remote chunks so roads and compounds stay continuous without visibly repeating the lower topology.
+- Ceiling compounds remain ordinary upright buildings internally. Each compound is translated rigidly so its highest ordinary roof datum meets the white macro-roof. Shorter modules keep aligned floors; uninhabited root mass fills from their stepped roofs upward into the flat white plane.
+- The exposed low end of a ceiling compound receives a downward-facing roof/crown vocabulary. This is a boundary treatment, not a second inverted building engine.
+- Opposing city fields reconcile **architectural claim volumes before realization**. Claims include conservative horizontal growth allowance and underside/crown reserve; a ceiling building is height-budgeted or omitted before geometry exists. Do not clip two finished buildings after collision.
+- Ladders are a preferred vertical stitch through near-miss gaps. Ordinary stairs remain ordinary stairs.
+- Structural color is a world-height composition: black near the lower plane, strongest color/visual density through the middle band, and white near the upper plane. This should preserve batching and must not require macro terrain deformation.
+- The visual throughline is therefore: **simple computational macro geometry -> increasingly organic architectural generation -> granular authored/procedural detail**. The planes remain geometric; the mess comes from what grows off them.

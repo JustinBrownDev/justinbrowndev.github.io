@@ -1,126 +1,134 @@
-export const HANGING_CITY_SCHEMA = 'jweb.hanging-city.v2';
-export const HANGING_CITY_FRAME_SCHEMA = 'jweb.vertical-traversal-frame.v2';
-export const HANGING_CITY_VERTICAL_POLARITY = -1;
+export const HANGING_CITY_SCHEMA = 'jweb.ceiling-city.v3';
 export const HANGING_CITY_FLOOR_HEIGHT = 3.15;
-export const HANGING_CITY_ANCHOR_FLOORS = 18;
-export const HANGING_CITY_CEILING_Y = HANGING_CITY_FLOOR_HEIGHT * HANGING_CITY_ANCHOR_FLOORS;
+// Cut 16: the two macro surfaces remain exact parallel planes.  The ceiling is
+// deliberately 60% of Cut 15's 56.7m separation to compress the vertical search
+// space and force the two independently sampled city fields to interlock.
+export const HANGING_CITY_CEILING_Y = 56.7 * 0.60;
+export const HANGING_CITY_PHASE_X = 8192;
+export const HANGING_CITY_PHASE_Z = -12289;
+export const HANGING_CITY_CLAIM_MARGIN = 2.40;
+export const HANGING_CITY_VERTICAL_CLEARANCE = 0.72;
+export const HANGING_CITY_UNDERSIDE_RESERVE = 1.35;
+export const HANGING_CITY_GROUND_HEADROOM_RESERVE = 5.50;
 
-function hashString32(value) {
-  let h = 2166136261 >>> 0;
-  for (let i = 0; i < String(value).length; i++) {
-    h ^= String(value).charCodeAt(i);
-    h = Math.imul(h, 16777619) >>> 0;
-  }
-  return h >>> 0;
-}
-function mulberry32(seed) {
-  let a = seed >>> 0;
-  return () => {
-    a = (a + 0x6D2B79F5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+function clamp(value, lo, hi) { return Math.max(lo, Math.min(hi, value)); }
 
-export function hangingFrame(anchorY = HANGING_CITY_CEILING_Y) {
+export function ceilingSourceCoordinates(chunkX = 0, chunkZ = 0) {
+  const x = Math.trunc(Number(chunkX) || 0) + HANGING_CITY_PHASE_X;
+  const z = Math.trunc(Number(chunkZ) || 0) + HANGING_CITY_PHASE_Z;
+  return Object.freeze({ x, z, key: `${x},${z}` });
+}
+
+export function ceilingFrame(anchorY = HANGING_CITY_CEILING_Y) {
   return Object.freeze({
-    schema: HANGING_CITY_FRAME_SCHEMA,
-    id: `hanging-city-frame:${Number(anchorY).toFixed(3)}`,
+    schema: 'jweb.ceiling-growth-frame.v1',
+    id: `ceiling-city-frame:${Number(anchorY).toFixed(3)}`,
     anchorY,
-    verticalPolarity: HANGING_CITY_VERTICAL_POLARITY,
-    localZeroRole: 'ceiling-street-plane',
-    positiveLocalYDirection: 'world-down',
+    growthDirection: 'world-down',
+    gravityDirection: 'world-down',
+    cameraUpDirection: 'world-up',
+    playerTraversal: 'ordinary',
+    macroSurface: 'flat-white-ceiling-plane',
   });
 }
 
-export function planHangingCityCounterparts({
-  worldSeed = 0,
-  chunkKey = '0,0',
-  sitePlans = [],
-  groundEntities = [],
-  weirdness = 0,
-  floorHeight = HANGING_CITY_FLOOR_HEIGHT,
-  anchorFloors = HANGING_CITY_ANCHOR_FLOORS,
+export function expandedHorizontalClaim(bounds, margin = HANGING_CITY_CLAIM_MARGIN) {
+  if (!bounds) return null;
+  const m = Math.max(0, Number(margin) || 0);
+  const minX = Number(bounds.minX ?? (Number(bounds.x) - Number(bounds.halfX)));
+  const maxX = Number(bounds.maxX ?? (Number(bounds.x) + Number(bounds.halfX)));
+  const minZ = Number(bounds.minZ ?? (Number(bounds.z) - Number(bounds.halfZ)));
+  const maxZ = Number(bounds.maxZ ?? (Number(bounds.z) + Number(bounds.halfZ)));
+  if (![minX, maxX, minZ, maxZ].every(Number.isFinite)) return null;
+  return Object.freeze({ minX: minX - m, maxX: maxX + m, minZ: minZ - m, maxZ: maxZ + m });
+}
+
+export function horizontalClaimsOverlap(a, b, epsilon = 1e-6) {
+  if (!a || !b) return false;
+  const e = Math.max(0, Number(epsilon) || 0);
+  return Math.min(a.maxX, b.maxX) - Math.max(a.minX, b.minX) > e
+    && Math.min(a.maxZ, b.maxZ) - Math.max(a.minZ, b.minZ) > e;
+}
+
+export function groundBuildingClaim(entity, {
+  margin = HANGING_CITY_CLAIM_MARGIN,
+  roofReserve = HANGING_CITY_GROUND_HEADROOM_RESERVE,
 } = {}) {
-  const groundBySite = new Map(
-    groundEntities
-      .filter(entity => entity?.kind === 'building' && Number.isInteger(entity.siteId))
-      .map(entity => [entity.siteId, entity]),
-  );
-  const w = clamp(Number(weirdness) || 0, 0, 1);
-  const ceilingY = floorHeight * anchorFloors;
-  const frame = hangingFrame(ceilingY);
-  const counterparts = [];
-
-  for (const plan of sitePlans) {
-    if (!plan || plan.isPlaza) continue;
-    const ground = groundBySite.get(plan.site?.id);
-    if (!ground) continue;
-    const groundFloors = Math.max(1, Math.floor(Number(ground.floors) || 1));
-    const rng = mulberry32(hashString32(`${worldSeed}:hanging-city:${chunkKey}:${plan.signature ?? plan.site.id}`));
-    const desiredFloors = clamp(4 + Math.floor(rng() * (5 + Math.round(w * 2))), 4, 10);
-    const floorsUntilGroundRoof = Math.max(1, anchorFloors - groundFloors);
-
-    // Collision authority is resolved before the second frame is generated.
-    // If the natural hanging claim reaches the ground claim, there are not two
-    // buildings to trim later. The site is promoted to one dual-polarity building.
-    const dualPolarity = desiredFloors >= floorsUntilGroundRoof;
-    const hangingFloors = dualPolarity ? floorsUntilGroundRoof : desiredFloors;
-    const groundRoofY = groundFloors * floorHeight;
-    const hangingTipY = ceilingY - hangingFloors * floorHeight;
-    const gapFloors = anchorFloors - groundFloors - hangingFloors;
-    if (hangingTipY < groundRoofY - 1e-8) {
-      throw new Error(`${chunkKey}:${plan.site.id}: hanging claim overlaps ground claim after ownership resolution`);
-    }
-
-    const entityId = dualPolarity ? ground.id : `${ground.id}:hanging`;
-    counterparts.push(Object.freeze({
-      schema: HANGING_CITY_SCHEMA,
-      siteId: plan.site.id,
-      sourceSignature: plan.signature ?? String(plan.site.id),
-      groundEntityId: ground.id,
-      entityId,
-      planEntityId: `${entityId}:frame-plan`,
-      groundFloors,
-      desiredFloors,
-      hangingFloors,
-      floorHeight,
-      anchorFloors,
-      ceilingY,
-      groundRoofY,
-      hangingTipY,
-      gapFloors,
-      dualPolarity,
-      sharedSeamY: dualPolarity ? groundRoofY : null,
-      collisionDecision: dualPolarity
-        ? 'promote-single-dual-polarity-building'
-        : 'independent-non-overlapping-building',
-      frame,
-    }));
-  }
-
+  if (!entity || entity.kind !== 'building') return null;
+  const horizontal = expandedHorizontalClaim(entity.compoundBounds ?? entity, margin);
+  if (!horizontal) return null;
+  const floorHeight = Math.max(0.1, Number(entity.floorH) || HANGING_CITY_FLOOR_HEIGHT);
+  const occupiedTopY = Math.max(0, Number(entity.baseY) || 0) + Math.max(1, Number(entity.floors) || 1) * floorHeight;
   return Object.freeze({
-    schema: HANGING_CITY_SCHEMA,
-    frame,
-    ceilingY,
-    floorHeight,
-    anchorFloors,
-    counterparts: Object.freeze(counterparts),
-    dualPolarityCount: counterparts.filter(item => item.dualPolarity).length,
-    independentCount: counterparts.filter(item => !item.dualPolarity).length,
+    entityId: entity.id ?? null,
+    ...horizontal,
+    topY: Math.min(HANGING_CITY_CEILING_Y, occupiedTopY + Math.max(0, Number(roofReserve) || 0)),
   });
 }
 
-export function cloneBridgePlansForHangingFrame(bridgePlans = []) {
+export function planCeilingBuildingHeight({
+  siteBounds,
+  groundEntities = [],
+  desiredFloors = 6,
+  floorHeight = HANGING_CITY_FLOOR_HEIGHT,
+  ceilingY = HANGING_CITY_CEILING_Y,
+  margin = HANGING_CITY_CLAIM_MARGIN,
+  verticalClearance = HANGING_CITY_VERTICAL_CLEARANCE,
+  undersideReserve = HANGING_CITY_UNDERSIDE_RESERVE,
+  minimumFloors = 1,
+} = {}) {
+  const horizontal = expandedHorizontalClaim(siteBounds, margin);
+  const fh = Math.max(0.1, Number(floorHeight) || HANGING_CITY_FLOOR_HEIGHT);
+  const desired = Math.max(1, Math.floor(Number(desiredFloors) || 1));
+  let blockingTopY = 0;
+  const blockers = [];
+  for (const entity of groundEntities) {
+    const claim = groundBuildingClaim(entity, { margin });
+    if (!claim || !horizontalClaimsOverlap(horizontal, claim)) continue;
+    blockingTopY = Math.max(blockingTopY, claim.topY);
+    blockers.push(claim.entityId);
+  }
+  const availableHeight = Math.max(0, ceilingY - blockingTopY - verticalClearance - undersideReserve);
+  const maxFloors = Math.max(0, Math.floor((availableHeight + 1e-8) / fh));
+  const floors = Math.min(desired, maxFloors);
+  const accepted = floors >= Math.max(1, Math.floor(minimumFloors));
+  const occupiedHeight = accepted ? floors * fh : 0;
+  const baseY = accepted ? ceilingY - occupiedHeight : ceilingY;
+  return Object.freeze({
+    schema: 'jweb.ceiling-building-height-budget.v1',
+    accepted,
+    desiredFloors: desired,
+    floors: accepted ? floors : 0,
+    maxFloors,
+    floorHeight: fh,
+    ceilingY,
+    baseY,
+    occupiedHeight,
+    blockingTopY,
+    verticalClearance,
+    undersideReserve,
+    blockers: Object.freeze(blockers.filter(Boolean).sort()),
+    horizontal,
+  });
+}
+
+export function maximumCavernFloors(floorHeight, {
+  ceilingY = HANGING_CITY_CEILING_Y,
+  reserve = HANGING_CITY_GROUND_HEADROOM_RESERVE,
+  hardCap = 12,
+} = {}) {
+  const fh = Math.max(0.1, Number(floorHeight) || HANGING_CITY_FLOOR_HEIGHT);
+  return clamp(Math.floor(Math.max(fh, ceilingY - reserve) / fh), 1, Math.max(1, Math.floor(hardCap)));
+}
+
+export function cloneBridgePlansForCeilingCity(bridgePlans = [], sourceKey = 'ceiling') {
   return bridgePlans.map(plan => {
-    const id = `${plan.id}:hanging`;
+    const id = `${plan.id}:ceiling:${sourceKey}`;
     const aEndpoint = { ...plan.aEndpoint, id: `${id}:endpoint:a`, bridgeId: id, resolved: false };
     const bEndpoint = { ...plan.bEndpoint, id: `${id}:endpoint:b`, bridgeId: id, resolved: false };
     delete aEndpoint.x; delete aEndpoint.y; delete aEndpoint.z;
     delete bEndpoint.x; delete bEndpoint.y; delete bEndpoint.z;
-    return { ...plan, id, aEndpoint, bEndpoint, framePolarity: -1 };
+    return { ...plan, id, aEndpoint, bEndpoint, growthDirection: 'world-down', gravityDirection: 'world-down' };
   });
 }
 
@@ -135,28 +143,4 @@ export function bridgePortalMapForPlans(bridgePlans = []) {
     add(plan.bSiteId, plan.bEndpoint);
   }
   return map;
-}
-
-export function polarityPortalForCounterpart(counterpart, groundEntity) {
-  if (!counterpart || !groundEntity) return null;
-  const core = groundEntity.buildingPlan?.verticalCore?.reservation ?? null;
-  const x = Number(core?.x ?? groundEntity.x);
-  const z = Number(core?.z ?? groundEntity.z);
-  const hx = Math.max(0.45, Number(core?.halfX) || 0.55);
-  const hz = Math.max(0.45, Number(core?.halfZ) || 0.55);
-  if (![x, z, counterpart.ceilingY, counterpart.hangingTipY].every(Number.isFinite)) return null;
-  return Object.freeze({
-    id: `${counterpart.entityId}:polarity-portal`,
-    schema: 'jweb.polarity-portal.v1',
-    x, z, hx, hz,
-    anchorY: counterpart.ceilingY,
-    groundFeetY: counterpart.groundRoofY,
-    hangingWorldFeetY: counterpart.hangingTipY,
-    hangingLocalFeetY: counterpart.hangingFloors * counterpart.floorHeight,
-    dualPolarity: counterpart.dualPolarity,
-    sharedSeamY: counterpart.sharedSeamY,
-    sourceBuildingId: groundEntity.id,
-    destinationBuildingId: counterpart.entityId,
-    transitionKind: counterpart.dualPolarity ? 'shared-double-sided-floor' : 'vertical-service-shaft',
-  });
 }

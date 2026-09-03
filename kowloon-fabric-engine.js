@@ -129,6 +129,29 @@ function kowloonCellSetConnected(cells) {
     return seen.size === byCell.size;
 }
 
+function normalizeCeilingModuleFloorConnectivity(modulePlans, primaryModule, bridgePortals = []) {
+    const raised = new Map();
+    if (!primaryModule) return { raisedForBridgeModules: [], raisedFloorLevels: 0, raisedForTopPlateModules: [], raisedTopPlateFloorLevels: 0, trimmedModules: [], trimmedFloorLevels: 0, ceilingAligned: true };
+    for (const portal of bridgePortals) {
+        const target = modulePlans.find(module => module.key === portal.moduleKey);
+        if (!target) continue;
+        const requiredFloors = Math.min(primaryModule.floors, Math.max(1, Number(portal.floor) + 1 || 1));
+        if (target.floors >= requiredFloors) continue;
+        const before = target.floors;
+        target.floors = requiredFloors;
+        raised.set(target.key, target.floors - before);
+    }
+    return {
+        raisedForBridgeModules: [...raised.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([moduleKey, floorsAdded]) => ({ moduleKey, floorsAdded })),
+        raisedFloorLevels: [...raised.values()].reduce((sum, count) => sum + count, 0),
+        raisedForTopPlateModules: [],
+        raisedTopPlateFloorLevels: 0,
+        trimmedModules: [],
+        trimmedFloorLevels: 0,
+        ceilingAligned: true,
+    };
+}
+
 function normalizeModuleFloorConnectivity(modulePlans, primaryModule, bridgePortals = []) {
     if (!primaryModule || modulePlans.length <= 1) {
         return { raisedForBridgeModules: [], raisedFloorLevels: 0, trimmedModules: [], trimmedFloorLevels: 0 };
@@ -1534,8 +1557,8 @@ export function createKowloonFabricEngine({
         return { flights: realizedFlights, landings: realizedLandings, decks: realizedDecks };
     }
 
-    function addCompoundSideWall({ physics, wallList, rect, floorH, floor, side, opening = 0 }) {
-        const storyY0 = floor * floorH;
+    function addCompoundSideWall({ physics, wallList, rect, floorH, floor, side, opening = 0, floorBase = 0, metadata = null }) {
+        const storyY0 = (Number(floorBase) + Number(floor)) * floorH;
         const wallT = KOWLOON_EXTERIOR_WALL_THICKNESS;
         const ceilingLocalY = storyCeilingLocalY(floorH);
         const horizontal = side === 'north' || side === 'south';
@@ -1661,6 +1684,8 @@ export function createKowloonFabricEngine({
         let internalOpenFaces = 0;
         let exposedSetbackFaces = 0;
         let partyFaces = 0;
+        const ceilingAligned = structureProfile?.floorAlignment === 'ceiling';
+        const slabFloorAlignment = ceilingAligned ? 'ceiling' : 'ground';
 
         const streetFaces = [];
         for (let broadStreetModuleIndex = 0; broadStreetModuleIndex < modulePlans.length; broadStreetModuleIndex++) {
@@ -1759,16 +1784,15 @@ export function createKowloonFabricEngine({
         }
 
         // Switchback core geometry was solved once above and is the vertical-core authority.
-        const primaryModuleRoofY = primaryModule.floors > 0
-            ? (primaryModule.floors - 1) * floorH + floorH
-            : 0;
+        const primaryModuleRoofY = moduleRoofLocalY(primaryModule, floorH);
+        const primaryModuleBaseY = moduleBaseLocalY(primaryModule, floorH);
         const buildingPlanEntityId = structureProfile?.entityIdOverride ?? worldEntityId(worldSeed, chunk.x, chunk.z, 'building', siteSignature);
         const primaryStairConnector = createStairConnector({
             id: `${chunk.key}:${siteSignature}:${primaryModule.key}:stair`,
             x: primaryStairCx, z: primaryStairCz,
             openingWidth: primaryStairGapW,
             openingDepth: primaryStairGapD,
-            baseY: 0,
+            baseY: primaryModuleBaseY,
             roofY: primaryModuleRoofY,
             exitHeadroom: stairPhysicalTruth.stair.headroomSI,
             rampAxis: primaryStairAxis,
@@ -1811,7 +1835,7 @@ export function createKowloonFabricEngine({
             z: primaryStairSlabOpening.z,
             halfX: primaryStairSlabOpening.hx,
             halfZ: primaryStairSlabOpening.hz,
-            yMin: 0,
+            yMin: primaryModuleBaseY,
             yMax: primaryModuleRoofY + stairPhysicalTruth.stair.headroomSI,
             source: 'compound-stair-slab-opening',
             metadata: {
@@ -1850,7 +1874,7 @@ export function createKowloonFabricEngine({
             physicalUse,
             physicalTruth,
             floorHeight: floorH,
-            modules: modulePlans.map(module => ({
+            modules: (ceilingAligned ? [primaryModule] : modulePlans).map(module => ({
                 key: module.key,
                 cx: module.rect.cx,
                 cz: module.rect.cz,
@@ -1910,16 +1934,16 @@ export function createKowloonFabricEngine({
             return candidates[0] ?? sameFloor[0] ?? null;
         };
         const roofIntersectsInteriorCore = module => {
-            const roofY = module.floors * floorH;
-            const roofRect = computeKowloonSlabRect(module, moduleByKey, module.floors, { roof: true });
+            const roofY = moduleRoofLocalY(module, floorH);
+            const roofRect = computeKowloonSlabRect(module, moduleByKey, module.floors, { roof: true, floorAlignment: slabFloorAlignment });
             return reservationIntersectsBox(primaryStairReservation, {
                 x: roofRect.cx, z: roofRect.cz, sx: roofRect.width, sz: roofRect.depth,
                 yMin: roofY - 0.02, yMax: roofY + 0.02,
             });
         };
         const roofNeedsInteriorCoreOpening = module => {
-            const roofY = module.floors * floorH;
-            const roofRect = computeKowloonSlabRect(module, moduleByKey, module.floors, { roof: true });
+            const roofY = moduleRoofLocalY(module, floorH);
+            const roofRect = computeKowloonSlabRect(module, moduleByKey, module.floors, { roof: true, floorAlignment: slabFloorAlignment });
             return reservationIntersectsBox(primaryStairSlabOpeningReservation, {
                 x: roofRect.cx, z: roofRect.cz, sx: roofRect.width, sz: roofRect.depth,
                 yMin: roofY - 0.02, yMax: roofY + 0.02,
@@ -1986,7 +2010,8 @@ export function createKowloonFabricEngine({
         // EXTERIOR STRUCTURAL FAST LANE: preserve deterministic scaffold/fire-escape
         // planning around the restored interior/core reservations. Micro enrichment and
         // authored decoration stay disabled; facade apertures still publish before walls.
-        const scaffoldCandidates = streetFaces.filter(face => !face.courtyard && face.module.floors >= 2);
+        const scaffoldCandidates = streetFaces.filter(face => !face.courtyard && face.module.floors >= 2
+            && (!ceilingAligned || moduleFloorBase(face.module) === 0));
         const scaffoldOpeningByKey = new Map();
         let scaffoldPlan = null;
         let scaffoldSide = null;
@@ -2065,7 +2090,7 @@ export function createKowloonFabricEngine({
         for (const item of EXTERIOR_CIRCULATION_DEBT) if (!debtRegistry.includes(item.tag)) debtRegistry.push(item.tag);
 
         const broadVerticalCandidates = streetFaces
-            .filter(face => !face.courtyard && face.module.floors >= 2)
+            .filter(face => !face.courtyard && face.module.floors >= 2 && (!ceilingAligned || moduleFloorBase(face.module) === 0))
             .sort((a, b) => {
                 const floorDelta = b.module.floors - a.module.floors;
                 if (floorDelta) return floorDelta;
@@ -2356,21 +2381,37 @@ export function createKowloonFabricEngine({
         let partitionSegments = 0;
         for (let broadModuleIndex = 0; broadModuleIndex < modulePlans.length; broadModuleIndex++) {
             const module = modulePlans[broadModuleIndex];
+            const moduleBaseY = moduleBaseLocalY(module, floorH);
+            const moduleRoofY = moduleRoofLocalY(module, floorH);
             transforms.slabs.push({
-                x: module.rect.cx, y: 0.055, z: module.rect.cz,
+                x: module.rect.cx, y: moduleBaseY + 0.055, z: module.rect.cz,
                 sx: module.rect.halfX * 2 + 0.12, sy: 0.11, sz: module.rect.halfZ * 2 + 0.12,
+                moduleKey: module.key, ceilingTipSlab: ceilingAligned || undefined,
             });
+            if (ceilingAligned) {
+                const tipRect = computeKowloonSlabRect(module, moduleByKey, 0, { floorAlignment: slabFloorAlignment });
+                addRectPlatform(physics.platforms, tipRect.cx, tipRect.cz, tipRect.width, tipRect.depth, moduleBaseY, 'ceiling-building-tip', 0);
+                const tipPlatform = physics.platforms[physics.platforms.length - 1];
+                if (tipPlatform?.supportKind === 'ceiling-building-tip') {
+                    tipPlatform.moduleKey = module.key;
+                    tipPlatform.ceilingTipCollision = true;
+                }
+            }
 
             for (let floor = 0; floor < module.floors; floor++) {
-                const y0 = floor * floorH;
+                const y0 = moduleFloorLocalY(module, floor, floorH);
                 const y1 = y0 + floorH;
+                const globalFloor = moduleFloorBase(module) + floor;
                 for (const dir of KOWLOON_DIRS) {
                     const kind = module.edgeKinds[dir.key];
                     let shouldWall = kind !== 'internal';
                     if (kind === 'party') partyFaces++;
                     if (kind === 'internal') {
                         const neighbor = moduleByKey.get(kowloonCellKey(module.cell.col + dir.dc, module.cell.row + dir.dr));
-                        if (neighbor && floor < neighbor.floors) {
+                        const neighborActive = neighbor && (ceilingAligned
+                            ? moduleOccupiesGlobalFloor(neighbor, globalFloor)
+                            : floor < neighbor.floors);
+                        if (neighborActive) {
                             internalOpenFaces++;
                             shouldWall = false;
                         } else {
@@ -2395,11 +2436,14 @@ export function createKowloonFabricEngine({
                             height: physicalTruth?.door?.clearHeight?.realizedSI ?? 2.20,
                         });
                     }
-                    addCompoundSideWall({ physics, wallList, rect: module.rect, floorH, floor, side: dir.side, opening: openings });
+                    addCompoundSideWall({
+                        physics, wallList, rect: module.rect, floorH, floor, side: dir.side, opening: openings,
+                        floorBase: moduleFloorBase(module), metadata: { moduleKey: module.key, localFloor: floor, globalFloor },
+                    });
                 }
 
                 if (floor > 0) {
-                    const slabRect = computeKowloonSlabRect(module, moduleByKey, floor);
+                    const slabRect = computeKowloonSlabRect(module, moduleByKey, floor, { floorAlignment: slabFloorAlignment });
                     const primaryShaftCutsSlab = reservationIntersectsBox(primaryStairSlabOpeningReservation, {
                         x: slabRect.cx, z: slabRect.cz, sx: slabRect.width, sz: slabRect.depth,
                         yMin: y0 - 0.02, yMax: y0 + 0.02,
@@ -2416,7 +2460,7 @@ export function createKowloonFabricEngine({
                     } else {
                         addRectPlatform(physics.platforms, slabRect.cx, slabRect.cz, slabRect.width, slabRect.depth, y0, 'floor');
                         transforms.slabs.push({ x: slabRect.cx, y: y0 - 0.06, z: slabRect.cz,
-                            sx: slabRect.width, sy: 0.12, sz: slabRect.depth });
+                            sx: slabRect.width, sy: 0.12, sz: slabRect.depth, moduleKey: module.key, localFloor: floor, globalFloor });
                     }
                 }
 
@@ -2452,7 +2496,7 @@ export function createKowloonFabricEngine({
                     x: module.rect.cx + (dir.side === 'west' ? -module.rect.halfX : dir.side === 'east' ? module.rect.halfX : 0),
                     z: module.rect.cz + (dir.side === 'north' ? -module.rect.halfZ : dir.side === 'south' ? module.rect.halfZ : 0),
                     halfX: module.rect.halfX, halfZ: module.rect.halfZ,
-                    yMin: 0, yMax: module.floors * floorH,
+                    yMin: moduleBaseY, yMax: moduleRoofY, floorBase: moduleFloorBase(module),
                 });
             }
 
@@ -2463,8 +2507,8 @@ export function createKowloonFabricEngine({
                 moduleKey: module.key,
             };
 
-            const roofY = module.floors * floorH;
-            const roofRect = computeKowloonSlabRect(module, moduleByKey, module.floors, { roof: true });
+            const roofY = moduleRoofY;
+            const roofRect = computeKowloonSlabRect(module, moduleByKey, module.floors, { roof: true, floorAlignment: slabFloorAlignment });
             const localRoofAccess = [...fastRoofAccessByModuleSide.entries()]
                 .filter(([key]) => key.startsWith(`${module.key}:`))
                 .map(([key, value]) => ({ dirKey: key.slice(module.key.length + 1), ...value }));
@@ -2499,7 +2543,7 @@ export function createKowloonFabricEngine({
                     addRectPlatform(physics.platforms, roofRect.cx, roofRect.cz, roofRect.width, roofRect.depth, roofY, 'roof');
                     transforms.slabs.push({
                         x: roofRect.cx, y: roofY - 0.06, z: roofRect.cz,
-                        sx: roofRect.width, sy: 0.12, sz: roofRect.depth,
+                        sx: roofRect.width, sy: 0.12, sz: roofRect.depth, moduleKey: module.key, ceilingRoofSlab: ceilingAligned || undefined,
                     });
                 }
             }
@@ -2507,7 +2551,7 @@ export function createKowloonFabricEngine({
                 let exposed = module.edgeKinds[dir.key] !== 'internal';
                 if (!exposed) {
                     const neighbor = moduleByKey.get(kowloonCellKey(module.cell.col + dir.dc, module.cell.row + dir.dr));
-                    exposed = !neighbor || neighbor.floors < module.floors;
+                    exposed = ceilingAligned ? !neighbor : (!neighbor || neighbor.floors < module.floors);
                 }
                 if (exposed) addCompoundRoofParapetSide({
                     physics, transforms, wallList, rect: module.rect, roofY, side: dir.side,
@@ -2604,7 +2648,7 @@ export function createKowloonFabricEngine({
             courtyardCell: courtyard ? { col: courtyard.col, row: courtyard.row } : null,
             courtyardSuppressedForConnectivity,
             moduleCount: modulePlans.length,
-            footprintModules: modulePlans.map(module => ({ ...module.rect, floors: module.floors, key: module.key })),
+            footprintModules: modulePlans.map(module => ({ ...module.rect, floors: module.floors, floorBase: moduleFloorBase(module), key: module.key })),
             modularSetbacks: Math.max(0, new Set(floorCounts).size - 1) + Math.max(0, modulePlans.length - 1),
             floorConnectivityRepair,
             heightVariance: Math.max(...floorCounts) - Math.min(...floorCounts),
@@ -2869,13 +2913,25 @@ export function createKowloonFabricEngine({
         // floor can be reached laterally through same-site openings.
         let primaryModule = modulePlans.find(module => module.key === primaryKey) || modulePlans[0];
         for (const module of modulePlans) module.floors = Math.min(module.floors, primaryModule.floors);
-        // Every occupied upper-floor module must have a same-site lateral route to
-        // the persistent vertical spine. Raise only the deterministic shortest
-        // support chain needed to preserve requested/bridge-served upper floors.
-        const floorConnectivityRepair = normalizeModuleFloorConnectivity(modulePlans, primaryModule, bridgePortals);
+        const ceilingAlignedModules = structureProfile?.floorAlignment === 'ceiling';
+        // Ground compounds grow from floor zero upward, so their connectivity repair
+        // may raise a top plate. Ceiling compounds are the dual geometry: every module
+        // shares the same roof/base plane and variable depth is the silhouette. Do not
+        // erase that taper by raising short modules; only preserve explicit bridge floors.
+        const floorConnectivityRepair = ceilingAlignedModules
+            ? normalizeCeilingModuleFloorConnectivity(modulePlans, primaryModule, bridgePortals)
+            : normalizeModuleFloorConnectivity(modulePlans, primaryModule, bridgePortals);
+        const commonTopFloors = primaryModule.floors;
+        for (const module of modulePlans) module.floorBase = ceilingAlignedModules ? Math.max(0, commonTopFloors - module.floors) : 0;
         const moduleByKey = new Map(modulePlans.map(module => [module.key, module]));
+        if (ceilingAlignedModules) {
+            for (const portal of bridgePortals) {
+                const module = moduleByKey.get(portal.moduleKey);
+                if (module && Number.isFinite(Number(portal.floor))) portal.y = moduleFloorLocalY(module, Number(portal.floor), floorH);
+            }
+        }
 
-        if (GENERATION_LANES.broadStrokesOnly) {
+        if (GENERATION_LANES.broadStrokesOnly || ceilingAlignedModules) {
             return yield* buildBroadStrokesCompoundSteps({
                 chunk, site, siteIdOf, openSiteIds, topology, siteSignature, siteSeed, structureProfile,
                 physics, transforms, materialIndex, modulePlans, moduleByKey, primaryModule,
@@ -4131,6 +4187,15 @@ export function createKowloonFabricEngine({
         };
     }
 
+    function moduleFloorBase(module) { return Math.max(0, Math.floor(Number(module?.floorBase) || 0)); }
+    function moduleBaseLocalY(module, floorH) { return moduleFloorBase(module) * Number(floorH); }
+    function moduleFloorLocalY(module, floor, floorH) { return (moduleFloorBase(module) + Number(floor)) * Number(floorH); }
+    function moduleRoofLocalY(module, floorH) { return (moduleFloorBase(module) + Number(module?.floors || 0)) * Number(floorH); }
+    function moduleOccupiesGlobalFloor(module, globalFloor) {
+        const base = moduleFloorBase(module);
+        return Number(globalFloor) >= base && Number(globalFloor) < base + Number(module?.floors || 0);
+    }
+
     function createFabricBuffers() {
         return {
             transforms: { wallGroups: wallMats.map(() => []), slabs: [], steps: [], props: [], guardMetal: [], guardConcrete: [], roads: [], windows: [], doors: [] },
@@ -4232,57 +4297,33 @@ export function createKowloonFabricEngine({
         entity.ceilingRooted = true;
     }
 
-    function addCeilingRootMass({ entity, physics, transforms, localTopY }) {
-        const floorH = Number(entity?.floorH) || HANGING_CITY_FLOOR_HEIGHT;
-        let roots = 0;
-        for (const module of entity?.footprintModules ?? []) {
-            const moduleRoofY = Math.min(localTopY, Number(module.floors) * floorH);
-            const h = localTopY - moduleRoofY;
-            if (!(h > 0.08)) continue;
-            const sx = Math.max(0.2, Number(module.halfX) * 2);
-            const sz = Math.max(0.2, Number(module.halfZ) * 2);
-            transforms.props.push({
-                x: module.cx, y: moduleRoofY + h * 0.5, z: module.cz,
-                sx, sy: h, sz, ceilingRootMass: true,
-            });
-            const x0 = module.cx - module.halfX, x1 = module.cx + module.halfX;
-            const z0 = module.cz - module.halfZ, z1 = module.cz + module.halfZ;
-            physics.mazeWalls.push(
-                { x1: x0, z1: z0, x2: x1, z2: z0, yMin: moduleRoofY, yMax: localTopY, supportKind: 'ceiling-root-mass' },
-                { x1: x0, z1: z1, x2: x1, z2: z1, yMin: moduleRoofY, yMax: localTopY, supportKind: 'ceiling-root-mass' },
-                { x1: x0, z1: z0, x2: x0, z2: z1, yMin: moduleRoofY, yMax: localTopY, supportKind: 'ceiling-root-mass' },
-                { x1: x1, z1: z0, x2: x1, z2: z1, yMin: moduleRoofY, yMax: localTopY, supportKind: 'ceiling-root-mass' },
-            );
-            roots++;
-        }
-        entity.ceilingRootModules = roots;
-        return roots;
-    }
-
     function addInvertedLowEndRoof({ entity, transforms, stableKey }) {
         const modules = entity?.footprintModules ?? [];
         if (!modules.length) return { rims: 0, crown: 0 };
         const moduleKeys = new Set(modules.map(module => String(module.key)));
         let rims = 0;
+        const floorH = Number(entity?.floorH) || HANGING_CITY_FLOOR_HEIGHT;
         for (const module of modules) {
             const [col, row] = String(module.key).split(',').map(Number);
             const exposed = [
                 [col - 1, row], [col + 1, row], [col, row - 1], [col, row + 1],
             ].some(([c, r]) => !moduleKeys.has(`${c},${r}`));
             if (!exposed) continue;
+            const tipY = (Number(module.floorBase) || 0) * floorH;
             transforms.slabs.push({
-                x: module.cx, y: -0.10, z: module.cz,
+                x: module.cx, y: tipY - 0.10, z: module.cz,
                 sx: module.halfX * 2 + 0.18, sy: 0.20, sz: module.halfZ * 2 + 0.18,
-                invertedRoofRim: true,
+                invertedRoofRim: true, moduleKey: module.key,
             });
             rims++;
         }
         const primaryKey = entity.primaryCell ? `${entity.primaryCell.col},${entity.primaryCell.row}` : null;
         const primary = modules.find(module => module.key === primaryKey) ?? modules[0];
         const rng = mulberry32(hashString32(`${stableKey}:underside-roof`));
+        const primaryTipY = (Number(primary.floorBase) || 0) * floorH;
         const crownH = 0.55 + rng() * 0.58;
         transforms.props.push({
-            x: primary.cx, y: -0.20 - crownH * 0.5, z: primary.cz,
+            x: primary.cx, y: primaryTipY - 0.20 - crownH * 0.5, z: primary.cz,
             sx: Math.max(0.65, primary.halfX * (0.78 + rng() * 0.28)),
             sy: crownH,
             sz: Math.max(0.65, primary.halfZ * (0.78 + rng() * 0.28)),
@@ -4291,7 +4332,7 @@ export function createKowloonFabricEngine({
         if (rng() < 0.52) {
             const spireH = 0.65 + rng() * 0.70;
             transforms.props.push({
-                x: primary.cx, y: -0.20 - crownH - spireH * 0.5, z: primary.cz,
+                x: primary.cx, y: primaryTipY - 0.20 - crownH - spireH * 0.5, z: primary.cz,
                 sx: 0.12 + rng() * 0.10, sy: spireH, sz: 0.12 + rng() * 0.10,
                 invertedRoofSpire: true,
             });
@@ -4467,12 +4508,12 @@ export function createKowloonFabricEngine({
                     floorHeight: HANGING_CITY_FLOOR_HEIGHT,
                     entityIdOverride: worldEntityId(worldSeed, phaseChunk.x, phaseChunk.z, 'ceiling-building-plan', signature),
                     singularRecipe: 'ceiling-stalactite-building',
+                    floorAlignment: 'ceiling',
                 },
             });
             if (!structural) continue;
             const localTopY = structural.floors * structural.floorH;
             stripCeilingSideRoofIdentity(structural, local.transforms, local.physics);
-            addCeilingRootMass({ entity: structural, physics: local.physics, transforms: local.transforms, localTopY });
             addInvertedLowEndRoof({ entity: structural, transforms: local.transforms, stableKey: `${phaseChunk.key}:${signature}` });
             const baseY = HANGING_CITY_CEILING_Y - localTopY;
             translateFabricBuffersY(local, baseY);
@@ -4489,8 +4530,14 @@ export function createKowloonFabricEngine({
             };
             const sitePortals = bridgePortalsBySite.get(site.id) ?? [];
             translateSemanticY({ entity, sitePortals }, baseY);
-            entity.baseY = baseY; // baseY is a placement datum, not a local coordinate to translate twice.
+            entity.baseY = baseY; // common lowest-tip datum; per-module bases live on footprintModules.
             entity.ceilingY = HANGING_CITY_CEILING_Y;
+            entity.floorAlignment = 'ceiling';
+            entity.footprintModules = (entity.footprintModules ?? []).map(module => ({
+                ...module,
+                baseY: baseY + (Number(module.floorBase) || 0) * entity.floorH,
+                roofY: HANGING_CITY_CEILING_Y,
+            }));
             mergeFabricBuffers(aggregate, local);
             entities.push(entity); buildings++;
 

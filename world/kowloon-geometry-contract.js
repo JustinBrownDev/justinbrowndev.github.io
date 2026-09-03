@@ -60,12 +60,20 @@ export function computeKowloonModuleRect({ cellCx, cellCz, halfX, halfZ, edgeKin
     return { cx: (x0 + x1) * 0.5, cz: (z0 + z1) * 0.5, halfX: Math.max(0.3, (x1 - x0) * 0.5), halfZ: Math.max(0.3, (z1 - z0) * 0.5) };
 }
 
-export function computeKowloonSlabRect(module, moduleByKey, level, { roof = false, wallHalf = KOWLOON_WALL_HALF } = {}) {
+export function computeKowloonSlabRect(module, moduleByKey, level, { roof = false, wallHalf = KOWLOON_WALL_HALF, floorAlignment = 'ground' } = {}) {
     const insetFor = dir => {
         if (module.edgeKinds[dir.key] !== 'internal') return wallHalf;
         const neighbor = moduleByKey.get(`${module.cell.col + dir.dc},${module.cell.row + dir.dr}`);
         if (!neighbor) return wallHalf;
-        const seamOpen = roof ? neighbor.floors === module.floors : level < neighbor.floors;
+        let seamOpen;
+        if (floorAlignment === 'ceiling') {
+            if (roof) seamOpen = true;
+            else {
+                const globalLevel = (Number(module.floorBase) || 0) + Number(level);
+                const neighborBase = Number(neighbor.floorBase) || 0;
+                seamOpen = globalLevel >= neighborBase && globalLevel <= neighborBase + neighbor.floors;
+            }
+        } else seamOpen = roof ? neighbor.floors === module.floors : level < neighbor.floors;
         return seamOpen ? 0 : wallHalf;
     };
     const west = insetFor(DIRS[2]), east = insetFor(DIRS[3]), north = insetFor(DIRS[0]), south = insetFor(DIRS[1]);

@@ -178,7 +178,8 @@ function destinationTaskGroupKey(chunk, payload, task) {
     }
     const module = findModule(entity, task.moduleKey);
     if (!entity || !module) return `missing:${task.entityId}:${task.moduleKey}:${task.floor ?? 0}`;
-    const floor = Math.max(0, Math.min((module.floors || 1) - 1, task.floor || 0));
+    const floorBase = Math.max(0, Math.floor(Number(module.floorBase) || 0));
+    const floor = Math.max(floorBase, Math.min(floorBase + (module.floors || 1) - 1, Number(task.floor) || floorBase));
     const siteKey = entity.semanticSiteKey ?? entity.siteId ?? entity.id;
     return task.spaceId || semanticSpaceId(chunk.key, siteKey, module.key, floor);
 }
@@ -325,7 +326,8 @@ export function solveSemanticLayout({ chunk, payload, tasks, assetById } = {}) {
         const entity = findEntity(payload, task.entityId);
         const module = findModule(entity, task.moduleKey);
         if (!entity || !module) continue;
-        const floor = Math.max(0, Math.min((module.floors || 1) - 1, task.floor || 0));
+        const floorBase = Math.max(0, Math.floor(Number(module.floorBase) || 0));
+        const floor = Math.max(floorBase, Math.min(floorBase + (module.floors || 1) - 1, Number(task.floor) || floorBase));
         const siteKey = entity.semanticSiteKey ?? entity.siteId ?? entity.id;
         activeSpaceIds.add(task.spaceId || semanticSpaceId(chunk.key, siteKey, module.key, floor));
     }
@@ -356,7 +358,8 @@ export function solveSemanticLayout({ chunk, payload, tasks, assetById } = {}) {
                 continue;
             }
             const floorH = entity.floorH || 3.15;
-            const floor = Math.max(0, Math.min((module.floors || 1) - 1, task.floor || 0));
+            const floorBase = Math.max(0, Math.floor(Number(module.floorBase) || 0));
+            const floor = Math.max(floorBase, Math.min(floorBase + (module.floors || 1) - 1, Number(task.floor) || floorBase));
             const siteKey = entity.semanticSiteKey ?? entity.siteId ?? entity.id;
             const spaceId = task.spaceId || semanticSpaceId(chunk.key, siteKey, module.key, floor);
             const spacePlan = planById.get(spaceId);
@@ -371,7 +374,7 @@ export function solveSemanticLayout({ chunk, payload, tasks, assetById } = {}) {
                 graph: def.semanticGraph ?? null,
                 module,
                 spacePlan,
-                yBase: floor * floorH,
+                yBase: (Number(entity.baseY) || 0) + floor * floorH,
                 floorH,
                 seed: task.seed,
                 placements,

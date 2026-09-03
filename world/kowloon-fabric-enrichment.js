@@ -47,7 +47,11 @@ const IVY_COLORS = Object.freeze([0x394f32, 0x465a35, 0x2f4634, 0x52603b]);
 
 function facadePoint(entity, side, along = 0, y = 2, facadeIndex = null) {
     const facade = Number.isInteger(facadeIndex) ? entity.facades?.[facadeIndex] : null;
-    y += Number(entity?.baseY) || 0;
+    if (facade && Number.isFinite(Number(facade.yMin))) {
+        const yMin = Number(facade.yMin);
+        const yMax = Number.isFinite(Number(facade.yMax)) ? Number(facade.yMax) : yMin + Math.max(0.5, Number(entity?.floorH) || 3.15);
+        y = yMin + clamp(Number(y) || 0, 0.12, Math.max(0.12, yMax - yMin - 0.12));
+    } else y += Number(entity?.baseY) || 0;
     const x0 = facade?.x ?? entity.x;
     const z0 = facade?.z ?? entity.z;
     const halfX = facade?.halfX ?? entity.halfX ?? 2;
@@ -573,7 +577,10 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
         const legacy = [];
         for (const module of modules) {
             const maxFloor = Math.max(1, Math.min(6, module.floors || 1));
-            for (let floor = 0; floor < maxFloor; floor++) legacy.push({ module, floor, spaceId: null, program: null, role: null, spaceType: null });
+            const floorBase = Math.max(0, Math.floor(Number(module.floorBase) || 0));
+            for (let localFloor = 0; localFloor < maxFloor; localFloor++) {
+                legacy.push({ module, floor: floorBase + localFloor, spaceId: null, program: null, role: null, spaceType: null });
+            }
         }
         return legacy;
     }
@@ -1364,7 +1371,9 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
         const module = entity.footprintModules?.find(candidate => candidate.key === primaryKey) ?? entity.footprintModules?.[0];
         const baseY = Number(entity?.baseY) || 0;
         if (!module) return { x: entity.x, z: entity.z, halfX: entity.halfX ?? 2, halfZ: entity.halfZ ?? 2, y: baseY + (entity.floors || 1) * (entity.floorH || 3.15) };
-        return { x: module.cx, z: module.cz, halfX: module.halfX, halfZ: module.halfZ, y: baseY + module.floors * (entity.floorH || 3.15) };
+        const moduleBaseY = Number.isFinite(Number(module.baseY)) ? Number(module.baseY) : baseY + (Number(module.floorBase) || 0) * (entity.floorH || 3.15);
+        const moduleRoofY = Number.isFinite(Number(module.roofY)) ? Number(module.roofY) : moduleBaseY + module.floors * (entity.floorH || 3.15);
+        return { x: module.cx, z: module.cz, halfX: module.halfX, halfZ: module.halfZ, y: moduleRoofY };
     }
 
         function createRoofClutter(payload, task) {

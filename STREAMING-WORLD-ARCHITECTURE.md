@@ -207,9 +207,21 @@ The macro geometry is intentionally simple and must stay legible underneath proc
 - The nominal plane separation is **34.02 m**, exactly 60% of the Cut 15 56.7 m separation. Do not manufacture richness by deforming either macro plane.
 - Ground architecture grows upward. Ceiling architecture grows downward. **Growth direction is not gravity direction**: the player, camera, furniture, doors, rooms, stairs and props all remain in the one ordinary world-down gravity frame.
 - The ceiling city is not a registered mirror of the ground city. It samples the **same deterministic infinite generator and world seed at one fixed far-away chunk phase** and rebases that sampled topology over the visible chunk. Neighboring ceiling chunks sample neighboring remote chunks so roads and compounds stay continuous without visibly repeating the lower topology.
-- Ceiling compounds remain ordinary upright buildings internally. Each compound is translated rigidly so its highest ordinary roof datum meets the white macro-roof. Shorter modules keep aligned floors; uninhabited root mass fills from their stepped roofs upward into the flat white plane.
+- Ceiling compounds remain ordinary upright buildings internally. Their modules are top-aligned to the white macro-roof: every module roof shares the same ceiling datum, while each module keeps its own story depth and therefore terminates independently downward. No filler/root column is permitted merely to bridge a short module to the roof.
 - The exposed low end of a ceiling compound receives a downward-facing roof/crown vocabulary. This is a boundary treatment, not a second inverted building engine.
 - Opposing city fields reconcile **architectural claim volumes before realization**. Claims include conservative horizontal growth allowance and underside/crown reserve; a ceiling building is height-budgeted or omitted before geometry exists. Do not clip two finished buildings after collision.
 - Ladders are a preferred vertical stitch through near-miss gaps. Ordinary stairs remain ordinary stairs.
 - Structural color is a world-height composition: black near the lower plane, strongest color/visual density through the middle band, and white near the upper plane. This should preserve batching and must not require macro terrain deformation.
 - The visual throughline is therefore: **simple computational macro geometry -> increasingly organic architectural generation -> granular authored/procedural detail**. The planes remain geometric; the mess comes from what grows off them.
+
+## Ceiling module anchoring refinement — Cut 17
+
+Cut 16 established the two-plane cavern but rooted a multi-module ceiling compound by translating the whole compound to the roof and filling the shorter module gaps. That produced broad gray root columns and erased the intended stalactite taper. Cut 17 replaces that approximation with **top-aligned module bands**:
+
+- Every module in a ceiling compound owns its original story count. Its `floorBase` is `compoundMaxFloors - moduleFloors`, so every module roof lands on the same white plane while short modules terminate sooner downward.
+- The fused compound is still translated once as one architectural owner; the per-module floor bases are part of the structural plan before shell realization, not a post-render mesh shift.
+- Shared internal faces are evaluated in global/top-aligned floor bands. A short wing's local floor 0 therefore aligns with the corresponding upper floor of a taller neighbor instead of the taller neighbor's local floor 0.
+- Ceiling compounds do **not** grow filler/root columns between a short module roof and the white plane. The white plane is the base datum itself; breadth is greatest there and the occupied mass tapers downward.
+- The primary/tall module remains the Building Plan interior spine for this refinement. Side modules fuse through their overlapping structural floor bands; expanding the room allocator to multi-base modules is a separate authority change and must not weaken raster closure invariants.
+- Every module's exposed low-end floor-0 slab publishes a `ceiling-building-tip` physics platform with zero support forgiveness. A rendered hanging tip may never be visual-only collision.
+- Ordinary upward rooftop clutter/topper/antenna tasks stay suppressed on `ceilingRooted` entities. The only skyline treatment on the exposed end is the deliberately downward-facing low-end roof/crown vocabulary.

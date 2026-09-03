@@ -7,7 +7,9 @@ const main = fs.readFileSync(new URL('../main.js', import.meta.url), 'utf8');
 assert.match(engine, /ceilingSourceCoordinates/);
 assert.match(engine, /planCeilingBuildingHeight/);
 assert.match(engine, /buildCeilingCityLayerSteps/);
-assert.match(engine, /ceilingRootMass/);
+assert.match(engine, /floorAlignment:\s*'ceiling'/);
+assert.match(engine, /ceiling-building-tip/);
+assert.doesNotMatch(engine, /ceilingRootMass/);
 assert.match(engine, /invertedLowEndRoof/);
 assert.match(engine, /addCavernLadder/);
 assert.match(engine, /ceilingMat/);
@@ -23,5 +25,5 @@ assert.doesNotMatch(main, /verticalPolarity === -1/);
 assert.match(main, /authoredCeilingOverlayComplete/);
 
 console.log('[hanging-city-engine-contract-selftest] PASS', {
-  invariant: 'two flat planes + independent phase-sampled ceiling topology + ordinary gravity + ceiling-rooted upright compounds',
+  invariant: 'two flat planes + independent phase-sampled ceiling topology + ordinary gravity + top-aligned fused ceiling modules',
 });

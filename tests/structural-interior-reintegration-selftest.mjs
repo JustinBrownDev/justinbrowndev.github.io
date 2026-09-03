@@ -121,8 +121,10 @@ assert.match(engineSource, /roofIntersectsInteriorCore[\s\S]*addNotchedFloor/,
   'the persistent interior core must own a real roof opening');
 assert.doesNotMatch(facadeSource, /facadeRole: 'inhabited-window'/,
   'ordinary inhabited window glass planes must stay deleted');
-assert.match(facadeSource, /facadeRole: 'storefront-glazing'/,
-  'storefront glazing remains an independent facade material decision');
+assert.match(facadeSource, /storefront-aperture/,
+  'storefront frontage must remain a real carved facade aperture');
+assert.doesNotMatch(facadeSource, /facadeRole: 'storefront-glazing'/,
+  'storefront wall cut must stay physically empty; no glazing plane may refill it');
 
 console.log('[structural-interior-reintegration-selftest] PASS', {
   buildingsSeen,
@@ -131,5 +133,5 @@ console.log('[structural-interior-reintegration-selftest] PASS', {
   partitionWallsSeen,
   coreRampsSeen,
   realRoomExteriorDemandsSeen,
-  invariant: 'Building Plan occupancy -> structural partitions/core -> circulation-owned exterior door; inhabited windows are literal apertures',
+  invariant: 'Building Plan occupancy -> structural partitions/core -> circulation-owned exterior door; inhabited windows and storefronts are literal apertures',
 });

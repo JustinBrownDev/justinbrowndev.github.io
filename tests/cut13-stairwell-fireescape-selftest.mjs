@@ -41,6 +41,10 @@ assert.ok(core.guardMouthClearance >= 0.22, 'rail collision must terminate befor
 const openingCross = core.axis === 'x' ? core.opening.sz : core.opening.sx;
 assert.ok(openingCross + 1e-9 >= core.flightCrossSpan + core.sideCapsuleClearance * 2,
   'visible slab opening must contain both flights plus capsule clearance outside their rails');
+assert.equal(core.floorLandingIntegrated, true, 'story floor must own the low-side landing');
+assert.ok(core.slabOpening, 'core must publish shaft-only slab opening separately from full clearance');
+assert.ok(core.metrics.slabOpeningAlong < core.metrics.openingAlong,
+  'floor landing remains solid floor, so slab hole must be shorter than full clearance envelope');
 
 const highStoryCore = planInteriorSwitchbackStairCore({
   rect: { cx: 0, cz: 0, halfX: 3.435, halfZ: 3.435 },
@@ -92,6 +96,29 @@ assert.equal(runtimeEnvelopeCore.segmentFlight.fitClassification, 'fits-resolved
 assert.ok(runtimeEnvelopeCore.opening.sx <= 5.4 + 1e-9 && runtimeEnvelopeCore.opening.sz <= 5.4 + 1e-9,
   'adaptive core must fit the actual host bay rather than merely suppressing the no-fit error');
 
+const narrowRuntimeCore = planInteriorSwitchbackStairCore({
+  // This is narrower than the R3 8-flight ceiling could accept. Preserve every
+  // public-stair truth value and add switchback pairs instead of rejecting the site.
+  rect: { cx: 0, cz: 0, halfX: 2.30, halfZ: 2.30 },
+  floorH: 5.8,
+  physicalTruth: {
+    stair: {
+      widthSI: 1.36, landingDepthSI: 1.70, headroomSI: 2.10,
+      riser: { realizedSI: 0.15 }, tread: { realizedSI: 0.34, sourceMinimum: { canonicalSI: 0.25 } },
+    },
+  },
+  traversalEnvelope: { playerRadius: 0.22 },
+  stableKey: 'cut14-narrow-runtime-envelope-core',
+});
+assert.ok(narrowRuntimeCore, 'narrow runtime bay must adapt beyond eight flights rather than aborting generation');
+assert.ok(narrowRuntimeCore.flightCount > 8 && narrowRuntimeCore.flightCount % 2 === 0,
+  `narrow bay should use an even >8-flight fallback, got ${narrowRuntimeCore.flightCount}`);
+assert.equal(narrowRuntimeCore.segmentFlight.fitClassification, 'fits-resolved-truth');
+assert.equal(narrowRuntimeCore.flights.at(-1).to, narrowRuntimeCore.lowMouth,
+  'extended fallback must still return to the same stacked floor-landing side');
+assert.ok(narrowRuntimeCore.opening.sx <= 4.6 + 1e-9 && narrowRuntimeCore.opening.sz <= 4.6 + 1e-9,
+  'extended switchback must fit the narrow host without shrinking truth');
+
 const facadePlan = planFastFacadeArchitecture({
   stableKey: 'facade-unit', floorH: 3.2,
   faces: [{ moduleKey: 'm1', dirKey: 'E', side: 'east', floors: 3,
@@ -110,6 +137,11 @@ assert.match(engine, /blocksFromBelow:\s*false/, 'stair landings must support fe
 assert.match(engine, /core\.intermediateLandings/, 'physical stair emission must realize every intermediate turn landing');
 assert.match(engine, /core\.segmentFlight/, 'physical stair emission must use the selected adaptive even-flight segment truth');
 assert.match(engine, /guardMouthClearance/, 'flight rails must leave capsule-sized landing mouths');
+assert.match(engine, /primaryStairCore\.slabOpening/, 'floor/roof cuts must use the shaft-only slab opening');
+assert.doesNotMatch(engine, /addLanding\(core\.floorLanding, y0/,
+  'story landing may not be re-added as a floating slab after the floor is cut');
+assert.match(engine, /treadVisualBudget:\s*GENERATION_LANES\.broadStrokesOnly \? 3 : Infinity/,
+  'skeleton first paint must cap eager interior stair tread visuals while preserving ramp physics');
 assert.doesNotMatch(engine, /consumeScaffoldForModule\(face\);/,
   'generic exterior street trunk may not delete an independently valid fire escape');
 assert.match(engine, /scaffoldOwnsFace/, 'fire escape keeps its facade while generic transport chooses elsewhere');
@@ -140,8 +172,10 @@ console.log('[cut13-stairwell-fireescape-selftest] PASS', {
   tallFlightCount: highStoryCore.flightCount,
   runtimeEnvelopeTopology: runtimeEnvelopeCore.topology,
   runtimeEnvelopeFlightCount: runtimeEnvelopeCore.flightCount,
+  narrowRuntimeTopology: narrowRuntimeCore.topology,
+  narrowRuntimeFlightCount: narrowRuntimeCore.flightCount,
   floorLandingDepth: core.floorLandingDepth,
   turnLandingDepth: core.midLandingDepth,
   capsuleSideClearance: core.sideCapsuleClearance,
-  invariant: 'adaptive 2/4/6/8-flight switchback + capsule-safe shaft + empty storefront hole + independent fire escape authority',
+  invariant: 'adaptive switchback + floor-integrated landings + bounded skeleton tread visuals + independent fire escape authority',
 });

@@ -1,3 +1,5 @@
+import { chooseVolumetricCompoundTargetSize } from './building-scale-policy.js';
+
 // Shared structural grammar for both the authored origin and streamed infinity.
 //
 // ONE STRUCTURAL LANGUAGE. Spawn, singular landmark shells, recurring district
@@ -202,31 +204,7 @@ export function classifyKowloonEdge({
 export function chooseKowloonCompoundTargetSize(rng, weirdness = 0) {
     if (typeof rng !== 'function') throw new Error('chooseKowloonCompoundTargetSize requires rng');
     const intensity = kowloonIntensity(weirdness);
-    // Dense fabric is the baseline now. Prefer multi-cell compounds so vertical
-    // setbacks, intermediate roofs, overhang rooms, scaffolds, and bridges have
-    // enough neighboring mass to form an occupied section instead of isolated boxes.
-    // Human-scale interior programs need real floor plate, not a one-cell box
-    // subdivided until every room and stair is compromised. Keep the alley grid
-    // unchanged, but let each building accrete more of the solid cells between
-    // those alleys. Single-module buildings are now an edge-case fallback.
-    // Real buildings need enough connected footprint to support rooms, corridors,
-    // cores, and vertical setbacks at the same time. Five cells is now the normal
-    // lower bound; constrained partition leftovers may still be smaller when the
-    // alley topology genuinely leaves no connected cells to claim.
-    const base = [
-        [5, 8], [6, 18], [7, 24], [8, 22], [9, 16], [10, 8], [11, 3], [12, 1],
-    ];
-    const adjusted = base.map(([size, weight]) => {
-        const bonus = size >= 7 ? intensity.siteTargetBonus * (size - 5) * 3.0 : 0;
-        return [size, weight + bonus];
-    });
-    const total = adjusted.reduce((sum, [, weight]) => sum + weight, 0);
-    let roll = rng() * total;
-    for (const [size, weight] of adjusted) {
-        roll -= weight;
-        if (roll <= 0) return size;
-    }
-    return adjusted[adjusted.length - 1][0];
+    return chooseVolumetricCompoundTargetSize(rng, { siteTargetBonus: intensity.siteTargetBonus });
 }
 
 export function kowloonIntensity(weirdness = 0) {

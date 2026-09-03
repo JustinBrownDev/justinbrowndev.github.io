@@ -7,7 +7,7 @@ import { assertBuildingPlanAuthority, promoteBuildingPlanAuthority } from '../wo
 for (const weirdness of [0, 0.5, 1]) {
   for (const roll of [0, 0.01, 0.15, 0.4, 0.7, 0.95, 0.999999]) {
     const target = chooseKowloonCompoundTargetSize(() => roll, weirdness);
-    assert.ok(target >= 5 && target <= 12, `compound target escaped 5..12: ${target}`);
+    assert.ok(target >= 20 && target <= 48, `compound target escaped 4x 20..48 range: ${target}`);
   }
 }
 
@@ -112,7 +112,7 @@ assert.equal(assertBuildingPlanAuthority(promoted), true,
   'large hallway/occupancy tower must promote cleanly to Building Plan authority');
 
 console.log('[cut13-building-floorplates-robustness-selftest] PASS', {
-  compoundTargets: '5..12',
+  compoundTargets: '20..48 (4x prior target volume)',
   tallTowerPlate: '4-5 connected modules',
   upperOccupancies: occupancies.length,
   hallwayCells: hallway.cellCount,

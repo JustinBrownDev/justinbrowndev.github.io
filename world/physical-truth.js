@@ -367,8 +367,19 @@ export function deriveStairFlight({ rise, truth, stableKey = '', availableRun = 
     const requiredRun = Math.max(0, (riserCount - 1) * nominalTread);
     const finiteRun = Number.isFinite(availableRun) && availableRun >= 0 ? availableRun : requiredRun;
     const realizedTread = riserCount > 1 ? finiteRun / (riserCount - 1) : 0;
-    const minTread = truth.stair.tread.sourceMinimum ? si(truth.stair.tread.sourceMinimum) : null;
-    const runOutside = minTread != null && realizedTread + 1e-9 < minTread;
+    const sourceMinimumTread = truth.stair.tread.sourceMinimum ? si(truth.stair.tread.sourceMinimum) : null;
+    // Preserve the existing source-minimum compression behavior for ordinary
+    // stairs, but never let that source minimum invalidate a deliberately weird
+    // resolved truth that is already below it. Geometry must satisfy whichever
+    // admissible tread floor is lower: resolved truth or the source minimum.
+    const geometryMinimumTread = sourceMinimumTread == null
+        ? null
+        : Math.min(nominalTread, sourceMinimumTread);
+    const runOutsideResolvedTruth = geometryMinimumTread != null
+        && riserCount > 1
+        && realizedTread + 1e-9 < geometryMinimumTread;
+    const resolvedTruthOutsideSourceMinimum = sourceMinimumTread != null
+        && nominalTread + 1e-9 < sourceMinimumTread;
     return Object.freeze({
         schema: 'jweb.stair-flight.v1',
         stableKey: String(stableKey),
@@ -383,7 +394,14 @@ export function deriveStairFlight({ rise, truth, stableKey = '', availableRun = 
         clearWidth: truth.stair.widthSI,
         landingDepth: truth.stair.landingDepthSI,
         headroom: truth.stair.headroomSI,
-        fitClassification: runOutside ? 'geometry-fit-outside-truth' : 'fits-resolved-truth',
+        fitClassification: runOutsideResolvedTruth ? 'geometry-fit-outside-truth' : 'fits-resolved-truth',
+        baselineClassification: resolvedTruthOutsideSourceMinimum
+            ? 'resolved-truth-outside-source-minimum'
+            : 'resolved-truth-within-source-minimum',
+        fitThresholdTreadDepth: geometryMinimumTread,
+        fitThresholdBasis: resolvedTruthOutsideSourceMinimum
+            ? 'resolved-truth'
+            : (sourceMinimumTread == null ? 'unconstrained-source' : 'source-minimum'),
         physicalTruth: truth,
     });
 }

@@ -75,6 +75,12 @@ function candidateForAxis({ axis, rect, floorH, truth, playerRadius, stableKey, 
   const floorLanding = orientedRect(axis, openingLow + floorLandingDepth * 0.5, crossCenter, floorLandingDepth, landingCross);
   const turnLanding = orientedRect(axis, highMouth + turnLandingDepth * 0.5, crossCenter, turnLandingDepth, landingCross);
   const opening = orientedRect(axis, alongCenter, crossCenter, openingAlong, openingCross);
+  // The story floor itself owns the low-side landing. Only the vertical throat
+  // beyond that landing is cut out of the slab. This makes stair arrival a
+  // continuous floor surface instead of a floating landing slab touching the
+  // floor at one mathematical edge.
+  const slabOpeningAlong = openingHigh - lowMouth;
+  const slabOpening = orientedRect(axis, (lowMouth + openingHigh) * 0.5, crossCenter, slabOpeningAlong, openingCross);
   const guardMouthClearance = Math.min(0.34, Math.max(0.22, playerRadius + 0.05));
   const lowBackGuard = backGuardForLanding({ axis, outerAlong: openingLow, crossCenter, crossSize: landingCross });
   const highBackGuard = backGuardForLanding({ axis, outerAlong: openingHigh, crossCenter, crossSize: landingCross });
@@ -110,7 +116,8 @@ function candidateForAxis({ axis, rect, floorH, truth, playerRadius, stableKey, 
     schema: INTERIOR_STAIR_CORE_SCHEMA,
     topology: flightCount === 2 ? 'two-flight-switchback'
       : flightCount === 4 ? 'four-flight-switchback'
-        : flightCount === 6 ? 'six-flight-switchback' : 'eight-flight-switchback',
+        : flightCount === 6 ? 'six-flight-switchback'
+          : flightCount === 8 ? 'eight-flight-switchback' : `${flightCount}-flight-switchback`,
     fitTier: tier,
     flightCount,
     axis,
@@ -124,7 +131,9 @@ function candidateForAxis({ axis, rect, floorH, truth, playerRadius, stableKey, 
     midLandingDepth: turnLandingDepth,
     turnLandingDepth,
     opening,
+    slabOpening,
     floorLanding,
+    floorLandingIntegrated: true,
     midLanding: turnLanding,
     turnLanding,
     lowMouth,
@@ -142,6 +151,7 @@ function candidateForAxis({ axis, rect, floorH, truth, playerRadius, stableKey, 
       availableCross,
       openingAlong,
       openingCross,
+      slabOpeningAlong,
       run,
       playerRadius,
     }),
@@ -167,7 +177,7 @@ export function planInteriorSwitchbackStairCore({
   // add switchback pairs before considering the building invalid. All candidates
   // use an even flight count, so every story finishes on the same floor-landing
   // side and the stairwell stacks continuously story to story.
-  for (const flightCount of [2, 4, 6, 8]) {
+  for (const flightCount of [2, 4, 6, 8, 10, 12, 14, 16]) {
     for (const tier of ['generous', 'compact']) {
       const candidates = axes
         .map(axis => candidateForAxis({

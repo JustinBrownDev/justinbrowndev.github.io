@@ -19,6 +19,17 @@ import {
     planCeilingBuildingHeight,
 } from './world/hanging-city-topology.js';
 import { reconcileCavernFloorBudgets } from './world/cavern-joint-synthesis.js';
+import {
+    CAVERN_LADDER_APERTURE_DEPTH,
+    CAVERN_LADDER_APERTURE_WIDTH,
+    CAVERN_LADDER_SCHEMA,
+    planCavernLadderCandidates,
+    splitRectAroundAperture,
+} from './world/cavern-ladder-circulation.js';
+import {
+    CAVERN_WALL_STAIR_SCHEMA,
+    planCavernWallStairCandidates,
+} from './world/cavern-wall-stair-circulation.js';
 import { classifyPhysicalUse } from './world/physical-use.js';
 import { deriveStairFlight, gameplayTraversalEnvelope, resolvePhysicalTruth } from './world/physical-truth.js';
 import { BUILDING_SLAB_THICKNESS, storyCeilingLocalY } from './world/interior-geometry-policy.js';
@@ -4224,6 +4235,25 @@ export function createKowloonFabricEngine({
         return value;
     }
 
+    function shiftedSemanticClone(value, dy, seen = new Map()) {
+        if (!value || typeof value !== 'object') return value;
+        if (seen.has(value)) return seen.get(value);
+        if (Array.isArray(value)) {
+            const out = [];
+            seen.set(value, out);
+            for (const item of value) out.push(shiftedSemanticClone(item, dy, seen));
+            return Object.isFrozen(value) ? Object.freeze(out) : out;
+        }
+        const out = {};
+        seen.set(value, out);
+        for (const [key, child] of Object.entries(value)) {
+            out[key] = CEILING_Y_KEYS.has(key) && Number.isFinite(child)
+                ? Number(child) + dy
+                : shiftedSemanticClone(child, dy, seen);
+        }
+        return Object.isFrozen(value) ? Object.freeze(out) : out;
+    }
+
     function translateFabricBuffersY(buffers, dy) {
         const { transforms, physics } = buffers;
         for (const list of [...(transforms.wallGroups ?? []), transforms.slabs, transforms.steps, transforms.props,
@@ -4246,9 +4276,14 @@ export function createKowloonFabricEngine({
             if (Number.isFinite(item?.yMax)) item.yMax += dy;
         }
         const seen = new WeakSet();
-        for (const list of [physics.guardSpans, physics.circulationReservations, physics.semanticConnectors,
-            physics.exteriorTransportSurfaces, physics.scaffoldCirculationRoutes]) {
+        for (const list of [physics.guardSpans, physics.circulationReservations, physics.semanticConnectors]) {
             translateSemanticY(list, dy, seen);
+        }
+        // Transport surfaces and scaffold route plans are frozen authority records.
+        // Rebase them by replacement so their metadata remains in the same world-Y
+        // frame as the geometry/platforms they describe.
+        for (const key of ['exteriorTransportSurfaces', 'scaffoldCirculationRoutes']) {
+            if (Array.isArray(physics[key])) physics[key] = shiftedSemanticClone(physics[key], dy);
         }
         return buffers;
     }
@@ -4303,26 +4338,40 @@ export function createKowloonFabricEngine({
 
     function addInvertedLowEndRoof({ entity, transforms, stableKey }) {
         const modules = entity?.footprintModules ?? [];
-        if (!modules.length) return { rims: 0, crown: 0 };
-        const moduleKeys = new Set(modules.map(module => String(module.key)));
-        let rims = 0;
+        if (!modules.length) return { edgeBands: 0, crown: 0 };
+        const moduleByKey = new Map(modules.map(module => [String(module.key), module]));
         const floorH = Number(entity?.floorH) || HANGING_CITY_FLOOR_HEIGHT;
+        const trimT = 0.14;
+        const trimH = 0.14;
+        const overhang = 0.08;
+        let edgeBands = 0;
         for (const module of modules) {
             const [col, row] = String(module.key).split(',').map(Number);
-            const exposed = [
-                [col - 1, row], [col + 1, row], [col, row - 1], [col, row + 1],
-            ].some(([c, r]) => !moduleKeys.has(`${c},${r}`));
-            if (!exposed) continue;
-            const tipY = (Number(module.floorBase) || 0) * floorH;
-            transforms.slabs.push({
-                x: module.cx, y: tipY - 0.10, z: module.cz,
-                sx: module.halfX * 2 + 0.18, sy: 0.20, sz: module.halfZ * 2 + 0.18,
-                invertedRoofRim: true, moduleKey: module.key,
-            });
-            rims++;
+            const tipFloor = Math.max(0, Number(module.floorBase) || 0);
+            const tipY = tipFloor * floorH;
+            for (const dir of [
+                { key: 'north', dc: 0, dr: -1 }, { key: 'south', dc: 0, dr: 1 },
+                { key: 'west', dc: -1, dr: 0 }, { key: 'east', dc: 1, dr: 0 },
+            ]) {
+                const neighbor = moduleByKey.get(`${col + dir.dc},${row + dir.dr}`);
+                const exposedAtTip = !neighbor || !moduleOccupiesGlobalFloor(neighbor, tipFloor);
+                if (!exposedAtTip) continue;
+                const northSouth = dir.key === 'north' || dir.key === 'south';
+                const sign = dir.key === 'north' || dir.key === 'west' ? -1 : 1;
+                transforms.props.push({
+                    x: module.cx + (northSouth ? 0 : sign * (module.halfX + trimT * 0.5)),
+                    y: tipY - trimH * 0.5,
+                    z: module.cz + (northSouth ? sign * (module.halfZ + trimT * 0.5) : 0),
+                    sx: northSouth ? module.halfX * 2 + overhang * 2 : trimT,
+                    sy: trimH,
+                    sz: northSouth ? trimT : module.halfZ * 2 + overhang * 2,
+                    invertedRoofEdge: true, moduleKey: module.key, side: dir.key,
+                });
+                edgeBands++;
+            }
         }
         const primaryKey = entity.primaryCell ? `${entity.primaryCell.col},${entity.primaryCell.row}` : null;
-        const primary = modules.find(module => module.key === primaryKey) ?? modules[0];
+        const primary = modules.find(module => String(module.key) === primaryKey) ?? modules[0];
         const rng = mulberry32(hashString32(`${stableKey}:underside-roof`));
         const primaryTipY = (Number(primary.floorBase) || 0) * floorH;
         const crownH = 0.55 + rng() * 0.58;
@@ -4342,23 +4391,303 @@ export function createKowloonFabricEngine({
             });
         }
         entity.invertedLowEndRoof = true;
-        return { rims, crown: 1 };
+        entity.invertedLowEndRoofEdgeBands = edgeBands;
+        return { edgeBands, crown: 1 };
     }
 
-    function addCavernLadder({ id, x, z, y0, y1, physics, transforms }) {
-        if (!(Number.isFinite(y0) && Number.isFinite(y1) && y1 > y0 + 0.42)) return 0;
+    function pointNearMazeWall(wall, x, z, halfX, halfZ, yMin, yMax) {
+        const wy0 = Number.isFinite(wall?.yMin) ? wall.yMin : -Infinity;
+        const wy1 = Number.isFinite(wall?.yMax) ? wall.yMax : Infinity;
+        if (!(yMin < wy1 && yMax > wy0)) return false;
+        const minX = Math.min(Number(wall?.x1) || 0, Number(wall?.x2) || 0) - halfX - 0.12;
+        const maxX = Math.max(Number(wall?.x1) || 0, Number(wall?.x2) || 0) + halfX + 0.12;
+        const minZ = Math.min(Number(wall?.z1) || 0, Number(wall?.z2) || 0) - halfZ - 0.12;
+        const maxZ = Math.max(Number(wall?.z1) || 0, Number(wall?.z2) || 0) + halfZ + 0.12;
+        return x >= minX && x <= maxX && z >= minZ && z <= maxZ;
+    }
+
+    function carveCavernLadderMouth({ id, moduleKey, x, z, y, apertureWidth, apertureDepth, physics, transforms }) {
+        const aperture = { x, z, width: apertureWidth, depth: apertureDepth };
+        let carvedPlatforms = 0;
+        const rebuiltPlatforms = [];
+        for (const platform of physics.platforms ?? []) {
+            const target = platform?.supportKind === 'ceiling-building-tip'
+                && String(platform?.moduleKey) === String(moduleKey)
+                && Math.abs(Number(platform?.y) - y) < 0.16;
+            if (!target) { rebuiltPlatforms.push(platform); continue; }
+            const pieces = splitRectAroundAperture({ x: platform.x, z: platform.z, halfX: platform.hx, halfZ: platform.hz }, aperture);
+            if (!pieces) { rebuiltPlatforms.push(platform); continue; }
+            for (const piece of pieces) rebuiltPlatforms.push({
+                ...platform, x: piece.x, z: piece.z, hx: piece.halfX, hz: piece.halfZ,
+                supportMargin: 0, ladderApertureId: id,
+            });
+            carvedPlatforms++;
+        }
+        physics.platforms.splice(0, physics.platforms.length, ...rebuiltPlatforms);
+
+        let carvedSlabs = 0;
+        const rebuiltSlabs = [];
+        for (const slab of transforms.slabs ?? []) {
+            const slabBottom = Number(slab?.y) - (Number(slab?.sy) || 0) * 0.5;
+            const slabTop = Number(slab?.y) + (Number(slab?.sy) || 0) * 0.5;
+            const target = slab?.ceilingTipSlab === true
+                && String(slab?.moduleKey) === String(moduleKey)
+                && y >= slabBottom - 0.03 && y <= slabTop + 0.03;
+            if (!target) { rebuiltSlabs.push(slab); continue; }
+            const pieces = splitRectAroundAperture({ x: slab.x, z: slab.z, halfX: slab.sx * 0.5, halfZ: slab.sz * 0.5 }, aperture);
+            if (!pieces) { rebuiltSlabs.push(slab); continue; }
+            for (const piece of pieces) rebuiltSlabs.push({
+                ...slab, x: piece.x, z: piece.z, sx: piece.halfX * 2, sz: piece.halfZ * 2,
+                ladderApertureId: id,
+            });
+            carvedSlabs++;
+        }
+        transforms.slabs.splice(0, transforms.slabs.length, ...rebuiltSlabs);
+        return { carvedPlatforms, carvedSlabs };
+    }
+
+    function addCavernLadder({ route, physics, transforms }) {
+        const { id, x, z, y0, y1, apertureWidth, apertureDepth } = route;
+        if (!(Number.isFinite(y0) && Number.isFinite(y1) && y1 > y0 + 0.42)) return null;
+        const halfWidth = Math.min(0.38, apertureWidth * 0.32);
         const rungGap = 0.42;
         const rungCount = Math.max(2, Math.ceil((y1 - y0) / rungGap));
-        const halfWidth = 0.34;
+        const reservation = createBoxCirculationReservation({
+            id: `${id}:shaft`, kind: 'cavern-ladder-shaft', x, z,
+            halfX: apertureWidth * 0.5, halfZ: apertureDepth * 0.5,
+            yMin: y0, yMax: y1 + traversalEnvelope.bodyHeight,
+            source: 'cavern-cross-level-circulation',
+            metadata: { connectorId: id, ceilingModuleKey: route.ceilingModuleKey, groundModuleKey: route.groundModuleKey },
+        });
+        physics.circulationReservations.push(reservation);
+        physics.semanticConnectors.push({
+            schema: 'jweb.semantic-connector.v1', id, kind: 'ladder', source: 'cavern-cross-level-circulation',
+            visualRole: 'cavern-ladder',
+            endpoints: [
+                { id: `${id}:lower`, x, y: y0, z },
+                { id: `${id}:upper`, x, y: y1, z },
+            ],
+            aperture: { width: apertureWidth, height: y1 - y0, depth: apertureDepth },
+            sweep: { type: 'ladder', x, z, y0, y1, width: apertureWidth, depth: apertureDepth },
+            reservations: [reservation],
+            metadata: { schema: CAVERN_LADDER_SCHEMA, ceilingModuleKey: route.ceilingModuleKey, groundModuleKey: route.groundModuleKey },
+        });
         for (let i = 1; i <= rungCount; i++) {
             const y = y0 + (y1 - y0) * (i / rungCount);
             physics.platforms.push({ x, z, hx: halfWidth, hz: 0.18, y, blocksFromBelow: false, supportKind: 'ladder', supportMargin: 0, ladderId: id });
             transforms.props.push({ x, y, z, sx: halfWidth * 1.8, sy: 0.055, sz: 0.075, ladderId: id });
         }
         for (const railX of [x - halfWidth * 0.82, x + halfWidth * 0.82]) transforms.props.push({
-            x: railX, y: y0 + (y1 - y0) * 0.5, z, sx: 0.065, sy: y1 - y0, sz: 0.065, ladderId: id,
+            x: railX, y: y0 + (y1 - y0) * 0.5, z,
+            sx: 0.065, sy: y1 - y0, sz: 0.065, ladderId: id,
         });
-        return rungCount;
+        return { routeCount: 1, rungCount, reservation };
+    }
+
+    function chooseAndCarveCavernLadder({ entity, groundEntities, physics, transforms, stableKey }) {
+        const candidates = planCavernLadderCandidates({ ceilingEntity: entity, groundEntities });
+        for (let index = 0; index < candidates.length; index++) {
+            const candidate = candidates[index];
+            const route = { ...candidate, id: `${entity.id}:cavern-ladder:${index}` };
+            const query = {
+                x: route.x, z: route.z,
+                halfX: route.apertureWidth * 0.5, halfZ: route.apertureDepth * 0.5,
+                yMin: route.y1 - 0.02, yMax: route.y1 + traversalEnvelope.bodyHeight,
+            };
+            if (anyReservationIntersectsBox(physics.circulationReservations ?? [], query, 0.06)) continue;
+            if ((physics.mazeWalls ?? []).some(wall => {
+                const guard = !!(wall?.guardSpanId || wall?.transportRailId || /guard|rail/i.test(String(wall?.supportKind ?? '')));
+                return !guard && pointNearMazeWall(
+                    wall, route.x, route.z, query.halfX, query.halfZ, query.yMin, query.yMax,
+                );
+            })) continue;
+            const carved = carveCavernLadderMouth({
+                id: route.id, moduleKey: route.ceilingModuleKey,
+                x: route.x, z: route.z, y: route.y1,
+                apertureWidth: route.apertureWidth, apertureDepth: route.apertureDepth,
+                physics, transforms,
+            });
+            if (carved.carvedPlatforms < 1 || carved.carvedSlabs < 1) continue;
+            carved.guardMouth = clearCirculationGuardMouth({
+                id: `${route.id}:hatch-mouth`, x: route.x, z: route.z, y: route.y1,
+                width: route.apertureWidth, depth: route.apertureDepth, physics, transforms,
+            });
+            const realized = addCavernLadder({ route, physics, transforms });
+            if (!realized) continue;
+            return { route, carved, ...realized, stableKey };
+        }
+        return null;
+    }
+
+
+    function clearCirculationGuardMouth({ id, x, z, y, width, depth, physics, transforms }) {
+        const halfX = width * 0.5 + 0.16;
+        const halfZ = depth * 0.5 + 0.16;
+        const yMin = y - 0.28, yMax = y + 1.38;
+        const removedIds = new Set();
+        const isGuard = item => !!(item?.guardSpanId || item?.transportRailId
+            || /guard|rail/i.test(String(item?.supportKind ?? '')));
+        const intersectsSegment = item => {
+            const wy0 = Number.isFinite(item?.yMin) ? Number(item.yMin) : yMin;
+            const wy1 = Number.isFinite(item?.yMax) ? Number(item.yMax) : yMax;
+            if (!(wy1 >= yMin && wy0 <= yMax)) return false;
+            const x1 = Number(item?.x1), x2 = Number(item?.x2), z1 = Number(item?.z1), z2 = Number(item?.z2);
+            if (![x1, x2, z1, z2].every(Number.isFinite)) return false;
+            return Math.max(x1, x2) >= x - halfX && Math.min(x1, x2) <= x + halfX
+                && Math.max(z1, z2) >= z - halfZ && Math.min(z1, z2) <= z + halfZ;
+        };
+        const keptWalls = [];
+        for (const wall of physics.mazeWalls ?? []) {
+            if (isGuard(wall) && intersectsSegment(wall)) {
+                if (wall.guardSpanId) removedIds.add(wall.guardSpanId);
+                if (wall.transportRailId) removedIds.add(wall.transportRailId);
+                continue;
+            }
+            keptWalls.push(wall);
+        }
+        physics.mazeWalls.splice(0, physics.mazeWalls.length, ...keptWalls);
+        for (const bucket of [transforms.guardMetal ?? [], transforms.guardConcrete ?? []]) {
+            const kept = bucket.filter(item => {
+                if (item?.guardSpanId && removedIds.has(item.guardSpanId)) return false;
+                const iy = Number(item?.y), sx = Number(item?.sx), sz = Number(item?.sz);
+                if (!Number.isFinite(iy) || !Number.isFinite(sx) || !Number.isFinite(sz) || iy < yMin || iy > yMax) return true;
+                return !(Math.abs(Number(item.x) - x) < sx * 0.5 + halfX
+                    && Math.abs(Number(item.z) - z) < sz * 0.5 + halfZ);
+            });
+            bucket.splice(0, bucket.length, ...kept);
+        }
+        if (Array.isArray(physics.guardSpans) && removedIds.size) {
+            physics.guardSpans = physics.guardSpans.filter(span => !removedIds.has(span.id));
+        }
+        return { id, removedGuardSpans: removedIds.size };
+    }
+
+    function realizeCavernWallStairRoute({ route, physics, transforms }) {
+        if (!route?.physicalTruth?.stair || !route?.flights?.length) return null;
+        const resolvedFlights = [];
+        for (const flight of route.flights) {
+            const stairFlight = deriveStairFlight({
+                rise: flight.y1 - flight.y0,
+                truth: route.physicalTruth,
+                stableKey: `${route.id}:${flight.id}`,
+                availableRun: flight.run,
+            });
+            if (stairFlight.fitClassification !== 'fits-resolved-truth') return null;
+            resolvedFlights.push({ ...flight, stairFlight });
+        }
+        const envelope = route.envelope;
+        if (anyReservationIntersectsBox(physics.circulationReservations ?? [], envelope, 0.08)) return null;
+        const reservation = createBoxCirculationReservation({
+            id: `${route.id}:reservation`, kind: 'cavern-wall-stair-trunk',
+            x: envelope.x, z: envelope.z, halfX: envelope.halfX, halfZ: envelope.halfZ,
+            yMin: envelope.yMin, yMax: envelope.yMax,
+            source: 'cavern-popular-node-wall-stairs',
+            metadata: { routeId: route.id, field: route.field, entityId: route.entityId, moduleKey: route.moduleKey },
+        });
+        physics.circulationReservations.push(reservation);
+        const routeRegistry = physics.cavernWallStairRoutes ?? (physics.cavernWallStairRoutes = []);
+        routeRegistry.push({ ...route, reservationId: reservation.id });
+
+        const landingTangent = route.stairWidth * 1.42;
+        const slabT = 0.16;
+        for (let index = 0; index < route.landings.length; index++) {
+            const landing = route.landings[index];
+            const sx = route.face.tangentAxis === 'x' ? landingTangent : route.landingDepth;
+            const sz = route.face.tangentAxis === 'z' ? landingTangent : route.landingDepth;
+            transforms.slabs.push({
+                x: landing.x, y: landing.y - slabT * 0.5, z: landing.z,
+                sx, sy: slabT, sz,
+                routeId: route.id, cavernWallStair: true, landingIndex: index,
+            });
+            addRectPlatform(physics.platforms, landing.x, landing.z, sx, sz, landing.y, 'cavern-wall-stair-landing');
+            const platform = physics.platforms[physics.platforms.length - 1];
+            platform.routeId = route.id;
+            platform.landingIndex = index;
+        }
+
+        let steps = 0;
+        for (let index = 0; index < resolvedFlights.length; index++) {
+            const flight = resolvedFlights[index];
+            physics.ramps.push({
+                axis: flight.axis, from: flight.from, to: flight.to, fixedCoord: flight.fixedCoord,
+                halfWidth: flight.halfWidth, y0: flight.y0, y1: flight.y1,
+                supportKind: 'cavern-wall-stair', routeId: route.id, flightId: flight.id,
+            });
+            const connector = createRampConnector({
+                id: `${flight.id}:connector`, kind: 'stair',
+                axis: flight.axis, from: flight.from, to: flight.to, fixedCoord: flight.fixedCoord,
+                halfWidth: flight.halfWidth, y0: flight.y0, y1: flight.y1,
+                headroom: flight.stairFlight.headroom,
+                source: 'cavern-popular-node-wall-stairs', visualRole: 'blocky-wall-hugging-stair',
+                reservationKind: 'cavern-wall-stair-flight', physicalTruth: route.physicalTruth,
+                stairFlight: flight.stairFlight,
+                metadata: { routeId: route.id, field: route.field, entityId: route.entityId, moduleKey: route.moduleKey, side: route.side },
+            });
+            registerSemanticConnector(physics, connector);
+            const count = flight.stairFlight.stepCount;
+            const thickness = Math.min(0.16, Math.max(0.08, flight.stairFlight.riserHeight * 0.64));
+            for (let i = 0; i < count; i++) {
+                const t = (i + 0.5) / count;
+                const along = flight.from + (flight.to - flight.from) * t;
+                const stepY = flight.y0 + flight.stairFlight.riserHeight * (i + 1) - thickness * 0.5;
+                const runStep = flight.run / count * 1.10;
+                transforms.steps.push(flight.axis === 'x'
+                    ? { x: along, y: stepY, z: flight.fixedCoord, sx: runStep, sy: thickness, sz: route.stairWidth, routeId: route.id, cavernWallStair: true }
+                    : { x: flight.fixedCoord, y: stepY, z: along, sx: route.stairWidth, sy: thickness, sz: runStep, routeId: route.id, cavernWallStair: true });
+                steps++;
+            }
+            emitFlightGuardPairFromAuthority({
+                physics, transforms, idPrefix: `${flight.id}:guard`,
+                axis: flight.axis, from: flight.from, to: flight.to, fixedCoord: flight.fixedCoord,
+                halfWidth: flight.halfWidth, y0: flight.y0, y1: flight.y1,
+                family: 'municipal-concrete', supportKind: 'cavern-wall-stair-guard',
+                metadata: { routeId: route.id, field: route.field, visualRole: 'blocky-wall-hugging-stair' },
+            });
+        }
+
+        // Chunky posts make these read as structural circulation rather than another
+        // delicate fire escape. They share the exact accepted route envelope.
+        const span = route.y1 - route.y0;
+        const tangentValues = [route.face.min, route.face.max];
+        const postNormal = route.face.fixedCoord + route.face.sign * Math.max(0.18, route.landingDepth * 0.36);
+        for (const tangent of tangentValues) {
+            transforms.props.push(route.face.tangentAxis === 'x'
+                ? { x: tangent, y: route.y0 + span * 0.5, z: postNormal, sx: 0.18, sy: span, sz: 0.18, routeId: route.id, cavernWallStairSupport: true }
+                : { x: postNormal, y: route.y0 + span * 0.5, z: tangent, sx: 0.18, sy: span, sz: 0.18, routeId: route.id, cavernWallStairSupport: true });
+        }
+
+        const lower = route.landings[0], upper = route.landings[route.landings.length - 1];
+        clearCirculationGuardMouth({ id: `${route.id}:lower-mouth`, x: lower.x, z: lower.z, y: lower.y,
+            width: route.stairWidth * 1.45, depth: route.landingDepth, physics, transforms });
+        clearCirculationGuardMouth({ id: `${route.id}:upper-mouth`, x: upper.x, z: upper.z, y: upper.y,
+            width: route.stairWidth * 1.45, depth: route.landingDepth, physics, transforms });
+        return { route, flights: resolvedFlights.length, landings: route.landings.length, steps, reservation };
+    }
+
+    function realizePopularCavernWallStairs({ field, entities, physics, transforms, maxRoutes = 2 }) {
+        const candidates = planCavernWallStairCandidates({
+            entities, field, maxRoutes: Math.max(16, entities.length * 10),
+        });
+        const usedEntities = new Set();
+        const accepted = [];
+        for (const route of candidates) {
+            if (accepted.length >= maxRoutes) break;
+            if (usedEntities.has(route.entityId)) continue;
+            const result = realizeCavernWallStairRoute({ route, physics, transforms });
+            if (!result) continue;
+            accepted.push(result);
+            usedEntities.add(route.entityId);
+        }
+        physics.cavernWallStairSummary = {
+            schema: CAVERN_WALL_STAIR_SCHEMA,
+            field,
+            candidates: candidates.length,
+            routes: accepted.length,
+            flights: accepted.reduce((sum, item) => sum + item.flights, 0),
+            landings: accepted.reduce((sum, item) => sum + item.landings, 0),
+            steps: accepted.reduce((sum, item) => sum + item.steps, 0),
+        };
+        return accepted;
     }
 
     function ceilingSiteBounds(site, cx0, cz0, half, cellSize) {
@@ -4608,7 +4937,7 @@ export function createKowloonFabricEngine({
         const aggregate = createFabricBuffers();
         aggregate.physics.ceilingCity = { schema: HANGING_CITY_SCHEMA, frame: ceilingFrame(), source };
         const entities = [];
-        let buildings = 0, plazas = 0, ladders = 0;
+        let buildings = 0, plazas = 0, ladders = 0, ladderRungs = 0;
 
         for (const plan of sitePlans) {
             const { site, signature } = plan;
@@ -4684,26 +5013,25 @@ export function createKowloonFabricEngine({
                 baseY: baseY + (Number(module.floorBase) || 0) * entity.floorH,
                 roofY: HANGING_CITY_CEILING_Y,
             }));
+            const ladder = chooseAndCarveCavernLadder({
+                entity, groundEntities, physics: local.physics, transforms: local.transforms,
+                stableKey: `${phaseChunk.key}:${signature}:cross-level`,
+            });
+            if (ladder) {
+                ladders += ladder.routeCount;
+                ladderRungs += ladder.rungCount;
+                entity.cavernLadderRoute = {
+                    id: ladder.route.id, x: ladder.route.x, z: ladder.route.z,
+                    y0: ladder.route.y0, y1: ladder.route.y1,
+                    ceilingModuleKey: ladder.route.ceilingModuleKey,
+                    groundEntityId: ladder.route.groundEntityId, groundModuleKey: ladder.route.groundModuleKey,
+                    apertureWidth: ladder.route.apertureWidth, apertureDepth: ladder.route.apertureDepth,
+                    carvedPlatforms: ladder.carved.carvedPlatforms, carvedSlabs: ladder.carved.carvedSlabs,
+                    removedGuardSpans: ladder.carved.guardMouth?.removedGuardSpans ?? 0,
+                };
+            }
             mergeFabricBuffers(aggregate, local);
             entities.push(entity); buildings++;
-
-            if (heightPlan.blockers.length) {
-                let ground = null;
-                for (const candidate of groundEntities) {
-                    if (!heightPlan.blockers.includes(candidate?.id)) continue;
-                    const topY = (Number(candidate.baseY) || 0) + (Number(candidate.floors) || 1) * (Number(candidate.floorH) || HANGING_CITY_FLOOR_HEIGHT);
-                    if (!ground || topY > ground.topY) ground = { entity: candidate, topY };
-                }
-                if (ground && baseY > ground.topY + 0.5) {
-                    const x = clamp(entity.x, Math.max(entity.compoundBounds.minX, ground.entity.compoundBounds?.minX ?? entity.x), Math.min(entity.compoundBounds.maxX, ground.entity.compoundBounds?.maxX ?? entity.x));
-                    const z = clamp(entity.z, Math.max(entity.compoundBounds.minZ, ground.entity.compoundBounds?.minZ ?? entity.z), Math.min(entity.compoundBounds.maxZ, ground.entity.compoundBounds?.maxZ ?? entity.z));
-                    ladders += addCavernLadder({
-                        id: `${entity.id}:cavern-ladder`, x: Number.isFinite(x) ? x : entity.x, z: Number.isFinite(z) ? z : entity.z,
-                        y0: ground.topY, y1: baseY,
-                        physics: aggregate.physics, transforms: aggregate.transforms,
-                    });
-                }
-            }
             yield { phase: 'ceiling-building', current: buildings, total: sitePlans.length, sourceKey: source.key };
         }
 
@@ -4723,11 +5051,15 @@ export function createKowloonFabricEngine({
             skybridges++;
         }
 
+        const cavernWallStairs = realizePopularCavernWallStairs({
+            field: 'ceiling', entities: entities.filter(entity => entity.kind === 'building'),
+            physics: aggregate.physics, transforms: aggregate.transforms, maxRoutes: 2,
+        });
         attachFabricMeshes(root, aggregate.transforms, `ceiling:${chunk.key}`);
         const payload = {
             formatVersion: WORLD_FORMAT_VERSION,
             ownerId, root, physics: aggregate.physics, entities,
-            buildings, plazas, skybridges, ladders,
+            buildings, plazas, skybridges, ladders, ladderRungs, cavernWallStairs: cavernWallStairs.length,
             ceilingCity: true,
             ceilingSourceChunk: source,
             frame: ceilingFrame(),
@@ -4741,7 +5073,7 @@ export function createKowloonFabricEngine({
             frame: payload.frame,
             source,
             payload,
-            buildings, plazas, skybridges, ladders,
+            buildings, plazas, skybridges, ladders, ladderRungs, cavernWallStairs: cavernWallStairs.length,
             independentCount: buildings,
             dualPolarityCount: 0,
         };
@@ -5382,6 +5714,10 @@ export function createKowloonFabricEngine({
         const exteriorTransportNetwork = realizeExteriorTransportNetwork({
             physics, transforms, stableKey: `${worldSeed}:${chunk.key}:exterior-transport`,
         });
+        const cavernWallStairs = realizePopularCavernWallStairs({
+            field: 'ground', entities: entities.filter(entity => entity.kind === 'building'),
+            physics, transforms, maxRoutes: 2,
+        });
         const exteriorDebugSnapshot = buildExteriorDebugSnapshot({
             chunk, physics, entities, exteriorTransportNetwork,
         });
@@ -5401,6 +5737,7 @@ export function createKowloonFabricEngine({
             plazas,
             skybridges,
             exteriorTransportNetwork,
+            cavernWallStairs: cavernWallStairs.length,
             buildingFootprintInvariant,
             hangingLayer,
             cavernJointSynthesis: physics.cavernJointSynthesis ?? null,

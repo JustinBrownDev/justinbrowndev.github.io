@@ -225,3 +225,18 @@ Cut 16 established the two-plane cavern but rooted a multi-module ceiling compou
 - The primary/tall module remains the Building Plan interior spine for this refinement. Side modules fuse through their overlapping structural floor bands; expanding the room allocator to multi-base modules is a separate authority change and must not weaken raster closure invariants.
 - Every module's exposed low-end floor-0 slab publishes a `ceiling-building-tip` physics platform with zero support forgiveness. A rendered hanging tip may never be visual-only collision.
 - Ordinary upward rooftop clutter/topper/antenna tasks stay suppressed on `ceilingRooted` entities. The only skyline treatment on the exposed end is the deliberately downward-facing low-end roof/crown vocabulary.
+
+## Cavern circulation authority — Cut 19
+
+Cut 19 turns cross-level circulation into an explicit hierarchy instead of treating every vertical connection as the same primitive:
+
+- **Popular-node wall stairs** are the heavy, legible circulation trunks within each city field. Compounds are ranked from existing circulation evidence (bridge portals, scaffold landings, exterior street-layer routes, reservations, module/floor scale), and only the highest-ranked compounds receive extra trunks.
+- At most two Cut-19 wall-stair trunks are added per field/chunk. The lower and ceiling fields are planned independently, so both sides of the cavern participate without saturating every facade.
+- These trunks are chunky structural switchbacks: ramps, real step treads, landings, guards, support posts, semantic stair connectors, and a circulation reservation all derive from one accepted route. They hug one exterior wall and reverse direction along that facade rather than floating free in the cavern.
+- Existing bridge/scaffold/circulation reservations have first refusal. A Cut-19 wall stair is rejected rather than overwriting a previously accepted route.
+- **Ladders remain the cheap cross-cavern stitch.** A ladder is counted as one route, not as a number of rungs, and owns a shaft reservation plus a semantic ladder connector.
+- A ladder may not visually pass through a hanging floor. Its upper mouth first carves the rendered low-end slab and the matching collision platform into a real rectangular hatch, then clears guard/rail collision at that mouth before rungs are emitted.
+- The exposed hanging low-end roof treatment is edge-only trim. Full module-sized `invertedRoofRim` plates are retired; they read as detached gray slabs and have no architectural reason to exist.
+- Frozen ceiling transport/scaffold authority records must be rebased into final world Y when ceiling geometry is translated. Routing metadata is invalid if it describes local-Y surfaces while collision/render geometry lives in world Y.
+
+The resulting traversal hierarchy is: **interior stairs -> wall-hugging structural trunks -> elevated street/bridge/catwalk nodes -> carved ladder stitches -> opposite field**. Circulation geometry must continue to originate from reachable-node demand and publish reservations before later enrichment can occupy the same volume.

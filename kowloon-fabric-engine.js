@@ -6,7 +6,8 @@ import { assertBuildingFootprintsDoNotOverlap } from './world/building-footprint
 import { createKowloonMazeTopology } from './world/kowloon-district-plan.js';
 import { classifyPhysicalUse } from './world/physical-use.js';
 import { deriveStairFlight, gameplayTraversalEnvelope, resolvePhysicalTruth } from './world/physical-truth.js';
-import { BUILDING_SLAB_THICKNESS, centeredStairCorePosition, storyCeilingLocalY } from './world/interior-geometry-policy.js';
+import { BUILDING_SLAB_THICKNESS, storyCeilingLocalY } from './world/interior-geometry-policy.js';
+import { planInteriorSwitchbackStairCore } from './world/interior-stair-core.js';
 import { planBuildingSidecar } from './world/architecture/building-plan-sidecar.js';
 import { assertBuildingPlanAuthority, promoteBuildingPlanAuthority } from './world/architecture/building-plan-authority.js';
 import { createSemanticPlanCache, semanticPlanCacheKey } from './world/architecture/semantic-plan-runtime.js';
@@ -1011,6 +1012,71 @@ export function createKowloonFabricEngine({
         return plans.length;
     }
 
+    function realizeInteriorSwitchbackStory({
+        physics, transforms, core, floor, y0, y1, guardFamily, metadata = null, includeUpperLanding = false,
+    }) {
+        const slabT = BUILDING_SLAB_THICKNESS;
+        const addLanding = (landing, y, supportKind, landingRole) => {
+            physics.platforms.push({
+                x: landing.x, z: landing.z, hx: landing.hx, hz: landing.hz, y,
+                supportKind, supportMargin: 0, blocksFromBelow: false,
+                stairTopology: core.topology, floor, landingRole, ...(metadata || {}),
+            });
+            transforms.slabs.push({
+                x: landing.x, y: y - slabT * 0.5, z: landing.z,
+                sx: landing.sx, sy: slabT, sz: landing.sz,
+                stairTopology: core.topology, floor, landingRole, ...(metadata || {}),
+            });
+        };
+        addLanding(core.floorLanding, y0, 'compound-stair-floor-landing', 'floor');
+        if (includeUpperLanding) addLanding(core.floorLanding, y1, 'compound-stair-floor-landing', 'upper-floor');
+        for (const landing of core.intermediateLandings) {
+            const landingY = y0 + (y1 - y0) * landing.yFraction;
+            addLanding(landing.geometry, landingY, 'compound-stair-mid-landing', landing.sideRole);
+        }
+
+        for (const flight of core.flights) {
+            const flightY0 = y0 + (y1 - y0) * flight.y0Fraction;
+            const flightY1 = y0 + (y1 - y0) * flight.y1Fraction;
+            physics.ramps.push({
+                axis: flight.axis, from: flight.from, to: flight.to, fixedCoord: flight.fixedCoord,
+                halfWidth: core.halfWidth, y0: flightY0, y1: flightY1,
+                supportKind: 'compound-stair', stairTopology: core.topology, floor, flightId: flight.id, ...(metadata || {}),
+            });
+            const steps = core.segmentFlight.stepCount;
+            const stepThickness = Math.min(0.14, Math.max(0.075, core.segmentFlight.riserHeight * 0.62));
+            for (let i = 0; i < steps; i++) {
+                const t = (i + 0.5) / steps;
+                const along = flight.from + (flight.to - flight.from) * t;
+                const stepY = flightY0 + core.segmentFlight.riserHeight * (i + 1) - stepThickness * 0.5;
+                const runStep = Math.abs(flight.to - flight.from) / steps * 1.06;
+                transforms.steps.push(flight.axis === 'z'
+                    ? { x: flight.fixedCoord, y: stepY, z: along, sx: core.clearWidth, sy: stepThickness, sz: runStep, stairTopology: core.topology, floor, flightId: flight.id }
+                    : { x: along, y: stepY, z: flight.fixedCoord, sx: runStep, sy: stepThickness, sz: core.clearWidth, stairTopology: core.topology, floor, flightId: flight.id });
+            }
+            const direction = Math.sign(flight.to - flight.from) || 1;
+            const guardFrom = flight.from + direction * core.guardMouthClearance;
+            const guardTo = flight.to - direction * core.guardMouthClearance;
+            if (Math.abs(guardTo - guardFrom) > 0.20) emitFlightGuardPairFromAuthority({
+                physics, transforms, idPrefix: `${metadata?.stairId ?? "interior-stair"}:${floor}:${flight.id}:guard`,
+                axis: flight.axis, from: guardFrom, to: guardTo, fixedCoord: flight.fixedCoord,
+                halfWidth: core.halfWidth, y0: flightY0, y1: flightY1,
+                family: guardFamily, supportKind: "compound-stair-guard",
+                metadata: { ...(metadata || {}), floor, flightId: flight.id, visualRole: "interior-stair" },
+            });
+        }
+        for (const landing of core.intermediateLandings) {
+            const landingY = y0 + (y1 - y0) * landing.yFraction;
+            const back = landing.backGuard;
+            emitGuardSpanFromAuthority({
+                physics, transforms, id: `${metadata?.stairId ?? "interior-stair"}:${floor}:${landing.id}:back-guard`,
+                x1: back.x1, z1: back.z1, x2: back.x2, z2: back.z2, y: landingY,
+                family: guardFamily, supportKind: "compound-stair-mid-landing-guard",
+                metadata: { ...(metadata || {}), floor, landingId: landing.id, visualRole: "interior-stair-mid-landing" },
+            });
+        }
+    }
+
     function removeGuardArtifacts({ physics, transforms, guardSpanId }) {
         if (!guardSpanId) return;
         transforms.guardMetal = (transforms.guardMetal ?? []).filter(item => item.guardSpanId !== guardSpanId);
@@ -1590,20 +1656,32 @@ export function createKowloonFabricEngine({
         // STRUCTURAL INTERIOR AUTHORITY: skeleton keeps the cheap generation profile,
         // but rooms, partitions, doors, the persistent core and its slab voids are
         // structural prerequisites now. Rich clutter/enrichment remains deferred.
-        const primaryStairAxis = primaryModule.rect.halfZ >= primaryModule.rect.halfX ? 'z' : 'x';
-        const primaryRunInterior = Math.max(1.2, (primaryStairAxis === 'z' ? primaryModule.rect.halfZ : primaryModule.rect.halfX) * 2 - 0.44);
-        const primaryCrossInterior = Math.max(0.8, (primaryStairAxis === 'z' ? primaryModule.rect.halfX : primaryModule.rect.halfZ) * 2 - 0.38);
-        const primaryNominalStairFlight = deriveStairFlight({
-            rise: floorH,
-            truth: stairPhysicalTruth,
-            stableKey: `${chunk.key}:${siteSignature}:${primaryModule.key}:flight:nominal`,
+        const primaryStairCore = planInteriorSwitchbackStairCore({
+            rect: primaryModule.rect,
+            floorH,
+            physicalTruth: stairPhysicalTruth,
+            traversalEnvelope,
+            stableKey: `${chunk.key}:${siteSignature}:${primaryModule.key}:switchback-core`,
         });
-        const primaryStairAvailableRun = Math.min(primaryNominalStairFlight.requiredRun, primaryRunInterior);
-        const primaryActualStairClearWidth = Math.min(stairPhysicalTruth.stair.widthSI, Math.max(0.56, primaryCrossInterior - 0.14));
-        const primaryStairCrossOpening = Math.min(primaryCrossInterior, Math.max(primaryActualStairClearWidth + 0.16, primaryActualStairClearWidth * 1.08));
-        const primaryStairRunOpening = Math.min(primaryRunInterior + 0.18, Math.max(primaryStairAvailableRun + 0.18, 1.35));
-        const primaryStairGapW = primaryStairAxis === 'z' ? primaryStairCrossOpening : primaryStairRunOpening;
-        const primaryStairGapD = primaryStairAxis === 'z' ? primaryStairRunOpening : primaryStairCrossOpening;
+        if (!primaryStairCore) {
+            throw new Error(`${chunk.key}:${siteSignature}:${primaryModule.key}: no human-scale switchback stair fits the primary module`);
+        }
+        const primaryStairAxis = primaryStairCore.axis;
+        const primaryRunInterior = primaryStairCore.metrics.availableAlong;
+        const primaryCrossInterior = primaryStairCore.metrics.availableCross;
+        const primaryNominalStairFlight = primaryStairCore.segmentFlight;
+        const primaryStairAvailableRun = primaryStairCore.segmentFlight.requiredRun;
+        const primaryActualStairClearWidth = primaryStairCore.clearWidth;
+        const primaryStairCrossOpening = primaryStairAxis === 'z' ? primaryStairCore.opening.sx : primaryStairCore.opening.sz;
+        const primaryStairRunOpening = primaryStairAxis === 'z' ? primaryStairCore.opening.sz : primaryStairCore.opening.sx;
+        const primaryStairGapW = primaryStairCore.opening.sx;
+        const primaryStairGapD = primaryStairCore.opening.sz;
+        const primaryStairCx = primaryStairCore.opening.x;
+        const primaryStairCz = primaryStairCore.opening.z;
+        const primaryStairFrom = primaryStairCore.flights[0].from;
+        const primaryStairTo = primaryStairCore.flights[0].to;
+        const primaryStairHalfWidth = primaryStairCore.halfWidth;
+        const primaryStairFlight = primaryStairCore.segmentFlight;
 
         const entranceConnectorByKey = new Map();
         for (let i = 0; i < entranceFaces.length; i++) {
@@ -1634,28 +1712,7 @@ export function createKowloonFabricEngine({
             entranceConnectorByKey.set(openingKey, connector);
         }
 
-        const primaryCoreRng = mulberry32(hashString32(`${siteSeed}:vertical-core`));
-        const primaryCoreOffsetX = (primaryCoreRng() - 0.5) * primaryModule.rect.halfX * 0.18;
-        const primaryCoreOffsetZ = (primaryCoreRng() - 0.5) * primaryModule.rect.halfZ * 0.18;
-        const primaryStairCenter = centeredStairCorePosition({
-            axis: primaryStairAxis, rect: primaryModule.rect,
-            offsetX: primaryCoreOffsetX, offsetZ: primaryCoreOffsetZ,
-        });
-        const primaryStairCx = primaryStairCenter.x;
-        const primaryStairCz = primaryStairCenter.z;
-        const primaryStairFrom = primaryStairAxis === 'z'
-            ? primaryStairCz - primaryStairAvailableRun * 0.5
-            : primaryStairCx - primaryStairAvailableRun * 0.5;
-        const primaryStairTo = primaryStairAxis === 'z'
-            ? primaryStairCz + primaryStairAvailableRun * 0.5
-            : primaryStairCx + primaryStairAvailableRun * 0.5;
-        const primaryStairHalfWidth = primaryActualStairClearWidth * 0.5;
-        const primaryStairFlight = deriveStairFlight({
-            rise: floorH,
-            truth: stairPhysicalTruth,
-            stableKey: `${chunk.key}:${siteSignature}:${primaryModule.key}:flight`,
-            availableRun: primaryStairAvailableRun,
-        });
+        // Switchback core geometry was solved once above and is the vertical-core authority.
         const primaryModuleRoofY = primaryModule.floors > 0
             ? (primaryModule.floors - 1) * floorH + floorH
             : 0;
@@ -1693,6 +1750,12 @@ export function createKowloonFabricEngine({
         });
         registerSemanticConnector(physics, primaryStairConnector);
         const primaryStairReservation = primaryStairConnector.primaryReservation;
+        primaryStairReservation.stairTopology = primaryStairCore.topology;
+        primaryStairReservation.integratedFloorLanding = true;
+        primaryStairReservation.floorLandingDepth = primaryStairCore.floorLandingDepth;
+        primaryStairReservation.midLandingDepth = primaryStairCore.midLandingDepth;
+        primaryStairReservation.flightCount = primaryStairCore.flightCount;
+        primaryStairReservation.playerSideClearance = primaryStairCore.sideCapsuleClearance;
 
         const accessPortals = compileAccessPortals({ connectors: [...entranceConnectorByKey.values()] });
         const accessAnchors = accessAnchorsForBuildingPortals(accessPortals);
@@ -1936,7 +1999,7 @@ export function createKowloonFabricEngine({
             });
         const broadVerticalFaceKey = face => `${face.module.key}:${face.dir.key}`;
         const entranceOwnsFace = face => entranceFaces.some(entrance => entrance.module === face.module && entrance.dir.key === face.dir.key);
-        const canUseBroadVerticalFace = face => !usedBroadVerticalFaces.has(broadVerticalFaceKey(face));
+        const canUseBroadVerticalFace = face => !usedBroadVerticalFaces.has(broadVerticalFaceKey(face)) && !scaffoldOwnsFace(face);
         const portalOpening = portal => ({
             width: Number(portal.width) || (servicePhysicalTruth?.door?.clearWidth?.realizedSI ?? 1.35),
             height: Number(portal.height) || (servicePhysicalTruth?.door?.clearHeight?.realizedSI ?? 2.20),
@@ -2018,14 +2081,9 @@ export function createKowloonFabricEngine({
             });
             registerSemanticConnector(physics, connector);
         };
-        const consumeScaffoldForModule = face => {
-            if (!scaffoldPlan || scaffoldPlan.moduleKey !== face.module.key) return false;
-            scaffoldPlan = null;
-            scaffoldSide = null;
-            scaffoldCollisionEvaluation = null;
-            scaffoldOpeningByKey.clear();
-            return true;
-        };
+        const scaffoldOwnsFace = face => !!scaffoldPlan
+            && scaffoldPlan.moduleKey === face.module.key
+            && scaffoldPlan.side === face.dir.side;
         const bridgePortalForFaceFloor = (face, floor) => (bridgePortals ?? []).find(portal =>
             portal.moduleKey === face.module.key && portal.dirKey === face.dir.key && Number(portal.floor) === Number(floor));
         const buildStreetLayerStops = (face, policy) => policy.layerFloors.map(floor => {
@@ -2071,7 +2129,6 @@ export function createKowloonFabricEngine({
                 return false;
             }
             publishExteriorRouteClearances(collision.reservations);
-            consumeScaffoldForModule(face);
             usedBroadVerticalFaces.add(broadVerticalFaceKey(face));
             broadVerticalRoutes.push(plan);
             for (const stop of plan.portalStops) commitRoomPortal(stop, plan);
@@ -2087,6 +2144,15 @@ export function createKowloonFabricEngine({
             }
             return true;
         };
+
+        // Fire escape is independent egress. Publish its accepted clearance before
+        // generic exterior transport so the newer street-layer trunk routes around it.
+        if (scaffoldPlan && scaffoldCollisionEvaluation) {
+            publishExteriorRouteClearances(scaffoldCollisionEvaluation.reservations);
+            const scaffoldFace = scaffoldCandidates.find(face =>
+                face.module.key === scaffoldPlan.moduleKey && face.dir.side === scaffoldPlan.side) ?? null;
+            if (scaffoldFace) usedBroadVerticalFaces.add(broadVerticalFaceKey(scaffoldFace));
+        }
 
         // Walkways are the strongest horizontal street-layer anchors. If a bridge
         // face can host the trunk, it anchors the layer and the route may continue through upper
@@ -2132,29 +2198,12 @@ export function createKowloonFabricEngine({
         }
 
 
-        // A scaffold is only authoritative if it survived later shared-trunk
-        // selection and still has exclusive exterior clearance. Publish that
-        // reservation now, before facade wall emission.
+        // The fire escape was published before generic trunk selection. At this point
+        // it must still own every accepted reservation; later transport cannot delete it.
         if (scaffoldPlan && scaffoldCollisionEvaluation) {
-            const scaffoldCirculationConflict = firstCirculationVolumeConflict(
-                scaffoldCollisionEvaluation.reservations,
-                acceptedExteriorClearances,
-                0.02,
-            );
-            if (scaffoldCirculationConflict) {
-                recordExteriorCollisionReject(
-                    scaffoldPlan,
-                    scaffoldCandidates.find(face => face.module.key === scaffoldPlan.moduleKey && face.dir.side === scaffoldPlan.side) ?? null,
-                    'fire-escape-scaffold',
-                    scaffoldCollisionEvaluation,
-                    scaffoldCirculationConflict,
-                );
-                scaffoldPlan = null;
-                scaffoldSide = null;
-                scaffoldCollisionEvaluation = null;
-                scaffoldOpeningByKey.clear();
-            } else {
-                publishExteriorRouteClearances(scaffoldCollisionEvaluation.reservations);
+            const acceptedIds = new Set(acceptedExteriorClearances.map(item => item.id));
+            for (const reservation of scaffoldCollisionEvaluation.reservations) {
+                if (!acceptedIds.has(reservation.id)) throw new Error(`${scaffoldPlan.id}: fire escape clearance lost before wall publication`);
             }
         }
 
@@ -2296,30 +2345,14 @@ export function createKowloonFabricEngine({
                 }
 
                 if (module === primaryModule) {
-                    physics.ramps.push({
-                        axis: primaryStairAxis, from: primaryStairFrom, to: primaryStairTo,
-                        fixedCoord: primaryStairAxis === 'z' ? primaryStairCx : primaryStairCz,
-                        halfWidth: primaryStairHalfWidth,
-                        y0, y1, supportKind: 'compound-stair',
-                    });
-                    const steps = primaryStairFlight.stepCount;
-                    const stepThickness = Math.min(0.14, Math.max(0.075, primaryStairFlight.riserHeight * 0.62));
-                    for (let i = 0; i < steps; i++) {
-                        const t = (i + 0.5) / steps;
-                        const along = primaryStairFrom + (primaryStairTo - primaryStairFrom) * t;
-                        const stepY = y0 + primaryStairFlight.riserHeight * (i + 1) - stepThickness * 0.5;
-                        transforms.steps.push(primaryStairAxis === 'z'
-                            ? { x: primaryStairCx, y: stepY, z: along, sx: primaryActualStairClearWidth, sy: stepThickness, sz: Math.abs(primaryStairTo - primaryStairFrom) / steps * 1.06 }
-                            : { x: along, y: stepY, z: primaryStairCz, sx: Math.abs(primaryStairTo - primaryStairFrom) / steps * 1.06, sy: stepThickness, sz: primaryActualStairClearWidth });
-                    }
-                    emitFlightGuardPairFromAuthority({
-                        physics, transforms, idPrefix: `${chunk.key}:${siteSignature}:${module.key}:compound-stair:${floor}:guard`,
-                        axis: primaryStairAxis, from: primaryStairFrom, to: primaryStairTo,
-                        fixedCoord: primaryStairAxis === 'z' ? primaryStairCx : primaryStairCz,
-                        halfWidth: primaryStairHalfWidth, y0, y1,
-                        family: guardFamilyForContext({ supportKind: 'compound-stair', visualRole: 'interior-stair', physicalUse: stairPhysicalTruth?.physicalUse }),
-                        supportKind: 'compound-stair-guard',
-                        metadata: { moduleKey: module.key, floor, physicalUse: stairPhysicalTruth?.physicalUse, visualRole: 'interior-stair' },
+                    const stairGuardFamily = guardFamilyForContext({ supportKind: 'compound-stair', visualRole: 'interior-stair', physicalUse: stairPhysicalTruth?.physicalUse });
+                    realizeInteriorSwitchbackStory({
+                        physics, transforms, core: primaryStairCore, floor, y0, y1, guardFamily: stairGuardFamily,
+                        includeUpperLanding: floor === module.floors - 1,
+                        metadata: {
+                            stairId: `${chunk.key}:${siteSignature}:${module.key}:compound-stair`,
+                            moduleKey: module.key, physicalUse: stairPhysicalTruth?.physicalUse,
+                        },
                     });
                 }
                 yield {
@@ -2866,29 +2899,41 @@ export function createKowloonFabricEngine({
         // The primary stair center is still chosen later by the legacy shared RNG, so
         // preflight against the complete range that center may occupy. Primary interior
         // circulation wins before a scaffold can publish either geometry or an aperture.
-        const primaryStairAxis = primaryModule.rect.halfZ >= primaryModule.rect.halfX ? 'z' : 'x';
-        const primaryRunInterior = Math.max(1.2, (primaryStairAxis === 'z' ? primaryModule.rect.halfZ : primaryModule.rect.halfX) * 2 - 0.44);
-        const primaryCrossInterior = Math.max(0.8, (primaryStairAxis === 'z' ? primaryModule.rect.halfX : primaryModule.rect.halfZ) * 2 - 0.38);
-        const primaryNominalStairFlight = deriveStairFlight({
-            rise: floorH,
-            truth: stairPhysicalTruth,
-            stableKey: `${chunk.key}:${siteSignature}:${primaryModule.key}:flight:nominal`,
+        const primaryStairCore = planInteriorSwitchbackStairCore({
+            rect: primaryModule.rect,
+            floorH,
+            physicalTruth: stairPhysicalTruth,
+            traversalEnvelope,
+            stableKey: `${chunk.key}:${siteSignature}:${primaryModule.key}:switchback-core`,
         });
-        const primaryStairAvailableRun = Math.min(primaryNominalStairFlight.requiredRun, primaryRunInterior);
-        const primaryActualStairClearWidth = Math.min(stairPhysicalTruth.stair.widthSI, Math.max(0.56, primaryCrossInterior - 0.14));
-        const primaryStairCrossOpening = Math.min(primaryCrossInterior, Math.max(primaryActualStairClearWidth + 0.16, primaryActualStairClearWidth * 1.08));
-        const primaryStairRunOpening = Math.min(primaryRunInterior + 0.18, Math.max(primaryStairAvailableRun + 0.18, 1.35));
-        const primaryStairGapW = primaryStairAxis === 'z' ? primaryStairCrossOpening : primaryStairRunOpening;
-        const primaryStairGapD = primaryStairAxis === 'z' ? primaryStairRunOpening : primaryStairCrossOpening;
+        if (!primaryStairCore) {
+            throw new Error(`${chunk.key}:${siteSignature}:${primaryModule.key}: no human-scale switchback stair fits the primary module`);
+        }
+        const primaryStairAxis = primaryStairCore.axis;
+        const primaryRunInterior = primaryStairCore.metrics.availableAlong;
+        const primaryCrossInterior = primaryStairCore.metrics.availableCross;
+        const primaryNominalStairFlight = primaryStairCore.segmentFlight;
+        const primaryStairAvailableRun = primaryStairCore.segmentFlight.requiredRun;
+        const primaryActualStairClearWidth = primaryStairCore.clearWidth;
+        const primaryStairCrossOpening = primaryStairAxis === 'z' ? primaryStairCore.opening.sx : primaryStairCore.opening.sz;
+        const primaryStairRunOpening = primaryStairAxis === 'z' ? primaryStairCore.opening.sz : primaryStairCore.opening.sx;
+        const primaryStairGapW = primaryStairCore.opening.sx;
+        const primaryStairGapD = primaryStairCore.opening.sz;
+        const primaryStairCx = primaryStairCore.opening.x;
+        const primaryStairCz = primaryStairCore.opening.z;
+        const primaryStairFrom = primaryStairCore.flights[0].from;
+        const primaryStairTo = primaryStairCore.flights[0].to;
+        const primaryStairHalfWidth = primaryStairCore.halfWidth;
+        const primaryStairFlight = primaryStairCore.segmentFlight;
         const primaryStairEnvelope = createBoxCirculationReservation({
             id: `${chunk.key}:${siteSignature}:${primaryModule.key}:stair:preflight-envelope`,
             kind: 'stair-preflight-envelope',
-            x: primaryModule.rect.cx,
-            z: primaryModule.rect.cz,
-            // stairCx/Cz later vary by +/- 0.09 module half-extent. Fold that exact
-            // legacy range into this immutable pre-wall keep-clear envelope.
-            halfX: primaryStairGapW * 0.5 + primaryModule.rect.halfX * 0.09 + KOWLOON_EXTERIOR_WALL_THICKNESS,
-            halfZ: primaryStairGapD * 0.5 + primaryModule.rect.halfZ * 0.09 + KOWLOON_EXTERIOR_WALL_THICKNESS,
+            x: primaryStairCx,
+            z: primaryStairCz,
+            // The internal core is deterministic and centered now. Preflight the
+            // actual player-clear switchback envelope rather than a legacy jitter range.
+            halfX: primaryStairGapW * 0.5 + KOWLOON_EXTERIOR_WALL_THICKNESS,
+            halfZ: primaryStairGapD * 0.5 + KOWLOON_EXTERIOR_WALL_THICKNESS,
             yMin: 0,
             yMax: primaryModule.floors * floorH + stairPhysicalTruth.stair.headroomSI,
             source: 'compound-stair-preflight',
@@ -2987,28 +3032,7 @@ export function createKowloonFabricEngine({
         // BUILDING PLAN AUTHORITY: physical envelope, entrance connectors and the
         // persistent vertical core are known now.  Author the semantic floor graph
         // before any partition geometry is published, then make geometry consume it.
-        const primaryCoreRng = mulberry32(hashString32(`${siteSeed}:vertical-core`));
-        const primaryCoreOffsetX = (primaryCoreRng() - 0.5) * primaryModule.rect.halfX * 0.18;
-        const primaryCoreOffsetZ = (primaryCoreRng() - 0.5) * primaryModule.rect.halfZ * 0.18;
-        const primaryStairCenter = centeredStairCorePosition({
-            axis: primaryStairAxis, rect: primaryModule.rect,
-            offsetX: primaryCoreOffsetX, offsetZ: primaryCoreOffsetZ,
-        });
-        const primaryStairCx = primaryStairCenter.x;
-        const primaryStairCz = primaryStairCenter.z;
-        const primaryStairFrom = primaryStairAxis === 'z'
-            ? primaryStairCz - primaryStairAvailableRun * 0.5
-            : primaryStairCx - primaryStairAvailableRun * 0.5;
-        const primaryStairTo = primaryStairAxis === 'z'
-            ? primaryStairCz + primaryStairAvailableRun * 0.5
-            : primaryStairCx + primaryStairAvailableRun * 0.5;
-        const primaryStairHalfWidth = primaryActualStairClearWidth * 0.5;
-        const primaryStairFlight = deriveStairFlight({
-            rise: floorH,
-            truth: stairPhysicalTruth,
-            stableKey: `${chunk.key}:${siteSignature}:${primaryModule.key}:flight`,
-            availableRun: primaryStairAvailableRun,
-        });
+        // Switchback core geometry was solved once above and is the vertical-core authority.
         const primaryModuleRoofY = primaryModule.floors > 0
             ? (primaryModule.floors - 1) * floorH + floorH
             : 0;
@@ -3046,6 +3070,12 @@ export function createKowloonFabricEngine({
         });
         registerSemanticConnector(physics, primaryStairConnector);
         const primaryStairReservation = primaryStairConnector.primaryReservation;
+        primaryStairReservation.stairTopology = primaryStairCore.topology;
+        primaryStairReservation.integratedFloorLanding = true;
+        primaryStairReservation.floorLandingDepth = primaryStairCore.floorLandingDepth;
+        primaryStairReservation.midLandingDepth = primaryStairCore.midLandingDepth;
+        primaryStairReservation.flightCount = primaryStairCore.flightCount;
+        primaryStairReservation.playerSideClearance = primaryStairCore.sideCapsuleClearance;
         // Access identity comes from canonical Portals, not connector publication
         // order or an independent interior entrance roll. Structural connector IDs
         // remain the physical identity carried by each Portal.
@@ -3254,30 +3284,14 @@ export function createKowloonFabricEngine({
                 // Planned wall runs are emitted once after the envelope/slab pass.
 
                 if (isSpine && floor < module.floors) {
-                    physics.ramps.push({
-                        axis: stairRunAxis, from: stairFrom, to: stairTo,
-                        fixedCoord: stairRunAxis === 'z' ? stairCx : stairCz,
-                        halfWidth: stairHalfWidth,
-                        y0, y1, supportKind: 'compound-stair',
-                    });
-                    const steps = stairFlight.stepCount;
-                    const stepThickness = Math.min(0.14, Math.max(0.075, stairFlight.riserHeight * 0.62));
-                    for (let i = 0; i < steps; i++) {
-                        const t = (i + 0.5) / steps;
-                        const along = stairFrom + (stairTo - stairFrom) * t;
-                        const stepY = y0 + stairFlight.riserHeight * (i + 1) - stepThickness * 0.5;
-                        transforms.steps.push(stairRunAxis === 'z'
-                            ? { x: stairCx, y: stepY, z: along, sx: actualStairClearWidth, sy: stepThickness, sz: Math.abs(stairTo - stairFrom) / steps * 1.06 }
-                            : { x: along, y: stepY, z: stairCz, sx: Math.abs(stairTo - stairFrom) / steps * 1.06, sy: stepThickness, sz: actualStairClearWidth });
-                    }
-                    emitFlightGuardPairFromAuthority({
-                        physics, transforms, idPrefix: `${chunk.key}:${siteSignature}:${module.key}:compound-stair:${floor}:guard`,
-                        axis: stairRunAxis, from: stairFrom, to: stairTo,
-                        fixedCoord: stairRunAxis === 'z' ? stairCx : stairCz,
-                        halfWidth: stairHalfWidth, y0, y1,
-                        family: guardFamilyForContext({ supportKind: 'compound-stair', visualRole: 'interior-stair', physicalUse: stairPhysicalTruth?.physicalUse }),
-                        supportKind: 'compound-stair-guard',
-                        metadata: { moduleKey: module.key, floor, physicalUse: stairPhysicalTruth?.physicalUse, visualRole: 'interior-stair' },
+                    const stairGuardFamily = guardFamilyForContext({ supportKind: 'compound-stair', visualRole: 'interior-stair', physicalUse: stairPhysicalTruth?.physicalUse });
+                    realizeInteriorSwitchbackStory({
+                        physics, transforms, core: primaryStairCore, floor, y0, y1, guardFamily: stairGuardFamily,
+                        includeUpperLanding: floor === module.floors - 1,
+                        metadata: {
+                            stairId: `${chunk.key}:${siteSignature}:${module.key}:compound-stair`,
+                            moduleKey: module.key, physicalUse: stairPhysicalTruth?.physicalUse,
+                        },
                     });
                 }
             }

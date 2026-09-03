@@ -133,8 +133,8 @@ export function planFastFacadeArchitecture({
           kind: 'storefront', moduleKey: face.moduleKey, dirKey: face.dirKey, side: face.side,
           floor: 0, center, width: bayWidth, height: bayHeight, bottom: 0,
         }));
-        windows.push(facadePlane(face, center, panelNormal, baseY + bayHeight * 0.5, bayWidth, bayHeight,
-          { facadeRole: 'storefront-glazing', moduleKey: face.moduleKey, dirKey: face.dirKey, floor: 0 }));
+        // Deliberately empty: the storefront treatment is the carved opening itself.
+        // No glass/panel plane is allowed to refill the hole.
         const frameT = 0.10;
         const frameNormal = geometry.faceCoord + geometry.outward * 0.055;
         const frameY = baseY + bayHeight * 0.5;

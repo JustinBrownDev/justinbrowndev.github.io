@@ -145,7 +145,7 @@ let bridgeAccessSeen = 0;
 let streetLayerDecksSeen = 0;
 let throatsSeen = 0;
 let scaffoldRoutesSeen = 0;
-let consumedScaffoldChecks = 0;
+let independentScaffoldChecks = 0;
 let buildingPlansSeen = 0;
 let partitionSegmentsSeen = 0;
 let interiorStairRampsSeen = 0;
@@ -198,10 +198,10 @@ for (const [x, z] of samples) {
       `${c.key}:${route.id}: unsupported stair geometry may not enter occupancy footprint`);
     if (route.streetLayers.length > 1) multiLayerRoutesSeen++;
 
-    const sameModuleScaffold = scaffoldRoutes.some(scaffold => scaffold.moduleKey === route.moduleKey);
-    assert.equal(sameModuleScaffold, false,
-      `${c.key}:${route.id}: accepted balcony street trunk must consume redundant fire escape on the same occupancy module`);
-    consumedScaffoldChecks++;
+    const sameFaceScaffold = scaffoldRoutes.some(scaffold => scaffold.moduleKey === route.moduleKey && scaffold.side === route.side);
+    assert.equal(sameFaceScaffold, false,
+      `${c.key}:${route.id}: generic street trunk may coexist with a fire escape on the building, but may not consume its exact facade`);
+    independentScaffoldChecks++;
 
     for (const flight of route.flights) {
       assert.ok(stairRamps.some(ramp => ramp.routeId === route.id && ramp.flightId === flight.id),
@@ -246,7 +246,7 @@ assert.ok(multiLayerRoutesSeen > 0, 'sample must get off the one-floor pattern a
 assert.ok(occupancyPortalsSeen > 0, 'sample must attach sparse occupancy doors to street layers');
 assert.ok(streetLayerDecksSeen > 0, 'sample must publish balconies/decks as horizontal transport');
 assert.ok(throatsSeen > 0, 'generated street layers must preserve independent flight headroom clearances');
-assert.ok(consumedScaffoldChecks > 0, 'sample must verify street-layer trunks consume redundant same-module fire escapes');
+assert.ok(independentScaffoldChecks > 0, 'sample must verify generic street-layer trunks preserve independent fire-escape facade ownership');
 assert.ok(buildingPlansSeen > 0, 'skeleton sample must restore structural Building Plans');
 assert.ok(partitionSegmentsSeen > 0, 'skeleton sample must publish interior partition walls');
 assert.ok(interiorStairRampsSeen > 0, 'skeleton sample must publish persistent interior core stairs');

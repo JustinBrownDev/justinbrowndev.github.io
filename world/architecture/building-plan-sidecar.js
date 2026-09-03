@@ -113,14 +113,20 @@ function normalizeReservations(reservations = []) {
     const openingCrossCandidates = [Number(r?.openingWidth), Number(r?.openingDepth)]
       .filter(value => Number.isFinite(value) && value > 0);
     const openingCross = openingCrossCandidates.length ? Math.min(...openingCrossCandidates) : 0;
-    const stairClearWidth = Math.max(
+    const flightClearWidth = Math.max(
       0.86,
       Number(r?.rampHalfWidth) > 0 ? Number(r.rampHalfWidth) * 2 : 0,
-      openingCross,
     );
-    // Technical passability is not enough: reserve enough apron for a person to
-    // turn, read the stair, and approach a doorway without the plan feeling pinched.
-    const walkAround = stairWalkAroundClearance(stairClearWidth);
+    const stairClearWidth = r?.integratedFloorLanding === true
+      ? flightClearWidth
+      : Math.max(flightClearWidth, openingCross);
+    // A switchback core already owns real floor and mid landings inside the
+    // shaft. Reserve only the approach outside that physical landing; using
+    // the whole capsule-safe shaft width here would double-count circulation
+    // and turn half the floor into an invisible semantic apron.
+    const walkAround = r?.integratedFloorLanding === true
+      ? Math.max(0.85, flightClearWidth * 0.95)
+      : stairWalkAroundClearance(stairClearWidth);
     const apron = {
       ...base,
       id: `${base.id}:walk-around-apron`,

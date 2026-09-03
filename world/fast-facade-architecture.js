@@ -34,6 +34,7 @@ function facadePlane(face, tangent, normal, y, width, height, metadata = null) {
     : { x: normal, y, z: tangent, sx: 0.04, sy: height, sz: width, ...(metadata || {}) };
 }
 function freezeRecord(value) { return Object.freeze({ ...value }); }
+function floorBaseOf(face) { return Math.max(0, Math.floor(finite(face?.floorBase, 0))); }
 
 export function planFastFacadeArchitecture({
   stableKey = 'fast-facade',
@@ -85,7 +86,7 @@ export function planFastFacadeArchitecture({
       const frameDepth = 0.22;
       const frameT = Math.min(0.14, Math.max(0.08, width * 0.07));
       const innerNormal = geometry.faceCoord - geometry.outward * frameDepth * 0.42;
-      const baseY = floor * floorH;
+      const baseY = (floorBaseOf(face) + floor) * floorH;
       const frameMeta = { facadeRole: 'portal-frame', openingId: raw.openingId ?? null, openingKey: raw.openingKey ?? null, moduleKey: face.moduleKey, dirKey: face.dirKey, floor, portalKind: raw.kind ?? 'portal' };
       props.push(orientedBox(face, center - width * 0.5 - frameT * 0.5, innerNormal, baseY + height * 0.5, frameT, frameDepth, height, frameMeta));
       props.push(orientedBox(face, center + width * 0.5 + frameT * 0.5, innerNormal, baseY + height * 0.5, frameT, frameDepth, height, frameMeta));
@@ -109,13 +110,14 @@ export function planFastFacadeArchitecture({
 
         const stoopDepth = 0.52;
         const stoopNormal = geometry.faceCoord + geometry.outward * stoopDepth * 0.5;
-        props.push(orientedBox(face, center, stoopNormal, 0.055, Math.min(tangentSpan - 0.12, width + 0.34), stoopDepth, 0.11,
+        props.push(orientedBox(face, center, stoopNormal, baseY + 0.055, Math.min(tangentSpan - 0.12, width + 0.34), stoopDepth, 0.11,
           { facadeRole: 'entry-stoop', moduleKey: face.moduleKey, dirKey: face.dirKey, floor }));
         metrics.stoops++;
       }
     }
 
     const groundOccupied = openingByFloor.has(0);
+    const groundBaseY = floorBaseOf(face) * floorH;
     let groundBay = null;
     if (!groundOccupied && tangentSpan >= 2.0) {
       const roll = stableHash(`${stableKey}:${face.moduleKey}:${face.dirKey}:ground-bay`) % 100;
@@ -124,14 +126,14 @@ export function planFastFacadeArchitecture({
       const bayHeight = bayKind === 'storefront' ? Math.min(2.45, floorH - 0.18) : Math.min(2.25, floorH * 0.72);
       const center = geometry.tangentCenter;
       const panelNormal = geometry.faceCoord + geometry.outward * 0.035;
-      const baseY = 0;
+      const baseY = groundBaseY;
       if (bayKind === 'storefront') {
         // Storefront is a literal ground-level wall cut, like a broad doorway.
         // It remains facade architecture rather than fabricating a circulation portal.
         apertures.push(freezeRecord({
           id: `${stableKey}:${face.moduleKey}:${face.dirKey}:storefront-aperture`,
           kind: 'storefront', moduleKey: face.moduleKey, dirKey: face.dirKey, side: face.side,
-          floor: 0, center, width: bayWidth, height: bayHeight, bottom: 0,
+          floor: 0, floorBase: floorBaseOf(face), center, width: bayWidth, height: bayHeight, bottom: 0,
         }));
         // Deliberately empty: the storefront treatment is the carved opening itself.
         // No glass/panel plane is allowed to refill the hole.
@@ -150,9 +152,9 @@ export function planFastFacadeArchitecture({
         metrics.storefronts++;
         metrics.canopies++;
       } else {
-        props.push(orientedBox(face, center, panelNormal, bayHeight * 0.5 + 0.10, bayWidth, 0.08, bayHeight,
+        props.push(orientedBox(face, center, panelNormal, baseY + bayHeight * 0.5 + 0.10, bayWidth, 0.08, bayHeight,
           { facadeRole: 'closed-service-shutter', moduleKey: face.moduleKey, dirKey: face.dirKey, floor: 0 }));
-        props.push(orientedBox(face, center, geometry.faceCoord + geometry.outward * 0.07, bayHeight + 0.19, bayWidth + 0.24, 0.14, 0.18,
+        props.push(orientedBox(face, center, geometry.faceCoord + geometry.outward * 0.07, baseY + bayHeight + 0.19, bayWidth + 0.24, 0.14, 0.18,
           { facadeRole: 'service-shutter-hood', moduleKey: face.moduleKey, dirKey: face.dirKey, floor: 0 }));
         metrics.serviceShutters++;
       }
@@ -167,7 +169,7 @@ export function planFastFacadeArchitecture({
     for (let floor = 0; floor < floors; floor++) {
       if (openingByFloor.has(floor)) continue;
       if (floor === 0 && groundBay) continue;
-      const y = floor * floorH + floorH * 0.56;
+      const y = (floorBaseOf(face) + floor) * floorH + floorH * 0.56;
       const windowCount = tangentSpan >= 5.6 ? 2 : 1;
       const width = clamp(tangentSpan * (windowCount === 2 ? 0.22 : 0.32), 0.82, 1.28);
       const height = clamp(floorH * 0.25, 0.68, 0.90);
@@ -177,7 +179,7 @@ export function planFastFacadeArchitecture({
         apertures.push(freezeRecord({
           id: `${stableKey}:${face.moduleKey}:${face.dirKey}:window-aperture:${floor}:${i}`,
           kind: 'window', moduleKey: face.moduleKey, dirKey: face.dirKey, side: face.side,
-          floor, center: tangent, width, height, bottom: floorH * 0.56 - height * 0.5,
+          floor, floorBase: floorBaseOf(face), center: tangent, width, height, bottom: floorH * 0.56 - height * 0.5,
         }));
         props.push(orientedBox(face, tangent, geometry.faceCoord + geometry.outward * 0.055, y - height * 0.5 - 0.055, width + 0.16, 0.12, 0.10,
           { facadeRole: 'window-sill', moduleKey: face.moduleKey, dirKey: face.dirKey, floor, windowIndex: i }));

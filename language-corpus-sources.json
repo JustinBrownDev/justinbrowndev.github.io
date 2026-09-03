@@ -1,0 +1,591 @@
+{
+  "version": 1,
+  "policy": {
+    "minimum_component_items": 5000,
+    "hand_authored_vocabulary": false,
+    "source_derived_only": true,
+    "release_build_fails_under_quota": true
+  },
+  "components": {
+    "names": {
+      "floor": 5000
+    },
+    "statements": {
+      "floor": 5000
+    },
+    "aphorisms": {
+      "floor": 5000
+    },
+    "propaganda": {
+      "floor": 5000
+    },
+    "advertisements": {
+      "floor": 5000
+    },
+    "instructions": {
+      "floor": 5000
+    },
+    "headlines": {
+      "floor": 5000
+    },
+    "notices": {
+      "floor": 5000
+    },
+    "graffiti": {
+      "floor": 5000
+    },
+    "personal_fragments": {
+      "floor": 5000
+    },
+    "technical": {
+      "floor": 5000
+    },
+    "economic": {
+      "floor": 5000
+    },
+    "political_theory": {
+      "floor": 5000
+    },
+    "religious_mystical": {
+      "floor": 5000
+    },
+    "products_models": {
+      "floor": 5000
+    },
+    "addresses_identifiers": {
+      "floor": 5000
+    },
+    "poetry": {
+      "floor": 5000
+    },
+    "association_chains": {
+      "floor": 5000
+    },
+    "warnings": {
+      "floor": 5000
+    },
+    "classifieds": {
+      "floor": 5000
+    },
+    "bureaucratic": {
+      "floor": 5000
+    },
+    "industrial": {
+      "floor": 5000
+    },
+    "network": {
+      "floor": 5000
+    },
+    "scientific": {
+      "floor": 5000
+    },
+    "transport": {
+      "floor": 5000
+    },
+    "commercial_names": {
+      "floor": 5000
+    },
+    "organization_names": {
+      "floor": 5000
+    },
+    "slogans": {
+      "floor": 5000
+    }
+  },
+  "sources": [
+    {
+      "id": "jweb_repo",
+      "family": "jweb",
+      "adapter": "repo_strings",
+      "rights": "project_owned",
+      "components": [
+        "statements",
+        "instructions",
+        "headlines",
+        "notices",
+        "technical",
+        "products_models",
+        "addresses_identifiers",
+        "association_chains",
+        "warnings",
+        "bureaucratic",
+        "industrial",
+        "network",
+        "scientific",
+        "transport",
+        "commercial_names",
+        "organization_names",
+        "advertisements",
+        "classifieds",
+        "graffiti",
+        "aphorisms",
+        "propaganda",
+        "personal_fragments",
+        "poetry",
+        "religious_mystical",
+        "slogans"
+      ],
+      "exclude_globs": [
+        "noise-data-language.js",
+        "language-corpus-provenance.jsonl",
+        "language-corpus-report.json"
+      ]
+    },
+    {
+      "id": "ssa_given_names",
+      "family": "names",
+      "adapter": "ssa_names",
+      "rights": "us_government_public_domain",
+      "url": "https://www.ssa.gov/oact/babynames/names.zip",
+      "components": [
+        "names",
+        "commercial_names",
+        "association_chains"
+      ]
+    },
+    {
+      "id": "census_2010_surnames",
+      "family": "names",
+      "adapter": "census_surnames",
+      "rights": "us_government_public_domain",
+      "url": "https://www2.census.gov/topics/genealogy/2010surnames/names.zip",
+      "components": [
+        "names",
+        "commercial_names",
+        "organization_names",
+        "association_chains"
+      ]
+    },
+    {
+      "id": "mountain_goats_musicbrainz",
+      "family": "mountain_goats",
+      "adapter": "musicbrainz_artist",
+      "rights": "cc0",
+      "artist_mbid": "9639cd52-c351-4a17-9797-58880e95a7ef",
+      "entities": [
+        "release-group",
+        "recording",
+        "work"
+      ],
+      "max_items": 5000,
+      "components": [
+        "poetry",
+        "personal_fragments",
+        "headlines",
+        "association_chains"
+      ],
+      "optional": true
+    },
+    {
+      "id": "marx_engels_manifesto_pg61",
+      "family": "marxist_primary",
+      "adapter": "plain_text",
+      "rights": "public_domain_us",
+      "url": "https://www.gutenberg.org/cache/epub/61/pg61.txt",
+      "strip_gutenberg": true,
+      "components": [
+        "statements",
+        "aphorisms",
+        "propaganda",
+        "economic",
+        "political_theory",
+        "slogans",
+        "association_chains"
+      ]
+    },
+    {
+      "id": "engels_working_class_pg17306",
+      "family": "marxist_primary",
+      "adapter": "plain_text",
+      "rights": "public_domain_us",
+      "url": "https://www.gutenberg.org/cache/epub/17306/pg17306.txt",
+      "strip_gutenberg": true,
+      "components": [
+        "statements",
+        "economic",
+        "political_theory",
+        "industrial",
+        "personal_fragments",
+        "association_chains"
+      ]
+    },
+    {
+      "id": "engels_feuerbach_pg27814",
+      "family": "marxist_primary",
+      "adapter": "plain_text",
+      "rights": "public_domain_us",
+      "url": "https://www.gutenberg.org/cache/epub/27814/pg27814.txt",
+      "strip_gutenberg": true,
+      "components": [
+        "statements",
+        "aphorisms",
+        "political_theory",
+        "religious_mystical",
+        "association_chains"
+      ]
+    },
+    {
+      "id": "engels_anti_duehring_pg31933",
+      "family": "marxist_primary",
+      "adapter": "plain_text",
+      "rights": "public_domain_us",
+      "url": "https://www.gutenberg.org/cache/epub/31933/pg31933.txt",
+      "strip_gutenberg": true,
+      "components": [
+        "statements",
+        "aphorisms",
+        "economic",
+        "political_theory",
+        "scientific",
+        "association_chains"
+      ]
+    },
+    {
+      "id": "engels_family_property_state_pg33111",
+      "family": "marxist_primary",
+      "adapter": "plain_text",
+      "rights": "public_domain_us",
+      "url": "https://www.gutenberg.org/cache/epub/33111/pg33111.txt",
+      "strip_gutenberg": true,
+      "components": [
+        "statements",
+        "economic",
+        "political_theory",
+        "organization_names",
+        "association_chains"
+      ]
+    },
+    {
+      "id": "engels_socialism_pg39257",
+      "family": "marxist_primary",
+      "adapter": "plain_text",
+      "rights": "public_domain_us",
+      "url": "https://www.gutenberg.org/cache/epub/39257/pg39257.txt",
+      "strip_gutenberg": true,
+      "components": [
+        "statements",
+        "aphorisms",
+        "propaganda",
+        "economic",
+        "political_theory",
+        "industrial",
+        "slogans",
+        "association_chains"
+      ]
+    },
+    {
+      "id": "spoon_river_pg1280",
+      "family": "public_domain_poetry",
+      "adapter": "plain_text",
+      "rights": "public_domain_us",
+      "url": "https://www.gutenberg.org/cache/epub/1280/pg1280.txt",
+      "strip_gutenberg": true,
+      "components": [
+        "poetry",
+        "personal_fragments",
+        "headlines",
+        "graffiti",
+        "association_chains",
+        "names"
+      ]
+    },
+    {
+      "id": "maxims_rochefoucauld_pg9105",
+      "family": "aphorisms",
+      "adapter": "plain_text",
+      "rights": "public_domain_us",
+      "url": "https://www.gutenberg.org/cache/epub/9105/pg9105.txt",
+      "strip_gutenberg": true,
+      "components": [
+        "aphorisms",
+        "statements",
+        "slogans",
+        "graffiti",
+        "association_chains"
+      ]
+    },
+    {
+      "id": "current_superstitions_pg18992",
+      "family": "folklore",
+      "adapter": "plain_text",
+      "rights": "public_domain_us",
+      "url": "https://www.gutenberg.org/cache/epub/18992/pg18992.txt",
+      "strip_gutenberg": true,
+      "components": [
+        "religious_mystical",
+        "warnings",
+        "notices",
+        "graffiti",
+        "aphorisms",
+        "association_chains"
+      ]
+    },
+    {
+      "id": "wise_sayings_pg21130",
+      "family": "aphorisms",
+      "adapter": "plain_text",
+      "rights": "public_domain_us",
+      "url": "https://www.gutenberg.org/cache/epub/21130/pg21130.txt",
+      "strip_gutenberg": true,
+      "components": [
+        "aphorisms",
+        "slogans",
+        "graffiti",
+        "religious_mystical",
+        "association_chains"
+      ]
+    },
+    {
+      "id": "metallurgy_assaying_pg18751",
+      "family": "metallurgy",
+      "adapter": "plain_text",
+      "rights": "public_domain_us",
+      "url": "https://www.gutenberg.org/cache/epub/18751/pg18751.txt",
+      "strip_gutenberg": true,
+      "components": [
+        "instructions",
+        "technical",
+        "products_models",
+        "warnings",
+        "industrial",
+        "scientific",
+        "association_chains"
+      ]
+    },
+    {
+      "id": "steel_manual_pg71782",
+      "family": "metallurgy",
+      "adapter": "plain_text",
+      "rights": "public_domain_us",
+      "url": "https://www.gutenberg.org/cache/epub/71782/pg71782.txt",
+      "strip_gutenberg": true,
+      "components": [
+        "instructions",
+        "technical",
+        "products_models",
+        "warnings",
+        "industrial",
+        "scientific",
+        "association_chains"
+      ]
+    },
+    {
+      "id": "iana_service_registry",
+      "family": "network_standards",
+      "adapter": "csv_columns",
+      "rights": "registry_notice_required",
+      "url": "https://www.iana.org/assignments/service-names-port-numbers/service-names-port-numbers.csv",
+      "fields": [
+        "Service Name",
+        "Port Number",
+        "Transport Protocol",
+        "Description",
+        "Reference"
+      ],
+      "joiner": " | ",
+      "components": [
+        "technical",
+        "products_models",
+        "addresses_identifiers",
+        "association_chains",
+        "network"
+      ]
+    },
+    {
+      "id": "rfc_index",
+      "family": "network_standards",
+      "adapter": "xml_tags",
+      "rights": "registry_notice_required",
+      "url": "https://www.rfc-editor.org/rfc-index.xml",
+      "item_tag": "rfc-entry",
+      "tags": [
+        "doc-id",
+        "title",
+        "current-status",
+        "month",
+        "year"
+      ],
+      "joiner": " | ",
+      "components": [
+        "headlines",
+        "technical",
+        "products_models",
+        "addresses_identifiers",
+        "association_chains",
+        "network"
+      ]
+    },
+    {
+      "id": "ourairports_airports",
+      "family": "transport",
+      "adapter": "csv_columns",
+      "rights": "public_domain_us",
+      "url": "https://davidmegginson.github.io/ourairports-data/airports.csv",
+      "fields": [
+        "ident",
+        "type",
+        "name",
+        "municipality",
+        "iso_country",
+        "elevation_ft",
+        "gps_code",
+        "iata_code",
+        "local_code"
+      ],
+      "joiner": " | ",
+      "components": [
+        "headlines",
+        "addresses_identifiers",
+        "association_chains",
+        "transport",
+        "organization_names"
+      ]
+    },
+    {
+      "id": "ourairports_runways",
+      "family": "transport",
+      "adapter": "csv_columns",
+      "rights": "public_domain_us",
+      "url": "https://davidmegginson.github.io/ourairports-data/runways.csv",
+      "fields": [
+        "airport_ident",
+        "length_ft",
+        "width_ft",
+        "surface",
+        "le_ident",
+        "he_ident",
+        "lighted",
+        "closed"
+      ],
+      "joiner": " | ",
+      "components": [
+        "technical",
+        "addresses_identifiers",
+        "association_chains",
+        "transport"
+      ]
+    },
+    {
+      "id": "ourairports_navaids",
+      "family": "transport",
+      "adapter": "csv_columns",
+      "rights": "public_domain_us",
+      "url": "https://davidmegginson.github.io/ourairports-data/navaids.csv",
+      "fields": [
+        "ident",
+        "name",
+        "type",
+        "frequency_khz",
+        "iso_country",
+        "associated_airport"
+      ],
+      "joiner": " | ",
+      "components": [
+        "technical",
+        "addresses_identifiers",
+        "association_chains",
+        "transport"
+      ]
+    },
+    {
+      "id": "ieee_standards_public_metadata",
+      "family": "ansi_ieee",
+      "adapter": "json_fields",
+      "rights": "metadata_only",
+      "path": ".language-cache/manual/ieee-standards-metadata.json",
+      "optional_local": true,
+      "optional": true,
+      "items_path": [],
+      "fields": [
+        "designation",
+        "title",
+        "abstract",
+        "scope"
+      ],
+      "joiner": " | ",
+      "components": [
+        "statements",
+        "instructions",
+        "technical",
+        "products_models",
+        "warnings",
+        "industrial",
+        "network",
+        "scientific"
+      ]
+    },
+    {
+      "id": "ansi_standards_public_metadata",
+      "family": "ansi_ieee",
+      "adapter": "json_fields",
+      "rights": "metadata_only",
+      "path": ".language-cache/manual/ansi-standards-metadata.json",
+      "optional_local": true,
+      "optional": true,
+      "items_path": [],
+      "fields": [
+        "designation",
+        "title",
+        "scope",
+        "developer"
+      ],
+      "joiner": " | ",
+      "components": [
+        "statements",
+        "instructions",
+        "technical",
+        "products_models",
+        "warnings",
+        "industrial",
+        "scientific"
+      ]
+    },
+    {
+      "id": "ansi_ieee_licensed_fulltext",
+      "family": "ansi_ieee",
+      "adapter": "zip_text",
+      "rights": "license_required_local_only",
+      "path": ".language-cache/manual/ansi-ieee-licensed-text.zip",
+      "optional_local": true,
+      "optional": true,
+      "member_regex": "\\.(txt|md)$",
+      "components": [
+        "statements",
+        "instructions",
+        "technical",
+        "products_models",
+        "warnings",
+        "bureaucratic",
+        "industrial",
+        "network",
+        "scientific"
+      ]
+    }
+  ],
+  "derived": {
+    "person_names": {
+      "component": "names",
+      "target": 20000,
+      "given_sources": [
+        "ssa_given_names"
+      ],
+      "surname_sources": [
+        "census_2010_surnames"
+      ]
+    }
+  },
+  "planned_source_families": [
+    "NIST Technical Series full public-domain text and metadata",
+    "USGS Mineral Commodity Summaries and historical materials text",
+    "USPTO patent titles abstracts and classification-linked terminology",
+    "Library of Congress Chronicling America OCR and newspaper metadata",
+    "Library of Congress WPA and public-domain poster OCR/metadata",
+    "GovInfo Federal Register CFR and Congressional Record XML",
+    "Wikidata CC0 organizations products places occupations and materials",
+    "GeoNames place corpus",
+    "NOAA GHCN station and observation terminology",
+    "USGS earthquake catalog",
+    "Unicode Character Database",
+    "public-domain poetry letters diaries sermons and folklore"
+  ]
+}

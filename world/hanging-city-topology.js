@@ -54,7 +54,7 @@ export function groundBuildingClaim(entity, {
   margin = HANGING_CITY_CLAIM_MARGIN,
   roofReserve = HANGING_CITY_GROUND_HEADROOM_RESERVE,
 } = {}) {
-  if (!entity || entity.kind !== 'building') return null;
+  if (!entity || (entity.kind !== 'building' && entity.kind !== 'district-landmark')) return null;
   const horizontal = expandedHorizontalClaim(entity.compoundBounds ?? entity, margin);
   if (!horizontal) return null;
   const floorHeight = Math.max(0.1, Number(entity.floorH) || HANGING_CITY_FLOOR_HEIGHT);
@@ -83,7 +83,9 @@ export function planCeilingBuildingHeight({
   let blockingTopY = 0;
   const blockers = [];
   for (const entity of groundEntities) {
-    const claim = groundBuildingClaim(entity, { margin });
+    // Ground height is already cavern-capped. Do not charge the old 5.5m
+    // headroom reserve a second time when budgeting the opposing field.
+    const claim = groundBuildingClaim(entity, { margin, roofReserve: 0 });
     if (!claim || !horizontalClaimsOverlap(horizontal, claim)) continue;
     blockingTopY = Math.max(blockingTopY, claim.topY);
     blockers.push(claim.entityId);

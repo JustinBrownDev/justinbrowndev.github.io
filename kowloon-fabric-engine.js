@@ -4,7 +4,13 @@ import { WORLD_FORMAT_VERSION, worldChunkOwnerId, worldEntityId } from './world-
 import { createKowloonFabricEnrichment } from './world/kowloon-fabric-enrichment.js';
 import { assertBuildingFootprintsDoNotOverlap } from './world/building-footprint-invariant.js';
 import { createKowloonMazeTopology } from './world/kowloon-district-plan.js';
-import { planInvertedTowerField } from './world/inverted-tower-field.js';
+import {
+    HANGING_CITY_CEILING_Y,
+    bridgePortalMapForPlans,
+    cloneBridgePlansForHangingFrame,
+    planHangingCityCounterparts,
+    polarityPortalForCounterpart,
+} from './world/hanging-city-topology.js';
 import { classifyPhysicalUse } from './world/physical-use.js';
 import { deriveStairFlight, gameplayTraversalEnvelope, resolvePhysicalTruth } from './world/physical-truth.js';
 import { BUILDING_SLAB_THICKNESS, storyCeilingLocalY } from './world/interior-geometry-policy.js';
@@ -1722,7 +1728,7 @@ export function createKowloonFabricEngine({
         const primaryModuleRoofY = primaryModule.floors > 0
             ? (primaryModule.floors - 1) * floorH + floorH
             : 0;
-        const buildingPlanEntityId = worldEntityId(worldSeed, chunk.x, chunk.z, 'building', siteSignature);
+        const buildingPlanEntityId = structureProfile?.entityIdOverride ?? worldEntityId(worldSeed, chunk.x, chunk.z, 'building', siteSignature);
         const primaryStairConnector = createStairConnector({
             id: `${chunk.key}:${siteSignature}:${primaryModule.key}:stair`,
             x: primaryStairCx, z: primaryStairCz,
@@ -3072,7 +3078,7 @@ export function createKowloonFabricEngine({
         const primaryModuleRoofY = primaryModule.floors > 0
             ? (primaryModule.floors - 1) * floorH + floorH
             : 0;
-        const buildingPlanEntityId = worldEntityId(worldSeed, chunk.x, chunk.z, 'building', siteSignature);
+        const buildingPlanEntityId = structureProfile?.entityIdOverride ?? worldEntityId(worldSeed, chunk.x, chunk.z, 'building', siteSignature);
         const primaryStairConnector = createStairConnector({
             id: `${chunk.key}:${siteSignature}:${primaryModule.key}:stair`,
             x: primaryStairCx, z: primaryStairCz,
@@ -4092,6 +4098,247 @@ export function createKowloonFabricEngine({
         };
     }
 
+
+    function stripDualPolarityRoofIdentity(entity, transforms, physics) {
+        if (!entity?.compoundBounds || !Number.isFinite(entity?.floors) || !Number.isFinite(entity?.floorH)) return;
+        const roofY = entity.floors * entity.floorH;
+        const bounds = entity.compoundBounds;
+        const inside = item => {
+            const x = Number.isFinite(item?.x) ? Number(item.x)
+                : Number.isFinite(item?.x1) && Number.isFinite(item?.x2) ? (Number(item.x1) + Number(item.x2)) * 0.5 : NaN;
+            const z = Number.isFinite(item?.z) ? Number(item.z)
+                : Number.isFinite(item?.z1) && Number.isFinite(item?.z2) ? (Number(item.z1) + Number(item.z2)) * 0.5 : NaN;
+            return Number.isFinite(x) && Number.isFinite(z)
+                && x >= bounds.minX - 0.08 && x <= bounds.maxX + 0.08
+                && z >= bounds.minZ - 0.08 && z <= bounds.maxZ + 0.08;
+        };
+        const startsAtRoof = item => {
+            if (!inside(item)) return false;
+            if (Number.isFinite(item?.y) && Number.isFinite(item?.sy)) return item.y - item.sy * 0.5 >= roofY - 0.08;
+            if (Number.isFinite(item?.yMin)) return item.yMin >= roofY - 0.08;
+            return false;
+        };
+        for (const list of [...(transforms.wallGroups ?? []), transforms.props ?? [], transforms.guardMetal ?? [], transforms.guardConcrete ?? []]) {
+            if (!Array.isArray(list)) continue;
+            const kept = list.filter(item => !startsAtRoof(item));
+            list.splice(0, list.length, ...kept);
+        }
+        for (const list of [physics.props ?? [], physics.mazeWalls ?? []]) {
+            if (!Array.isArray(list)) continue;
+            const kept = list.filter(item => !startsAtRoof(item));
+            list.splice(0, list.length, ...kept);
+        }
+        entity.roofTopper = 'none';
+        entity.rooftopMechanical = 0;
+        entity.roofCrowns = 0;
+        entity.dualPolaritySeam = true;
+    }
+
+    function addPolarityServiceShaft({ portal, physics, transforms }) {
+        const y0 = portal.groundFeetY;
+        const y1 = portal.hangingWorldFeetY;
+        if (!(y1 > y0 + 0.18)) return 0;
+        const span = y1 - y0;
+        const rungGap = 0.42;
+        const rungs = Math.max(2, Math.ceil(span / rungGap));
+        const hx = Math.min(0.38, portal.hx * 0.62);
+        const hz = Math.min(0.38, portal.hz * 0.62);
+        for (let i = 1; i <= rungs; i++) {
+            const y = y0 + span * (i / rungs);
+            physics.platforms.push({
+                x: portal.x, z: portal.z, hx, hz, y,
+                blocksFromBelow: false, supportKind: 'ladder', supportMargin: 0,
+                polarityPortalId: portal.id,
+            });
+            transforms.props.push({
+                x: portal.x, y, z: portal.z,
+                sx: Math.max(0.58, hx * 1.7), sy: 0.055, sz: 0.075,
+                polarityPortalId: portal.id,
+            });
+        }
+        for (const x of [portal.x - hx * 0.82, portal.x + hx * 0.82]) transforms.props.push({
+            x, y: y0 + span * 0.5, z: portal.z,
+            sx: 0.065, sy: span, sz: 0.065, polarityPortalId: portal.id,
+        });
+        return rungs;
+    }
+
+    async function buildFullFatHangingCityLayer({
+        chunk, root, ownerId, sitePlans, siteIdOf, roadPlan, bridgePlans,
+        groundEntities, physics, transforms, cx0, cz0, half, cellSize, weird,
+    }) {
+        const topology = planHangingCityCounterparts({
+            worldSeed, chunkKey: chunk.key, sitePlans, groundEntities, weirdness: weird,
+        });
+        if (!topology.counterparts.length) return null;
+
+        const hangingRoot = new THREE.Group();
+        hangingRoot.name = 'hanging-city:' + chunk.key;
+        hangingRoot.position.y = HANGING_CITY_CEILING_Y;
+        hangingRoot.scale.y = -1;
+        hangingRoot.userData.hangingCityFrame = topology.frame;
+        hangingRoot.userData.noSpatialChunk = true;
+        root.add(hangingRoot);
+
+        const hangingGround = new THREE.Mesh(unitPlane, groundMat);
+        hangingGround.rotation.x = -Math.PI / 2;
+        hangingGround.scale.set(chunkSize, chunkSize, 1);
+        hangingGround.position.set(cx0, -0.025, cz0);
+        hangingGround.receiveShadow = true;
+        hangingRoot.add(hangingGround);
+
+        const { transforms: hangingTransforms, physics: hangingPhysics } = createFabricBuffers();
+        hangingPhysics.verticalFrame = topology.frame;
+        hangingPhysics.polarityPortals = [];
+        physics.polarityPortals ??= [];
+
+        for (const roadKey of roadPlan.roads) {
+            const [c, r] = roadKey.split(',').map(Number);
+            hangingTransforms.roads.push({
+                x: cx0 - half + (c + 0.5) * cellSize,
+                y: 0.002,
+                z: cz0 - half + (r + 0.5) * cellSize,
+                sx: cellSize * 1.015,
+                sy: cellSize * 1.015,
+                sz: 1,
+                plane: true,
+            });
+        }
+        addOwnedBoundaryBarriers(chunk, roadPlan, hangingPhysics, hangingTransforms.wallGroups[0], cellSize);
+
+        const counterpartBySite = new Map(topology.counterparts.map(item => [item.siteId, item]));
+        const groundBySite = new Map(groundEntities.filter(entity => entity.kind === 'building').map(entity => [entity.siteId, entity]));
+        const hangingBridgePlans = cloneBridgePlansForHangingFrame(bridgePlans);
+        const hangingBridgePortalsBySite = bridgePortalMapForPlans(hangingBridgePlans);
+        const hangingOpenSiteIds = new Set(sitePlans.filter(plan => plan.isPlaza).map(plan => plan.site.id));
+        const hangingEntities = [];
+        let hangingBuildings = 0;
+        let hangingPlazas = 0;
+
+        for (const plan of sitePlans) {
+            const { site, signature } = plan;
+            if (plan.isPlaza) {
+                let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+                for (const cell of site.cells) {
+                    const x = cx0 - half + (cell.col + 0.5) * cellSize;
+                    const z = cz0 - half + (cell.row + 0.5) * cellSize;
+                    minX = Math.min(minX, x - cellSize * 0.5); maxX = Math.max(maxX, x + cellSize * 0.5);
+                    minZ = Math.min(minZ, z - cellSize * 0.5); maxZ = Math.max(maxZ, z + cellSize * 0.5);
+                }
+                hangingEntities.push({
+                    id: worldEntityId(worldSeed, chunk.x, chunk.z, 'hanging-plaza', signature),
+                    kind: 'plaza', verticalPolarity: -1, verticalFrame: topology.frame,
+                    x: (minX + maxX) * 0.5, z: (minZ + maxZ) * 0.5,
+                    halfX: (maxX - minX) * 0.5, halfZ: (maxZ - minZ) * 0.5,
+                    compoundCells: site.cells.map(cell => ({ col: cell.col, row: cell.row })),
+                    kowloonServiceVoid: plan.realRoadFaces === 0,
+                });
+                hangingPlazas++;
+                continue;
+            }
+
+            const counterpart = counterpartBySite.get(site.id);
+            const groundEntity = groundBySite.get(site.id);
+            if (!counterpart || !groundEntity) continue;
+            const materialIndex = hashString32(chunk.seed + ':hanging-compound-facade:' + signature) % wallMats.length;
+            const groundFloorsByModule = new Map((groundEntity.footprintModules ?? []).map(module => [module.key, module.floors]));
+            const floorCountByCell = Object.fromEntries(site.cells.map(cell => {
+                const moduleKey = key(cell.col, cell.row);
+                const groundModuleFloors = groundFloorsByModule.get(moduleKey) ?? groundEntity.floors;
+                const setbackDrop = Math.max(0, groundEntity.floors - groundModuleFloors);
+                return [moduleKey, Math.max(1, counterpart.hangingFloors - setbackDrop)];
+            }));
+            const structural = await buildKowloonCompoundCooperative({
+                chunk, site, siteIdOf, roadPlan, openSiteIds: hangingOpenSiteIds,
+                bridgePortalsBySite: hangingBridgePortalsBySite,
+                physics: hangingPhysics, transforms: hangingTransforms,
+                cx0, cz0, half, cellSize, materialIndex,
+                structureProfile: {
+                    primaryFloors: counterpart.hangingFloors,
+                    floorHeight: counterpart.floorHeight,
+                    floorCountByCell,
+                    entityIdOverride: counterpart.planEntityId,
+                    singularRecipe: counterpart.dualPolarity ? 'dual-polarity-building' : 'hanging-city-building',
+                },
+            });
+            if (!structural) continue;
+            const hangingEntity = {
+                id: counterpart.entityId,
+                kind: 'building', siteId: site.id, materialIndex,
+                verticalPolarity: -1, verticalFrame: topology.frame,
+                groundEntityId: groundEntity.id,
+                collisionDecision: counterpart.collisionDecision,
+                dualPolaritySeam: counterpart.dualPolarity,
+                sharedSeamY: counterpart.sharedSeamY,
+                ...structural,
+            };
+            hangingEntities.push(hangingEntity);
+            hangingBuildings++;
+
+            const portalBase = polarityPortalForCounterpart(counterpart, groundEntity);
+            if (portalBase) {
+                const portal = { ...portalBase, ownerId: ownerId + ':hanging' };
+                hangingPhysics.polarityPortals.push(portal);
+                physics.polarityPortals.push(portal);
+                addPolarityServiceShaft({ portal, physics, transforms });
+            }
+
+            if (counterpart.dualPolarity) {
+                stripDualPolarityRoofIdentity(groundEntity, transforms, physics);
+                stripDualPolarityRoofIdentity(hangingEntity, hangingTransforms, hangingPhysics);
+                groundEntity.verticalFrames = [
+                    { id: groundEntity.id + ':ground-frame', verticalPolarity: 1, anchorY: 0 },
+                    topology.frame,
+                ];
+                groundEntity.hangingFrame = {
+                    floors: counterpart.hangingFloors,
+                    sharedSeamY: counterpart.sharedSeamY,
+                    collisionDecision: counterpart.collisionDecision,
+                };
+            }
+        }
+
+        const footprintInvariant = assertBuildingFootprintsDoNotOverlap(hangingEntities);
+        const hangingEntityBySite = new Map(hangingEntities.filter(entity => entity.kind === 'building').map(entity => [entity.siteId, entity]));
+        let hangingSkybridges = 0;
+        for (const bridge of hangingBridgePlans) {
+            const aEntity = hangingEntityBySite.get(bridge.aSiteId);
+            const bEntity = hangingEntityBySite.get(bridge.bSiteId);
+            if (!emitSkybridge({ bridge, aEntity, bEntity, physics: hangingPhysics, transforms: hangingTransforms })) continue;
+            hangingEntities.push({ id: bridge.id, kind: 'skybridge', verticalPolarity: -1, verticalFrame: topology.frame, ...bridge });
+            hangingSkybridges++;
+        }
+
+        attachFabricMeshes(hangingRoot, hangingTransforms, 'hanging:' + chunk.key);
+        const hangingPayload = {
+            formatVersion: WORLD_FORMAT_VERSION,
+            ownerId: ownerId + ':hanging',
+            root: hangingRoot,
+            physics: hangingPhysics,
+            entities: hangingEntities,
+            buildings: hangingBuildings,
+            plazas: hangingPlazas,
+            skybridges: hangingSkybridges,
+            buildingFootprintInvariant: footprintInvariant,
+            verticalFrame: topology.frame,
+            committed: false,
+            disposed: false,
+        };
+        const hangingChunk = { ...chunk, key: chunk.key + ':hanging', seed: hashString32(chunk.seed + ':hanging-city') };
+        await enrichment.initializePayloadCooperative(hangingChunk, hangingPayload, { yieldControl, maxUnitsPerSlice: 1 });
+        return {
+            schema: topology.schema,
+            frame: topology.frame,
+            topology,
+            payload: hangingPayload,
+            buildings: hangingBuildings,
+            plazas: hangingPlazas,
+            skybridges: hangingSkybridges,
+            dualPolarityCount: topology.dualPolarityCount,
+            independentCount: topology.independentCount,
+        };
+    }
+
     function attachFabricMeshes(root, transforms, namePrefix) {
         const roadMesh = makeInstanced(`${namePrefix}-roads`, unitPlane, roadMat, transforms.roads);
         if (roadMesh) root.add(roadMesh);
@@ -4129,6 +4376,18 @@ export function createKowloonFabricEngine({
         root.userData.streamAuthority = 'WorldChunkStreamer';
         root.userData.authoredOriginComposite = true;
         root.visible = false;
+        const authoredHangingStreetRoot = new THREE.Group();
+        authoredHangingStreetRoot.name = 'hanging-city:authored-origin-street-plane';
+        authoredHangingStreetRoot.position.y = HANGING_CITY_CEILING_Y;
+        authoredHangingStreetRoot.scale.y = -1;
+        authoredHangingStreetRoot.userData.hangingCityFrame = { anchorY: HANGING_CITY_CEILING_Y, verticalPolarity: -1 };
+        const authoredHangingStreet = new THREE.Mesh(unitPlane, groundMat);
+        authoredHangingStreet.rotation.x = -Math.PI / 2;
+        authoredHangingStreet.scale.set(chunkSize, chunkSize, 1);
+        authoredHangingStreet.position.set(0, -0.025, 0);
+        authoredHangingStreet.receiveShadow = true;
+        authoredHangingStreetRoot.add(authoredHangingStreet);
+        root.add(authoredHangingStreetRoot);
         const { physics } = createFabricBuffers();
         authoredOriginChunkPayload = {
             formatVersion: WORLD_FORMAT_VERSION, key: spawnChunkKey, chunk, ownerId, root, physics,
@@ -4195,11 +4454,97 @@ export function createKowloonFabricEngine({
             structureProfile,
         });
         if (!structural) return null;
-        attachFabricMeshes(root, transforms, `spawn-fabric-${site.id}`);
+
         const entity = { id: worldEntityId(worldSeed, 0, 0, 'spawn-fabric-site', String(site.id)), kind: 'building', siteId: site.id, ...structural };
+        let authoredHangingLayer = null;
+        const groundRoofY = structural.floors * structural.floorH;
+        const hangingFloorH = 3.15;
+        const authoredDesiredFloors = 4 + (hashString32(String(worldSeed) + ':authored-hanging:' + String(site.id)) % 5);
+        const authoredMaxFloors = Math.max(1, Math.floor((HANGING_CITY_CEILING_Y - groundRoofY + 1e-8) / hangingFloorH));
+        const authoredHangingFloors = Math.min(authoredDesiredFloors, authoredMaxFloors);
+        if (authoredHangingFloors >= 2) {
+            const hangingRoot = new THREE.Group();
+            hangingRoot.name = 'hanging-city:spawn-site:' + String(site.id);
+            hangingRoot.position.y = HANGING_CITY_CEILING_Y;
+            hangingRoot.scale.y = -1;
+            hangingRoot.userData.hangingCityFrame = { anchorY: HANGING_CITY_CEILING_Y, verticalPolarity: -1 };
+            root.add(hangingRoot);
+            const { transforms: hangingTransforms, physics: hangingPhysics } = createFabricBuffers();
+            hangingPhysics.verticalFrame = { schema: 'jweb.vertical-traversal-frame.v2', anchorY: HANGING_CITY_CEILING_Y, verticalPolarity: -1 };
+            hangingPhysics.polarityPortals = [];
+            physics.polarityPortals ??= [];
+
+            const hangingEndpoints = (bridgePortalsBySite?.get(site.id) ?? []).map(endpoint => {
+                const hangingBridgeId = String(endpoint.bridgeId) + ':hanging';
+                const clone = { ...endpoint, id: hangingBridgeId + ':endpoint:' + String(endpoint.endpointRole), bridgeId: hangingBridgeId, resolved: false };
+                delete clone.x; delete clone.y; delete clone.z;
+                return clone;
+            });
+            const hangingBridgePortalsBySite = new Map();
+            if (hangingEndpoints.length) hangingBridgePortalsBySite.set(site.id, hangingEndpoints);
+            const groundFloorsByModule = new Map((structural.footprintModules ?? []).map(module => [module.key, module.floors]));
+            const floorCountByCell = Object.fromEntries(site.cells.map(cell => {
+                const moduleKey = key(cell.col, cell.row);
+                const groundModuleFloors = groundFloorsByModule.get(moduleKey) ?? structural.floors;
+                const setbackDrop = Math.max(0, structural.floors - groundModuleFloors);
+                return [moduleKey, Math.max(1, authoredHangingFloors - setbackDrop)];
+            }));
+            const hangingStructural = yield* buildKowloonCompoundSteps({
+                chunk, site, siteIdOf, roadPlan: { roads: new Set() }, openSiteIds: new Set(),
+                bridgePortalsBySite: hangingBridgePortalsBySite,
+                physics: hangingPhysics, transforms: hangingTransforms, cx0: 0, cz0: 0, half: 0, cellSize: 1,
+                materialIndex: materialIndex ?? (hashString32(String(worldSeed) + ':spawn-hanging-material:' + String(site.id)) % wallMats.length),
+                geometryAdapter,
+                streetCellOverride: (col, row) => grid[row]?.[col] !== true,
+                courtyardCellOverride: structureProfile?.courtyardCell,
+                structureProfile: {
+                    ...(structureProfile || {}),
+                    primaryFloors: authoredHangingFloors,
+                    floorHeight: hangingFloorH,
+                    floorCountByCell,
+                    entityIdOverride: entity.id + ':hanging-frame-plan',
+                    singularRecipe: 'hanging:' + String(structureProfile?.singularRecipe ?? 'spawn-fabric'),
+                },
+            });
+            if (hangingStructural) {
+                const hangingEntity = {
+                    id: entity.id + ':hanging', kind: 'building', siteId: site.id,
+                    verticalPolarity: -1, verticalFrame: hangingPhysics.verticalFrame,
+                    groundEntityId: entity.id, collisionDecision: 'independent-non-overlapping-building',
+                    ...hangingStructural,
+                };
+                const counterpart = {
+                    entityId: hangingEntity.id, groundEntityId: entity.id,
+                    hangingFloors: authoredHangingFloors, floorHeight: hangingFloorH,
+                    ceilingY: HANGING_CITY_CEILING_Y, groundRoofY,
+                    hangingTipY: HANGING_CITY_CEILING_Y - authoredHangingFloors * hangingFloorH,
+                    dualPolarity: false, sharedSeamY: null,
+                };
+                const portalBase = polarityPortalForCounterpart(counterpart, entity);
+                if (portalBase) {
+                    const portal = { ...portalBase, ownerId: ownerId + ':hanging' };
+                    hangingPhysics.polarityPortals.push(portal);
+                    physics.polarityPortals.push(portal);
+                    addPolarityServiceShaft({ portal, physics, transforms });
+                }
+                attachFabricMeshes(hangingRoot, hangingTransforms, 'spawn-hanging-' + String(site.id));
+                const hangingChunk = { ...chunk, key: chunk.key + ':hanging' };
+                const hangingPayload = {
+                    formatVersion: WORLD_FORMAT_VERSION, ownerId: ownerId + ':hanging', root: hangingRoot,
+                    physics: hangingPhysics, chunk: hangingChunk, entity: hangingEntity, entities: [hangingEntity],
+                    buildings: 1, plazas: 0, skybridges: 0, verticalFrame: hangingPhysics.verticalFrame,
+                    committed: false, disposed: false, authoredSpawnFabric: true,
+                };
+                enrichment.initializePayload(hangingChunk, hangingPayload);
+                const bridgeEndpointsById = new Map(hangingEndpoints.map(endpoint => [endpoint.bridgeId, endpoint]));
+                authoredHangingLayer = { payload: hangingPayload, bridgeEndpointsById };
+            }
+        }
+        attachFabricMeshes(root, transforms, `spawn-fabric-${site.id}`);
         const payload = {
             formatVersion: WORLD_FORMAT_VERSION, ownerId, root, physics, chunk,
             entity, entities: [entity], buildings: 1, plazas: 0, skybridges: 0,
+            hangingLayer: authoredHangingLayer,
             committed: false, disposed: false, authoredSpawnFabric: true,
         };
         enrichment.initializePayload(chunk, payload);
@@ -4327,14 +4672,17 @@ export function createKowloonFabricEngine({
         return { ownerId, root, physics: null, draws, instances, committed: false, patchKey, authoredSpawnSurface: true };
     }
 
-    function buildAuthoredBridge({ bridge, payloadBySite, ownerId = `spawn-link:${bridge?.id ?? 'unknown'}` } = {}) {
+    function buildAuthoredBridge({ bridge, payloadBySite, ownerId = null } = {}) {
         if (!bridge || !payloadBySite) return null;
-        const aEntity = payloadBySite.get(bridge.aSiteId)?.entity;
-        const bEntity = payloadBySite.get(bridge.bSiteId)?.entity;
+        ownerId ??= 'spawn-link:' + String(bridge.id ?? 'unknown');
+        const aPayload = payloadBySite.get(bridge.aSiteId);
+        const bPayload = payloadBySite.get(bridge.bSiteId);
+        const aEntity = aPayload?.entity;
+        const bEntity = bPayload?.entity;
         const { transforms, physics } = createFabricBuffers();
         if (!emitSkybridge({ bridge, aEntity, bEntity, physics, transforms })) return null;
         const root = new THREE.Group();
-        root.name = `kowloon-link:${bridge.id}`;
+        root.name = 'kowloon-link:' + String(bridge.id);
         root.userData.noSpatialChunk = true;
         root.userData.worldChunkRoot = true;
         root.userData.worldChunkKey = '0,0';
@@ -4342,9 +4690,47 @@ export function createKowloonFabricEngine({
         root.userData.worldFormatVersion = WORLD_FORMAT_VERSION;
         root.userData.renderAuthority = 'KowloonFabricEngine';
         root.userData.authoredSpawnRelationship = true;
-        attachFabricMeshes(root, transforms, `spawn-link-${bridge.id}`);
+        attachFabricMeshes(root, transforms, 'spawn-link-' + String(bridge.id));
+
+        let hangingLayer = null;
+        const aHangingEntity = aPayload?.hangingLayer?.payload?.entity;
+        const bHangingEntity = bPayload?.hangingLayer?.payload?.entity;
+        const hangingBridgeId = String(bridge.id) + ':hanging';
+        const aEndpoint = aPayload?.hangingLayer?.bridgeEndpointsById?.get(hangingBridgeId) ?? null;
+        const bEndpoint = bPayload?.hangingLayer?.bridgeEndpointsById?.get(hangingBridgeId) ?? null;
+        if (aHangingEntity && bHangingEntity && aEndpoint?.resolved === true && bEndpoint?.resolved === true) {
+            const hangingBridge = {
+                ...bridge,
+                id: hangingBridgeId,
+                aEndpoint,
+                bEndpoint,
+                framePolarity: -1,
+            };
+            const { transforms: hangingTransforms, physics: hangingPhysics } = createFabricBuffers();
+            hangingPhysics.verticalFrame = { schema: 'jweb.vertical-traversal-frame.v2', anchorY: HANGING_CITY_CEILING_Y, verticalPolarity: -1 };
+            if (emitSkybridge({ bridge: hangingBridge, aEntity: aHangingEntity, bEntity: bHangingEntity, physics: hangingPhysics, transforms: hangingTransforms })) {
+                const hangingRoot = new THREE.Group();
+                hangingRoot.name = 'kowloon-link:hanging:' + String(bridge.id);
+                hangingRoot.position.y = HANGING_CITY_CEILING_Y;
+                hangingRoot.scale.y = -1;
+                hangingRoot.userData.hangingCityFrame = hangingPhysics.verticalFrame;
+                attachFabricMeshes(hangingRoot, hangingTransforms, 'spawn-link-hanging-' + String(bridge.id));
+                root.add(hangingRoot);
+                const hangingPayload = {
+                    ownerId: ownerId + ':hanging', root: hangingRoot, physics: hangingPhysics,
+                    bridge: hangingBridge, entity: { id: hangingBridge.id, kind: 'skybridge', verticalPolarity: -1, ...hangingBridge },
+                    committed: false, disposed: false, authoredSpawnRelationship: true,
+                };
+                hangingLayer = { payload: hangingPayload };
+            }
+        }
         freezeChunkRoot(root);
-        return { ownerId, root, physics, bridge, entity: { id: bridge.id, kind: 'skybridge', ...bridge }, committed: false, disposed: false, authoredSpawnRelationship: true };
+        return {
+            ownerId, root, physics, bridge,
+            entity: { id: bridge.id, kind: 'skybridge', ...bridge },
+            hangingLayer,
+            committed: false, disposed: false, authoredSpawnRelationship: true,
+        };
     }
 
     async function build(chunk) {
@@ -4455,44 +4841,6 @@ export function createKowloonFabricEngine({
             pick: candidates => candidates[Math.floor(compoundPartitionRng() * candidates.length) % candidates.length],
         });
         const siteIdOf = compoundPartition.siteIdOf;
-
-        // INVERTED CITY MASS AUTHORITY: the upside-down city is a structural
-        // macro layer derived from the same compound partition, not a decor pass.
-        // It stays first-paint cheap: one or two towers, three instanced boxes each.
-        const invertedTowerField = planInvertedTowerField({
-            worldSeed,
-            chunkKey: chunk.key,
-            chunkCenterX: chunk.centerX,
-            chunkCenterZ: chunk.centerZ,
-            chunkSize,
-            microCells,
-            sites: compoundPartition.sites,
-            weirdness: weird,
-        });
-        for (const mass of invertedTowerField.masses) transforms.slabs.push({ ...mass, invertedTowerMass: true });
-        const invertedTowerRegistry = physics.invertedTowerFields ?? (physics.invertedTowerFields = []);
-        invertedTowerRegistry.push({
-            schema: invertedTowerField.schema,
-            chunkKey: chunk.key,
-            verticalPolarity: invertedTowerField.verticalPolarity,
-            ceilingY: invertedTowerField.ceilingY,
-            towerCount: invertedTowerField.towers.length,
-            instanceCount: invertedTowerField.instanceCount,
-            towerIds: invertedTowerField.towers.map(tower => tower.id),
-            towers: invertedTowerField.towers.map(tower => ({
-                id: tower.id,
-                sourceSiteId: tower.sourceSiteId,
-                sourceSiteCellCount: tower.sourceSiteCellCount,
-                sourceSignature: tower.sourceSignature,
-                sourceCells: tower.sourceCells,
-                verticalPolarity: tower.verticalPolarity,
-                verticalFrame: tower.verticalFrame,
-                anchorY: tower.anchorY,
-                tipY: tower.tipY,
-                localHeight: tower.localHeight,
-                footprint: tower.footprint,
-            })),
-        });
 
         const sitePlans = compoundPartition.sites.map(site => {
             const signature = site.cells.map(cell => key(cell.col, cell.row)).join('|');
@@ -4670,6 +5018,11 @@ export function createKowloonFabricEngine({
             if (yieldControl) await yieldControl(`building Kowloon compound ${chunk.key}`, entities.length, sitePlans.length + (districtLandmarkCell ? 1 : 0));
         }
 
+        const hangingLayer = await buildFullFatHangingCityLayer({
+            chunk, root, ownerId, sitePlans, siteIdOf, roadPlan, bridgePlans,
+            groundEntities: entities, physics, transforms, cx0, cz0, half, cellSize, weird,
+        });
+
         // Cross-building footprint overlap is a generator contract failure, not a
         // visual defect to hide later. Fail before bridges, enrichment, or publish.
         const buildingFootprintInvariant = assertBuildingFootprintsDoNotOverlap(entities);
@@ -4707,6 +5060,12 @@ export function createKowloonFabricEngine({
             skybridges,
             exteriorTransportNetwork,
             buildingFootprintInvariant,
+            hangingLayer,
+            hangingCity: hangingLayer ? {
+                schema: hangingLayer.schema, frame: hangingLayer.frame,
+                buildings: hangingLayer.buildings, plazas: hangingLayer.plazas, skybridges: hangingLayer.skybridges,
+                dualPolarityCount: hangingLayer.dualPolarityCount, independentCount: hangingLayer.independentCount,
+            } : null,
             portals: { ...roadPlan.portals },
             roadCells: roadPlan.roads.size,
             weirdness: chunk.weirdness,
@@ -4729,7 +5088,8 @@ export function createKowloonFabricEngine({
     // owner and this root remains hidden until that same owner activates.
     function applyPayloadVisibility(payload) {
         if (!payload?.root) return false;
-        const physicsReady = !payload.physics || payload.physicsActivationState === 'active';
+        const physicsReady = (!payload.physics || payload.physicsActivationState === 'active')
+            && (!payload.hangingLayer?.payload?.physics || payload.hangingPhysicsActivationState === 'active');
         payload.root.visible = !!payload.requestedVisible && physicsReady;
         payload.visible = payload.root.visible;
         payload.renderPublished = payload.visible;
@@ -4776,6 +5136,24 @@ export function createKowloonFabricEngine({
             payload.physicsActivationState = 'active';
             payload.physicsDeferredReason = null;
         }
+        const hangingPayload = payload.hangingLayer?.payload ?? null;
+        if (hangingPayload?.physics) {
+            const hangingRecord = playerPhysics.registerOwnedWorld(hangingPayload.ownerId, hangingPayload.physics, {
+                onActivationChange: nextRecord => {
+                    payload.hangingPhysicsActivationState = nextRecord?.activationState ?? 'active';
+                    payload.hangingPhysicsDeferredReason = nextRecord?.deferredReason ?? null;
+                    applyPayloadVisibility(payload);
+                },
+            });
+            committedOwners.add(hangingPayload.ownerId);
+            hangingPayload.physicsPublished = true;
+            hangingPayload.committed = true;
+            payload.hangingPhysicsActivationState = hangingRecord?.activationState ?? 'active';
+            payload.hangingPhysicsDeferredReason = hangingRecord?.deferredReason ?? null;
+        } else {
+            payload.hangingPhysicsActivationState = 'active';
+            payload.hangingPhysicsDeferredReason = null;
+        }
         payload.committed = true;
         applyPayloadVisibility(payload);
         return payload;
@@ -4801,7 +5179,8 @@ export function createKowloonFabricEngine({
         if (!payload.worldMatricesReady) throw new Error(`chunk ${chunk.key} READY verification failed: world matrices not committed`);
         if (!committedOwners.has(payload.ownerId)) throw new Error(`chunk ${chunk.key} READY verification failed: physics owner is not registered`);
         if (payload.requestedVisible !== !!expectedVisible) throw new Error(`chunk ${chunk.key} READY verification failed: visibility request does not match streamer authority`);
-        const physicsReady = !payload.physics || payload.physicsActivationState === 'active';
+        const physicsReady = (!payload.physics || payload.physicsActivationState === 'active')
+            && (!payload.hangingLayer?.payload?.physics || payload.hangingPhysicsActivationState === 'active');
         const expectedActualVisibility = !!expectedVisible && physicsReady;
         if (root.visible !== expectedActualVisibility) throw new Error(`chunk ${chunk.key} READY verification failed: render/collision activation parity violated`);
         return true;
@@ -4821,6 +5200,10 @@ export function createKowloonFabricEngine({
         }
         if (payload.committed && payload.physicsPublished) playerPhysics.unregisterOwnedWorld(payload.ownerId);
         if (payload.physicsPublished && payload.ownerId) committedOwners.delete(payload.ownerId);
+        const hangingPayload = payload.hangingLayer?.payload ?? null;
+        if (hangingPayload?.physicsPublished) playerPhysics.unregisterOwnedWorld(hangingPayload.ownerId);
+        if (hangingPayload?.ownerId) committedOwners.delete(hangingPayload.ownerId);
+        if (hangingPayload) enrichment.disposePayload(hangingPayload);
         if (authoredOriginChunkPayload && payload !== authoredOriginChunkPayload) {
             const componentIndex = authoredOriginChunkPayload.components.indexOf(payload);
             if (componentIndex >= 0) authoredOriginChunkPayload.components.splice(componentIndex, 1);
@@ -4851,8 +5234,18 @@ export function createKowloonFabricEngine({
         enrichment.disposeShared();
     }
 
-    const hasPendingRefinement = (_chunk, payload) => enrichment.hasPending(payload);
-    const refine = (chunk, payload, budget) => enrichment.pump(chunk, payload, budget);
+    const hasPendingRefinement = (_chunk, payload) => enrichment.hasPending(payload) || enrichment.hasPending(payload?.hangingLayer?.payload);
+    const refine = (chunk, payload, budget) => {
+        const hangingPayload = payload?.hangingLayer?.payload ?? null;
+        const groundPending = enrichment.hasPending(payload);
+        const hangingPending = enrichment.hasPending(hangingPayload);
+        if (!groundPending && !hangingPending) return { progressed: false, steps: 0, complete: true, pending: 0, elapsedMs: 0 };
+        payload._hangingRefineTurn = !payload._hangingRefineTurn;
+        if (hangingPending && (!groundPending || payload._hangingRefineTurn)) {
+            return enrichment.pump({ ...chunk, key: chunk.key + ':hanging' }, hangingPayload, budget);
+        }
+        return enrichment.pump(chunk, payload, budget);
+    };
     const planningCacheStats = () => buildingPlanCache.stats();
 
     return { build, buildAuthoredOriginChunk, buildAuthoredSite, buildAuthoredSiteSteps, buildAuthoredPlaza, buildAuthoredSurfacePatch, buildAuthoredBridge, planAuthoredBridgeNetwork, commit, setVisible, verifyReady, unload, refine, hasPendingRefinement, planChunk, districtLandmarkFor, planningCacheStats, disposeShared };

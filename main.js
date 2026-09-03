@@ -4,7 +4,7 @@ import { PointerLockControls } from './vendor/three/addons/controls/PointerLockC
 import { EffectComposer } from './vendor/three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from './vendor/three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from './vendor/three/addons/postprocessing/UnrealBloomPass.js';
-import { createPlayerPhysics } from './player-physics.js';
+import { createDualPolarityPlayerPhysics } from './world/dual-polarity-player-physics.js';
 import { SpatialHash2D, createProgressiveStaticWorldOptimizer } from './city-performance.js';
 import { cylindricalFarPlaneDistance } from './world/cylindrical-render-distance.js';
 import { announceParameterOverrides, registerConfigLiveParameter, registerConfigLivePrefix, registerConfigRoot } from './numeric-parameters.js';
@@ -2026,7 +2026,7 @@ const PHYSICS_TUNING = {
     maxVerticalSubstep: QP[5316],
     maxSubsteps: QP[5317],
 };
-playerPhysics = createPlayerPhysics({
+playerPhysics = createDualPolarityPlayerPhysics({
     position: camera.position,
     eyeHeight: CONFIG.camera.eyeHeight,
     playerRadius: CONFIG.camera.playerRadius,
@@ -3687,7 +3687,10 @@ function animate(now = performance.now()) {
      
      
      
-    playerPhysics.step(delta, wishVelocityX, wishVelocityZ);
+    const traversalState = playerPhysics.step(delta, wishVelocityX, wishVelocityZ);
+    const invertedTraversal = traversalState.verticalPolarity === -1;
+    camera.up.set(0, invertedTraversal ? -1 : 1, 0);
+    camera.rotation.z = invertedTraversal ? Math.PI : 0;
 
     updateWebGradient(camera.position.z, camera.position.y, elapsedTime);
     updateRain(delta);

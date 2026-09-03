@@ -10,8 +10,10 @@ if (fs.existsSync(enginePath)) {
   const engine = fs.readFileSync(enginePath, 'utf8');
   assert.match(engine, /treadVisualBudget:\s*GENERATION_LANES\.broadStrokesOnly \? 3 : Infinity/,
     'skeleton must cap eager tread visuals without changing ramp physics');
-  assert.match(engine, /planInvertedTowerField/,
-    'overhead city mass must be planned by the bounded inverted-tower field authority');
+  assert.match(engine, /buildFullFatHangingCityLayer/,
+    'overhead city must be generated as a peer full-fat city layer');
+  assert.doesNotMatch(engine, /planInvertedTowerField\(/,
+    'retired sparse inverted-tower macro path must not remain live');
 }
 
 const solidKeys = new Set();
@@ -63,5 +65,5 @@ console.log('[cut14-first-paint-budget-selftest] PASS', {
   oldSites,
   scaledSites,
   ratio: scaledSites / oldSites,
-  invariant: 'fewer independent building/core plans + three eager tread visuals/flight in skeleton + bounded overhead mass',
+  invariant: 'fewer independent ground core plans + bounded tread visuals + peer hanging city on the same compound topology',
 });

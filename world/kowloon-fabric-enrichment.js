@@ -946,7 +946,7 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
                 y: 1.15, along: (rng() - 0.5) * 0.55, seed: taskSeed(chunk, entity.id, 'elevator-hardware'),
             });
         }
-        tasks.push({
+        if (!entity.dualPolaritySeam) tasks.push({
             kind: 'roof-clutter', entityId: entity.id, seed: taskSeed(chunk, entity.id, 'roof-clutter'),
             count: 2 + (rng() < 0.35 ? 1 : 0),
         });
@@ -1009,7 +1009,7 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
                 }
             }
         }
-        if (entity.roofTopper && entity.roofTopper !== 'none') tasks.push({
+        if (!entity.dualPolaritySeam && entity.roofTopper && entity.roofTopper !== 'none') tasks.push({
             kind: 'roof-topper', entityId: entity.id, topper: entity.roofTopper,
             seed: taskSeed(chunk, entity.id, 'roof-topper'),
         });

@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export const JWEB_PUSHZIP_RUNNER_SCHEMA = 'jweb.pushzip-runner.v3';
+export const JWEB_PUSHZIP_RUNNER_SCHEMA = 'jweb.pushzip-runner.v4';
 
 function die(message, work = null, code = 1) {
   console.error(`\n[jweb-pushzip] FAILED / ABORTED: ${message}`);
@@ -12,7 +12,7 @@ function die(message, work = null, code = 1) {
   process.exit(code);
 }
 
-function run(command, args, { cwd, inherit = true, encoding = null, maxBuffer = 16 * 1024 * 1024 } = {}) {
+function run(command, args, { cwd, inherit = true, encoding = null, maxBuffer = 32 * 1024 * 1024 } = {}) {
   return spawnSync(command, args, {
     cwd,
     stdio: inherit ? 'inherit' : ['ignore', 'pipe', 'pipe'],
@@ -67,6 +67,10 @@ function validatePackage(packageRoot) {
     throw new Error('file manifest is missing or empty');
   }
   if (!/^[0-9a-f]{40}$/i.test(config.expectedSha ?? '')) throw new Error('expectedSha must be a 40-character commit SHA');
+  if (config.applicatorAudit !== true) {
+    throw new Error('runner v4 requires manifest applicatorAudit=true; every package must prove its complete mutation plan before PRE');
+  }
+  config.applyScript = normalizeRepoPath(config.applyScript);
   config.preflightSyntax = validateCheckList(config.preflightSyntax, 'preflightSyntax');
   config.baselineTests = validateCheckList(config.baselineTests, 'baselineTests');
   config.syntax = validateCheckList(config.syntax, 'syntax');
@@ -78,6 +82,7 @@ function validatePackage(packageRoot) {
     seen.add(repoPath);
     if (!['payload', 'mutated'].includes(entry.mode)) throw new Error(`${repoPath}: mode must be payload or mutated`);
     if (entry.mode === 'payload' && !/^[0-9a-f]{64}$/i.test(entry.sha256 ?? '')) throw new Error(`${repoPath}: payload sha256 missing`);
+    if (entry.baseBlob !== undefined && !/^[0-9a-f]{40}$/i.test(entry.baseBlob)) throw new Error(`${repoPath}: baseBlob must be a 40-character blob SHA`);
     const baseContains = entry.baseContains === undefined ? [] : entry.baseContains;
     if (!Array.isArray(baseContains) || baseContains.some(value => typeof value !== 'string' || !value.length)) {
       throw new Error(`${repoPath}: baseContains must be an array of non-empty strings`);
@@ -88,6 +93,31 @@ function validatePackage(packageRoot) {
     return { ...entry, path: repoPath, baseContains };
   });
   return { config, files };
+}
+
+function verifyPackagedPayloadManifest(packageRoot, files) {
+  for (const entry of files.filter(item => item.mode === 'payload')) {
+    const packaged = path.join(packageRoot, 'payload', ...entry.path.split('/'));
+    if (!fs.existsSync(packaged)) throw new Error(`${entry.path}: packaged payload missing before clone`);
+    const actual = sha256(packaged);
+    if (actual !== entry.sha256) throw new Error(`${entry.path}: packaged payload hash mismatch before clone (manifest ${entry.sha256}, actual ${actual})`);
+  }
+}
+
+function verifyBootstrapRunnerParity(packageRoot, files) {
+  const runnerEntry = files.find(entry => entry.mode === 'payload' && entry.path === 'tools/jweb-pushzip/runner.mjs');
+  if (!runnerEntry) return;
+  const bootstrap = fileURLToPath(import.meta.url);
+  const candidate = path.join(packageRoot, 'payload', 'tools', 'jweb-pushzip', 'runner.mjs');
+  if (!fs.existsSync(candidate)) throw new Error('runner upgrade declares payload but candidate runner bytes are missing');
+  const bootstrapHash = sha256(bootstrap);
+  const candidateHash = sha256(candidate);
+  if (bootstrapHash !== candidateHash) {
+    throw new Error(`runner upgrade bootstrap/payload fork detected\nBootstrap: ${bootstrapHash}\nPayload:   ${candidateHash}`);
+  }
+  if (candidateHash !== runnerEntry.sha256) {
+    throw new Error(`runner upgrade payload hash does not match manifest: ${candidateHash}`);
+  }
 }
 
 function verifyBaseGuards(repo, files) {
@@ -107,22 +137,6 @@ function verifyBaseGuards(repo, files) {
         if (count !== 1) throw new Error(`${entry.path}: base anchor expected exactly once, found ${count}: ${anchor}`);
       }
     }
-  }
-}
-
-function verifyBootstrapRunnerParity(packageRoot, files) {
-  const runnerEntry = files.find(entry => entry.mode === 'payload' && entry.path === 'tools/jweb-pushzip/runner.mjs');
-  if (!runnerEntry) return;
-  const bootstrap = fileURLToPath(import.meta.url);
-  const candidate = path.join(packageRoot, 'payload', 'tools', 'jweb-pushzip', 'runner.mjs');
-  if (!fs.existsSync(candidate)) throw new Error('runner upgrade declares payload but candidate runner bytes are missing');
-  const bootstrapHash = sha256(bootstrap);
-  const candidateHash = sha256(candidate);
-  if (bootstrapHash !== candidateHash) {
-    throw new Error(`runner upgrade bootstrap/payload fork detected\nBootstrap: ${bootstrapHash}\nPayload:   ${candidateHash}`);
-  }
-  if (candidateHash !== runnerEntry.sha256) {
-    throw new Error(`runner upgrade payload hash does not match manifest: ${candidateHash}`);
   }
 }
 
@@ -154,11 +168,8 @@ function failureIssues(text, repo, status) {
     const line = raw.trim();
     if (!line) continue;
     if (/^-\s+/.test(line)) issues.push(line.replace(/\s+/g, ' '));
-    else if (/^(?:AssertionError|TypeError|ReferenceError|SyntaxError|RangeError|Error)(?:\s+\[[^\]]+\])?:\s+/.test(line)) {
-      issues.push(line.replace(/\s+/g, ' '));
-    } else if (/^\[[^\]]+\]\s+FAIL(?:\s+\(\d+\))?\s*$/.test(line)) {
-      issues.push(line.replace(/\s+/g, ' '));
-    }
+    else if (/^(?:AssertionError|TypeError|ReferenceError|SyntaxError|RangeError|Error)(?:\s+\[[^\]]+\])?:\s+/.test(line)) issues.push(line.replace(/\s+/g, ' '));
+    else if (/^\[[^\]]+\]\s+FAIL(?:\s+\(\d+\))?\s*$/.test(line)) issues.push(line.replace(/\s+/g, ' '));
   }
   const unique = [...new Set(issues)];
   if (unique.length) return unique;
@@ -166,21 +177,32 @@ function failureIssues(text, repo, status) {
   return [`fallback-exit-${status}:${digest}`];
 }
 
-function runCheckList({ repo, label, syntax = [], tests = [] }) {
-  const checks = [
+function uniqueChecks(syntax, tests) {
+  const out = [];
+  const seen = new Set();
+  for (const check of [
     ...syntax.map(file => ({ kind: 'syntax', file, args: ['--check', file] })),
     ...tests.map(file => ({ kind: 'test', file, args: [file] })),
-  ];
+  ]) {
+    const key = `${check.kind}:${check.file}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ ...check, key });
+  }
+  return out;
+}
+
+function runCheckList({ repo, label, syntax = [], tests = [] }) {
+  const checks = uniqueChecks(syntax, tests);
   const results = new Map();
   console.log(`\n[${label}] Running ${checks.length} checks. Every configured check runs before this phase gets a test-derived verdict.`);
   for (let i = 0; i < checks.length; i++) {
     const check = checks[i];
-    const key = `${check.kind}:${check.file}`;
     const target = path.join(repo, ...check.file.split('/'));
     console.log(`\n[${label}] ${i + 1}/${checks.length} ${check.kind.toUpperCase()} ${check.file}`);
     if (!fs.existsSync(target)) {
-      const result = { ...check, key, passed: false, status: -1, infrastructureFailure: true, issues: ['missing-file'] };
-      results.set(key, result);
+      const result = { ...check, passed: false, status: -1, infrastructureFailure: true, issues: ['missing-file'] };
+      results.set(check.key, result);
       console.error(`[${label}] MISSING ${check.file}`);
       continue;
     }
@@ -192,14 +214,13 @@ function runCheckList({ repo, label, syntax = [], tests = [] }) {
     const combined = `${child.stdout ?? ''}\n${child.stderr ?? ''}`;
     const result = {
       ...check,
-      key,
       passed: status === 0 && !infrastructureFailure,
       status,
       infrastructureFailure,
       reason: child.error?.message ?? null,
       issues: status === 0 && !infrastructureFailure ? [] : failureIssues(combined, repo, status),
     };
-    results.set(key, result);
+    results.set(check.key, result);
     if (result.passed) console.log(`[${label}] PASS ${check.file}`);
     else console.error(`[${label}] FAIL ${check.file} (exit ${status})${result.reason ? `: ${result.reason}` : ''}`);
   }
@@ -277,6 +298,26 @@ function assertTransactionalApplyFailure(repo) {
   if (changed.length) throw new Error(`apply failed after modifying the worktree; apply scripts must be transactional:\n  ${changed.join('\n  ')}`);
 }
 
+function runApplicatorAudit({ packageRoot, work, config }) {
+  const applyScript = path.join(packageRoot, ...config.applyScript.split('/'));
+  if (!fs.existsSync(applyScript)) throw new Error(`apply script missing: ${config.applyScript}`);
+  const syntax = run(process.execPath, ['--check', applyScript], { cwd: packageRoot, inherit: false, encoding: 'utf8' });
+  if (syntax.status !== 0) throw new Error(`apply script syntax failed before clone audit:\n${syntax.stderr || syntax.stdout || ''}`);
+  const beforeHead = output('git', ['rev-parse', 'HEAD'], work);
+  assertWorkingSet(work, new Set());
+  console.log(`\n[${config.label}] APPLICATOR AUDIT: exercising the complete mutation plan without writing...`);
+  const audit = run(process.execPath, [applyScript, work, '--audit'], { cwd: packageRoot, inherit: true });
+  if (audit.status !== 0) {
+    assertTransactionalApplyFailure(work);
+    throw new Error(`applicator AUDIT failed before PRE (exit ${audit.status ?? 'unknown'})`);
+  }
+  const afterHead = output('git', ['rev-parse', 'HEAD'], work);
+  if (afterHead !== beforeHead) throw new Error(`applicator AUDIT changed HEAD (${beforeHead} -> ${afterHead})`);
+  const changed = assertWorkingSet(work, new Set());
+  if (changed.length) throw new Error(`applicator AUDIT dirtied the worktree:\n  ${changed.join('\n  ')}`);
+  console.log(`[${config.label}] APPLICATOR AUDIT PASS: full anchor/range/postcondition plan is valid and non-writing.`);
+}
+
 function stageAndValidate(repo, files) {
   const expected = files.map(entry => entry.path).sort();
   const add = run('git', ['add', '-f', '--', ...expected], { cwd: repo, inherit: true });
@@ -307,9 +348,19 @@ async function main() {
   try { packageData = validatePackage(packageRoot); }
   catch (error) { die(error.message); }
   const { config, files } = packageData;
-  try { verifyBootstrapRunnerParity(packageRoot, files); }
-  catch (error) { die(error.message); }
   const label = config.label ?? 'JWEB';
+
+  try {
+    verifyPackagedPayloadManifest(packageRoot, files);
+    verifyBootstrapRunnerParity(packageRoot, files);
+    const applyScript = path.join(packageRoot, ...config.applyScript.split('/'));
+    if (!fs.existsSync(applyScript)) throw new Error(`apply script missing: ${config.applyScript}`);
+    const check = run(process.execPath, ['--check', applyScript], { cwd: packageRoot, inherit: false, encoding: 'utf8' });
+    if (check.status !== 0) throw new Error(`apply script syntax invalid:\n${check.stderr || check.stdout || ''}`);
+  } catch (error) {
+    die(`package integrity gate: ${error.message}`);
+  }
+
   const workParent = path.join(packageRoot, 'work');
   fs.mkdirSync(workParent, { recursive: true });
   const work = path.join(workParent, `repo-${process.pid}-${crypto.randomBytes(3).toString('hex')}`);
@@ -329,6 +380,7 @@ async function main() {
     if (cname !== 'jweb.dev' && cname !== 'jweb.dev\n') throw new Error('CNAME must be exactly jweb.dev');
     console.log(`[${label}] CNAME confirmed: jweb.dev`);
     verifyBaseGuards(work, files);
+    runApplicatorAudit({ packageRoot, work, config });
   } catch (error) {
     die(error.message, work);
   }
@@ -339,17 +391,17 @@ async function main() {
     syntax: config.preflightSyntax,
     tests: config.baselineTests,
   });
-  const preInfrastructure = [...preResults.values()].filter(result => result.infrastructureFailure);
-  const preSyntaxFailures = resultsForKind(preResults, 'syntax').filter(result => !result.passed);
+  const preInfrastructure = [...preResults.values()].filter(item => item.infrastructureFailure);
+  const preSyntaxFailures = resultsForKind(preResults, 'syntax').filter(item => !item.passed);
   if (preInfrastructure.length || preSyntaxFailures.length) {
-    die(`clean-base PRE infrastructure/syntax gate failed after every configured PRE check ran`, work);
+    die('clean-base PRE infrastructure/syntax gate failed after every configured PRE check ran', work);
   }
-  const baselineDebtCount = resultsForKind(preResults, 'test').filter(result => !result.passed).length;
+  const baselineDebtCount = resultsForKind(preResults, 'test').filter(item => !item.passed).length;
   if (baselineDebtCount) {
     console.warn(`\n[${label}] PRE baseline debt recorded: ${baselineDebtCount}/${config.baselineTests.length} baseline tests currently fail on the pinned clean base. This is evidence, not an automatic blocker.`);
   }
 
-  const applyScript = path.join(packageRoot, ...normalizeRepoPath(config.applyScript).split('/'));
+  const applyScript = path.join(packageRoot, ...config.applyScript.split('/'));
   console.log(`\n[${label}] Applying package payload transactionally...`);
   result = run(process.execPath, [applyScript, work], { cwd: packageRoot, inherit: true });
   if (result.status !== 0) {
@@ -371,12 +423,9 @@ async function main() {
     syntax: config.syntax,
     tests: [...config.baselineTests, ...config.tests],
   });
-
-  const postInfrastructure = [...postResults.values()].filter(result => result.infrastructureFailure);
-  const postSyntaxFailures = resultsForKind(postResults, 'syntax').filter(result => !result.passed);
-  const requiredFailures = config.tests
-    .map(file => postResults.get(`test:${file}`))
-    .filter(result => !result || !result.passed);
+  const postInfrastructure = [...postResults.values()].filter(item => item.infrastructureFailure);
+  const postSyntaxFailures = resultsForKind(postResults, 'syntax').filter(item => !item.passed);
+  const requiredFailures = config.tests.map(file => postResults.get(`test:${file}`)).filter(item => !item || !item.passed);
   const differential = compareBaseline(preResults, postResults, config.baselineTests, label);
   const blockers = [];
   if (postInfrastructure.length) blockers.push(`${postInfrastructure.length} POST infrastructure failures`);

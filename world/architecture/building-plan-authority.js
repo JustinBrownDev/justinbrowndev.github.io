@@ -182,9 +182,16 @@ export function compileBuildingPlanWallRuns(plan) {
     || a.fixedCoord - b.fixedCoord || a.spanA - b.spanA || a.id.localeCompare(b.id));
 }
 
-function moduleKeysForSpace(space, modules = []) {
+function moduleKeysForSpace(space, modules = [], floor = 0, allowedModuleKeys = null) {
   const result = [];
+  const allowed = allowedModuleKeys ? new Set(allowedModuleKeys.map(String)) : null;
   for (const module of modules) {
+    if (allowed && !allowed.has(String(module.key))) continue;
+    const floorBase = Math.max(0, Math.floor(finite(module?.floorBase, 0)));
+    const floorTop = Number.isFinite(Number(module?.floorTop))
+      ? Math.max(floorBase + 1, Math.floor(Number(module.floorTop)))
+      : floorBase + Math.max(1, Math.floor(finite(module?.floors, 1)));
+    if (floor < floorBase || floor >= floorTop) continue;
     const mx0 = finite(module.cx) - finite(module.halfX);
     const mx1 = finite(module.cx) + finite(module.halfX);
     const mz0 = finite(module.cz) - finite(module.halfZ);
@@ -219,7 +226,7 @@ export function compileBuildingPlanTopologySpaces(plan, { chunkKey = plan?.chunk
     for (const space of floor.spaces ?? []) {
       const bounds = boundsUnion(space.regions);
       if (!bounds) continue;
-      const moduleKeys = moduleKeysForSpace(space, modules);
+      const moduleKeys = moduleKeysForSpace(space, modules, floor.floor, floor.plannedModuleKeys ?? floor.activeModuleKeys ?? null);
       result.push({
         schema: BUILDING_PLAN_SPACE_SCHEMA,
         id: space.id,

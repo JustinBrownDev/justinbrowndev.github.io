@@ -58,14 +58,21 @@ function chooseGrammar({ stableKey, family, programHint, authoredIntent }) {
 
 function normalizeModules(modules = []) {
   return modules
-    .map((module, index) => ({
-      key: String(module?.key ?? `module-${index}`),
-      cx: Number(module?.cx) || 0,
-      cz: Number(module?.cz) || 0,
-      halfX: Math.max(0.3, Number(module?.halfX) || 0.3),
-      halfZ: Math.max(0.3, Number(module?.halfZ) || 0.3),
-      floors: Math.max(1, Math.floor(Number(module?.floors) || 1)),
-    }))
+    .map((module, index) => {
+      const floors = Math.max(1, Math.floor(Number(module?.floors) || 1));
+      const floorBase = Math.max(0, Math.floor(Number(module?.floorBase) || 0));
+      const floorTop = floorBase + floors;
+      return {
+        key: String(module?.key ?? `module-${index}`),
+        cx: Number(module?.cx) || 0,
+        cz: Number(module?.cz) || 0,
+        halfX: Math.max(0.3, Number(module?.halfX) || 0.3),
+        halfZ: Math.max(0.3, Number(module?.halfZ) || 0.3),
+        floors,
+        floorBase,
+        floorTop,
+      };
+    })
     .filter(module => Number.isFinite(module.cx) && Number.isFinite(module.cz));
 }
 
@@ -73,8 +80,86 @@ function moduleArea(module) {
   return module.halfX * 2 * module.halfZ * 2;
 }
 
-function floorArea(modules, floor) {
-  return modules.filter(module => module.floors > floor).reduce((sum, module) => sum + moduleArea(module), 0);
+function moduleOccupiesGlobalFloor(module, floor) {
+  return floor >= module.floorBase && floor < module.floorTop;
+}
+
+function activeModulesForFloor(modules, floor) {
+  return modules.filter(module => moduleOccupiesGlobalFloor(module, floor));
+}
+
+function moduleTouchesOrOverlaps(a, b) {
+  const ax0 = a.cx - a.halfX, ax1 = a.cx + a.halfX;
+  const az0 = a.cz - a.halfZ, az1 = a.cz + a.halfZ;
+  const bx0 = b.cx - b.halfX, bx1 = b.cx + b.halfX;
+  const bz0 = b.cz - b.halfZ, bz1 = b.cz + b.halfZ;
+  const xOverlap = Math.min(ax1, bx1) - Math.max(ax0, bx0);
+  const zOverlap = Math.min(az1, bz1) - Math.max(az0, bz0);
+  const xTouches = Math.abs(ax1 - bx0) <= EPS || Math.abs(bx1 - ax0) <= EPS;
+  const zTouches = Math.abs(az1 - bz0) <= EPS || Math.abs(bz1 - az0) <= EPS;
+  return (xOverlap > EPS && zOverlap > EPS)
+    || (xOverlap > EPS && zTouches)
+    || (zOverlap > EPS && xTouches);
+}
+
+function moduleComponents(modules) {
+  const remaining = new Set(modules.map(module => module.key));
+  const byKey = new Map(modules.map(module => [module.key, module]));
+  const result = [];
+  while (remaining.size) {
+    const startKey = [...remaining].sort()[0];
+    remaining.delete(startKey);
+    const queue = [byKey.get(startKey)];
+    const component = [];
+    for (let qi = 0; qi < queue.length; qi++) {
+      const current = queue[qi];
+      component.push(current);
+      for (const key of [...remaining]) {
+        const candidate = byKey.get(key);
+        if (!moduleTouchesOrOverlaps(current, candidate)) continue;
+        remaining.delete(key);
+        queue.push(candidate);
+      }
+    }
+    result.push(component.sort((a, b) => a.key.localeCompare(b.key)));
+  }
+  return result;
+}
+
+function reservationHitsModule(reservation, module) {
+  return Math.abs(reservation.x - module.cx) <= reservation.halfX + module.halfX + EPS
+    && Math.abs(reservation.z - module.cz) <= reservation.halfZ + module.halfZ + EPS;
+}
+
+function anchorHitsModule(anchor, module, floor) {
+  if (anchor.floor !== floor) return false;
+  return anchor.x >= module.cx - module.halfX - EPS && anchor.x <= module.cx + module.halfX + EPS
+    && anchor.z >= module.cz - module.halfZ - EPS && anchor.z <= module.cz + module.halfZ + EPS;
+}
+
+function circulationConnectedFloorModules({ allModules, activeModules, floorReservations, accessAnchors, floor }) {
+  const staggered = allModules.some(module => module.floorBase > 0);
+  if (!staggered || activeModules.length <= 1) {
+    return { plannedModules: activeModules, deferredModules: [], componentCount: activeModules.length ? 1 : 0 };
+  }
+  const components = moduleComponents(activeModules);
+  if (components.length <= 1) return { plannedModules: activeModules, deferredModules: [], componentCount: components.length };
+
+  const coreReservations = floorReservations.filter(reservation => /stair|shaft|core/i.test(String(reservation.kind)));
+  const scored = components.map(component => {
+    const coreHits = component.reduce((sum, module) => sum + coreReservations.filter(reservation => reservationHitsModule(reservation, module)).length, 0);
+    const anchorHits = component.reduce((sum, module) => sum + accessAnchors.filter(anchor => anchorHitsModule(anchor, module, floor)).length, 0);
+    const area = component.reduce((sum, module) => sum + moduleArea(module), 0);
+    return { component, coreHits, anchorHits, area };
+  }).sort((a, b) => b.coreHits - a.coreHits || b.anchorHits - a.anchorHits || b.area - a.area
+    || a.component[0].key.localeCompare(b.component[0].key));
+  const plannedModules = scored[0].component;
+  const plannedKeys = new Set(plannedModules.map(module => module.key));
+  return {
+    plannedModules,
+    deferredModules: activeModules.filter(module => !plannedKeys.has(module.key)),
+    componentCount: components.length,
+  };
 }
 
 function normalizeAccessAnchors(accessAnchors = []) {
@@ -186,8 +271,9 @@ function minimumAreaForSpace(space, floorH) {
   return Math.max(Number(space?.minArea) || 0, minimumVolumeForSpace(space) / height);
 }
 
-function expandedTemplates({ grammar, floor, area, profile, authoredIntent, stableKey, semanticProgram }) {
-  const templates = floor === 0 ? grammar.ground : grammar.upper;
+function expandedTemplates({ grammar, floor, baseFloor = 0, area, profile, authoredIntent, stableKey, semanticProgram }) {
+  const isBaseFloor = floor === baseFloor;
+  const templates = isBaseFloor ? grammar.ground : grammar.upper;
   const result = [];
 
   for (const template of templates) {
@@ -203,7 +289,7 @@ function expandedTemplates({ grammar, floor, area, profile, authoredIntent, stab
 
     for (let i = 0; i < count; i++) {
       const instanceKey = count === 1 ? template.key : `${template.key}:${i + 1}`;
-      const authoredType = floor === 0 ? authoredIntent?.groundOverrides?.[template.key] : null;
+      const authoredType = isBaseFloor ? authoredIntent?.groundOverrides?.[template.key] : null;
       result.push({
         key: instanceKey,
         templateKey: template.key,
@@ -258,8 +344,8 @@ function expandedTemplates({ grammar, floor, area, profile, authoredIntent, stab
   return result;
 }
 
-function configureUpperOccupancyHallway(spaces, grid, floor) {
-  if (floor <= 0 || !grid?.cells?.length) return null;
+function configureUpperOccupancyHallway(spaces, grid, floor, baseFloor = 0) {
+  if (floor <= baseFloor || !grid?.cells?.length) return null;
   const occupancyRoles = new Set(['private', 'program', 'work']);
   const occupancies = spaces.filter(space => space.repeat && occupancyRoles.has(space.role));
   const hallway = spaces.find(space => space.role === 'circulation');
@@ -319,8 +405,8 @@ function preclaimOccupancyHallway(spaces, grid) {
   return { hallway, claimed };
 }
 
-function occupancyHallwayFrontageShortfalls(spaces, grid, floor) {
-  if (floor <= 0 || !grid?.cells?.length) return [];
+function occupancyHallwayFrontageShortfalls(spaces, grid, floor, baseFloor = 0) {
+  if (floor <= baseFloor || !grid?.cells?.length) return [];
   const hallway = spaces.find(space => space.circulationShape === 'occupancy-hallway');
   if (!hallway) return [];
   const occupancies = spaces.filter(space => space.repeat && ['private', 'program', 'work'].includes(space.role));
@@ -381,8 +467,8 @@ function conventionalEdges(spaces) {
   return edges;
 }
 
-function chooseRootSpace(spaces, floor) {
-  if (floor === 0) return spaces.find(s => s.role === 'entry')
+function chooseRootSpace(spaces, floor, baseFloor = 0) {
+  if (floor === baseFloor) return spaces.find(s => s.role === 'entry')
     ?? spaces.find(s => s.role === 'public')
     ?? spaces.find(s => s.role === 'circulation')
     ?? spaces[0];
@@ -410,9 +496,9 @@ function graphReachable(spaces, edges, rootKey) {
   return seen;
 }
 
-function buildTopology({ spaces, floor, profile, stableKey }) {
+function buildTopology({ spaces, floor, baseFloor = 0, profile, stableKey }) {
   if (!spaces.length) return { rootKey: null, edges: [], inversionOperations: [] };
-  const root = chooseRootSpace(spaces, floor);
+  const root = chooseRootSpace(spaces, floor, baseFloor);
   const conventional = conventionalEdges(spaces);
   const operations = [];
   let edges = [];
@@ -504,25 +590,30 @@ function chooseCellSize(modules, minimumClearWidth = 0.72) {
   return Math.min(minSpan, Math.max(natural, Math.min(minSpan, Math.max(0.72, minimumClearWidth))));
 }
 
-function buildFloorGrid({ modules, floor, floorH, reservations, minimumClearWidth = 0.72 }) {
-  const activeModules = modules.filter(module => module.floors > floor);
+function buildFloorGrid({ modules, floor, floorH, reservations, accessAnchors, minimumClearWidth = 0.72 }) {
+  const activeModules = activeModulesForFloor(modules, floor);
   if (!activeModules.length) return null;
-  const bounds = floorBounds(activeModules);
-  const cellSize = chooseCellSize(activeModules, minimumClearWidth);
+  const y0 = floor * floorH;
+  const y1 = y0 + floorH;
+  const floorReservations = reservations.filter(r => reservationHitsFloor(r, y0, y1));
+  const occupancy = circulationConnectedFloorModules({
+    allModules: modules, activeModules, floorReservations, accessAnchors, floor,
+  });
+  const plannedModules = occupancy.plannedModules;
+  if (!plannedModules.length) return null;
+  const bounds = floorBounds(plannedModules);
+  const cellSize = chooseCellSize(plannedModules, minimumClearWidth);
   const minIx = Math.floor(bounds.minX / cellSize);
   const maxIx = Math.ceil(bounds.maxX / cellSize);
   const minIz = Math.floor(bounds.minZ / cellSize);
   const maxIz = Math.ceil(bounds.maxZ / cellSize);
-  const y0 = floor * floorH;
-  const y1 = y0 + floorH;
-  const floorReservations = reservations.filter(r => reservationHitsFloor(r, y0, y1));
   const cells = [];
   const byKey = new Map();
   for (let iz = minIz; iz < maxIz; iz++) {
     for (let ix = minIx; ix < maxIx; ix++) {
       const x = (ix + 0.5) * cellSize;
       const z = (iz + 0.5) * cellSize;
-      if (!pointInsideAnyModule(x, z, activeModules)) continue;
+      if (!pointInsideAnyModule(x, z, plannedModules)) continue;
       const reservation = floorReservations.find(r =>
         cellIntersectsReservation({ x, z }, r, cellSize * 0.5));
       const cell = {
@@ -547,7 +638,11 @@ function buildFloorGrid({ modules, floor, floorH, reservations, minimumClearWidt
     }
     cell.exposure = cell.exposedSides.length;
   }
-  return { activeModules, bounds, cellSize, cells, byKey, y0, y1 };
+  return {
+    activeModules, plannedModules, deferredModules: occupancy.deferredModules,
+    floorComponentCount: occupancy.componentCount,
+    bounds, cellSize, cells, byKey, y0, y1,
+  };
 }
 
 function neighborsOf(cell, grid) {
@@ -601,10 +696,10 @@ function nearestCell(cells, point, predicate = () => true) {
   return best;
 }
 
-function rootAnchor({ floor, rootSpace, grid, accessAnchors, reservations }) {
-  if (floor === 0) {
-    const anchor = accessAnchors.find(a => a.floor === 0 && a.kind === 'main-entry')
-      ?? accessAnchors.find(a => a.floor === 0);
+function rootAnchor({ floor, baseFloor = 0, rootSpace, grid, accessAnchors, reservations }) {
+  if (floor === baseFloor) {
+    const anchor = accessAnchors.find(a => a.floor === floor && a.kind === 'main-entry')
+      ?? accessAnchors.find(a => a.floor === floor);
     if (anchor) return { x: anchor.x, z: anchor.z, source: anchor.id };
   }
   if (rootSpace?.role === 'circulation') {
@@ -653,12 +748,12 @@ function minimumCellCountForSpace(space, grid, floorH) {
   return Math.max(1, Math.ceil((minimumAreaForSpace(space, floorH) - EPS) / Math.max(EPS, cellArea)));
 }
 
-function fitSpacesToFloorCapacity(spaces, grid, floorH, floor) {
+function fitSpacesToFloorCapacity(spaces, grid, floorH, floor, baseFloor = 0) {
   const selected = [...spaces];
   const droppedSpaceKeys = [];
   const capacity = grid.cells.length;
   const nonReservedCapacity = grid.cells.filter(cell => !cell.structuralReservationId).length;
-  const rootKey = chooseRootSpace(selected, floor)?.key ?? null;
+  const rootKey = chooseRootSpace(selected, floor, baseFloor)?.key ?? null;
   const requiredCells = () => selected.reduce((sum, s) => sum + minimumCellCountForSpace(s, grid, floorH), 0);
   const requiredNonCirculationCells = () => selected
     .filter(s => s.role !== 'circulation' && s.role !== 'entry')
@@ -831,8 +926,8 @@ function growExistingSpace({ space, target, grid, stableKey, profile }) {
   return assigned;
 }
 
-function chooseMinimumGeometryDropCandidate(spaces, shortfalls, floor) {
-  const rootKey = chooseRootSpace(spaces, floor)?.key ?? null;
+function chooseMinimumGeometryDropCandidate(spaces, shortfalls, floor, baseFloor = 0) {
+  const rootKey = chooseRootSpace(spaces, floor, baseFloor)?.key ?? null;
   const ordinary = chooseHumanScaleProgramDrop({
     spaces,
     shortfalls,
@@ -858,11 +953,11 @@ function chooseMinimumGeometryDropCandidate(spaces, shortfalls, floor) {
 }
 
 function attemptMinimumProgramPlacement({
-  spaces, floor, grid, reservations, accessAnchors, profile, stableKey, floorH,
+  spaces, floor, baseFloor = 0, grid, reservations, accessAnchors, profile, stableKey, floorH,
 }) {
   for (const cell of grid.cells) cell.spaceId = null;
 
-  const topology = buildTopology({ spaces, floor, profile, stableKey: `${stableKey}:floor:${floor}` });
+  const topology = buildTopology({ spaces, floor, baseFloor, profile, stableKey: `${stableKey}:floor:${floor}` });
   const rootSpace = spaces.find(space => space.key === topology.rootKey) ?? spaces[0];
   const { order, parent } = graphBfsOrder(spaces, topology.edges, rootSpace.key);
   const minimumCellsByKey = new Map(spaces.map(space => [
@@ -870,7 +965,7 @@ function attemptMinimumProgramPlacement({
     minimumCellCountForSpace(space, grid, floorH),
   ]));
   const hallwayClaim = preclaimOccupancyHallway(spaces, grid);
-  const rootPoint = rootAnchor({ floor, rootSpace, grid, accessAnchors, reservations });
+  const rootPoint = rootAnchor({ floor, baseFloor, rootSpace, grid, accessAnchors, reservations });
   const rootSeed = grid.cells.some(cell => cell.spaceId === rootSpace.key)
     ? null
     : nearestCell(grid.cells, rootPoint, cell => !cell.spaceId && cellEligibleForSpace(cell, rootSpace));
@@ -1130,7 +1225,7 @@ function resolvedDoorWidth(physicalTruth) {
       || 0.86);
 }
 
-function openingsFromTopology({ grid, edges, rootKey, accessAnchors, physicalTruth, stableKey, floor }) {
+function openingsFromTopology({ grid, edges, rootKey, accessAnchors, physicalTruth, stableKey, floor, baseFloor = 0 }) {
   const boundaries = boundaryCandidates(grid);
   const width = resolvedDoorWidth(physicalTruth);
   const openings = [];
@@ -1154,8 +1249,8 @@ function openingsFromTopology({ grid, edges, rootKey, accessAnchors, physicalTru
       topologySource: edge.source,
     });
   }
-  if (floor === 0 && rootKey) {
-    for (const anchor of accessAnchors.filter(a => a.floor === 0)) {
+  if (floor === baseFloor && rootKey) {
+    for (const anchor of accessAnchors.filter(a => a.floor === floor)) {
       openings.push({
         id: `${stableKey}:entrance:${anchor.id}`,
         kind: anchor.kind,
@@ -1230,24 +1325,24 @@ function facadeIntents({ spaces, grid, profile }) {
 }
 
 function planFloor({
-  floor, modules, floorH, reservations, accessAnchors, grammar, profile, authoredIntent,
+  floor, baseFloor = 0, modules, floorH, reservations, accessAnchors, grammar, profile, authoredIntent,
   semanticProgram, physicalTruth, stableKey,
 }) {
-  const area = floorArea(modules, floor);
   const minimumClearWidth = Math.max(0.72,
     Number(physicalTruth?.route?.clearWidthSI)
       || Number(physicalTruth?.door?.clearWidth?.realizedSI)
       || Number(physicalTruth?.door?.clearWidthSI)
       || 0.86);
-  const grid = buildFloorGrid({ modules, floor, floorH, reservations, minimumClearWidth });
+  const grid = buildFloorGrid({ modules, floor, floorH, reservations, accessAnchors, minimumClearWidth });
   if (!grid || !grid.cells.length) return null;
-  let spaces = expandedTemplates({ grammar, floor, area, profile, authoredIntent, stableKey, semanticProgram });
-  configureUpperOccupancyHallway(spaces, grid, floor);
+  const area = grid.plannedModules.reduce((sum, module) => sum + moduleArea(module), 0);
+  let spaces = expandedTemplates({ grammar, floor, baseFloor, area, profile, authoredIntent, stableKey, semanticProgram });
+  configureUpperOccupancyHallway(spaces, grid, floor, baseFloor);
 
   // Do not subdivide a small floor plate into implausible slivers. Room count
   // yields before human-scale volume does. The city massing is biased larger, and
   // this is the final fallback for constrained leftover sites.
-  const programFit = fitSpacesToFloorCapacity(spaces, grid, floorH, floor);
+  const programFit = fitSpacesToFloorCapacity(spaces, grid, floorH, floor, baseFloor);
   spaces = programFit.spaces;
 
   // Capacity is necessary but not sufficient: a greedy region can geometrically
@@ -1262,6 +1357,7 @@ function planFloor({
     minimumPlacement = attemptMinimumProgramPlacement({
       spaces,
       floor,
+      baseFloor,
       grid,
       reservations,
       accessAnchors,
@@ -1271,10 +1367,10 @@ function planFloor({
     });
     const hallwayFrontageShortfalls = minimumPlacement.shortfalls.length
       ? []
-      : occupancyHallwayFrontageShortfalls(spaces, grid, floor);
+      : occupancyHallwayFrontageShortfalls(spaces, grid, floor, baseFloor);
     const placementShortfalls = [...minimumPlacement.shortfalls, ...hallwayFrontageShortfalls];
     if (!placementShortfalls.length) break;
-    const drop = chooseMinimumGeometryDropCandidate(spaces, placementShortfalls, floor);
+    const drop = chooseMinimumGeometryDropCandidate(spaces, placementShortfalls, floor, baseFloor);
     if (!drop) break;
     geometryDroppedSpaceKeys.push(drop.key);
     spaces = spaces.filter(space => space.key !== drop.key);
@@ -1372,6 +1468,7 @@ function planFloor({
     physicalTruth,
     stableKey,
     floor,
+    baseFloor,
   });
   const reachable = realizedTopology.reachable;
   const unclaimedCells = grid.cells.filter(cell => !cell.spaceId);
@@ -1388,8 +1485,12 @@ function planFloor({
 
   return {
     floor,
+    globalFloor: floor,
     yBase: floor * floorH,
     floorHeight: floorH,
+    activeModuleKeys: grid.activeModules.map(module => module.key),
+    plannedModuleKeys: grid.plannedModules.map(module => module.key),
+    circulationDeferredModuleKeys: grid.deferredModules.map(module => module.key),
     approximateArea: area,
     rasterCellSize: grid.cellSize,
     minimumClearWidth,
@@ -1425,6 +1526,9 @@ function planFloor({
         && realizedSpaces.every(space => space.realizedVolume + EPS >= space.minimumVolume),
       stairCirculationApronCellCount: grid.cells.filter(cell => cell.structuralReservationKind === 'stair-circulation-apron').length,
       structuralReservationCellCount: grid.cells.filter(cell => cell.structuralReservationId).length,
+      floorModuleComponentCount: grid.floorComponentCount,
+      circulationDeferredModuleCount: grid.deferredModules.length,
+      circulationDeferredModuleKeys: grid.deferredModules.map(module => module.key),
       minimumClearWidth,
       circulationWidthHealthy: realizedSpaces
         .filter(space => space.role === 'circulation' || space.role === 'entry')
@@ -1444,11 +1548,12 @@ function verticalEdgesForFloors(floors, stableKey, profile) {
   for (let i = 0; i + 1 < floors.length; i++) {
     const lower = floors[i];
     const upper = floors[i + 1];
+    if (upper.floor !== lower.floor + 1) continue;
     const lowerCore = lower.spaces.find(s => s.role === 'circulation') ?? lower.spaces.find(s => s.role === 'entry');
     const upperCore = upper.spaces.find(s => s.role === 'circulation') ?? upper.spaces.find(s => s.role === 'service');
     if (!lowerCore || !upperCore) continue;
     result.push({
-      id: `${stableKey}:vertical:${i}-${i + 1}`,
+      id: `${stableKey}:vertical:${lower.floor}-${upper.floor}`,
       fromSpaceId: lowerCore.id,
       toSpaceId: upperCore.id,
       kind: 'authoritative-circulation-handoff',
@@ -1519,11 +1624,13 @@ export function planBuildingSidecar({
   const floorH = clamp(floorHeight ?? physicalTruth?.floorHeight?.realizedSI ?? 3.15, 2.4, 5.8);
   const anchors = normalizeAccessAnchors(accessAnchors);
   const reservations = normalizeReservations(circulationReservations);
-  const maxFloorCount = Math.max(...normalized.map(module => module.floors));
+  const minGlobalFloor = Math.min(...normalized.map(module => module.floorBase));
+  const maxGlobalFloorExclusive = Math.max(...normalized.map(module => module.floorTop));
   const floors = [];
-  for (let floor = 0; floor < maxFloorCount; floor++) {
+  for (let floor = minGlobalFloor; floor < maxGlobalFloorExclusive; floor++) {
     const planned = planFloor({
       floor,
+      baseFloor: minGlobalFloor,
       modules: normalized,
       floorH,
       reservations,
@@ -1551,6 +1658,7 @@ export function planBuildingSidecar({
     && f.diagnostics.minimumVolumeHealthy
     && (f.diagnostics.minimumProgramShortfallCells ?? 0) === 0);
   const droppedSpacesForPhysicalArea = floors.reduce((sum, f) => sum + (f.diagnostics.droppedSpaceKeysForPhysicalArea?.length ?? 0), 0);
+  const circulationDeferredModuleBands = floors.reduce((sum, f) => sum + (f.diagnostics.circulationDeferredModuleCount ?? 0), 0);
 
   const result = {
     schema: SCHEMA,
@@ -1575,9 +1683,12 @@ export function planBuildingSidecar({
     },
     envelope: {
       moduleCount: normalized.length,
-      floorCount: maxFloorCount,
+      floorCount: floors.length,
+      minGlobalFloor,
+      maxGlobalFloorExclusive,
       modules: normalized,
       authority: 'existing-kowloon-envelope',
+      verticalAuthority: 'global-floor-bands',
     },
     accessAuthority: {
       anchors,
@@ -1600,6 +1711,7 @@ export function planBuildingSidecar({
       physicalTruthPreserved: true,
       humanScaleHealthy,
       droppedSpacesForPhysicalArea,
+      circulationDeferredModuleBands,
       readyForFabricEmission: topologyHealthy && unclaimedCells === 0 && humanScaleHealthy,
     },
   };

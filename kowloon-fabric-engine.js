@@ -1987,13 +1987,14 @@ export function createKowloonFabricEngine({
             physicalUse,
             physicalTruth,
             floorHeight: floorH,
-            modules: (ceilingAligned ? [primaryModule] : modulePlans).map(module => ({
+            modules: modulePlans.map(module => ({
                 key: module.key,
                 cx: module.rect.cx,
                 cz: module.rect.cz,
                 halfX: module.rect.halfX,
                 halfZ: module.rect.halfZ,
                 floors: module.floors,
+                floorBase: moduleFloorBase(module),
             })),
             accessAnchors,
             circulationReservations: [
@@ -3513,6 +3514,7 @@ export function createKowloonFabricEngine({
                 halfX: module.rect.halfX,
                 halfZ: module.rect.halfZ,
                 floors: module.floors,
+                floorBase: moduleFloorBase(module),
             })),
             accessAnchors,
             circulationReservations: [

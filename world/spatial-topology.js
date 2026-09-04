@@ -3,6 +3,7 @@ import {
     portalApertureForSurface,
     portalNoClutterRegions,
 } from './access-portals.js';
+import { assertWorldCirculationGraph, compileWorldCirculationGraph } from './circulation-graph.js';
 
 export const SPATIAL_TOPOLOGY_SCHEMA = 'jweb.spatial-topology.v1';
 
@@ -390,6 +391,11 @@ export function compileSpatialTopologyGraph({ chunk, payload } = {}) {
             orphanReservations, orphanApertures, unboundEntranceFaces, danglingConnectorSpaces, danglingPortalSpaces, unboundPortalApertures,
         },
     };
+    const circulation = compileWorldCirculationGraph(graph);
+    assertWorldCirculationGraph(circulation);
+    graph.circulation = circulation;
+    graph.stats.circulation = circulation.stats;
+    payload.worldCirculation = circulation;
     payload.spatialTopology = graph;
     for (const entity of payload.entities ?? []) entity.spatialTopologyId = entity.id;
     for (const space of payload.semanticSpaces ?? []) space.spatialTopologyId = space.id;
@@ -402,5 +408,6 @@ export function assertSpatialTopologyGraph(graph, { requireEntranceAuthority = t
     if (graph.stats.orphanReservations) throw new Error(`spatial topology has ${graph.stats.orphanReservations} orphan reservations`);
     if (graph.stats.orphanApertures) throw new Error(`spatial topology has ${graph.stats.orphanApertures} orphan apertures`);
     if (requireEntranceAuthority && graph.stats.unboundEntranceFaces) throw new Error(`spatial topology has ${graph.stats.unboundEntranceFaces} unbound entrance faces`);
+    if (graph.circulation) assertWorldCirculationGraph(graph.circulation);
     return true;
 }

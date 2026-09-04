@@ -195,7 +195,7 @@ function freezeObject(object) {
 
 
 const DIAGNOSTIC_SIGNAGE_RE = /(?:^|[-_ ])(?:sign|signage|billboard|megascreen|screen|marquee)(?:$|[-_ ])/i;
-const DIAGNOSTIC_SMALL_PROP_RE = /(?:pipe|duct|hvac|vent|fixture|clutter|ivy|security|spray|awning|interior|semantic-prop|street-fixture|furniture|crate|trash|plant|bench|bollard|overhead-cable|elevator-hardware)/i;
+const DIAGNOSTIC_SMALL_PROP_RE = /(?:pipe|duct|hvac|vent|fixture|clutter|ivy|security|spray|awning|interior|semantic-prop|street-fixture|service-hardware|furniture|crate|trash|plant|bench|bollard|overhead-cable|elevator-hardware)/i;
 const DIAGNOSTIC_ARCHITECTURE_RE = /(?:^|[-_ ])(?:roof-topper)(?:$|[-_ ])/i;
 // Runtime task order is already layered across entities. Keep exact priority
 // comparison inside a bounded look-ahead instead of rescanning an arbitrary tail.
@@ -205,6 +205,7 @@ const MODERATE_PROP_PERCENT = Object.freeze({
     // Single shared-geometry cylinder; restore more of the already-bounded 1-2 pipe tasks.
     pipe: 65,
     'street-fixture': 38,
+    'service-hardware': 42,
     graffiti: 35,
     // Primitive-only 2-4 can cluster; task already exists only beside planned graffiti.
     'spray-cans': 40,
@@ -214,7 +215,7 @@ const MODERATE_PROP_PERCENT = Object.freeze({
     // Restore a little facade life after the refinement/setup spike cleanup.
     security: 40,
     'roof-clutter': 22,
-    ivy: 15,
+    ivy: 32,
     'elevator-hardware': 12,
 });
 
@@ -940,6 +941,17 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
                 seed: taskSeed(chunk, entity.id, 'ivy'),
             });
         }
+        // Independent service-hardware stream: AC case + duct + conduit + vent,
+        // all primitive-only and therefore cheap enough to restore before text micro-detail.
+        const serviceHardwareRng = mulberry32(taskSeed(chunk, entity.id, 'service-hardware-plan'));
+        if (floors >= 2 && serviceHardwareRng() < 0.74) {
+            tasks.push({
+                kind: 'service-hardware', entityId: entity.id, side, facadeIndex: sideFacadeIndex,
+                y: clamp(2.15 + serviceHardwareRng() * Math.min(3.8, wallHeight * 0.42), 1.9, Math.max(2.1, wallHeight - 0.8)),
+                along: (serviceHardwareRng() - 0.5) * 1.15,
+                seed: taskSeed(chunk, entity.id, 'service-hardware'),
+            });
+        }
 
         if (rng() < 0.44) {
             tasks.push({
@@ -1057,7 +1069,7 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
             return tier === 'spectacle' || tier === 'identity' || tier === 'macro' ? 'macro-exterior' : 'hidden';
         }
         if (kind === 'sign' || kind === 'awning' || kind === 'graffiti' || kind === 'flyer') return 'facade';
-        if (kind === 'pipe' || kind === 'ivy' || kind === 'security' || kind === 'elevator-hardware' || kind === 'spray-cans' || kind === 'street-fixture') return 'fixture';
+        if (kind === 'pipe' || kind === 'ivy' || kind === 'security' || kind === 'elevator-hardware' || kind === 'service-hardware' || kind === 'spray-cans' || kind === 'street-fixture') return 'fixture';
         if (kind === 'interior-prop' || String(kind).startsWith('semantic-') || kind === 'overhead-cable') return 'hidden';
         if (kind === 'roof-clutter' || kind === 'roof-topper' || String(kind).startsWith('plaza-')) return 'cap';
         return 'other';
@@ -1546,6 +1558,39 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
         group.userData.chunkCosmetic = true; group.userData.detailKind = task.kind; return group;
     }
 
+    function createServiceHardware(payload, task) {
+        const point = semanticPlacementPoint(task);
+        const rng = mulberry32(task.seed);
+        const tangentX = Math.abs(Math.sin(point.ry)) < 0.5;
+        const halfX = tangentX ? 0.72 : 0.30;
+        const halfZ = tangentX ? 0.30 : 0.72;
+        if (!reserveDetailBox(payload, point.x, point.z, halfX, halfZ, point.y - 0.78, point.y + 0.72, 0.04)) return null;
+        const group = new THREE.Group();
+        group.name = `chunk-service-hardware:${task.entityId}`;
+        group.position.set(point.x, point.y, point.z);
+        group.rotation.y = point.ry;
+        const ac = new THREE.Mesh(unitBox, elevatorMat);
+        ac.scale.set(1.08, 0.68, 0.30);
+        ac.position.set(0.12, 0.04, -0.17);
+        const duct = new THREE.Mesh(unitBox, roofHardwareMat);
+        duct.scale.set(0.48 + rng() * 0.18, 0.28, 0.24);
+        duct.position.set(-0.46, 0.12, -0.13);
+        const vent = new THREE.Mesh(unitBox, securityMat);
+        vent.scale.set(0.34, 0.24, 0.11);
+        vent.position.set(0.37, 0.03, -0.36);
+        group.add(ac, duct, vent);
+        for (const [index, x] of [-0.34, 0.46].entries()) {
+            const conduit = new THREE.Mesh(pipeGeo, index ? securityMat : roofHardwareMat);
+            conduit.scale.set(0.72, 0.58 + rng() * 0.38, 0.72);
+            conduit.position.set(x, -0.63, -0.12);
+            group.add(conduit);
+        }
+        group.userData.chunkCosmetic = true;
+        group.userData.detailKind = task.kind;
+        group.userData.semanticClass = 'facade-service-hardware';
+        return group;
+    }
+
     function createSecurity(payload, task) {
         const point = semanticPlacementPoint(task);
         const group = new THREE.Group();
@@ -1695,6 +1740,7 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
         else if (task.kind === 'awning') object = createAwning(payload, task);
         else if (task.kind === 'ivy') object = createIvy(payload, task);
         else if (task.kind === 'security') object = createSecurity(payload, task);
+        else if (task.kind === 'service-hardware') object = createServiceHardware(payload, task);
         else if (task.kind === 'elevator-hardware') object = createElevatorHardware(payload, task);
         else if (task.kind === 'street-fixture') object = createStreetFixture(payload, task);
         else if (task.kind === 'exterior-prop-field') object = exteriorPropField.realize(payload, task);

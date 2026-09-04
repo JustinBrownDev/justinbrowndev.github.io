@@ -47,6 +47,7 @@ export const EXTERIOR_TASK_KIND_PRIORITY = Object.freeze({
     'street-fixture': 2,
     'overhead-cable': 2,
     security: 3,
+    'service-hardware': 3,
     ivy: 3,
     'semantic-identity': 3,
     'semantic-functional': 4,
@@ -63,7 +64,7 @@ export const EXTERIOR_TASK_KIND_PRIORITY = Object.freeze({
 // the ordinary breadth contract.
 export const EXTERIOR_FIRST_PASS_KIND_ORDER = Object.freeze([
     'semantic-context-prop', 'roof-topper', 'sign', 'awning', 'roof-clutter', 'pipe',
-    'elevator-hardware', 'street-fixture', 'security', 'ivy', 'graffiti',
+    'elevator-hardware', 'street-fixture', 'security', 'ivy', 'service-hardware', 'graffiti',
     'spray-cans', 'flyer',
 ]);
 
@@ -134,6 +135,7 @@ export function exteriorTaskVisualImpact(task = {}) {
         case 'overhead-cable': return 3.2;
         case 'street-fixture': return 2.4;
         case 'security': return 1.6;
+        case 'service-hardware': return 2.8;
         case 'ivy': return 1.4;
         case 'graffiti': return Math.max(0.4, finite(task.width, 1) * finite(task.height, 0.5) * 0.35);
         case 'flyer': return 0.25;
@@ -148,7 +150,7 @@ export function exteriorTaskVisualTier(task = {}) {
     if (task.semanticContextRole === 'roof') return 'identity';
     if (task.kind === 'roof-topper' || task.kind === 'sign') return 'identity';
     if (task.kind === 'awning' || task.kind === 'roof-clutter' || task.kind === 'pipe' || task.kind === 'overhead-cable') return 'macro';
-    if (task.kind === 'elevator-hardware' || task.kind === 'street-fixture' || task.kind === 'security' || task.kind === 'ivy') return 'medium';
+    if (task.kind === 'elevator-hardware' || task.kind === 'street-fixture' || task.kind === 'security' || task.kind === 'service-hardware' || task.kind === 'ivy') return 'medium';
     if (task.kind === 'graffiti' || task.kind === 'flyer' || task.kind === 'spray-cans') return 'micro';
     return 'medium';
 }

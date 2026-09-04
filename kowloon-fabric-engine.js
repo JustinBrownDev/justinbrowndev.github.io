@@ -35,6 +35,7 @@ import { deriveStairFlight, gameplayTraversalEnvelope, resolvePhysicalTruth } fr
 import { BUILDING_SLAB_THICKNESS, storyCeilingLocalY } from './world/interior-geometry-policy.js';
 import { planInteriorStairCoreStructuralFeasibility } from './world/interior-stair-core.js';
 import { recoverCellFootprintForCirculation } from './world/architecture/circulation-footprint-recovery.js';
+import { collapseSolidComponentsIntoSuperstructureSites, superstructureFallbackDecision } from './world/superstructure-fallback.js';
 import { planBuildingSidecar } from './world/architecture/building-plan-sidecar.js';
 import { assertBuildingPlanAuthority, promoteBuildingPlanAuthority } from './world/architecture/building-plan-authority.js';
 import { createSemanticPlanCache, semanticPlanCacheKey } from './world/architecture/semantic-plan-runtime.js';
@@ -397,6 +398,8 @@ export function createKowloonFabricEngine({
     const guardConcreteMat = new THREE.MeshStandardMaterial({ color: 0x8b8982, roughness: 0.96, metalness: 0.0 });
     const doorMat = new THREE.MeshStandardMaterial({ color: 0x24211f, roughness: 0.9, metalness: 0.05 });
     const windowMat = new THREE.MeshStandardMaterial({ color: 0x8fa9a8, emissive: 0x182827, emissiveIntensity: 0.5, roughness: 0.35 });
+    const interiorPaintMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.93, metalness: 0.0 });
+    const interiorPaintPalette = Object.freeze([0xc98f7a, 0x8fa99a, 0xd0bd82, 0x8f9eb8, 0xb58ca5, 0x9f956f, 0x7fa7a8, 0xb88c73]);
     const traversalEnvelope = gameplayTraversalEnvelope();
     const wallMats = [
         new THREE.MeshStandardMaterial({ color: 0xb6ae9c, roughness: 0.82 }),
@@ -425,6 +428,7 @@ export function createKowloonFabricEngine({
     const cavernBlack = new THREE.Color(0x030405);
     const cavernWhite = new THREE.Color(0xf4f3ee);
     const cavernTintScratch = new THREE.Color();
+    const instanceTintScratch = new THREE.Color();
     function cavernTintAtY(y, material) {
         const t = clamp((Number(y) || 0) / HANGING_CITY_CEILING_Y, 0, 1);
         const center = cavernMaterialCenter.get(material) ?? new THREE.Color(0x8b8179);
@@ -457,7 +461,7 @@ export function createKowloonFabricEngine({
             else quat.identity();
             matrix.compose(pos, quat, scale);
             mesh.setMatrixAt(i, matrix);
-            mesh.setColorAt(i, cavernTintAtY(t.y, material));
+            mesh.setColorAt(i, t.color != null ? instanceTintScratch.set(t.color) : cavernTintAtY(t.y, material));
         }
         mesh.instanceMatrix.needsUpdate = true;
         if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
@@ -576,8 +580,12 @@ export function createKowloonFabricEngine({
         return claim;
     }
 
-    function realizeBuildingPlanWallRuns({ physics, wallList, plan }) {
+    function realizeBuildingPlanWallRuns({ physics, wallList, plan, paintList = null }) {
         const wallT = 0.14;
+        const paintT = 0.018;
+        const paintColorBySpaceId = new Map((plan?.topologySpaces ?? []).map(space => [
+            String(space.id), interiorPaintPalette[hashString32(`interior-paint:${space.id}`) % interiorPaintPalette.length],
+        ]));
         const coreReservation = plan?.verticalCore?.reservation ?? null;
         let segments = 0;
         const emitRaw = (run, a, b, yMin = run.yBase, yMax = run.yBase + run.height) => {
@@ -603,6 +611,18 @@ export function createKowloonFabricEngine({
                 });
             }
             segments++;
+            if (paintList && b - a > 0.08) {
+                const offset = wallT * 0.5 + paintT * 0.5 + 0.002;
+                const pushPaint = (spaceId, sign) => {
+                    const color = paintColorBySpaceId.get(String(spaceId ?? ''));
+                    if (color == null) return;
+                    paintList.push(run.axis === 'x'
+                        ? { x: mid, y: wallY, z: run.fixedCoord + sign * offset, sx: b - a, sy: wallH, sz: paintT, color, buildingPlanWallId: run.id, spaceId, interiorPaint: true }
+                        : { x: run.fixedCoord + sign * offset, y: wallY, z: mid, sx: paintT, sy: wallH, sz: b - a, color, buildingPlanWallId: run.id, spaceId, interiorPaint: true });
+                };
+                pushPaint(run.fromSpaceId, -1);
+                pushPaint(run.toSpaceId, 1);
+            }
         };
         const emit = (run, a, b, yMin = run.yBase, yMax = run.yBase + run.height) => {
             if (!coreReservation) return emitRaw(run, a, b, yMin, yMax);
@@ -2709,6 +2729,7 @@ export function createKowloonFabricEngine({
             physics,
             wallList: transforms.wallGroups[materialIndex],
             plan: buildingPlan,
+            paintList: transforms.interiorPaint,
         });
         yield { phase: 'broad-structural-interiors', current: modulePlans.length, total: modulePlans.length };
 
@@ -3756,6 +3777,7 @@ export function createKowloonFabricEngine({
             physics,
             wallList: transforms.wallGroups[materialIndex],
             plan: buildingPlan,
+            paintList: transforms.interiorPaint,
         });
 
         // Keep the old readable facade layer, but derive it from the shared
@@ -4460,7 +4482,7 @@ export function createKowloonFabricEngine({
 
     function createFabricBuffers() {
         return {
-            transforms: { wallGroups: wallMats.map(() => []), slabs: [], steps: [], props: [], guardMetal: [], guardConcrete: [], roads: [], windows: [], doors: [] },
+            transforms: { wallGroups: wallMats.map(() => []), slabs: [], steps: [], props: [], guardMetal: [], guardConcrete: [], roads: [], windows: [], doors: [], interiorPaint: [] },
             physics: { mazeWalls: [], platforms: [], ramps: [], ceilings: [], props: [], guardSpans: [], circulationReservations: [], semanticConnectors: [], structuralSurfaceClaims: [] },
         };
     }
@@ -4504,7 +4526,7 @@ export function createKowloonFabricEngine({
     function translateFabricBuffersY(buffers, dy) {
         const { transforms, physics } = buffers;
         for (const list of [...(transforms.wallGroups ?? []), transforms.slabs, transforms.steps, transforms.props,
-            transforms.guardMetal, transforms.guardConcrete, transforms.roads, transforms.windows, transforms.doors]) {
+            transforms.guardMetal, transforms.guardConcrete, transforms.roads, transforms.windows, transforms.doors, transforms.interiorPaint]) {
             for (const item of list ?? []) if (Number.isFinite(item?.y)) item.y += dy;
         }
         for (const item of physics.platforms ?? []) if (Number.isFinite(item?.y)) item.y += dy;
@@ -4539,7 +4561,7 @@ export function createKowloonFabricEngine({
         for (let i = 0; i < target.transforms.wallGroups.length; i++) {
             target.transforms.wallGroups[i].push(...(source.transforms.wallGroups[i] ?? []));
         }
-        for (const key of ['slabs', 'steps', 'props', 'guardMetal', 'guardConcrete', 'roads', 'windows', 'doors']) {
+        for (const key of ['slabs', 'steps', 'props', 'guardMetal', 'guardConcrete', 'roads', 'windows', 'doors', 'interiorPaint']) {
             target.transforms[key].push(...(source.transforms[key] ?? []));
         }
         for (const [key, value] of Object.entries(source.physics ?? {})) {
@@ -5122,6 +5144,85 @@ export function createKowloonFabricEngine({
         return Object.freeze({ archetype, desiredFloors: primaryFloors, floorHeight, siteSignature });
     }
 
+
+    function structuralPreflightForSite({ chunk, site, siteIdOf, roadPlan, cx0, cz0, half, cellSize, structureProfile = null }) {
+        const mass = planCompoundMassIntent({ chunk, site, structureProfile });
+        const topology = analyzeKowloonCompound(site, siteIdOf);
+        const siteSignature = site.cells.map(cell => kowloonCellKey(cell.col, cell.row)).join('|');
+        const physicalUse = classifyPhysicalUse({
+            morphology: mass.archetype, stableKey: `${chunk.key}:${siteSignature}`, districtContext: 'kowloon',
+            override: structureProfile?.physicalUse ?? null,
+        });
+        const stairTruth = resolvePhysicalTruth({
+            physicalUse, role: 'primary-circulation', weirdness: chunk.weirdness?.sampled ?? 0,
+            stableKey: `${chunk.key}:${siteSignature}:stair`,
+        });
+        const modulePlans = site.cells.map(cell => {
+            const moduleKey = kowloonCellKey(cell.col, cell.row);
+            const cellCx = cx0 - half + (cell.col + 0.5) * cellSize;
+            const cellCz = cz0 - half + (cell.row + 0.5) * cellSize;
+            const edgeKinds = {};
+            for (const dir of KOWLOON_DIRS) {
+                edgeKinds[dir.key] = kowloonChunkBoundaryEdgeKind(cell, dir, {
+                    microCells, portals: roadPlan.portals, roads: roadPlan.roads,
+                }) ?? 'internal';
+            }
+            const nominal = { cx: cellCx, cz: cellCz, halfX: cellSize * 0.18, halfZ: cellSize * 0.18 };
+            const shell = { key: moduleKey, cell, edgeKinds, floors: mass.desiredFloors, rect: nominal };
+            const maximum = recoverCellFootprintForCirculation({ module: shell, cx0, cz0, half, cellSize });
+            return { ...shell, rect: maximum?.rect ? { ...maximum.rect } : nominal };
+        });
+        const primaryKey = kowloonCellKey(topology.primary.col, topology.primary.row);
+        const primaryModule = modulePlans.find(module => module.key === primaryKey) ?? modulePlans[0] ?? null;
+        const result = planInteriorStairCoreStructuralFeasibility({
+            modulePlans, primaryModule, floorH: mass.floorHeight, physicalTruth: stairTruth, traversalEnvelope,
+            stableKey: `${chunk.key}:${siteSignature}:${primaryModule?.key ?? 'none'}:switchback-core`,
+        });
+        return {
+            accepted: result.accepted === true, rejectionReason: result.rejectionReason ?? null,
+            siteSignature, primaryModuleKey: primaryModule?.key ?? null, floorHeight: mass.floorHeight,
+        };
+    }
+
+    function realRoadFacesForSite(site, roadPlan) {
+        let count = 0;
+        for (const cell of site.cells) for (const dir of KOWLOON_DIRS) {
+            const nc = cell.col + dir.dc, nr = cell.row + dir.dr;
+            if (nc < 0 || nr < 0 || nc >= microCells || nr >= microCells || roadPlan.roads.has(kowloonCellKey(nc, nr))) count++;
+        }
+        return count;
+    }
+
+    function reconcileStructuralPartition({ chunk, solidKeys, roadPlan, siteIdOf, sitePlans, cx0, cz0, half, cellSize, structureProfile = null, forcedFailures = [] }) {
+        const failures = [...forcedFailures];
+        for (const plan of sitePlans) {
+            if (plan.isPlaza) continue;
+            const preflight = structuralPreflightForSite({ chunk, site: plan.site, siteIdOf, roadPlan, cx0, cz0, half, cellSize, structureProfile });
+            plan.structuralPreflight = preflight;
+            if (!preflight.accepted) failures.push({
+                chunkKey: chunk.key, siteId: plan.site.id, siteSignature: preflight.siteSignature,
+                moduleKey: preflight.primaryModuleKey, rejectionReason: preflight.rejectionReason,
+            });
+        }
+        if (!failures.length) return { siteIdOf, sitePlans, structuralFallback: superstructureFallbackDecision({ ordinarySiteCount: sitePlans.length }) };
+
+        const collapsed = collapseSolidComponentsIntoSuperstructureSites({ solidKeys, cols: microCells, rows: microCells });
+        const fallbackPlans = collapsed.sites.map(site => {
+            const preflight = structuralPreflightForSite({ chunk, site, siteIdOf: collapsed.siteIdOf, roadPlan, cx0, cz0, half, cellSize, structureProfile });
+            return {
+                site, signature: preflight.siteSignature, realRoadFaces: realRoadFacesForSite(site, roadPlan), roll: 0,
+                isPlaza: !preflight.accepted, structuralServiceVoid: !preflight.accepted,
+                superstructure: preflight.accepted, structuralPreflight: preflight,
+            };
+        });
+        const superstructures = fallbackPlans.filter(plan => plan.superstructure).map(plan => plan.site);
+        const serviceVoids = fallbackPlans.filter(plan => plan.structuralServiceVoid).map(plan => plan.site);
+        const structuralFallback = superstructureFallbackDecision({
+            ordinarySiteCount: sitePlans.length, failures, superstructureSites: superstructures, serviceVoids,
+        });
+        console.warn?.(`[world-structure-fallback] ${chunk.key} ${structuralFallback.mode} failures=${failures.length} superstructures=${superstructures.length} serviceVoids=${serviceVoids.length}`);
+        return { siteIdOf: collapsed.siteIdOf, sitePlans: fallbackPlans, structuralFallback };
+    }
     function prepareCeilingCityField({ chunk, weirdness = chunk.weirdness?.sampled ?? 0 }) {
         const source = ceilingSourceCoordinates(chunk.x, chunk.z);
         const weird = clamp(Number(weirdness) || 0, 0, 1);
@@ -5145,8 +5246,8 @@ export function createKowloonFabricEngine({
             chooseTargetSize: () => chooseKowloonCompoundTargetSize(partitionRng, weird),
             pick: candidates => candidates[Math.floor(partitionRng() * candidates.length) % candidates.length],
         });
-        const siteIdOf = partition.siteIdOf;
-        const sitePlans = partition.sites.map(site => {
+        let siteIdOf = partition.siteIdOf;
+        let sitePlans = partition.sites.map(site => {
             const signature = site.cells.map(cell => key(cell.col, cell.row)).join('|');
             const rng = mulberry32(hashString32(`${worldSeed}:kowloon-site-class:${phaseChunk.key}:${signature}`));
             let realRoadFaces = 0;
@@ -5161,10 +5262,17 @@ export function createKowloonFabricEngine({
             sitePlans.sort((a, b) => b.site.cells.length - a.site.cells.length || a.signature.localeCompare(b.signature));
             sitePlans[0].isPlaza = false;
         }
+        const ceilingStructuralPartition = reconcileStructuralPartition({
+            chunk: phaseChunk, solidKeys, roadPlan, siteIdOf, sitePlans, cx0, cz0, half, cellSize,
+            structureProfile: { primaryFloors: 4, floorHeight: HANGING_CITY_FLOOR_HEIGHT, floorAlignment: 'ceiling' },
+        });
+        siteIdOf = ceilingStructuralPartition.siteIdOf;
+        sitePlans = ceilingStructuralPartition.sitePlans;
+        const structuralFallback = ceilingStructuralPartition.structuralFallback;
         const openSiteIds = new Set(sitePlans.filter(plan => plan.isPlaza).map(plan => plan.site.id));
         const buildingSiteIds = new Set(sitePlans.filter(plan => !plan.isPlaza).map(plan => plan.site.id));
         const { bridgePlans, bridgePortalsBySite } = planCeilingBridgeNetwork({ phaseChunk, roadPlan, siteIdOf, buildingSiteIds, weird });
-        return { source, weird, phaseChunk, cx0, cz0, half, cellSize, roadPlan, siteIdOf, sitePlans, openSiteIds, buildingSiteIds, bridgePlans, bridgePortalsBySite };
+        return { source, weird, phaseChunk, cx0, cz0, half, cellSize, roadPlan, siteIdOf, sitePlans, openSiteIds, buildingSiteIds, bridgePlans, bridgePortalsBySite, structuralFallback };
     }
 
     function prepareJointCavernSynthesis({ chunk, groundSitePlans, groundBridgePortalsBySite = null, cx0, cz0, half, cellSize, weird }) {
@@ -5304,12 +5412,15 @@ export function createKowloonFabricEngine({
                 chunk: phaseChunk, site, siteIdOf, roadPlan, openSiteIds, bridgePortalsBySite,
                 physics: local.physics, transforms: local.transforms,
                 cx0, cz0, half, cellSize, materialIndex,
+                courtyardCellOverride: plan.superstructure ? null : undefined,
                 structureProfile: {
                     primaryFloors: heightPlan.floors,
                     floorHeight: HANGING_CITY_FLOOR_HEIGHT,
+                    archetype: plan.superstructure ? 'vertical-stack' : undefined,
                     entityIdOverride: worldEntityId(worldSeed, phaseChunk.x, phaseChunk.z, 'ceiling-building-plan', signature),
-                    singularRecipe: 'ceiling-stalactite-building',
+                    singularRecipe: plan.superstructure ? 'ceiling-circulation-superstructure' : 'ceiling-stalactite-building',
                     floorAlignment: 'ceiling',
+                    superstructureFallback: plan.superstructure === true,
                 },
             });
             if (!structural) continue;
@@ -5327,6 +5438,7 @@ export function createKowloonFabricEngine({
                 ceilingSourceChunk: source,
                 collisionDecision: heightPlan.blockers.length ? 'height-budgeted-against-opposing-claims' : 'independent-phase-open-column',
                 architecturalClaim: heightPlan,
+                structuralFallbackMode: plan.superstructure ? 'connected-solid-superstructure' : null,
                 ...structural,
             };
             const sitePortals = bridgePortalsBySite.get(site.id) ?? [];
@@ -5386,6 +5498,7 @@ export function createKowloonFabricEngine({
             formatVersion: WORLD_FORMAT_VERSION,
             ownerId, root, physics: aggregate.physics, entities,
             buildings, plazas, skybridges, ladders, ladderRungs, cavernWallStairs: cavernWallStairs.length,
+            structuralFallback: field.structuralFallback ?? null,
             ceilingCity: true,
             ceilingSourceChunk: source,
             frame: ceilingFrame(),
@@ -5456,7 +5569,8 @@ export function createKowloonFabricEngine({
         const guardConcreteMesh = makeInstanced(`${namePrefix}-guard-concrete`, unitBox, guardConcreteMat, transforms.guardConcrete);
         const windowMesh = makeInstanced(`${namePrefix}-windows`, unitBox, windowMat, transforms.windows);
         const doorMesh = makeInstanced(`${namePrefix}-doors`, unitBox, doorMat, transforms.doors);
-        for (const mesh of [slabMesh, stepMesh, propMesh, guardMetalMesh, guardConcreteMesh, windowMesh, doorMesh]) if (mesh) root.add(mesh);
+        const interiorPaintMesh = makeInstanced(`${namePrefix}-building-plan-interior-paint`, unitBox, interiorPaintMat, transforms.interiorPaint);
+        for (const mesh of [slabMesh, stepMesh, propMesh, guardMetalMesh, guardConcreteMesh, windowMesh, doorMesh, interiorPaintMesh]) if (mesh) root.add(mesh);
         return root.children.length;
     }
 
@@ -5724,8 +5838,8 @@ export function createKowloonFabricEngine({
     async function build(chunk) {
         const rng = mulberry32(chunk.seed ^ (worldSeed >>> 0));
         const roadPlan = planRoads(chunk);
-        const districtLandmarkSpec = districtLandmarkFor(chunk);
-        const districtLandmarkCell = districtLandmarkSpec ? chooseDistrictLandmarkCell(roadPlan) : null;
+        let districtLandmarkSpec = districtLandmarkFor(chunk);
+        let districtLandmarkCell = districtLandmarkSpec ? chooseDistrictLandmarkCell(roadPlan) : null;
         const root = new THREE.Group();
         root.name = `world-chunk:${chunk.key}`;
         root.userData.noSpatialChunk = true;
@@ -5775,6 +5889,32 @@ export function createKowloonFabricEngine({
          
          
         addOwnedBoundaryBarriers(chunk, roadPlan, physics, transforms.wallGroups[0], cellSize);
+
+        // Sparse one-cell landmarks use the same stair truth. If the landmark exhausts
+        // its legal cell and still cannot fit circulation, return the cell to the solid
+        // field and force the connected-superstructure repartition instead of failing early.
+        let districtLandmarkFallback = null;
+        if (districtLandmarkCell && districtLandmarkSpec) {
+            const typeIndex = districtLandmarkTypes.indexOf(districtLandmarkSpec.type);
+            const landmarkFloors = Math.min(12, 5 + typeIndex + Math.floor(weird * 3));
+            const landmarkSite = { id: 0, cells: [{ col: districtLandmarkCell.c, row: districtLandmarkCell.r }] };
+            const landmarkSiteIdOf = Array.from({ length: microCells }, () => new Array(microCells).fill(-1));
+            landmarkSiteIdOf[districtLandmarkCell.r][districtLandmarkCell.c] = 0;
+            const preflight = structuralPreflightForSite({
+                chunk, site: landmarkSite, siteIdOf: landmarkSiteIdOf, roadPlan, cx0, cz0, half, cellSize,
+                structureProfile: { archetype: 'vertical-stack', primaryFloors: landmarkFloors, floorHeight: 3.15 },
+            });
+            if (!preflight.accepted) {
+                districtLandmarkFallback = {
+                    chunkKey: chunk.key, siteId: 'district-landmark', siteSignature: preflight.siteSignature,
+                    moduleKey: preflight.primaryModuleKey, rejectionReason: preflight.rejectionReason,
+                    source: 'district-landmark-preflight', landmarkType: districtLandmarkSpec.type,
+                };
+                console.warn?.(`[world-structure-fallback] ${chunk.key} landmark ${districtLandmarkSpec.type} ${preflight.siteSignature} cannot host circulation; returning cell to superstructure field`);
+                districtLandmarkSpec = null;
+                districtLandmarkCell = null;
+            }
+        }
 
         let buildings = 0;
         let plazas = 0;
@@ -5828,9 +5968,9 @@ export function createKowloonFabricEngine({
             chooseTargetSize: () => chooseKowloonCompoundTargetSize(compoundPartitionRng, weird),
             pick: candidates => candidates[Math.floor(compoundPartitionRng() * candidates.length) % candidates.length],
         });
-        const siteIdOf = compoundPartition.siteIdOf;
+        let siteIdOf = compoundPartition.siteIdOf;
 
-        const sitePlans = compoundPartition.sites.map(site => {
+        let sitePlans = compoundPartition.sites.map(site => {
             const signature = site.cells.map(cell => key(cell.col, cell.row)).join('|');
             const siteRng = mulberry32(hashString32(`${worldSeed}:kowloon-site-class:${chunk.key}:${signature}`));
             let realRoadFaces = 0;
@@ -5848,6 +5988,13 @@ export function createKowloonFabricEngine({
             sitePlans.sort((a, b) => b.site.cells.length - a.site.cells.length || a.signature.localeCompare(b.signature));
             sitePlans[0].isPlaza = false;
         }
+        const groundStructuralPartition = reconcileStructuralPartition({
+            chunk, solidKeys, roadPlan, siteIdOf, sitePlans, cx0, cz0, half, cellSize,
+            forcedFailures: districtLandmarkFallback ? [districtLandmarkFallback] : [],
+        });
+        siteIdOf = groundStructuralPartition.siteIdOf;
+        sitePlans = groundStructuralPartition.sitePlans;
+        const structuralFallback = groundStructuralPartition.structuralFallback;
         if (yieldControl) await yieldControl(`planned Kowloon topology ${chunk.key}`, 0, sitePlans.length);
         const districtCompositionCandidates = sitePlans.filter(plan => !plan.isPlaza).map(plan => {
             const cols = plan.site.cells.map(cell => cell.col);
@@ -5997,10 +6144,14 @@ export function createKowloonFabricEngine({
                 const materialIndex = hashString32(`${chunk.seed}:compound-facade:${signature}`) % wallMats.length;
                 const districtBuildingContext = districtContextForEntity(districtComposition, siteEntityId);
                 const cavernProfile = cavernSynthesis.groundProfiles.get(site.id) ?? null;
+                const structuralProfile = plan.superstructure
+                    ? { ...(cavernProfile ?? {}), archetype: 'vertical-stack', singularRecipe: 'circulation-superstructure', superstructureFallback: true }
+                    : cavernProfile;
                 const structural = await buildKowloonCompoundCooperative({
                     chunk, site, siteIdOf, roadPlan, openSiteIds, bridgePortalsBySite,
                     physics, transforms, cx0, cz0, half, cellSize, materialIndex, districtBuildingContext,
-                    structureProfile: cavernProfile,
+                    courtyardCellOverride: plan.superstructure ? null : undefined,
+                    structureProfile: structuralProfile,
                 });
                 if (!structural) continue;
                 entities.push({
@@ -6010,6 +6161,7 @@ export function createKowloonFabricEngine({
                     materialIndex,
                     districtCompositionId: districtComposition.id,
                     districtComposition: districtBuildingContext,
+                    structuralFallbackMode: plan.superstructure ? 'connected-solid-superstructure' : null,
                     ...structural,
                 });
                 buildings++;
@@ -6066,6 +6218,7 @@ export function createKowloonFabricEngine({
             cavernWallStairs: cavernWallStairs.length,
             buildingFootprintInvariant,
             hangingLayer,
+            structuralFallback,
             cavernJointSynthesis: physics.cavernJointSynthesis ?? null,
             hangingCity: hangingLayer ? {
                 schema: hangingLayer.schema, frame: hangingLayer.frame,
@@ -6236,6 +6389,7 @@ export function createKowloonFabricEngine({
         guardConcreteMat.dispose();
         doorMat.dispose();
         windowMat.dispose();
+        interiorPaintMat.dispose();
         for (const mat of wallMats) mat.dispose();
         buildingPlanCache.clear();
         enrichment.disposeShared();

@@ -1,8 +1,9 @@
+// JWEB_INTENT: STAIR_WALKABILITY_V1
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { INTERIOR_STAIR_CORE_SCHEMA, planInteriorSwitchbackStairCore } from '../world/interior-stair-core.js';
+import { INTERIOR_STAIR_CORE_SCHEMA, planInteriorStairCoreWithArchitectureReplan, planInteriorSwitchbackStairCore } from '../world/interior-stair-core.js';
 import { planFastFacadeArchitecture } from '../world/fast-facade-architecture.js';
 import { kowloonIntensity } from '../world/kowloon-structure.js';
 
@@ -71,53 +72,69 @@ assert.ok(highStoryCore.midLandingDepth >= 1.15);
 
 
 
+const severeTruth = {
+  stair: {
+    widthSI: 1.36, landingDepthSI: 1.70, headroomSI: 2.10,
+    riser: { realizedSI: 0.15 }, tread: { realizedSI: 0.34, sourceMinimum: { canonicalSI: 0.25 } },
+  },
+};
 const runtimeEnvelopeCore = planInteriorSwitchbackStairCore({
-  // Deliberately harsher than the ordinary streamed module: this exercises the
-  // actual failure mode found by the canonical POST suite (long resolved run),
-  // while preserving wide public stairs, deep landings and full tread depth.
+  // P0 reversal: this bay previously manufactured an eight-flight accordion
+  // stair. It must now fail as geometry so architecture can consume more room.
   rect: { cx: 0, cz: 0, halfX: 2.70, halfZ: 2.70 },
   floorH: 5.8,
-  physicalTruth: {
-    stair: {
-      widthSI: 1.36, landingDepthSI: 1.70, headroomSI: 2.10,
-      riser: { realizedSI: 0.15 }, tread: { realizedSI: 0.34, sourceMinimum: { canonicalSI: 0.25 } },
-    },
-  },
+  physicalTruth: severeTruth,
   traversalEnvelope: { playerRadius: 0.22 },
   stableKey: 'cut13-06-runtime-envelope-core',
 });
-assert.ok(runtimeEnvelopeCore, 'runtime-envelope stair must adapt instead of aborting building generation');
-assert.equal(runtimeEnvelopeCore.topology, 'eight-flight-switchback');
-assert.equal(runtimeEnvelopeCore.flightCount, 8, 'severe long-run case should use four switchback pairs without shrinking truth');
-assert.equal(runtimeEnvelopeCore.intermediateLandings.length, 7, 'every severe-case turn still owns a real landing');
-assert.equal(runtimeEnvelopeCore.flights.at(-1).to, runtimeEnvelopeCore.lowMouth,
-  'even adaptive flight count must keep story-to-story stacking continuous');
-assert.equal(runtimeEnvelopeCore.segmentFlight.fitClassification, 'fits-resolved-truth');
-assert.ok(runtimeEnvelopeCore.opening.sx <= 5.4 + 1e-9 && runtimeEnvelopeCore.opening.sz <= 5.4 + 1e-9,
-  'adaptive core must fit the actual host bay rather than merely suppressing the no-fit error');
+assert.equal(runtimeEnvelopeCore, null,
+  'a severe story may not preserve truth by compressing itself into eight flights');
+
+const severeModules = [
+  { key: '0,0', cell: { col: 0, row: 0 }, rect: { cx: -2.70, cz: 0, halfX: 2.70, halfZ: 2.70 }, floors: 5 },
+  { key: '1,0', cell: { col: 1, row: 0 }, rect: { cx: 2.70, cz: 0, halfX: 2.70, halfZ: 2.70 }, floors: 3 },
+];
+const replannedRuntime = planInteriorStairCoreWithArchitectureReplan({
+  modulePlans: severeModules,
+  primaryModule: severeModules[0],
+  floorH: 5.8,
+  physicalTruth: severeTruth,
+  traversalEnvelope: { playerRadius: 0.22 },
+  stableKey: 'cut13-06-runtime-envelope-replanned',
+});
+assert.ok(replannedRuntime, 'severe case must replan architecture instead of weakening the stair invariant');
+assert.equal(replannedRuntime.replanned, true);
+assert.equal(replannedRuntime.replanMode, 'consume-adjacent-module');
+assert.equal(replannedRuntime.consumedModuleKeys.length, 2);
+assert.ok(replannedRuntime.core.flightCount <= 4, 'architectural replan must retain the four-flight-per-story ceiling');
+assert.equal(replannedRuntime.core.segmentFlight.fitClassification, 'fits-resolved-truth');
 
 const narrowRuntimeCore = planInteriorSwitchbackStairCore({
-  // This is narrower than the R3 8-flight ceiling could accept. Preserve every
-  // public-stair truth value and add switchback pairs instead of rejecting the site.
   rect: { cx: 0, cz: 0, halfX: 2.30, halfZ: 2.30 },
   floorH: 5.8,
-  physicalTruth: {
-    stair: {
-      widthSI: 1.36, landingDepthSI: 1.70, headroomSI: 2.10,
-      riser: { realizedSI: 0.15 }, tread: { realizedSI: 0.34, sourceMinimum: { canonicalSI: 0.25 } },
-    },
-  },
+  physicalTruth: severeTruth,
   traversalEnvelope: { playerRadius: 0.22 },
   stableKey: 'cut14-narrow-runtime-envelope-core',
 });
-assert.ok(narrowRuntimeCore, 'narrow runtime bay must adapt beyond eight flights rather than aborting generation');
-assert.ok(narrowRuntimeCore.flightCount > 8 && narrowRuntimeCore.flightCount % 2 === 0,
-  `narrow bay should use an even >8-flight fallback, got ${narrowRuntimeCore.flightCount}`);
-assert.equal(narrowRuntimeCore.segmentFlight.fitClassification, 'fits-resolved-truth');
-assert.equal(narrowRuntimeCore.flights.at(-1).to, narrowRuntimeCore.lowMouth,
-  'extended fallback must still return to the same stacked floor-landing side');
-assert.ok(narrowRuntimeCore.opening.sx <= 4.6 + 1e-9 && narrowRuntimeCore.opening.sz <= 4.6 + 1e-9,
-  'extended switchback must fit the narrow host without shrinking truth');
+assert.equal(narrowRuntimeCore, null,
+  'narrow bay must reject rather than adding switchback pairs past the P0 limit');
+
+const narrowModules = [
+  { key: '0,0', cell: { col: 0, row: 0 }, rect: { cx: -2.30, cz: 0, halfX: 2.30, halfZ: 2.30 }, floors: 5 },
+  { key: '1,0', cell: { col: 1, row: 0 }, rect: { cx: 2.30, cz: 0, halfX: 2.30, halfZ: 2.30 }, floors: 3 },
+  { key: '2,0', cell: { col: 2, row: 0 }, rect: { cx: 6.90, cz: 0, halfX: 2.30, halfZ: 2.30 }, floors: 2 },
+];
+const narrowReplan = planInteriorStairCoreWithArchitectureReplan({
+  modulePlans: narrowModules,
+  primaryModule: narrowModules[0],
+  floorH: 5.8,
+  physicalTruth: severeTruth,
+  traversalEnvelope: { playerRadius: 0.22 },
+  stableKey: 'cut14-narrow-runtime-envelope-replanned',
+});
+assert.ok(narrowReplan, 'narrow case must find more architectural space when connected modules exist');
+assert.ok(narrowReplan.consumedModuleKeys.length >= 2);
+assert.ok(narrowReplan.core.flightCount <= 4);
 
 const facadePlan = planFastFacadeArchitecture({
   stableKey: 'facade-unit', floorH: 3.2,
@@ -132,10 +149,10 @@ assert.equal(facadePlan.render.windows.some(item => item.facadeRole === 'storefr
 assert.equal(facadePlan.metrics.newPortalCount, 0, 'empty storefront hole still does not fabricate circulation semantics');
 
 const engine = fs.readFileSync(path.join(repo, 'kowloon-fabric-engine.js'), 'utf8');
-assert.match(engine, /planInteriorSwitchbackStairCore/);
+assert.match(engine, /planInteriorStairCoreWithArchitectureReplan/);
 assert.match(engine, /blocksFromBelow:\s*false/, 'stair landings must support feet without becoming invisible ceilings from below');
 assert.match(engine, /core\.intermediateLandings/, 'physical stair emission must realize every intermediate turn landing');
-assert.match(engine, /core\.segmentFlight/, 'physical stair emission must use the selected adaptive even-flight segment truth');
+assert.match(engine, /core\.segmentFlight/, 'physical stair emission must use the selected ordinary segment truth');
 assert.match(engine, /guardMouthClearance/, 'flight rails must leave capsule-sized landing mouths');
 assert.match(engine, /primaryStairCore\.slabOpening/, 'floor/roof cuts must use the shaft-only slab opening');
 assert.doesNotMatch(engine, /addLanding\(core\.floorLanding, y0/,
@@ -170,12 +187,13 @@ console.log('[cut13-stairwell-fireescape-selftest] PASS', {
   ordinaryFitTier: core.fitTier,
   tallTopology: highStoryCore.topology,
   tallFlightCount: highStoryCore.flightCount,
-  runtimeEnvelopeTopology: runtimeEnvelopeCore.topology,
-  runtimeEnvelopeFlightCount: runtimeEnvelopeCore.flightCount,
-  narrowRuntimeTopology: narrowRuntimeCore.topology,
-  narrowRuntimeFlightCount: narrowRuntimeCore.flightCount,
+  runtimeEnvelopeRejected: runtimeEnvelopeCore === null,
+  replannedTopology: replannedRuntime.core.topology,
+  replannedFlightCount: replannedRuntime.core.flightCount,
+  narrowRuntimeRejected: narrowRuntimeCore === null,
+  narrowReplanModules: narrowReplan.consumedModuleKeys.length,
   floorLandingDepth: core.floorLandingDepth,
   turnLandingDepth: core.midLandingDepth,
   capsuleSideClearance: core.sideCapsuleClearance,
-  invariant: 'adaptive switchback + floor-integrated landings + bounded skeleton tread visuals + independent fire escape authority',
+  invariant: '2/4-flight stories + architectural replan + floor-integrated landings + bounded skeleton tread visuals + independent fire escape authority',
 });

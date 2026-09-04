@@ -1,6 +1,7 @@
+// JWEB_INTENT: STAIR_WALKABILITY_V1
 import assert from 'node:assert/strict';
 import { deriveStairFlight, gameplayTraversalEnvelope, resolvePhysicalTruth } from '../world/physical-truth.js';
-import { planInteriorSwitchbackStairCore } from '../world/interior-stair-core.js';
+import { planInteriorStairCoreWithArchitectureReplan, planInteriorSwitchbackStairCore } from '../world/interior-stair-core.js';
 
 // Deterministic fixture where weirdness resolves the tread just below the source
 // minimum. That provenance is valid data; geometry that exactly realizes the
@@ -79,7 +80,22 @@ for (const family of families) {
       traversalEnvelope: envelope,
       stableKey: `cut14-r2:${family}:${i}:core`,
     });
-    assert.ok(core, `${family}:${i}: ordinary 5.98m bay should not false-fail solely because truth provenance is weird`);
+    const modules = [
+      { key: '0,0', cell: { col: 0, row: 0 }, rect: { ...rect, cx: 0 }, floors: 4 },
+      { key: '1,0', cell: { col: 1, row: 0 }, rect: { ...rect, cx: 5.98 }, floors: 3 },
+      { key: '2,0', cell: { col: 2, row: 0 }, rect: { ...rect, cx: 11.96 }, floors: 2 },
+    ];
+    const architecture = core ? { core, replanned: false } : planInteriorStairCoreWithArchitectureReplan({
+      modulePlans: modules,
+      primaryModule: modules[0],
+      floorH: sampleTruth.floorHeight.realizedSI,
+      physicalTruth: sampleTruth,
+      traversalEnvelope: envelope,
+      stableKey: `cut14-r2:${family}:${i}:architectural-core`,
+    });
+    assert.ok(architecture, `${family}:${i}: resolved truth must either fit the bay or trigger a legal architectural replan`);
+    assert.ok(architecture.core.flightCount <= 4, `${family}:${i}: architectural recovery may not exceed four flights per story`);
+    assert.equal(architecture.core.segmentFlight.fitClassification, 'fits-resolved-truth');
     samples++;
   }
 }
@@ -90,5 +106,5 @@ console.log('[cut14-resolved-stair-truth-selftest] PASS', {
   outsideBaselineSamples,
   nominalTread: truth.stair.tread.realizedSI,
   sourceMinimum,
-  invariant: 'geometry fit is resolved-truth-relative; source/code baseline provenance remains separate',
+  invariant: 'geometry fit is resolved-truth-relative; non-fitting bays replan architecture instead of compressing stair truth',
 });

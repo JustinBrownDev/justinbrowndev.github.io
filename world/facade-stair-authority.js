@@ -1,4 +1,7 @@
 import { deriveStairFlight } from './physical-truth.js';
+import { STAIR_WALKABILITY_DESIGN_INTENT, STAIR_WALKABILITY_INTENT, assertFacadeStairWalkability } from './stair-volume-contract.js';
+
+// JWEB_INTENT: STAIR_WALKABILITY_V1
 
 export const FACADE_STAIR_AUTHORITY_SCHEMA = 'jweb.facade-stair-authority.v2';
 const EPS = 1e-7;
@@ -119,6 +122,7 @@ function flightPlanRect(flight) {
 }
 
 export function assertFacadeStairAuthority(plan) {
+  assertFacadeStairWalkability(plan);
   if (!plan || plan.schema !== FACADE_STAIR_AUTHORITY_SCHEMA) throw new Error('facade stair authority schema missing');
   if (plan.topology !== 'landing-routed-facade-zigzag') throw new Error(`${plan.id}: facade stair topology drift`);
   if (!(plan.floors >= 1) || plan.flights.length !== plan.floors) throw new Error(`${plan.id}: one full-story flight is required per floor rise`);
@@ -336,6 +340,8 @@ export function planAlternatingFacadeStair({
 
   const plan = Object.freeze({
     schema: FACADE_STAIR_AUTHORITY_SCHEMA,
+    designIntent: STAIR_WALKABILITY_DESIGN_INTENT,
+    intentTag: STAIR_WALKABILITY_INTENT,
     id: routeId,
     topology: 'landing-routed-facade-zigzag',
     floors: count,

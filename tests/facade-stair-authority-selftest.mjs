@@ -1,3 +1,4 @@
+// JWEB_INTENT: STAIR_WALKABILITY_V1
 import assert from 'node:assert/strict';
 import { resolvePhysicalTruth } from '../world/physical-truth.js';
 import { FACADE_STAIR_AUTHORITY_SCHEMA, assertFacadeStairAuthority, planAlternatingFacadeStair } from '../world/facade-stair-authority.js';

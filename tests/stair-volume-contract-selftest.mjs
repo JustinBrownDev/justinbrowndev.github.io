@@ -1,3 +1,4 @@
+// JWEB_INTENT: STAIR_WALKABILITY_V1
 import assert from 'node:assert/strict';
 import { resolvePhysicalTruth } from '../world/physical-truth.js';
 import { createStairShaftReservation } from '../world/circulation-reservations.js';

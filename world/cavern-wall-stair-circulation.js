@@ -1,15 +1,18 @@
-export const CAVERN_WALL_STAIR_SCHEMA = 'jweb.cavern-wall-stair-route.v1';
+import { FACADE_STAIR_AUTHORITY_SCHEMA, planAlternatingFacadeStair } from './facade-stair-authority.js';
+import {
+  STAIR_WALKABILITY_DESIGN_INTENT,
+  STAIR_WALKABILITY_INTENT,
+  assertCavernWallStairWalkability,
+} from './stair-volume-contract.js';
+
+// JWEB_INTENT: STAIR_WALKABILITY_V1
+export const CAVERN_WALL_STAIR_SCHEMA = 'jweb.cavern-wall-stair-route.v2';
 export const CAVERN_WALL_STAIR_MAX_PER_FIELD = 2;
 export const CAVERN_WALL_STAIR_MAX_FLOORS = 4;
 export const CAVERN_WALL_STAIR_MIN_RUN = 2.7;
 export const CAVERN_WALL_STAIR_OFFSET = 0.92;
 
-const SIDES = Object.freeze([
-  Object.freeze({ side: 'north', normalAxis: 'z', tangentAxis: 'x', sign: -1 }),
-  Object.freeze({ side: 'south', normalAxis: 'z', tangentAxis: 'x', sign: 1 }),
-  Object.freeze({ side: 'west', normalAxis: 'x', tangentAxis: 'z', sign: -1 }),
-  Object.freeze({ side: 'east', normalAxis: 'x', tangentAxis: 'z', sign: 1 }),
-]);
+const SIDES = Object.freeze(['north', 'south', 'west', 'east']);
 
 function finite(value, fallback = 0) {
   return Number.isFinite(Number(value)) ? Number(value) : fallback;
@@ -34,6 +37,13 @@ export function cavernNodePopularity(entity) {
     + Math.min(18, reservations) * 0.45 + Math.min(8, modules) * 0.35 + Math.min(6, floors) * 0.3;
 }
 
+function hasUsefulNetworkDemand(entity) {
+  return finite(entity?.bridgePortalCount) > 0
+    || finite(entity?.scaffoldLandings) > 0
+    || finite(entity?.fastVerticalRouteCount) > 0
+    || finite(entity?.fastExteriorStreetLayerCount) > 0;
+}
+
 function moduleBaseY(entity, module) {
   if (Number.isFinite(Number(module?.baseY))) return Number(module.baseY);
   const floorH = finite(entity?.floorH, 3.15);
@@ -45,38 +55,167 @@ function moduleRoofY(entity, module) {
   return moduleBaseY(entity, module) + Math.max(1, Math.floor(finite(module?.floors, 1))) * finite(entity?.floorH, 3.15);
 }
 
-function faceGeometry(module, side, stairWidth, landingDepth) {
-  const cx = finite(module?.cx, NaN), cz = finite(module?.cz, NaN);
-  const halfX = finite(module?.halfX, NaN), halfZ = finite(module?.halfZ, NaN);
-  if (![cx, cz, halfX, halfZ].every(Number.isFinite) || halfX <= 0 || halfZ <= 0) return null;
-  const def = SIDES.find(item => item.side === side);
-  if (!def) return null;
-  const tangentCenter = def.tangentAxis === 'x' ? cx : cz;
-  const tangentHalf = def.tangentAxis === 'x' ? halfX : halfZ;
-  const normalCenter = def.normalAxis === 'x' ? cx : cz;
-  const normalHalf = def.normalAxis === 'x' ? halfX : halfZ;
-  const runInset = Math.max(stairWidth * 0.65, landingDepth * 0.45);
-  const min = tangentCenter - tangentHalf + runInset;
-  const max = tangentCenter + tangentHalf - runInset;
-  const run = max - min;
-  if (!(run >= CAVERN_WALL_STAIR_MIN_RUN)) return null;
-  const wallCoord = normalCenter + def.sign * normalHalf;
-  const fixedCoord = wallCoord + def.sign * (landingDepth * 0.5 + 0.06);
-  return { ...def, tangentCenter, tangentHalf, min, max, run, fixedCoord, wallCoord };
-}
-
-function sideOrder(entity, module) {
-  const key = `${entity?.id ?? ''}:${module?.key ?? ''}`;
-  let hash = 2166136261 >>> 0;
-  for (let i = 0; i < key.length; i++) { hash ^= key.charCodeAt(i); hash = Math.imul(hash, 16777619) >>> 0; }
-  const offset = hash % SIDES.length;
-  return Array.from({ length: SIDES.length }, (_, i) => SIDES[(i + offset) % SIDES.length].side);
-}
-
 function moduleRank(entity, module) {
   return (String(module?.key) === String(primaryKey(entity)) ? 100 : 0)
     + Math.max(0, finite(module?.floors)) * 10
     + Math.max(0, finite(module?.halfX)) + Math.max(0, finite(module?.halfZ));
+}
+
+function rebasePoint(point, yOffset) {
+  if (!point) return point;
+  return Object.freeze({ ...point, y: Number(point.y) + yOffset });
+}
+
+function rebaseMouth(mouth, yOffset) {
+  if (!mouth) return mouth;
+  return Object.freeze({ ...mouth, point: rebasePoint(mouth.point, yOffset) });
+}
+
+function boundsForStair(stair, headroom) {
+  let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+  const include = rect => {
+    minX = Math.min(minX, Number(rect.x) - Number(rect.hx));
+    maxX = Math.max(maxX, Number(rect.x) + Number(rect.hx));
+    minZ = Math.min(minZ, Number(rect.z) - Number(rect.hz));
+    maxZ = Math.max(maxZ, Number(rect.z) + Number(rect.hz));
+  };
+  for (const landing of stair.landings) include(landing.geometry);
+  for (const flight of stair.flights) {
+    const center = (Number(flight.from) + Number(flight.to)) * 0.5;
+    const halfRun = Math.abs(Number(flight.to) - Number(flight.from)) * 0.5;
+    include(flight.axis === 'x'
+      ? { x: center, z: flight.fixedCoord, hx: halfRun, hz: flight.halfWidth }
+      : { x: flight.fixedCoord, z: center, hx: flight.halfWidth, hz: halfRun });
+  }
+  const pad = 0.12;
+  return {
+    x: (minX + maxX) * 0.5,
+    z: (minZ + maxZ) * 0.5,
+    halfX: (maxX - minX) * 0.5 + pad,
+    halfZ: (maxZ - minZ) * 0.5 + pad,
+    headroom,
+  };
+}
+
+function routeForModuleSide({ entity, module, side, field, popularity, truth }) {
+  const floorH = Math.max(2.4, finite(entity.floorH, 3.15));
+  const availableFloors = Math.max(1, Math.floor(finite(module.floors, entity.floors ?? 1)));
+
+  // Major wall stairs terminate on actual network surfaces. The four-flight P0
+  // ceiling is per story; this authority uses one ordinary full-story flight per
+  // level, so a tall trunk may span many stories as long as it reaches the roof.
+  const y0 = moduleBaseY(entity, module);
+  const y1 = moduleRoofY(entity, module);
+  if (!(y1 - y0 >= 2.25)) return null;
+  const fp = {
+    cx: finite(module.cx, NaN), cz: finite(module.cz, NaN),
+    halfX: finite(module.halfX, NaN), halfZ: finite(module.halfZ, NaN),
+  };
+  if (![fp.cx, fp.cz, fp.halfX, fp.halfZ].every(Number.isFinite) || fp.halfX <= 0 || fp.halfZ <= 0) return null;
+
+  const routeId = `${entity.id}:cavern-wall-stair:${module.key}:${side}`;
+  const stair = planAlternatingFacadeStair({
+    routeId: `${routeId}:geometry`,
+    fp,
+    side,
+    floors: availableFloors,
+    floorH,
+    physicalTruth: truth,
+    stableKey: routeId,
+    facadeMargin: 0.18,
+    wallGap: 0.16,
+    landingTangentSize: Math.max(
+      finite(truth?.stair?.landingDepthSI, 1.10),
+      finite(truth?.stair?.widthSI, 0.96) * 1.45,
+    ),
+  });
+  if (!stair) return null;
+
+  const landings = stair.landings.map((landing, index) => Object.freeze({
+    ...landing,
+    id: `${routeId}:landing:${index}`,
+    y: y0 + landing.y,
+    incomingMouth: rebaseMouth(landing.incomingMouth, y0),
+    outgoingMouth: rebaseMouth(landing.outgoingMouth, y0),
+    targetPoint: rebasePoint(landing.targetPoint, y0),
+    networkStop: index === 0 || index === stair.landings.length - 1,
+    networkRole: index === 0 ? 'building-base' : index === stair.landings.length - 1 ? 'roof' : 'turn-only',
+  }));
+
+  const flights = stair.flights.map((flight, index) => Object.freeze({
+    ...flight,
+    id: `${routeId}:flight:${index}`,
+    y0: y0 + flight.y0,
+    y1: y0 + flight.y1,
+    fromLandingId: landings[index].id,
+    toLandingId: landings[index + 1].id,
+    fromMouth: landings[index].outgoingMouth,
+    toMouth: landings[index + 1].incomingMouth,
+  }));
+
+  const envelope2d = boundsForStair(stair, finite(truth?.stair?.headroomSI, 2.05));
+  const structuralMass = Object.freeze({
+    family: 'municipal-concrete',
+    waistThickness: Math.max(0.24, stair.clearWidth * 0.20),
+    landingSlabThickness: Math.max(0.26, stair.clearWidth * 0.22),
+    pierSize: Math.max(0.30, stair.clearWidth * 0.30),
+    sideMassThickness: Math.max(0.16, stair.clearWidth * 0.14),
+  });
+  const networkNodes = Object.freeze([
+    Object.freeze({ id: `${routeId}:network:base`, role: 'building-base', y: y0, landingId: landings[0].id, entityId: entity.id, moduleKey: module.key }),
+    Object.freeze({ id: `${routeId}:network:roof`, role: 'roof', y: y1, landingId: landings.at(-1).id, entityId: entity.id, moduleKey: module.key }),
+  ]);
+
+  const route = Object.freeze({
+    schema: CAVERN_WALL_STAIR_SCHEMA,
+    designIntent: STAIR_WALKABILITY_DESIGN_INTENT,
+    intentTag: STAIR_WALKABILITY_INTENT,
+    id: routeId,
+    field,
+    entityId: entity.id,
+    siteId: entity.siteId ?? null,
+    moduleKey: module.key,
+    side,
+    popularity,
+    y0,
+    y1,
+    servedFloors: availableFloors,
+    floorH,
+    stairWidth: stair.clearWidth,
+    landingDepth: stair.landingTangentSize,
+    topology: 'landing-routed-cavern-wall-zigzag',
+    geometryAuthority: FACADE_STAIR_AUTHORITY_SCHEMA,
+    laneGap: stair.laneGap,
+    laneCoords: stair.laneCoords,
+    face: Object.freeze({
+      tangentAxis: stair.orientation.tangentAxis,
+      normalAxis: stair.orientation.normalAxis,
+      sign: stair.orientation.outward,
+      wallCoord: stair.orientation.faceCoord,
+      tangentCenter: stair.tangentCenter,
+      min: stair.runLow,
+      max: stair.runHigh,
+      runLow: stair.runLow,
+      runHigh: stair.runHigh,
+      landingNormalCenter: stair.landingNormalCenter,
+    }),
+    flights: Object.freeze(flights),
+    landings: Object.freeze(landings),
+    networkNodes,
+    networkEdges: Object.freeze([Object.freeze({ from: networkNodes[0].id, to: networkNodes[1].id, kind: 'major-stair-trunk', routeId })]),
+    structuralMass,
+    envelope: Object.freeze({
+      x: envelope2d.x,
+      z: envelope2d.z,
+      halfX: envelope2d.halfX,
+      halfZ: envelope2d.halfZ,
+      yMin: y0,
+      yMax: y1 + envelope2d.headroom,
+    }),
+    physicalTruth: truth ?? null,
+  });
+  assertCavernWallStairWalkability(route);
+  return route;
 }
 
 export function planCavernWallStairCandidates({ entities = [], field = 'ground', maxRoutes = CAVERN_WALL_STAIR_MAX_PER_FIELD } = {}) {
@@ -84,79 +223,15 @@ export function planCavernWallStairCandidates({ entities = [], field = 'ground',
   for (const entity of entities) {
     if (entity?.kind !== 'building' || !entity?.footprintModules?.length) continue;
     const popularity = cavernNodePopularity(entity);
-    if (!Number.isFinite(popularity) || popularity < 2.5) continue;
+    if (!Number.isFinite(popularity) || popularity < 2.5 || !hasUsefulNetworkDemand(entity)) continue;
     const truth = entity.servicePhysicalTruth ?? entity.physicalTruth;
-    const stairWidth = Math.max(0.82, Math.min(1.35, finite(truth?.stair?.widthSI, 1.02)));
-    const landingDepth = Math.max(0.92, Math.min(1.55, finite(truth?.stair?.landingDepthSI, 1.18)));
-    const modules = [...entity.footprintModules].sort((a, b) => moduleRank(entity, b) - moduleRank(entity, a) || String(a.key).localeCompare(String(b.key)));
-    for (const module of modules.slice(0, 3)) {
-      const y0 = moduleBaseY(entity, module);
-      const fullTop = moduleRoofY(entity, module);
-      const floorH = Math.max(2.4, finite(entity.floorH, 3.15));
-      const availableFloors = Math.max(1, Math.floor(finite(module.floors, entity.floors ?? 1)));
-      const servedFloors = Math.min(CAVERN_WALL_STAIR_MAX_FLOORS, availableFloors);
-      const y1 = Math.min(fullTop, y0 + servedFloors * floorH);
-      if (!(y1 - y0 >= 2.25)) continue;
-      for (const side of sideOrder(entity, module)) {
-        const face = faceGeometry(module, side, stairWidth, landingDepth);
-        if (!face) continue;
-        const flightCount = Math.max(1, Math.min(servedFloors, Math.ceil((y1 - y0) / 2.75)));
-        const flights = [];
-        const landings = [];
-        const startAtMin = ((String(entity.id).length + String(module.key).length + side.length) & 1) === 0;
-        for (let i = 0; i <= flightCount; i++) {
-          const atMin = (i % 2 === 0) ? startAtMin : !startAtMin;
-          const tangent = atMin ? face.min : face.max;
-          const y = y0 + (y1 - y0) * (i / flightCount);
-          const x = face.tangentAxis === 'x' ? tangent : face.fixedCoord;
-          const z = face.tangentAxis === 'z' ? tangent : face.fixedCoord;
-          landings.push(Object.freeze({ id: `${entity.id}:cavern-wall:${module.key}:${side}:landing:${i}`, x, z, y, tangent }));
-          if (i === 0) continue;
-          const previous = landings[i - 1];
-          flights.push(Object.freeze({
-            id: `${entity.id}:cavern-wall:${module.key}:${side}:flight:${i - 1}`,
-            axis: face.tangentAxis,
-            from: previous.tangent,
-            to: tangent,
-            fixedCoord: face.fixedCoord,
-            y0: previous.y,
-            y1: y,
-            run: Math.abs(tangent - previous.tangent),
-            halfWidth: stairWidth * 0.5,
-            clearWidth: stairWidth,
-          }));
-        }
-        const routeId = `${entity.id}:cavern-wall-stair:${module.key}:${side}`;
-        const normalHalf = landingDepth * 0.55;
-        const tangentHalf = face.run * 0.5 + landingDepth * 0.5;
-        candidates.push(Object.freeze({
-          schema: CAVERN_WALL_STAIR_SCHEMA,
-          id: routeId,
-          field,
-          entityId: entity.id,
-          siteId: entity.siteId ?? null,
-          moduleKey: module.key,
-          side,
-          popularity,
-          y0,
-          y1,
-          servedFloors,
-          floorH,
-          stairWidth,
-          landingDepth,
-          face,
-          flights: Object.freeze(flights),
-          landings: Object.freeze(landings),
-          envelope: Object.freeze({
-            x: face.normalAxis === 'x' ? face.fixedCoord : face.tangentCenter,
-            z: face.normalAxis === 'z' ? face.fixedCoord : face.tangentCenter,
-            halfX: face.normalAxis === 'x' ? normalHalf : tangentHalf,
-            halfZ: face.normalAxis === 'z' ? normalHalf : tangentHalf,
-            yMin: y0,
-            yMax: y1 + Math.max(1.9, finite(truth?.stair?.headroomSI, 2.05)),
-          }),
-          physicalTruth: truth ?? null,
-        }));
+    if (!truth?.stair) continue;
+    const modules = [...entity.footprintModules]
+      .sort((a, b) => moduleRank(entity, b) - moduleRank(entity, a) || String(a.key).localeCompare(String(b.key)));
+    for (const module of modules) {
+      for (const side of SIDES) {
+        const route = routeForModuleSide({ entity, module, side, field, popularity, truth });
+        if (route) candidates.push(route);
       }
     }
   }

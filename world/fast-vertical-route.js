@@ -1,4 +1,7 @@
 import { FACADE_STAIR_AUTHORITY_SCHEMA, planAlternatingFacadeStair } from './facade-stair-authority.js';
+import { STAIR_WALKABILITY_DESIGN_INTENT, STAIR_WALKABILITY_INTENT } from './stair-volume-contract.js';
+
+// JWEB_INTENT: STAIR_WALKABILITY_V1
 
 export const FAST_VERTICAL_ROUTE_SCHEMA = 'jweb.fast-vertical-route.v3';
 const EPS = 1e-7;
@@ -306,6 +309,8 @@ export function planExteriorStreetLayerTrunk({
   const upperLanding = landings[landings.length - 1];
   const route = Object.freeze({
     schema: FAST_VERTICAL_ROUTE_SCHEMA,
+    designIntent: STAIR_WALKABILITY_DESIGN_INTENT,
+    intentTag: STAIR_WALKABILITY_INTENT,
     id: routeId,
     family,
     shape: 'landing-routed-street-layer-trunk',

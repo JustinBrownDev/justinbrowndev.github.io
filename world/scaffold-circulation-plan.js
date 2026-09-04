@@ -1,5 +1,7 @@
 import { FACADE_STAIR_AUTHORITY_SCHEMA, planAlternatingFacadeStair } from './facade-stair-authority.js';
-import { assertCanonicalFacadeZigzag } from './stair-volume-contract.js';
+import { STAIR_WALKABILITY_DESIGN_INTENT, STAIR_WALKABILITY_INTENT, assertCanonicalFacadeZigzag } from './stair-volume-contract.js';
+
+// JWEB_INTENT: STAIR_WALKABILITY_V1
 
 export const SCAFFOLD_CIRCULATION_PLAN_SCHEMA = 'jweb.scaffold-circulation-plan.v4';
 
@@ -204,6 +206,8 @@ export function planExteriorScaffoldRoute({
 
   const plan = Object.freeze({
     schema: SCAFFOLD_CIRCULATION_PLAN_SCHEMA,
+    designIntent: STAIR_WALKABILITY_DESIGN_INTENT,
+    intentTag: STAIR_WALKABILITY_INTENT,
     id,
     siteId,
     moduleKey,

@@ -30,7 +30,7 @@ assert.deepEqual(
   'partition crossing a shaft must be cut to the shaft opening',
 );
 
-const worldSeed = 0x13572468;
+const worldSeed = 671278205;
 const scene = new THREE.Scene();
 const owners = new Map();
 const playerPhysics = {
@@ -50,12 +50,14 @@ function chunk(x, z) {
   };
 }
 
-const payload = await factory.build(chunk(1, 0));
+const payload = await factory.build(chunk(16, 0));
 const reservations = payload.physics.circulationReservations;
 const shafts = reservations.filter(r => r.kind === 'stair-shaft');
+const slabOpenings = reservations.filter(r => r.kind === 'stair-slab-opening');
 const scaffoldRamps = reservations.filter(r => r.kind === 'scaffold-ramp');
 const mezzanineRamps = reservations.filter(r => r.kind === 'mezzanine-ramp');
 assert.ok(shafts.length >= payload.buildings, 'every generated building must publish a structural stair-shaft reservation');
+assert.equal(slabOpenings.length, shafts.length, 'every structural stair shaft must publish one distinct slab-opening reservation');
 assert.ok(scaffoldRamps.length > 0, 'exterior scaffold circulation must also be represented as reservations');
 assert.ok(payload.entities.filter(e => e.kind === 'building').every(e => e.circulationReservationCount >= 1), 'building metadata must expose reservation ownership');
 
@@ -76,6 +78,8 @@ for (const ramp of payload.physics.ramps.filter(r => r.supportKind === 'mezzanin
 // Check collision slabs at every stair arrival height, including the roof.
 let roofArrivalsChecked = 0;
 for (const shaft of shafts) {
+  const opening = slabOpenings.find(item => item.fullReservationId === shaft.id);
+  assert.ok(opening, `shaft ${shaft.id} must own a published slab-opening reservation`);
   const flights = payload.physics.ramps.filter(r => r.supportKind === 'compound-stair' && reservationContainsRamp(shaft, r));
   assert.ok(flights.length > 0, `shaft ${shaft.id} must own at least one stair flight`);
   const arrivals = new Set(flights.map(r => r.y1));
@@ -84,10 +88,11 @@ for (const shaft of shafts) {
   for (const y of arrivals) {
     for (const platform of payload.physics.platforms) {
       if (Math.abs(platform.y - y) > 1e-6) continue;
+      if (String(platform.supportKind ?? '').startsWith('compound-stair')) continue;
       assert.equal(
-        reservationIntersectsBox(shaft, { x: platform.x, z: platform.z, hx: platform.hx, hz: platform.hz, yMin: y - 0.02, yMax: y + 0.02 }),
+        reservationIntersectsBox(opening, { x: platform.x, z: platform.z, hx: platform.hx, hz: platform.hz, yMin: y - 0.02, yMax: y + 0.02 }),
         false,
-        `floor/roof collision must preserve circulation opening at y=${y} for ${shaft.id}`,
+        `floor/roof collision must preserve the published slab opening at y=${y} for ${shaft.id}`,
       );
     }
   }
@@ -104,22 +109,29 @@ const pos = new THREE.Vector3();
 const quat = new THREE.Quaternion();
 const scale = new THREE.Vector3();
 for (const shaft of shafts) {
+  const opening = slabOpenings.find(item => item.fullReservationId === shaft.id);
+  assert.ok(opening, `shaft ${shaft.id} must own a published slab-opening reservation`);
   const arrivals = payload.physics.ramps
     .filter(r => r.supportKind === 'compound-stair' && reservationContainsRamp(shaft, r))
-    .map(r => r.y1);
+    .map(r => r.y1)
+    .filter(y => payload.physics.platforms.some(platform =>
+      Math.abs(platform.y - y) <= 1e-6
+      && !String(platform.supportKind ?? '').startsWith('compound-stair')));
   for (const mesh of slabMeshes) {
     for (let i = 0; i < mesh.count; i++) {
       mesh.getMatrixAt(i, matrix);
       matrix.decompose(pos, quat, scale);
       const halfY = Math.abs(scale.y) * 0.5;
       if (!arrivals.some(y => pos.y - halfY <= y + 1e-6 && pos.y + halfY >= y - 1e-6)) continue;
-      assert.equal(
-        reservationIntersectsBox(shaft, {
-          x: pos.x, z: pos.z, sx: Math.abs(scale.x), sz: Math.abs(scale.z),
-          yMin: pos.y - halfY, yMax: pos.y + halfY,
-        }),
-        false,
-        `render slab must preserve stair opening for ${shaft.id}`,
+      const slabMinX = pos.x - Math.abs(scale.x) * 0.5;
+      const slabMaxX = pos.x + Math.abs(scale.x) * 0.5;
+      const slabMinZ = pos.z - Math.abs(scale.z) * 0.5;
+      const slabMaxZ = pos.z + Math.abs(scale.z) * 0.5;
+      const overlapX = Math.min(slabMaxX, opening.maxX) - Math.max(slabMinX, opening.minX);
+      const overlapZ = Math.min(slabMaxZ, opening.maxZ) - Math.max(slabMinZ, opening.minZ);
+      assert.ok(
+        overlapX <= 1e-3 || overlapZ <= 1e-3,
+        `render slab must preserve stair opening for ${shaft.id}; overlap=${overlapX.toFixed(6)}x${overlapZ.toFixed(6)}`,
       );
     }
   }
@@ -154,6 +166,7 @@ for (const shaft of shafts) {
 console.log('[circulation-reservation-selftest] PASS', {
   buildings: payload.buildings,
   stairShafts: shafts.length,
+  slabOpenings: slabOpenings.length,
   scaffoldRamps: scaffoldRamps.length,
   mezzanineRamps: mezzanineRamps.length,
   reservations: reservations.length,

@@ -1,6 +1,14 @@
 import { deriveStairFlight } from './physical-truth.js';
+import {
+  STAIR_ENDPOINT_SUPPORT_OVERLAP,
+  STAIR_WALKABILITY_DESIGN_INTENT,
+  STAIR_WALKABILITY_INTENT,
+  assertInteriorStairCoreWalkability,
+} from './stair-volume-contract.js';
+import { planStructuralFeasibility } from './architecture/structural-feasibility.js';
 
-export const INTERIOR_STAIR_CORE_SCHEMA = 'jweb.interior-stair-core.v1';
+// JWEB_INTENT: STAIR_WALKABILITY_V1
+export const INTERIOR_STAIR_CORE_SCHEMA = 'jweb.interior-stair-core.v2';
 
 const EPS = 1e-7;
 
@@ -29,7 +37,10 @@ function candidateForAxis({ axis, rect, floorH, truth, playerRadius, stableKey, 
   const crossHalf = axis === 'x' ? finite(rect.halfZ) : finite(rect.halfX);
   const alongCenter = axis === 'x' ? finite(rect.cx) : finite(rect.cz);
   const crossCenter = axis === 'x' ? finite(rect.cz) : finite(rect.cx);
-  const wallMargin = 0.24;
+  // The compact tier spends dead wall-offset before it ever shrinks a stair.
+  // Landing depth, flight width, tread/riser truth and capsule clearances remain
+  // unchanged; 8cm is only the non-walkable shell gap outside that authority.
+  const wallMargin = tier === 'generous' ? 0.24 : 0.08;
   const clearWidth = Math.max(0.78, finite(truth?.stair?.widthSI, 0.91));
   const sourceLanding = Math.max(0.90, finite(truth?.stair?.landingDepthSI, clearWidth));
   const laneGap = Math.max(0.30, playerRadius * 1.35);
@@ -53,14 +64,16 @@ function candidateForAxis({ axis, rect, floorH, truth, playerRadius, stableKey, 
   });
   if (segmentFlight.fitClassification !== 'fits-resolved-truth') return null;
 
+  // Four-flight tall-story stairs reuse each lane once above itself. They are
+  // admissible only when the vertical separation itself preserves full stair
+  // headroom. A short story is never allowed to become a stacked accordion.
+  if (flightCount === 4 && floorH * 0.5 + EPS < segmentFlight.headroom) return null;
+
   const run = segmentFlight.requiredRun;
   const laneCenterOffset = (clearWidth + laneGap) * 0.5;
   const flightCrossSpan = clearWidth * 2 + laneGap;
   const landingCross = flightCrossSpan + 0.28;
   const openingCross = landingCross + sideCapsuleClearance * 2;
-  // Every switchback reuses the same two landing footprints at alternating
-  // elevations, so adding turn pairs reduces per-flight run without lengthening
-  // the core footprint or weakening tread/landing truth.
   const openingAlong = floorLandingDepth + run + turnLandingDepth;
   const availableAlong = alongHalf * 2 - wallMargin * 2;
   const availableCross = crossHalf * 2 - wallMargin * 2;
@@ -75,10 +88,9 @@ function candidateForAxis({ axis, rect, floorH, truth, playerRadius, stableKey, 
   const floorLanding = orientedRect(axis, openingLow + floorLandingDepth * 0.5, crossCenter, floorLandingDepth, landingCross);
   const turnLanding = orientedRect(axis, highMouth + turnLandingDepth * 0.5, crossCenter, turnLandingDepth, landingCross);
   const opening = orientedRect(axis, alongCenter, crossCenter, openingAlong, openingCross);
-  // The story floor itself owns the low-side landing. Only the vertical throat
-  // beyond that landing is cut out of the slab. This makes stair arrival a
-  // continuous floor surface instead of a floating landing slab touching the
-  // floor at one mathematical edge.
+  // The floor owns the usable floor-level landing. The slab opening starts at
+  // the stair mouth, so the landing is not deleted merely to make room for the
+  // stair. Player-physics ramp support extends beneath the receiving edge.
   const slabOpeningAlong = openingHigh - lowMouth;
   const slabOpening = orientedRect(axis, (lowMouth + openingHigh) * 0.5, crossCenter, slabOpeningAlong, openingCross);
   const guardMouthClearance = Math.min(0.34, Math.max(0.22, playerRadius + 0.05));
@@ -97,8 +109,10 @@ function candidateForAxis({ axis, rect, floorH, truth, playerRadius, stableKey, 
       from: outbound ? lowMouth : highMouth,
       to: outbound ? highMouth : lowMouth,
       fixedCoord: laneIndex === 0 ? lane0 : lane1,
+      halfWidth: clearWidth * 0.5,
       y0Fraction: i / flightCount,
       y1Fraction: (i + 1) / flightCount,
+      endpointSupportOverlap: STAIR_ENDPOINT_SUPPORT_OVERLAP,
     }));
     if (i < flightCount - 1) {
       const highSide = outbound;
@@ -108,18 +122,21 @@ function candidateForAxis({ axis, rect, floorH, truth, playerRadius, stableKey, 
         yFraction: (i + 1) / flightCount,
         geometry: highSide ? turnLanding : floorLanding,
         backGuard: highSide ? highBackGuard : lowBackGuard,
+        walkElevationAuthority: STAIR_WALKABILITY_DESIGN_INTENT,
       }));
     }
   }
 
-  return Object.freeze({
+  const plan = Object.freeze({
     schema: INTERIOR_STAIR_CORE_SCHEMA,
-    topology: flightCount === 2 ? 'two-flight-switchback'
-      : flightCount === 4 ? 'four-flight-switchback'
-        : flightCount === 6 ? 'six-flight-switchback'
-          : flightCount === 8 ? 'eight-flight-switchback' : `${flightCount}-flight-switchback`,
+    designIntent: STAIR_WALKABILITY_DESIGN_INTENT,
+    intentTag: STAIR_WALKABILITY_INTENT,
+    stableKey,
+    id: `${stableKey}:${axis}:${tier}:${flightCount}`,
+    topology: flightCount === 2 ? 'two-flight-switchback' : 'four-flight-switchback',
     fitTier: tier,
     flightCount,
+    storyHeight: floorH,
     axis,
     clearWidth,
     halfWidth: clearWidth * 0.5,
@@ -127,6 +144,7 @@ function candidateForAxis({ axis, rect, floorH, truth, playerRadius, stableKey, 
     laneCoords: Object.freeze([lane0, lane1]),
     flightCrossSpan,
     sideCapsuleClearance,
+    endpointSupportOverlap: Math.max(STAIR_ENDPOINT_SUPPORT_OVERLAP, Math.min(playerRadius, 0.22)),
     floorLandingDepth,
     midLandingDepth: turnLandingDepth,
     turnLandingDepth,
@@ -140,8 +158,6 @@ function candidateForAxis({ axis, rect, floorH, truth, playerRadius, stableKey, 
     highMouth,
     guardMouthClearance,
     segmentFlight,
-    // Compatibility alias for the original two-flight cut. Runtime realization
-    // consumes segmentFlight; this remains only for older diagnostics.
     halfFlight: segmentFlight,
     flights: Object.freeze(flights),
     intermediateLandings: Object.freeze(intermediateLandings),
@@ -156,6 +172,8 @@ function candidateForAxis({ axis, rect, floorH, truth, playerRadius, stableKey, 
       playerRadius,
     }),
   });
+  assertInteriorStairCoreWalkability(plan);
+  return plan;
 }
 
 export function planInteriorSwitchbackStairCore({
@@ -172,12 +190,12 @@ export function planInteriorSwitchbackStairCore({
   const preferred = Number(rect.halfZ) >= Number(rect.halfX) ? 'z' : 'x';
   const axes = preferred === 'z' ? ['z', 'x'] : ['x', 'z'];
 
-  // Normal stories use the simpler two-flight dogleg. If the resolved floor
-  // height, tread, or landing truth makes that run too long for the actual module,
-  // add switchback pairs before considering the building invalid. All candidates
-  // use an even flight count, so every story finishes on the same floor-landing
-  // side and the stairwell stacks continuously story to story.
-  for (const flightCount of [2, 4, 6, 8, 10, 12, 14, 16]) {
+  // JWEB_INTENT: STAIR_WALKABILITY_V1
+  // Ordinary stories are allowed a two-flight switchback. A genuinely tall
+  // story may use four flights when it still preserves full stacked headroom.
+  // Anything that needs more room returns null so architecture can enlarge or
+  // replan the core instead of compressing the stair.
+  for (const flightCount of [2, 4]) {
     for (const tier of ['generous', 'compact']) {
       const candidates = axes
         .map(axis => candidateForAxis({
@@ -195,4 +213,27 @@ export function planInteriorSwitchbackStairCore({
     }
   }
   return null;
+}
+
+
+export function planInteriorStairCoreWithArchitectureReplan({
+  modulePlans = [],
+  primaryModule = null,
+  floorH,
+  physicalTruth,
+  traversalEnvelope = null,
+  stableKey = 'interior-switchback',
+  maxConsumedModules = Infinity,
+} = {}) {
+  const result = planStructuralFeasibility({
+    modulePlans,
+    primaryModule,
+    floorH,
+    physicalTruth,
+    traversalEnvelope,
+    stableKey,
+    maxConsumedModules,
+    planStairCore: planInteriorSwitchbackStairCore,
+  });
+  return result.accepted ? result : null;
 }

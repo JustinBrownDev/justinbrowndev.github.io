@@ -66,7 +66,16 @@ export function buildExteriorDebugSnapshot({ chunk, physics = {}, entities = [],
   const network = exteriorTransportNetwork ?? physics.exteriorTransportNetwork ?? {};
   const edges = physics.exteriorTransportEdges ?? [];
   const networkReachable = new Set(Array.isArray(network.reachableSurfaceIds) ? network.reachableSurfaceIds.map(String) : []);
-  const surfaceReachable = surface => networkReachable.size ? networkReachable.has(String(surface.id)) : surface.reachable !== false;
+  const plannedSurfaceIds = new Set(Array.isArray(network.surfaces) ? network.surfaces.map(surface => String(surface.id)) : []);
+  const surfaceReachable = surface => {
+    const id = String(surface.id);
+    if (!networkReachable.size) return surface.reachable !== false;
+    if (networkReachable.has(id)) return true;
+    // Walkway slabs are published while the selected plan is being realized, so
+    // they are not present in the planner's pre-realization reachable ID set.
+    if (!plannedSurfaceIds.has(id)) return surface.reachable !== false;
+    return false;
+  };
   const scaffoldRoutes = physics.scaffoldCirculationRoutes ?? [];
   const fastRoutes = physics.fastVerticalRoutes ?? [];
   const guardSpans = physics.guardSpans ?? [];
@@ -97,6 +106,11 @@ export function buildExteriorDebugSnapshot({ chunk, physics = {}, entities = [],
       stairLinks: Number(network.stairLinks) || 0,
       roofCrossovers: Number(network.roofCrossovers) || 0,
       jumpLinks: Number(network.jumpLinks) || 0,
+      requiredSurfaces: Number(network.closure?.required) || 0,
+      reachableRequiredSurfaces: Number(network.closure?.reachableRequired) || 0,
+      unreachableRequiredSurfaces: Number(network.closure?.unreachableRequired) || 0,
+      arterialLinks: Number(network.planning?.arterialLinks) || 0,
+      laneShiftedLinks: Number(network.planning?.laneShiftedLinks) || 0,
       rejectedBlockedLinks: Number(network.rejectionCounts?.blocked) || 0,
       rejectedOverlappingLinks: Number(network.rejectionCounts?.overlapping) || 0,
       reconciledTransportPlatformsBefore: Number(network.surfaceOwnership?.before) || 0,

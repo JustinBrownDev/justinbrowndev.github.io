@@ -8,7 +8,12 @@ const clean = buildExteriorDebugSnapshot({
       { id: 'a', kind: 'balcony-street-layer', x: 0, z: 0, hx: 1, hz: 1, y: 3, reachable: true },
       { id: 'b', kind: 'clear-roof-street-layer', x: 3, z: 0, hx: 1, hz: 1, y: 3, reachable: false },
     ],
-    exteriorTransportNetwork: { links: [], realized: 0, unions: 0, walkwayLinks: 0, stairLinks: 0, jumpLinks: 0 },
+    exteriorTransportNetwork: {
+      links: [], realized: 0, unions: 0, walkwayLinks: 0, stairLinks: 0, jumpLinks: 0,
+      surfaces: [{ id: 'a' }, { id: 'b' }], reachableSurfaceIds: ['a'],
+      closure: { required: 1, reachableRequired: 0, unreachableRequired: 1 },
+      planning: { arterialLinks: 0, laneShiftedLinks: 0 },
+    },
     platforms: [
       { surfaceId: 'a', x: 0, z: 0, hx: 1, hz: 1, y: 3 },
       { surfaceId: 'b', x: 3, z: 0, hx: 1, hz: 1, y: 3 },
@@ -23,6 +28,10 @@ assert.equal(clean.transport.stairThroatConflicts, 0);
 assert.equal(clean.transport.unreachableClearRoofs, 1);
 assert.equal(clean.transport.roofCrossovers, 0);
 assert.equal(clean.transport.jumpLinks, 0);
+assert.equal(clean.transport.requiredSurfaces, 1);
+assert.equal(clean.transport.unreachableRequiredSurfaces, 1);
+assert.equal(clean.transport.arterialLinks, 0);
+assert.equal(clean.transport.laneShiftedLinks, 0);
 assert.equal(clean.facade.portalFrames, 1);
 assert.deepEqual(clean.issues, []);
 
@@ -52,5 +61,5 @@ assert.ok(bad.issues.some(issue => issue.startsWith('facade-invented-portals:'))
 console.log('[exterior-debug-summary-selftest] PASS', {
   cleanIssues: clean.issues.length,
   badIssues: bad.issues,
-  invariant: 'one compact snapshot catches 06 transport/stair regressions and 07 facade portal regressions together',
+  invariant: 'one compact snapshot reports transport closure/arterial planning and catches overlap, throat, scaffold and facade regressions together',
 });

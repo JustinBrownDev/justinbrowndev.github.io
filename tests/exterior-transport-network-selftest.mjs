@@ -132,6 +132,31 @@ const jumpPlan = planExteriorTransportNetwork({
 assert.equal(jumpPlan.linkCounts.jump, 1);
 assert.equal(jumpPlan.links[0].kind, 'jump-link');
 
+
+const chainA = s('chain:A', 0, 20, 1.0, 1.2, 4.0, { siteId: 30, kind: 'balcony-street-layer', reachable: true });
+const chainB = s('chain:B', 4.2, 20, 1.0, 1.2, 4.0, { siteId: 31, kind: 'balcony-street-layer', reachable: false });
+const chainC = s('chain:C', 7.3, 20, 1.0, 1.2, 4.0, { siteId: 32, kind: 'balcony-street-layer', reachable: false });
+const frontierPlan = planExteriorTransportNetwork({
+  surfaces: [chainA, chainB, chainC], maxLinks: 2, maxStairLinks: 0, stableKey: 'frontier-rescan-network',
+});
+assert.equal(frontierPlan.links.length, 2, 'frontier planning must reconsider a cheap deferred B->C link after A->B becomes live');
+assert.deepEqual(new Set(frontierPlan.reachableSurfaceIds), new Set([chainA.id, chainB.id, chainC.id]));
+
+const routeSeed = s('route:seed', 0, 24, 1.0, 1.0, 4.0, { siteId: 40, kind: 'guarded-catwalk', reachable: true, routeId: 'shared-route' });
+const routePeer = s('route:peer', 20, 24, 1.0, 1.0, 4.0, { siteId: 40, kind: 'guarded-catwalk', reachable: false, routeId: 'shared-route' });
+const componentSeedPlan = planExteriorTransportNetwork({ surfaces: [routeSeed, routePeer], maxLinks: 0, stableKey: 'component-seed-network' });
+assert.deepEqual(new Set(componentSeedPlan.reachableSurfaceIds), new Set([routeSeed.id, routePeer.id]),
+  'reachability must propagate across a pre-existing route component before new links are planned');
+
+const arterialA = s('arterial:A', 0, 28, 2.0, 1.2, 4.0, { siteId: 50, kind: 'balcony-street-layer', reachable: true });
+const arterialB = s('arterial:B', 20, 28, 2.0, 1.2, 4.0, { siteId: 51, kind: 'balcony-street-layer', reachable: false });
+const arterialPlan = planExteriorTransportNetwork({ surfaces: [arterialA, arterialB], maxLinks: 1, stableKey: 'arterial-fallback-network' });
+assert.equal(arterialPlan.links.length, 1, 'a required long-span component may use the deferred arterial tier after local candidates are exhausted');
+assert.equal(arterialPlan.links[0].kind, 'walkway-link');
+assert.equal(arterialPlan.links[0].arterial, true);
+assert.equal(arterialPlan.planning.arterialLinks, 1);
+assert.ok(arterialPlan.reachableSurfaceIds.includes(arterialB.id));
+
 const plan = planExteriorTransportNetwork({
   surfaces: [balconyA, catwalkOverlap, balconyB, { ...upperC, reachable: true }, roof],
   maxLinks: 8,
@@ -147,5 +172,5 @@ assert.ok(plan.links.some(link => link.aId === roof.id || link.bId === roof.id),
 console.log('[exterior-transport-network-selftest] PASS', {
   links: plan.links.map(link => link.kind),
   rejections: plan.rejectionCounts,
-  invariant: 'junctions need usable overlap; roof jumps require the gameplay ballistic envelope and real landing depth; selected links keep clearance around reserved stair throats',
+  invariant: 'component-aware frontier closure grows cheap local links first, then deterministic arterial fallbacks, while preserving blocked-throat and overlap safety',
 });

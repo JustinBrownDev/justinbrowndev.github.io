@@ -175,6 +175,42 @@ function spacesForSurface(spaceIndex, surface) {
         : spaceIndex.byEntity.get(surface.entityId) ?? [];
 }
 
+function pointToRangeDistance(value, lo, hi) {
+    if (!Number.isFinite(value) || !Number.isFinite(lo) || !Number.isFinite(hi)) return 0;
+    if (value < lo) return lo - value;
+    if (value > hi) return value - hi;
+    return 0;
+}
+
+function crossLayerEndpointSpace(spaceIndex, { entityId, moduleKey, endpoint } = {}) {
+    if (!entityId || !endpoint) return null;
+    const exact = moduleKey
+        ? spaceIndex.byEntityModule.get(topologyJoinKey(entityId, moduleKey)) ?? []
+        : [];
+    // A ladder can land on a module that was deliberately left non-occupied by
+    // BuildingPlan. In that case bind to the nearest *real* space in the same
+    // building rather than fabricating a room for the ladder endpoint.
+    const candidates = exact.length ? exact : (spaceIndex.byEntity.get(entityId) ?? []);
+    const roleRank = role => role === 'circulation' ? 0 : role === 'entry' ? 1 : role === 'service' ? 2 : 3;
+    return [...candidates].sort((a, b) => {
+        const distance = space => {
+            const bounds = space?.bounds;
+            if (bounds) return Math.hypot(
+                pointToRangeDistance(finite(endpoint.x), finite(bounds.minX), finite(bounds.maxX)),
+                pointToRangeDistance(finite(endpoint.y), finite(bounds.yMin, space.yBase), finite(bounds.yMax, space.yBase + space.floorH)),
+                pointToRangeDistance(finite(endpoint.z), finite(bounds.minZ), finite(bounds.maxZ)),
+            );
+            const cx = finite(space?.centroid?.x), cz = finite(space?.centroid?.z);
+            const y0 = finite(space?.yBase), y1 = y0 + finite(space?.floorH, 3.15);
+            return Math.hypot(finite(endpoint.x) - cx, pointToRangeDistance(finite(endpoint.y), y0, y1), finite(endpoint.z) - cz);
+        };
+        return distance(a) - distance(b)
+            || roleRank(a.role) - roleRank(b.role)
+            || finite(a.floor) - finite(b.floor)
+            || String(a.id).localeCompare(String(b.id));
+    })[0] ?? null;
+}
+
 function accessEndpointNodes(portals) {
     const byId = new Map();
     const add = (portalId, endpoint, role) => {
@@ -268,16 +304,63 @@ export function compileSpatialTopologyGraph({ chunk, payload } = {}) {
         });
     }
     const transportEdges = [];
+    const transportEdgePairs = new Set();
+    const transportPairKey = (a, b) => a < b ? `${a}${TOPOLOGY_JOIN_SEPARATOR}${b}` : `${b}${TOPOLOGY_JOIN_SEPARATOR}${a}`;
+    const pushTransportEdge = edgeRecord => {
+        if (!edgeRecord?.aId || !edgeRecord?.bId || edgeRecord.aId === edgeRecord.bId) return false;
+        const pair = transportPairKey(edgeRecord.aId, edgeRecord.bId);
+        if (transportEdgePairs.has(pair)) return false;
+        transportEdgePairs.add(pair);
+        transportEdges.push(edgeRecord);
+        return true;
+    };
     for (const scope of scopes) for (const raw of scope.payload.physics?.exteriorTransportEdges ?? []) {
-        const aId = transportSurfaceNodeByLayerId.get(`${scope.layer}\u001f${String(raw?.aId ?? '')}`);
-        const bId = transportSurfaceNodeByLayerId.get(`${scope.layer}\u001f${String(raw?.bId ?? '')}`);
+        const sourceAId = String(raw?.aId ?? '');
+        const sourceBId = String(raw?.bId ?? '');
+        const aId = transportSurfaceNodeByLayerId.get(`${scope.layer}\u001f${sourceAId}`);
+        const bId = transportSurfaceNodeByLayerId.get(`${scope.layer}\u001f${sourceBId}`);
         if (!aId || !bId || aId === bId) continue;
-        transportEdges.push({
-            ...raw,
-            id: String(raw?.id ?? `transport-edge:${scope.layer}:${transportEdges.length}`),
-            layer: scope.layer, aId, bId,
-            sourceAId: String(raw?.aId ?? ''), sourceBId: String(raw?.bId ?? ''),
-        });
+        const baseId = String(raw?.id ?? `transport-edge:${scope.layer}:${transportEdges.length}`);
+        const viaId = raw?.surfaceId
+            ? transportSurfaceNodeByLayerId.get(`${scope.layer}\u001f${String(raw.surfaceId)}`) ?? null
+            : null;
+        if (viaId && viaId !== aId && viaId !== bId) {
+            pushTransportEdge({
+                ...raw, id: `${baseId}:via:a`, layer: scope.layer, aId, bId: viaId,
+                sourceAId, sourceBId: String(raw.surfaceId), parentTransportEdgeId: baseId,
+            });
+            pushTransportEdge({
+                ...raw, id: `${baseId}:via:b`, layer: scope.layer, aId: viaId, bId,
+                sourceAId: String(raw.surfaceId), sourceBId, parentTransportEdgeId: baseId,
+            });
+        } else {
+            pushTransportEdge({ ...raw, id: baseId, layer: scope.layer, aId, bId, sourceAId, sourceBId });
+        }
+    }
+
+    // A shared networkKey is the pre-existing route authority used by the planner
+    // (scaffold trunk, balcony street, bridge route, etc.). Publish that continuity
+    // into the unified graph as explicit edges instead of silently unioning it only
+    // inside the planner's temporary union-find state.
+    const transportRouteGroups = new Map();
+    for (const surface of transportSurfaces) {
+        if (!surface.networkKey) continue;
+        pushIndexed(transportRouteGroups, topologyJoinKey(surface.layer, surface.networkKey), surface);
+    }
+    for (const [routeKey, routeSurfaces] of transportRouteGroups) {
+        const ordered = [...routeSurfaces].sort((a, b) => finite(a.y) - finite(b.y)
+            || finite(a.x) - finite(b.x) || finite(a.z) - finite(b.z) || a.id.localeCompare(b.id));
+        for (let i = 1; i < ordered.length; i++) {
+            const a = ordered[i - 1], b = ordered[i];
+            pushTransportEdge({
+                id: `transport-route:${a.layer}:${a.networkKey}:${i - 1}:${i}`,
+                kind: 'transport-route-continuity', source: 'transport-route-continuity',
+                layer: a.layer, aId: a.id, bId: b.id,
+                sourceAId: a.sourceId, sourceBId: b.sourceId,
+                networkKey: a.networkKey,
+                traversalAuthority: 'published-route-network-key',
+            });
+        }
     }
 
     const surfaces = compileSurfaces({ entities });
@@ -327,6 +410,22 @@ export function compileSpatialTopologyGraph({ chunk, payload } = {}) {
         };
         pushUnique(connector.spaceIds, connector.fromSpaceId);
         pushUnique(connector.spaceIds, connector.toSpaceId);
+        if (raw.source === 'cavern-cross-level-circulation') {
+            const lowerEndpoint = raw.endpoints?.[0] ?? null;
+            const upperEndpoint = raw.endpoints?.[1] ?? null;
+            const groundSpace = crossLayerEndpointSpace(spaceJoinIndex, {
+                entityId: raw.metadata?.groundEntityId,
+                moduleKey: raw.metadata?.groundModuleKey,
+                endpoint: lowerEndpoint,
+            });
+            const hangingSpace = crossLayerEndpointSpace(spaceJoinIndex, {
+                entityId: raw.metadata?.ceilingEntityId,
+                moduleKey: raw.metadata?.ceilingModuleKey,
+                endpoint: upperEndpoint,
+            });
+            pushUnique(connector.spaceIds, groundSpace?.id);
+            pushUnique(connector.spaceIds, hangingSpace?.id);
+        }
         for (const reservation of raw.reservations ?? []) {
             connector.reservationIds.push(reservation.id);
             reservationOwner.set(reservation.id, raw.id);

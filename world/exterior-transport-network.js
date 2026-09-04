@@ -1,6 +1,6 @@
 import { deriveStairFlight, gameplayTraversalEnvelope } from './physical-truth.js';
 
-export const EXTERIOR_TRANSPORT_NETWORK_SCHEMA = 'jweb.exterior-transport-network.v3';
+export const EXTERIOR_TRANSPORT_NETWORK_SCHEMA = 'jweb.exterior-transport-network.v4';
 const EPS = 1e-6;
 const LEVEL_TOLERANCE = 0.12;
 const MIN_UNION_DEPTH = 0.22;
@@ -116,7 +116,7 @@ export function classifyRoofCrossoverConnection(a, b, relation, { traversalEnvel
   const bPoint = Object.freeze(relation.axis === 'x' ? { x: relation.bEdge, z: fixedCoord } : { x: fixedCoord, z: relation.bEdge });
   return Object.freeze({
     kind: 'roof-crossover-link', aId: a.id, bId: b.id, axis: relation.axis,
-    aEdge: relation.aEdge, bEdge: relation.bEdge, fixedCoord, gap: relation.gap, rise,
+    aEdge: relation.aEdge, bEdge: relation.bEdge, fixedCoord, crossLo: relation.crossLo, crossHi: relation.crossHi, gap: relation.gap, rise,
     clearWidth, halfWidth: clearWidth * 0.5, y0: a.y, y1: b.y, aPoint, bPoint,
     maxStep: Number(traversalEnvelope.maxStep) || 0, traversalAuthority: 'gameplay-controller-step-envelope',
     cost: relation.gap * 0.25 + rise * 0.5 + 0.04,
@@ -142,7 +142,7 @@ export function classifyRoofJumpConnection(a, b, relation, { traversalEnvelope =
   const bPoint = Object.freeze(relation.axis === 'x' ? { x: relation.bEdge, z: fixedCoord } : { x: fixedCoord, z: relation.bEdge });
   return Object.freeze({
     kind: 'jump-link', aId: a.id, bId: b.id, axis: relation.axis,
-    aEdge: relation.aEdge, bEdge: relation.bEdge, fixedCoord, gap: relation.gap, rise,
+    aEdge: relation.aEdge, bEdge: relation.bEdge, fixedCoord, crossLo: relation.crossLo, crossHi: relation.crossHi, gap: relation.gap, rise,
     clearWidth, halfWidth: clearWidth * 0.5, y0: a.y, y1: b.y, aPoint, bPoint,
     maxRange, apexHeight: Number(jump.apexHeight) || 0,
     minLandingDepth, traversalAuthority: jump.authority ?? 'gameplay-controller-ballistic-envelope',
@@ -194,6 +194,49 @@ function candidateBlocked(candidate, blocked) {
       || (Math.abs(block.y - candidate.y1) <= LEVEL_TOLERANCE && rectOverlap(block, upper)));
   }
   return false;
+}
+
+function withCandidateFixedCoord(candidate, fixedCoord) {
+  if (!candidate?.axis || !Number.isFinite(Number(fixedCoord))) return candidate;
+  const originalFixedCoord = Number(candidate.originalFixedCoord ?? candidate.fixedCoord);
+  const shifted = {
+    ...candidate, fixedCoord: Number(fixedCoord), originalFixedCoord,
+    laneShifted: Math.abs(Number(fixedCoord) - originalFixedCoord) >= 0.04,
+  };
+  if (candidate.kind === 'walkway-link' || candidate.kind === 'jump-link' || candidate.kind === 'roof-crossover-link') {
+    shifted.aPoint = Object.freeze(candidate.axis === 'x'
+      ? { x: candidate.aEdge, z: Number(fixedCoord) }
+      : { x: Number(fixedCoord), z: candidate.aEdge });
+    shifted.bPoint = Object.freeze(candidate.axis === 'x'
+      ? { x: candidate.bEdge, z: Number(fixedCoord) }
+      : { x: Number(fixedCoord), z: candidate.bEdge });
+  } else if (candidate.kind === 'stair-link') {
+    shifted.lowerPoint = Object.freeze(candidate.axis === 'x'
+      ? { x: candidate.from, z: Number(fixedCoord) }
+      : { x: Number(fixedCoord), z: candidate.from });
+    shifted.upperPoint = Object.freeze(candidate.axis === 'x'
+      ? { x: candidate.to, z: Number(fixedCoord) }
+      : { x: Number(fixedCoord), z: candidate.to });
+  }
+  return shifted;
+}
+
+function candidateLaneVariants(candidate) {
+  if (candidate.kind === 'surface-union' || !Number.isFinite(Number(candidate.crossLo)) || !Number.isFinite(Number(candidate.crossHi))) return [candidate];
+  const halfWidth = Math.max(0.36, Number(candidate.halfWidth) || 0.36);
+  const lo = Number(candidate.crossLo) + halfWidth + 0.08;
+  const hi = Number(candidate.crossHi) - halfWidth - 0.08;
+  if (!(hi > lo + 0.04)) return [candidate];
+  const center = Math.max(lo, Math.min(hi, Number(candidate.fixedCoord)));
+  const step = Math.max(0.98, (Number(candidate.clearWidth) || 0.72) + 0.28);
+  const coords = [center, center - step, center + step, center - step * 2, center + step * 2, lo, hi];
+  const unique = [];
+  for (const coord of coords) {
+    if (coord < lo - EPS || coord > hi + EPS) continue;
+    if (unique.some(value => Math.abs(value - coord) < 0.04)) continue;
+    unique.push(coord);
+  }
+  return unique.map(coord => withCandidateFixedCoord(candidate, coord));
 }
 
 function candidateEnvelope(candidate) {
@@ -259,7 +302,7 @@ export function classifyTransportConnection(aRaw, bRaw, { maxHorizontalSpan = 8.
   if (rise <= LEVEL_TOLERANCE) {
     return Object.freeze({
       kind: 'walkway-link', aId: a.id, bId: b.id, axis: relation.axis,
-      aEdge: relation.aEdge, bEdge: relation.bEdge, fixedCoord, gap: relation.gap,
+      aEdge: relation.aEdge, bEdge: relation.bEdge, fixedCoord, crossLo: relation.crossLo, crossHi: relation.crossHi, gap: relation.gap,
       clearWidth, halfWidth: clearWidth * 0.5, y0: a.y, y1: b.y,
       aPoint: Object.freeze(relation.axis === 'x' ? { x: relation.aEdge, z: fixedCoord } : { x: fixedCoord, z: relation.aEdge }),
       bPoint: Object.freeze(relation.axis === 'x' ? { x: relation.bEdge, z: fixedCoord } : { x: fixedCoord, z: relation.bEdge }),
@@ -284,7 +327,7 @@ export function classifyTransportConnection(aRaw, bRaw, { maxHorizontalSpan = 8.
     kind: 'stair-link', aId: a.id, bId: b.id,
     lowerId: lower.id, upperId: upper.id,
     axis: relation.axis,
-    from: lowerEdge, to: upperEdge, fixedCoord,
+    from: lowerEdge, to: upperEdge, fixedCoord, crossLo: relation.crossLo, crossHi: relation.crossHi,
     gap: Math.abs(upperEdge - lowerEdge), clearWidth,
     halfWidth: clearWidth * 0.5,
     y0: lower.y, y1: upper.y, rise,
@@ -301,6 +344,8 @@ export function planExteriorTransportNetwork({
   maxLinks = 8,
   maxStairLinks = 5,
   maxJumpLinks = 6,
+  maxArterialSpan = 24,
+  maxArterialRise = 8.0,
   stableKey = 'transport-network',
   traversalEnvelope = gameplayTraversalEnvelope(),
 } = {}) {
@@ -308,17 +353,32 @@ export function planExteriorTransportNetwork({
   const blocked = normalizedBlockedRects(blockedRects);
   const byId = new Map(normalized.map(surface => [surface.id, surface]));
   const parent = new Map(normalized.map(surface => [surface.id, surface.id]));
-  const reachable = new Set(normalized.filter(surface => surface.reachable !== false).map(surface => surface.id));
+  const componentReachable = new Map(normalized.map(surface => [surface.id, surface.reachable !== false]));
   const find = id => {
     let root = parent.get(id);
     while (root && root !== parent.get(root)) root = parent.get(root);
+    if (!root) return id;
     let cursor = id;
     while (parent.get(cursor) && parent.get(cursor) !== root) {
-      const next = parent.get(cursor); parent.set(cursor, root); cursor = next;
+      const next = parent.get(cursor);
+      parent.set(cursor, root);
+      cursor = next;
     }
-    return root ?? id;
+    return root;
   };
-  const union = (a, b) => { const ra = find(a), rb = find(b); if (ra !== rb) parent.set(rb, ra); };
+  const union = (a, b) => {
+    const ra = find(a), rb = find(b);
+    if (ra === rb) return ra;
+    parent.set(rb, ra);
+    componentReachable.set(ra, componentReachable.get(ra) === true || componentReachable.get(rb) === true);
+    componentReachable.delete(rb);
+    return ra;
+  };
+  const isReachable = id => componentReachable.get(find(id)) === true;
+
+  // Surfaces published by one pre-existing route are one topological component.
+  // Seed reachability therefore belongs to the component, not just the one surface
+  // that happened to carry reachable:true.
   for (let i = 0; i < normalized.length; i++) {
     for (let j = i + 1; j < normalized.length; j++) {
       if (networkKey(normalized[i]) === networkKey(normalized[j])) union(normalized[i].id, normalized[j].id);
@@ -329,50 +389,95 @@ export function planExteriorTransportNetwork({
   let blockedCandidateCount = 0;
   for (let i = 0; i < normalized.length; i++) {
     for (let j = i + 1; j < normalized.length; j++) {
-      const relation = classifyTransportConnection(normalized[i], normalized[j], { traversalEnvelope });
+      const local = classifyTransportConnection(normalized[i], normalized[j], { traversalEnvelope });
+      const arterial = local ? null : classifyTransportConnection(normalized[i], normalized[j], {
+        maxHorizontalSpan: maxArterialSpan, maxRise: maxArterialRise, traversalEnvelope,
+      });
+      const relation = local ?? arterial;
       if (!relation) continue;
       if (candidateBlocked(relation, blocked)) {
         blockedCandidateCount++;
         continue;
       }
+      const planningTier = local ? 0 : 1;
       candidates.push({
-        ...relation,
-        tie: stableHash(`${stableKey}:${normalized[i].id}:${normalized[j].id}:${relation.kind}`),
+        ...relation, planningTier, arterial: !local,
+        cost: relation.cost + (local ? 0 : 12),
+        tie: stableHash(`${stableKey}:${normalized[i].id}:${normalized[j].id}:${relation.kind}:${planningTier}`),
       });
     }
   }
-  candidates.sort((a, b) => a.cost - b.cost || a.tie - b.tie || `${a.aId}:${a.bId}`.localeCompare(`${b.aId}:${b.bId}`));
+  const kindOrder = Object.freeze({
+    'surface-union': 0,
+    'roof-crossover-link': 1,
+    'jump-link': 2,
+    'walkway-link': 3,
+    'stair-link': 4,
+  });
+  candidates.sort((a, b) => (a.planningTier ?? 0) - (b.planningTier ?? 0)
+    || (kindOrder[a.kind] ?? 9) - (kindOrder[b.kind] ?? 9)
+    || a.cost - b.cost || a.tie - b.tie || `${a.aId}:${a.bId}`.localeCompare(`${b.aId}:${b.bId}`));
 
+  const resolvedMaxLinks = Number.isFinite(Number(maxLinks))
+    ? Math.max(0, Math.floor(Number(maxLinks)))
+    : Math.max(0, normalized.length - 1);
   const links = [];
   let stairLinks = 0;
   let jumpLinks = 0;
-  let overlapRejectedCount = 0;
-  for (const candidate of candidates) {
-    if (links.length >= maxLinks) break;
-    if (find(candidate.aId) === find(candidate.bId)) continue;
-    if (candidate.kind === 'stair-link' && stairLinks >= maxStairLinks) continue;
-    if (candidate.kind === 'jump-link' && jumpLinks >= maxJumpLinks) continue;
-    if (links.some(link => linksConflict(candidate, link))) {
-      overlapRejectedCount++;
-      continue;
+  const overlapRejected = new Set();
+
+  // Grow a deterministic frontier from components that already have real access.
+  // Re-scan after every union: a cheap B->C candidate that was not eligible before
+  // A->B was selected becomes eligible on the next pass instead of being lost.
+  while (links.length < resolvedMaxLinks) {
+    let selected = null;
+    for (const candidate of candidates) {
+      if (find(candidate.aId) === find(candidate.bId)) continue;
+      if (candidate.kind === 'stair-link' && stairLinks >= maxStairLinks) continue;
+      if (candidate.kind === 'jump-link' && jumpLinks >= maxJumpLinks) continue;
+      if (!isReachable(candidate.aId) && !isReachable(candidate.bId)) continue;
+      const variants = candidateLaneVariants(candidate).filter(variant => !candidateBlocked(variant, blocked));
+      const lane = variants.find(variant => !links.some(link => linksConflict(variant, link)));
+      if (!lane) {
+        overlapRejected.add(`${candidate.kind}:${candidate.aId}:${candidate.bId}`);
+        continue;
+      }
+      selected = lane;
+      break;
     }
-    const a = byId.get(candidate.aId), b = byId.get(candidate.bId);
-    const aReachable = reachable.has(a.id);
-    const bReachable = reachable.has(b.id);
-    if (!aReachable && !bReachable) continue;
-    links.push(Object.freeze({ ...candidate, id: `transport-link:${links.length}:${candidate.aId}:${candidate.bId}` }));
-    union(candidate.aId, candidate.bId);
-    if (candidate.kind === 'stair-link') stairLinks++;
-    if (candidate.kind === 'jump-link') jumpLinks++;
-    if (!aReachable) reachable.add(a.id);
-    if (!bReachable) reachable.add(b.id);
+    if (!selected) break;
+    links.push(Object.freeze({ ...selected, id: `transport-link:${links.length}:${selected.aId}:${selected.bId}` }));
+    union(selected.aId, selected.bId);
+    if (selected.kind === 'stair-link') stairLinks++;
+    if (selected.kind === 'jump-link') jumpLinks++;
   }
+
+  const reachableSurfaceIds = normalized.filter(surface => isReachable(surface.id)).map(surface => surface.id).sort((a, b) => a.localeCompare(b));
+  const requiredSurfaceIds = normalized
+    .filter(surface => surface.kind === 'clear-roof-street-layer' && surface.priority === 'circulation-candidate')
+    .map(surface => surface.id)
+    .sort((a, b) => a.localeCompare(b));
+  const unreachableRequiredSurfaceIds = requiredSurfaceIds.filter(id => !isReachable(id));
   return Object.freeze({
     schema: EXTERIOR_TRANSPORT_NETWORK_SCHEMA,
     surfaces: Object.freeze(normalized),
     links: Object.freeze(links),
-    reachableSurfaceIds: Object.freeze([...reachable].sort((a, b) => a.localeCompare(b))),
-    rejectionCounts: Object.freeze({ blocked: blockedCandidateCount, overlapping: overlapRejectedCount }),
+    reachableSurfaceIds: Object.freeze(reachableSurfaceIds),
+    requiredSurfaceIds: Object.freeze(requiredSurfaceIds),
+    unreachableRequiredSurfaceIds: Object.freeze(unreachableRequiredSurfaceIds),
+    closure: Object.freeze({
+      required: requiredSurfaceIds.length,
+      reachableRequired: requiredSurfaceIds.length - unreachableRequiredSurfaceIds.length,
+      unreachableRequired: unreachableRequiredSurfaceIds.length,
+      linkBudget: resolvedMaxLinks,
+      budgetExhausted: links.length >= resolvedMaxLinks && unreachableRequiredSurfaceIds.length > 0,
+    }),
+    planning: Object.freeze({
+      arterialLinks: links.filter(link => link.arterial === true).length,
+      laneShiftedLinks: links.filter(link => link.laneShifted === true).length,
+      frontierPasses: links.length,
+    }),
+    rejectionCounts: Object.freeze({ blocked: blockedCandidateCount, overlapping: overlapRejected.size }),
     linkCounts: Object.freeze({
       union: links.filter(link => link.kind === 'surface-union').length,
       walkway: links.filter(link => link.kind === 'walkway-link').length,

@@ -71,13 +71,30 @@ for (const connector of jumpConnectors) {
   assert.deepEqual(connector.spaceIds ?? [], [], 'jump airspace must not bypass transport-surface graph authority by binding rooms directly');
 }
 
+const network = physics.exteriorTransportNetwork;
+assert.equal(network?.closure?.unreachableRequired, 0,
+  'every clear roof explicitly published as a circulation candidate must be attached to a live transport component');
+assert.deepEqual(network?.unreachableRequiredSurfaceIds ?? [], []);
+assert.ok((network?.planning?.arterialLinks ?? 0) > 0,
+  'deterministic generated fixture must exercise the deferred long-span arterial tier');
+assert.ok((network?.planning?.laneShiftedLinks ?? 0) > 0,
+  'deterministic generated fixture must exercise collision-safe junction lane shifting instead of dropping a valid branch');
+assert.ok((network?.links?.length ?? 0) <= (network?.closure?.linkBudget ?? Infinity));
+
 const circulation = payload.worldCirculation;
-assert.equal(circulation.stats.roofCrossoverEdges, crossoverEdges.length);
-assert.equal(circulation.stats.jumpEdges, jumpEdges.length);
+const hangingPhysics = payload.hangingLayer?.payload?.physics;
+const hangingCrossoverEdges = (hangingPhysics?.exteriorTransportEdges ?? []).filter(edge => edge.kind === 'roof-crossover-link' || edge.source === 'roof-crossover-link');
+const hangingJumpEdges = (hangingPhysics?.exteriorTransportEdges ?? []).filter(edge => edge.kind === 'jump-link' || edge.source === 'jump-link');
+assert.equal(circulation.stats.roofCrossoverEdges, crossoverEdges.length + hangingCrossoverEdges.length);
+assert.equal(circulation.stats.jumpEdges, jumpEdges.length + hangingJumpEdges.length);
 assert.ok(circulation.stats.transportJunctionEdges > 0);
-assert.ok(circulation.stats.reachableTransportNodes > 0);
+assert.equal(circulation.stats.unreachableTransportNodes, 0,
+  'unified graph must not leave published walkway, route, ground-roof, or hanging-roof shadow nodes behind');
+assert.ok(circulation.stats.crossLayerEdges > 0, 'roof circulation must join the hanging and ground layers through cavern circulation');
 assert.equal(circulation.stats.explicitEgressFailures, 0);
 assert.equal(circulation.stats.unreachableSpaces, 0);
+assert.equal(hangingPhysics?.exteriorTransportNetwork?.closure?.unreachableRequired, 0,
+  'hanging clear roofs must close under the same transport planner authority');
 
 console.log('[generated-roof-jump-circulation-selftest] PASS', {
   crossovers: crossoverEdges.length,
@@ -85,7 +102,15 @@ console.log('[generated-roof-jump-circulation-selftest] PASS', {
   transportEdges: circulation.stats.transportEdges,
   transportJunctionEdges: circulation.stats.transportJunctionEdges,
   reachableTransportNodes: circulation.stats.reachableTransportNodes,
+  unreachableTransportNodes: circulation.stats.unreachableTransportNodes,
+  crossLayerEdges: circulation.stats.crossLayerEdges,
   unreachableSpaces: circulation.stats.unreachableSpaces,
+  hangingRequiredRoofs: hangingPhysics.exteriorTransportNetwork.closure.required,
+  hangingUnreachableRequiredRoofs: hangingPhysics.exteriorTransportNetwork.closure.unreachableRequired,
+  requiredRoofs: network.closure.required,
+  unreachableRequiredRoofs: network.closure.unreachableRequired,
+  arterialLinks: network.planning.arterialLinks,
+  laneShiftedLinks: network.planning.laneShiftedLinks,
   maxCrossoverGap: Math.max(...crossoverEdges.map(edge => Number(edge.gap) || 0)),
   maxJumpGap: jumpEdges.length ? Math.max(...jumpEdges.map(edge => Number(edge.gap) || 0)) : null,
   minHeadroomAuthority: jumpConnectors[0]?.traversalEnvelope?.jump?.authority ?? null,

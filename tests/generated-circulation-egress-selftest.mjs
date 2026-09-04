@@ -40,5 +40,22 @@ assert.ok(circulation.stats.explicitEgressBuildings > 0, 'fixture must contain b
 assert.ok(circulation.stats.worldNodes > 0, 'generated circulation must reach real world nodes');
 assert.equal(circulation.stats.explicitEgressFailures, 0, 'generated explicit-egress buildings must have no disconnected authored spaces');
 assert.equal(circulation.stats.unreachableSpaces, 0, 'deterministic generated fixture must route every authored space to world circulation');
+assert.ok(circulation.stats.crossLayerEdges > 0, 'ground and hanging circulation must be joined by physical cavern connectors');
+assert.equal(circulation.stats.unreachableTransportNodes, 0,
+  'every published ground and hanging transport surface must participate in unified world circulation');
+const hangingPhysics = payload.hangingLayer?.payload?.physics;
+assert.ok(hangingPhysics?.exteriorTransportNetwork, 'hanging city must publish its own authoritative exterior transport network');
+assert.equal(hangingPhysics.exteriorTransportNetwork.closure.unreachableRequired, 0,
+  'hanging clear-roof circulation candidates must close before unified graph publication');
+for (const bridge of payload.hangingLayer?.payload?.entities?.filter(entity => entity.kind === 'skybridge') ?? []) {
+  assert.ok(Math.abs(Number(bridge.aEndpoint?.y) - Number(bridge.bEndpoint?.y)) <= 0.08,
+    `${bridge.id}: emitted flat hanging bridge endpoints must agree on world height`);
+  const surface = (hangingPhysics.exteriorTransportSurfaces ?? []).find(candidate => candidate.bridgeId === bridge.id);
+  assert.ok(surface, `${bridge.id}: emitted hanging bridge must publish a transport surface`);
+  assert.ok(Math.abs(Number(surface.y) - (Number(bridge.aEndpoint.y) + Number(bridge.bEndpoint.y)) * 0.5) <= 1e-9,
+    `${bridge.id}: bridge surface must use authoritative facade endpoint world Y`);
+  assert.ok((hangingPhysics.semanticConnectors ?? []).some(connector => connector.metadata?.surfaceId === surface.id),
+    `${bridge.id}: bridge transport surface must bind into semantic circulation`);
+}
 
 console.log('[generated-circulation-egress-selftest] PASS', circulation.stats);

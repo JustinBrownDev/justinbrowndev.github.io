@@ -157,6 +157,40 @@ assert.equal(arterialPlan.links[0].arterial, true);
 assert.equal(arterialPlan.planning.arterialLinks, 1);
 assert.ok(arterialPlan.reachableSurfaceIds.includes(arterialB.id));
 
+
+const closureRoofA = s('closure:A', 0, 32, 1.4, 1.2, 4.0, {
+  siteId: 60, kind: 'clear-roof-street-layer', reachable: true, priority: 'circulation-candidate',
+});
+const closureRoofB = s('closure:B', 4.5, 32, 1.4, 1.2, 4.0, {
+  siteId: 61, kind: 'clear-roof-street-layer', reachable: false, priority: 'circulation-candidate',
+});
+const closureOptional = s('closure:optional', 8.8, 32, 1.4, 1.2, 4.0, {
+  siteId: 62, kind: 'balcony-street-layer', reachable: false, priority: 'circulation-owned',
+});
+const closureOnlyPlan = planExteriorTransportNetwork({
+  surfaces: [closureRoofA, closureRoofB, closureOptional], maxLinks: 8, maxStairLinks: 0,
+  stopWhenRequiredReachable: true, restrictArterialsToRequiredClosure: true,
+  stableKey: 'required-closure-stop-network',
+});
+assert.equal(closureOnlyPlan.closure.unreachableRequired, 0);
+assert.equal(closureOnlyPlan.links.length, 1,
+  'required-closure mode must stop immediately after the last required roof becomes reachable');
+assert.ok(!closureOnlyPlan.reachableSurfaceIds.includes(closureOptional.id),
+  'required-closure mode must not grow optional low-level branches after roof closure is satisfied');
+assert.equal(closureOnlyPlan.planning.stopWhenRequiredReachable, true);
+
+const cappedArterialPlan = planExteriorTransportNetwork({
+  surfaces: [
+    s('cap:A', 0, 36, 2.0, 1.2, 4.0, { siteId: 70, kind: 'clear-roof-street-layer', reachable: true, priority: 'circulation-candidate' }),
+    s('cap:B', 20, 36, 2.0, 1.2, 4.0, { siteId: 71, kind: 'clear-roof-street-layer', reachable: false, priority: 'circulation-candidate' }),
+  ],
+  maxLinks: 4, maxStairLinks: 0, maxArterialWalkwaySpan: 10,
+  stopWhenRequiredReachable: true, restrictArterialsToRequiredClosure: true,
+  stableKey: 'ground-arterial-walkway-cap-network',
+});
+assert.equal(cappedArterialPlan.links.filter(link => link.kind === 'walkway-link' && link.arterial).length, 0,
+  'ground-style closure may cap fabricated same-level arterial catwalk spans independently from stair reach');
+
 const plan = planExteriorTransportNetwork({
   surfaces: [balconyA, catwalkOverlap, balconyB, { ...upperC, reachable: true }, roof],
   maxLinks: 8,

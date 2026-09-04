@@ -346,6 +346,10 @@ export function planExteriorTransportNetwork({
   maxJumpLinks = 6,
   maxArterialSpan = 24,
   maxArterialRise = 8.0,
+  maxArterialWalkwaySpan = Infinity,
+  requiredSurfaceMode = 'all',
+  stopWhenRequiredReachable = false,
+  restrictArterialsToRequiredClosure = false,
   stableKey = 'transport-network',
   traversalEnvelope = gameplayTraversalEnvelope(),
 } = {}) {
@@ -390,9 +394,12 @@ export function planExteriorTransportNetwork({
   for (let i = 0; i < normalized.length; i++) {
     for (let j = i + 1; j < normalized.length; j++) {
       const local = classifyTransportConnection(normalized[i], normalized[j], { traversalEnvelope });
-      const arterial = local ? null : classifyTransportConnection(normalized[i], normalized[j], {
+      const arterialCandidate = local ? null : classifyTransportConnection(normalized[i], normalized[j], {
         maxHorizontalSpan: maxArterialSpan, maxRise: maxArterialRise, traversalEnvelope,
       });
+      const arterial = arterialCandidate?.kind === 'walkway-link'
+        && Number(arterialCandidate.gap) > Number(maxArterialWalkwaySpan)
+        ? null : arterialCandidate;
       const relation = local ?? arterial;
       if (!relation) continue;
       if (candidateBlocked(relation, blocked)) {
@@ -421,6 +428,36 @@ export function planExteriorTransportNetwork({
   const resolvedMaxLinks = Number.isFinite(Number(maxLinks))
     ? Math.max(0, Math.floor(Number(maxLinks)))
     : Math.max(0, normalized.length - 1);
+  const allRequiredSurfaceIds = normalized
+    .filter(surface => surface.kind === 'clear-roof-street-layer' && surface.priority === 'circulation-candidate')
+    .map(surface => surface.id)
+    .sort((a, b) => a.localeCompare(b));
+  let requiredSurfaceIds = allRequiredSurfaceIds;
+  if (requiredSurfaceMode === 'local-seed-components') {
+    const adjacency = new Map(normalized.map(surface => [surface.id, new Set()]));
+    const connect = (a, b) => { adjacency.get(a)?.add(b); adjacency.get(b)?.add(a); };
+    for (let i = 0; i < normalized.length; i++) {
+      for (let j = i + 1; j < normalized.length; j++) {
+        if (networkKey(normalized[i]) === networkKey(normalized[j])) connect(normalized[i].id, normalized[j].id);
+      }
+    }
+    for (const candidate of candidates) if ((candidate.planningTier ?? 0) === 0) connect(candidate.aId, candidate.bId);
+    const locallyReachable = new Set(normalized.filter(surface => surface.reachable !== false).map(surface => surface.id));
+    const queue = [...locallyReachable];
+    for (let qi = 0; qi < queue.length; qi++) {
+      for (const next of adjacency.get(queue[qi]) ?? []) {
+        if (locallyReachable.has(next)) continue;
+        locallyReachable.add(next); queue.push(next);
+      }
+    }
+    requiredSurfaceIds = allRequiredSurfaceIds.filter(id => locallyReachable.has(id));
+  }
+  const allRequiredReachable = () => requiredSurfaceIds.length > 0 && requiredSurfaceIds.every(id => isReachable(id));
+  const componentHasUnreachableRequired = id => {
+    const root = find(id);
+    return requiredSurfaceIds.some(requiredId => find(requiredId) === root && !isReachable(requiredId));
+  };
+
   const links = [];
   let stairLinks = 0;
   let jumpLinks = 0;
@@ -430,12 +467,19 @@ export function planExteriorTransportNetwork({
   // Re-scan after every union: a cheap B->C candidate that was not eligible before
   // A->B was selected becomes eligible on the next pass instead of being lost.
   while (links.length < resolvedMaxLinks) {
+    if (stopWhenRequiredReachable && allRequiredReachable()) break;
     let selected = null;
     for (const candidate of candidates) {
       if (find(candidate.aId) === find(candidate.bId)) continue;
       if (candidate.kind === 'stair-link' && stairLinks >= maxStairLinks) continue;
       if (candidate.kind === 'jump-link' && jumpLinks >= maxJumpLinks) continue;
-      if (!isReachable(candidate.aId) && !isReachable(candidate.bId)) continue;
+      const aReachable = isReachable(candidate.aId), bReachable = isReachable(candidate.bId);
+      if (!aReachable && !bReachable) continue;
+      if (restrictArterialsToRequiredClosure && candidate.arterial === true) {
+        if (aReachable === bReachable) continue;
+        const targetId = aReachable ? candidate.bId : candidate.aId;
+        if (!componentHasUnreachableRequired(targetId)) continue;
+      }
       const variants = candidateLaneVariants(candidate).filter(variant => !candidateBlocked(variant, blocked));
       const lane = variants.find(variant => !links.some(link => linksConflict(variant, link)));
       if (!lane) {
@@ -453,20 +497,20 @@ export function planExteriorTransportNetwork({
   }
 
   const reachableSurfaceIds = normalized.filter(surface => isReachable(surface.id)).map(surface => surface.id).sort((a, b) => a.localeCompare(b));
-  const requiredSurfaceIds = normalized
-    .filter(surface => surface.kind === 'clear-roof-street-layer' && surface.priority === 'circulation-candidate')
-    .map(surface => surface.id)
-    .sort((a, b) => a.localeCompare(b));
   const unreachableRequiredSurfaceIds = requiredSurfaceIds.filter(id => !isReachable(id));
+  const optionalIsolatedSurfaceIds = allRequiredSurfaceIds.filter(id => !requiredSurfaceIds.includes(id));
   return Object.freeze({
     schema: EXTERIOR_TRANSPORT_NETWORK_SCHEMA,
     surfaces: Object.freeze(normalized),
     links: Object.freeze(links),
     reachableSurfaceIds: Object.freeze(reachableSurfaceIds),
     requiredSurfaceIds: Object.freeze(requiredSurfaceIds),
+    optionalIsolatedSurfaceIds: Object.freeze(optionalIsolatedSurfaceIds),
     unreachableRequiredSurfaceIds: Object.freeze(unreachableRequiredSurfaceIds),
     closure: Object.freeze({
       required: requiredSurfaceIds.length,
+      publishedCandidates: allRequiredSurfaceIds.length,
+      optionalIsolatedCandidates: Math.max(0, allRequiredSurfaceIds.length - requiredSurfaceIds.length),
       reachableRequired: requiredSurfaceIds.length - unreachableRequiredSurfaceIds.length,
       unreachableRequired: unreachableRequiredSurfaceIds.length,
       linkBudget: resolvedMaxLinks,
@@ -476,6 +520,9 @@ export function planExteriorTransportNetwork({
       arterialLinks: links.filter(link => link.arterial === true).length,
       laneShiftedLinks: links.filter(link => link.laneShifted === true).length,
       frontierPasses: links.length,
+      stopWhenRequiredReachable: stopWhenRequiredReachable === true,
+      restrictArterialsToRequiredClosure: restrictArterialsToRequiredClosure === true,
+      requiredSurfaceMode,
     }),
     rejectionCounts: Object.freeze({ blocked: blockedCandidateCount, overlapping: overlapRejected.size }),
     linkCounts: Object.freeze({

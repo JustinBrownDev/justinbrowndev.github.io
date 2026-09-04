@@ -75,14 +75,39 @@ const network = physics.exteriorTransportNetwork;
 assert.equal(network?.closure?.unreachableRequired, 0,
   'every clear roof explicitly published as a circulation candidate must be attached to a live transport component');
 assert.deepEqual(network?.unreachableRequiredSurfaceIds ?? [], []);
-assert.ok((network?.planning?.arterialLinks ?? 0) > 0,
-  'deterministic generated fixture must exercise the deferred long-span arterial tier');
+assert.equal(network?.planning?.requiredSurfaceMode, 'local-seed-components');
+assert.ok((network?.closure?.optionalIsolatedCandidates ?? 0) > 0,
+  'ground fixture must classify nonlocal roof islands as optional instead of forcing long catwalk closure');
 assert.ok((network?.planning?.laneShiftedLinks ?? 0) > 0,
   'deterministic generated fixture must exercise collision-safe junction lane shifting instead of dropping a valid branch');
 assert.ok((network?.links?.length ?? 0) <= (network?.closure?.linkBudget ?? Infinity));
+assert.equal(network?.planning?.stopWhenRequiredReachable, true,
+  'ground transport must stop once every required roof is live instead of spending the remaining forest budget');
+assert.equal(network?.planning?.restrictArterialsToRequiredClosure, true);
+const groundArterialWalkways = (network?.links ?? []).filter(link => link.kind === 'walkway-link' && link.arterial === true);
+assert.equal(groundArterialWalkways.length, 0,
+  'ground closure must not synthesize long same-level arterial catwalks after ordinary streets/building egress already exist');
+assert.ok((network?.links ?? []).filter(link => link.kind === 'walkway-link').every(link => Number(link.gap) <= 10 + 1e-9),
+  'ground fabricated walkways stay within the tightened local span envelope');
 
 const circulation = payload.worldCirculation;
 const hangingPhysics = payload.hangingLayer?.payload?.physics;
+const hangingPayload = payload.hangingLayer?.payload;
+const hangingSkybridges = (hangingPayload?.entities ?? []).filter(entity => entity.kind === 'skybridge');
+assert.ok(hangingSkybridges.length >= 2,
+  'deterministic hanging fixture must visibly realize multiple building-to-building sky connections');
+assert.equal(hangingPayload?.skybridgePlanning?.realized, hangingSkybridges.length);
+assert.ok((hangingPayload?.skybridgePlanning?.planned ?? 0) >= hangingSkybridges.length);
+assert.equal(hangingPayload?.skybridgePlanning?.authority, 'ceiling-field-peer-planner');
+for (const bridge of hangingSkybridges) {
+  assert.notEqual(bridge.aSiteId, bridge.bSiteId, `${bridge.id}: a hanging skybridge must join distinct buildings`);
+  assert.equal(bridge.aEndpoint?.resolved, true);
+  assert.equal(bridge.bEndpoint?.resolved, true);
+  assert.ok(Math.abs(Number(bridge.aEndpoint.y) - Number(bridge.bEndpoint.y)) <= 0.08,
+    `${bridge.id}: ceiling peer endpoints must resolve to one flat world-height band`);
+}
+assert.ok(hangingSkybridges.some(bridge => Number(bridge.aEndpoint?.floor) !== Number(bridge.bEndpoint?.floor)),
+  'fixture must prove top-aligned ceiling bridges can join different local floor numbers at the same world height');
 const hangingCrossoverEdges = (hangingPhysics?.exteriorTransportEdges ?? []).filter(edge => edge.kind === 'roof-crossover-link' || edge.source === 'roof-crossover-link');
 const hangingJumpEdges = (hangingPhysics?.exteriorTransportEdges ?? []).filter(edge => edge.kind === 'jump-link' || edge.source === 'jump-link');
 assert.equal(circulation.stats.roofCrossoverEdges, crossoverEdges.length + hangingCrossoverEdges.length);
@@ -105,6 +130,11 @@ console.log('[generated-roof-jump-circulation-selftest] PASS', {
   unreachableTransportNodes: circulation.stats.unreachableTransportNodes,
   crossLayerEdges: circulation.stats.crossLayerEdges,
   unreachableSpaces: circulation.stats.unreachableSpaces,
+  hangingSkybridges: hangingSkybridges.length,
+  hangingBridgePlans: hangingPayload.skybridgePlanning?.planned ?? 0,
+  groundWalkways: (network.links ?? []).filter(link => link.kind === 'walkway-link').length,
+  groundArterialWalkways: groundArterialWalkways.length,
+  groundOptionalIsolatedRoofs: network.closure.optionalIsolatedCandidates ?? 0,
   hangingRequiredRoofs: hangingPhysics.exteriorTransportNetwork.closure.required,
   hangingUnreachableRequiredRoofs: hangingPhysics.exteriorTransportNetwork.closure.unreachableRequired,
   requiredRoofs: network.closure.required,

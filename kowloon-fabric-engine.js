@@ -14,7 +14,6 @@ import {
     bridgePortalMapForPlans,
     ceilingFrame,
     ceilingSourceCoordinates,
-    cloneBridgePlansForCeilingCity,
     maximumCavernFloors,
     planCeilingBuildingHeight,
 } from './world/hanging-city-topology.js';
@@ -160,11 +159,12 @@ function normalizeCeilingModuleFloorConnectivity(modulePlans, primaryModule, bri
     for (const portal of bridgePortals) {
         const target = modulePlans.find(module => module.key === portal.moduleKey);
         if (!target) continue;
-        const requiredFloors = Math.min(primaryModule.floors, Math.max(1, Number(portal.floor) + 1 || 1));
-        if (target.floors >= requiredFloors) continue;
-        const before = target.floors;
-        target.floors = requiredFloors;
-        raised.set(target.key, target.floors - before);
+        // Ceiling buildings share one top plane, not one bottom datum. Resolve every
+        // inter-building portal on the target module's top occupied floor band.
+        // After floorBase is assigned this makes worldY = ceilingY - floorH for both
+        // endpoints regardless of each stalactite/module depth, so a flat bridge is
+        // physically valid instead of being discarded as a mismatched local floor.
+        portal.floor = Math.max(0, Number(target.floors) - 1);
     }
     return {
         raisedForBridgeModules: [...raised.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([moduleKey, floorsAdded]) => ({ moduleKey, floorsAdded })),
@@ -1331,7 +1331,7 @@ export function createKowloonFabricEngine({
         return connector;
     }
 
-    function realizeExteriorTransportNetwork({ physics, transforms, stableKey }) {
+    function realizeExteriorTransportNetwork({ physics, transforms, stableKey, field = 'ground' }) {
         const surfaceOwnership = reconcileTransportPlatformOwnership({ physics, transforms });
         const surfaces = exteriorTransportSurfaces(physics);
         const plan = planExteriorTransportNetwork({
@@ -1341,9 +1341,26 @@ export function createKowloonFabricEngine({
             maxLinks: Math.max(10, surfaces.length - 1),
             maxStairLinks: Math.max(6, Math.ceil(surfaces.length * 0.45)),
             maxJumpLinks: Math.max(6, Math.ceil(surfaces.length * 0.30)),
+            // Ground already has streets + building egress. Close the required roof
+            // set, then stop instead of spending the remaining forest budget on long
+            // low catwalk branches. The hanging field keeps full network closure so
+            // its exterior routes can actually knit the ceiling city together.
+            maxArterialSpan: 24,
+            maxArterialWalkwaySpan: field === 'ground' ? 10 : 24,
+            requiredSurfaceMode: field === 'ground' ? 'local-seed-components' : 'all',
+            stopWhenRequiredReachable: field === 'ground',
+            restrictArterialsToRequiredClosure: field === 'ground',
             stableKey, traversalEnvelope,
         });
         const byId = new Map(surfaces.map(surface => [surface.id, surface]));
+        if (field === 'ground' && (plan.optionalIsolatedSurfaceIds?.length ?? 0) > 0) {
+            // A ground roof that cannot be reached through the local roof envelope is
+            // ordinary physical roof, not a mandate to fabricate a 15-25m catwalk.
+            // Keep its platform/parapet geometry, but remove the semantic transport
+            // publication so the unified graph does not contain shadow road nodes.
+            const optional = new Set(plan.optionalIsolatedSurfaceIds);
+            physics.exteriorTransportSurfaces = exteriorTransportSurfaces(physics).filter(surface => !optional.has(surface.id));
+        }
         const edgeRegistry = physics.exteriorTransportEdges ?? (physics.exteriorTransportEdges = []);
         let realized = 0;
         let stairLinks = 0;
@@ -1498,6 +1515,7 @@ export function createKowloonFabricEngine({
             stableKey: `${worldSeed}:${chunk.key}:${field}:route-owned-rooftop-places`,
             field,
             maxPlaces,
+            minPlaces: field === 'ground' ? Math.min(5, maxPlaces) : 2,
         });
         physics.routeOwnedRooftopPlacePlan = plan;
         const registry = physics.routeOwnedRooftopPlaces ?? (physics.routeOwnedRooftopPlaces = []);
@@ -5287,11 +5305,12 @@ export function createKowloonFabricEngine({
             bridgePortalsBySite.get(siteId).push(portal);
         };
         const consider = (roadC, roadR, a, b, axis) => {
-            if (bridgePlans.length >= 4 || !a || !b || a.siteId < 0 || b.siteId < 0 || a.siteId === b.siteId) return;
+            if (bridgePlans.length >= 6 || !a || !b || a.siteId < 0 || b.siteId < 0 || a.siteId === b.siteId) return;
             if (!buildingSiteIds.has(a.siteId) || !buildingSiteIds.has(b.siteId)) return;
             const identity = `ceiling:${phaseChunk.key}:${roadC},${roadR}:${Math.min(a.siteId,b.siteId)}:${Math.max(a.siteId,b.siteId)}:${axis}`;
             const rng = mulberry32(hashString32(`${worldSeed}:kowloon-bridge:${identity}`));
-            if (rng() >= intensity.bridgeChance) return;
+            const ceilingBridgeChance = Math.min(0.90, Math.max(intensity.bridgeChance, 0.58 + weird * 0.22));
+            if (rng() >= ceilingBridgeChance) return;
             const floor = 1;
             const id = worldEntityId(worldSeed, phaseChunk.x, phaseChunk.z, 'ceiling-skybridge', identity);
             const aEndpoint = { id: `${id}:endpoint:a`, bridgeId: id, endpointRole: 'a', axis, moduleKey: a.moduleKey, dirKey: a.dirKey, floor, resolved: false };
@@ -5704,13 +5723,12 @@ export function createKowloonFabricEngine({
 
         const entityBySite = new Map(entities.map(entity => [entity.siteId, entity]));
         let skybridges = 0;
-        for (const bridge of cloneBridgePlansForCeilingCity(bridgePlans, source.key)) {
-            // The builder resolved the original phase endpoints in place.  Reuse
-            // those world-space endpoints while keeping a ceiling-specific bridge id.
-            const original = bridgePlans.find(candidate => candidate.aSiteId === bridge.aSiteId && candidate.bSiteId === bridge.bSiteId && candidate.axis === bridge.axis);
-            if (!original?.aEndpoint?.resolved || !original?.bEndpoint?.resolved) continue;
-            bridge.aEndpoint = { ...original.aEndpoint, id: `${bridge.id}:endpoint:a`, bridgeId: bridge.id };
-            bridge.bEndpoint = { ...original.bEndpoint, id: `${bridge.id}:endpoint:b`, bridgeId: bridge.id };
+        for (const bridge of bridgePlans) {
+            // Ceiling bridge plans are authored against the ceiling field itself and
+            // their endpoints are resolved while those ceiling buildings render.
+            // Do not clone or remap ground-field endpoints here: that silently threw
+            // away valid hanging-building peers whenever the two fields differed.
+            if (!bridge.aEndpoint?.resolved || !bridge.bEndpoint?.resolved) continue;
             const aEntity = entityBySite.get(bridge.aSiteId), bEntity = entityBySite.get(bridge.bSiteId);
             if (!aEntity || !bEntity) continue;
             if (!emitSkybridge({ bridge, aEntity, bEntity, physics: aggregate.physics, transforms: aggregate.transforms })) continue;
@@ -5724,7 +5742,7 @@ export function createKowloonFabricEngine({
         // circulation authority instead of leaving a disconnected shadow layer.
         const exteriorTransportNetwork = realizeExteriorTransportNetwork({
             physics: aggregate.physics, transforms: aggregate.transforms,
-            stableKey: `${worldSeed}:${chunk.key}:ceiling-exterior-transport`,
+            stableKey: `${worldSeed}:${chunk.key}:ceiling-exterior-transport`, field: 'ceiling',
         });
         const cavernWallStairs = realizePopularCavernWallStairs({
             field: 'ceiling', entities: entities.filter(entity => entity.kind === 'building'),
@@ -5739,6 +5757,7 @@ export function createKowloonFabricEngine({
             formatVersion: WORLD_FORMAT_VERSION,
             ownerId, root, physics: aggregate.physics, entities,
             buildings, plazas, skybridges, ladders, ladderRungs, cavernWallStairs: cavernWallStairs.length,
+            skybridgePlanning: { planned: bridgePlans.length, realized: skybridges, authority: 'ceiling-field-peer-planner' },
             exteriorTransportNetwork,
             routeOwnedRooftopPlaces: routeOwnedRooftopPlaces.stats,
             structuralFallback: field.structuralFallback ?? null,
@@ -6442,7 +6461,7 @@ export function createKowloonFabricEngine({
         }
 
         const exteriorTransportNetwork = realizeExteriorTransportNetwork({
-            physics, transforms, stableKey: `${worldSeed}:${chunk.key}:exterior-transport`,
+            physics, transforms, stableKey: `${worldSeed}:${chunk.key}:exterior-transport`, field: 'ground',
         });
         const cavernWallStairs = realizePopularCavernWallStairs({
             field: 'ground', entities: entities.filter(entity => entity.kind === 'building'),

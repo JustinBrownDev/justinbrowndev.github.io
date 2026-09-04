@@ -1,7 +1,7 @@
 import { CUT_COMMON_KOWLOON_ENRICHMENT, GENERATION_LANES } from '../config/performance-isolation.js';
 import { hashString32 } from '../world-chunk-streamer.js';
 import { pickPoetryTag } from '../noise-data-bootstrap.js';
-import { pickSurfaceLanguagePair } from '../content/language-sidecar.js';
+import { pickDirtyFlavorPairForSurface } from '../content/dirty-flavor-sidecar.js';
 import { BASE_GRAFFITI_TAGS } from '../content/graffiti-content.js';
 import { createProceduralTextExciter } from './procedural-text-exciter.js';
 import { SEMANTIC_RUNTIME_PROP_ASSETS as SEMANTIC_INTERIOR_ASSETS, SEMANTIC_RUNTIME_PROP_ASSET_BY_ID as SEMANTIC_INTERIOR_ASSET_BY_ID } from '../vendor/city-pack/semantic-megapack/runtime-props-v6.js';
@@ -836,7 +836,7 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
 
         if (entity.exteriorIdentity || rng() < 0.96) {
             const labelRng = mulberry32(taskSeed(chunk, entity.id, 'sign-label'));
-            const basePair = pickSurfaceLanguagePair(labelRng);
+            const basePair = pickDirtyFlavorPairForSurface(labelRng, 'sign');
             const generatedPair = textExciter.pairFor(chunk, entity.id, 'sign-label', basePair);
             const title = String(entity.exteriorIdentity?.title ?? generatedPair[0]);
             const subtitle = String(entity.exteriorIdentity?.subtitle ?? generatedPair[1]);
@@ -869,7 +869,7 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
             const signSide = i % 2 ? side : front;
             const signFacadeIndex = chooseFacadeIndex(entity, signDensityRng, signSide);
             const labelRng = mulberry32(taskSeed(chunk, entity.id, 'sign-extra-label', i));
-            const [title, subtitle] = textExciter.pairFor(chunk, entity.id, `sign-extra:${i}`, pickSurfaceLanguagePair(labelRng));
+            const [title, subtitle] = textExciter.pairFor(chunk, entity.id, `sign-extra:${i}`, pickDirtyFlavorPairForSurface(labelRng, 'sign'));
             tasks.push({
                 kind: 'sign', entityId: entity.id, side: signSide, facadeIndex: signFacadeIndex,
                 y: clamp(2.35 + signDensityRng() * Math.min(5.8, wallHeight * 0.62), 2.25, Math.max(2.45, wallHeight - 0.65)),
@@ -919,7 +919,7 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
             const flyerCount = 1 + (rng() < 0.32 ? 1 : 0) + (rng() < 0.10 ? 1 : 0);
             for (let i = 0; i < flyerCount; i++) {
                 const flyerRng = mulberry32(taskSeed(chunk, entity.id, 'flyer-label', i));
-                const basePair = pickSurfaceLanguagePair(flyerRng);
+                const basePair = pickDirtyFlavorPairForSurface(flyerRng, 'flyer');
                 const [title, subtitle] = textExciter.pairFor(chunk, entity.id, `flyer-label:${i}`, basePair);
                 tasks.push({
                     kind: 'flyer', entityId: entity.id, side: i ? side : front, facadeIndex: i ? sideFacadeIndex : frontFacadeIndex,
@@ -1038,7 +1038,7 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
         const feature = kinds[taskSeed(chunk, entity.id, 'plaza-feature-order') % kinds.length];
         const seed = taskSeed(chunk, entity.id, `plaza-${feature}`);
         const labelRng = mulberry32(seed ^ 0x6a09e667);
-        const [title, subtitle] = textExciter.pairFor(chunk, entity.id, `plaza-${feature}`, pickSurfaceLanguagePair(labelRng));
+        const [title, subtitle] = textExciter.pairFor(chunk, entity.id, `plaza-${feature}`, pickDirtyFlavorPairForSurface(labelRng, `plaza-${feature}`));
         tasks.push({
             kind: `plaza-${feature}`,
             entityId: entity.id,
@@ -1948,7 +1948,7 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
             tasks: exteriorComposition.acceptedExteriorTasks,
             pairFor: ({ task, assemblyId, rng, semanticContentContext }) => {
                 const context = semanticContentContext ?? task.semanticContentContext ?? null;
-                const semanticFallback = frontageContentFallback(context, pickSurfaceLanguagePair(rng));
+                const semanticFallback = frontageContentFallback(context, pickDirtyFlavorPairForSurface(rng, 'megascreen'));
                 const [title, excitedSubtitle] = textExciter.pairFor(
                     chunk,
                     task.entityId,

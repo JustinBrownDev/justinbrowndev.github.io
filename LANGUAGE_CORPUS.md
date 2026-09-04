@@ -67,3 +67,39 @@ generation work.
 The existing `noise-data-poetry.js` remains both an immediate runtime fallback and
 source material available to repository harvesting. Geometry decides *where* text
 belongs; the sidecar decides *what source-derived text* occupies that opportunity.
+
+## Dirty flavor sidecar placement policy
+
+The `jweb.dirty-flavor-corpus.v1` harvest is not a flat billboard pool. A deterministic
+build step (`tools/build-dirty-flavor-runtime.py`) compresses it into a lazy runtime
+sidecar and assigns source rows to presentation lanes before they can reach the city.
+
+- **background** — census/name rows, GeoNames/place facts, Unicode/encoding rows,
+  weather-station facts, and low-signal registry text. These belong on tiny directory,
+  phone-booth, lookup, and readout surfaces.
+- **storefront** — compact product, commercial, facility, and place labels only. Long
+  registry sentences are reduced to sign-sized labels or rejected.
+- **flyer** — repair notices, civic notices, small commercial notices, restrained
+  public-domain literary fragments, transport items, and similar paper-scale material.
+- **technical** — protocol, security, repair, industrial, encoding, and diagnostic text.
+  ATM/service-terminal-like surfaces consume this lane.
+- **institutional** — civic, facility, transport, utility, legal, weather, and other
+  registry material that reads plausibly on a newsstand card or public notice.
+- **spectacle** — intentionally scarce. Only high-signal warnings, vulnerabilities,
+  failures/recalls, hazards, earthquakes, or quantitative production/process rows are
+  eligible. Census, ordinary airport/facility listings, RFC-title boilerplate, Unicode,
+  and pharmaceutical catalog prose are blocked from megascreens.
+
+Two source-specific rules are hard gates:
+
+1. Library of Congress WPA poster descriptions are excluded because the text describes
+   an image the player cannot see; the description is not useful as standalone flavor.
+2. MusicBrainz Mountain Goats rows never emit `X is a Mountain Goats recording.` The
+   wrapper is stripped at build time and title-only metadata is available only through
+   an extremely rare flyer-ephemera branch (0.4% of dirty-flavor flyer picks). It is
+   never eligible for storefronts, directories, technical screens, institutional media,
+   or megascreens.
+
+The generated sidecar is loaded lazily after runtime start. Until hydration completes,
+existing language-sidecar content remains the fallback, so this larger reservoir does
+not become a first-paint dependency.

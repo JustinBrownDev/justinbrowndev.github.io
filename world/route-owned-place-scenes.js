@@ -204,14 +204,21 @@ export function routeOwnedScenePartWithinFootprint(place, item, clearance = EPS)
 
 export function buildRouteOwnedPlaceScene(place, { stableKey = 'route-owned-place-scene', variant = null } = {}) {
   const placeType = String(place?.placeType ?? 'utility-yard');
-  const c = PALETTES[placeType] ?? PALETTES['utility-yard'];
+  // Location systems may name the same visual grammar differently (for example
+  // street-bodega vs roof-bodega). sceneType is the canonical visual vocabulary;
+  // placeType remains the semantic identity published by the host system.
+  const sceneType = String(place?.sceneType ?? placeType);
+  const c = PALETTES[sceneType] ?? PALETTES['utility-yard'];
+  const variantKey = sceneType === placeType
+    ? `${stableKey}:${place?.id ?? placeType}:variant`
+    : `${stableKey}:${place?.id ?? placeType}:${sceneType}:variant`;
   const resolvedVariant = Number.isInteger(variant)
     ? ((variant % ROUTE_OWNED_PLACE_SCENE_VARIANTS) + ROUTE_OWNED_PLACE_SCENE_VARIANTS) % ROUTE_OWNED_PLACE_SCENE_VARIANTS
-    : stableHash(`${stableKey}:${place?.id ?? placeType}:variant`) % ROUTE_OWNED_PLACE_SCENE_VARIANTS;
+    : stableHash(variantKey) % ROUTE_OWNED_PLACE_SCENE_VARIANTS;
   const parts = [];
   const add = (role, spec) => parts.push(part(place, role, spec));
   basePaint(place, c, add, resolvedVariant);
-  (BUILDERS[placeType] ?? utility)(place, c, add, resolvedVariant);
+  (BUILDERS[sceneType] ?? utility)(place, c, add, resolvedVariant);
   for (const item of parts) {
     if (!routeOwnedScenePartWithinFootprint(place, item, 0.025)) {
       throw new Error(`${place?.id ?? placeType}:${item.role}: scene part escapes route-owned footprint`);
@@ -222,8 +229,9 @@ export function buildRouteOwnedPlaceScene(place, { stableKey = 'route-owned-plac
     schema: ROUTE_OWNED_PLACE_SCENE_SCHEMA,
     version: ROUTE_OWNED_PLACE_SCENE_VERSION,
     placeType,
+    sceneType,
     variant: resolvedVariant,
-    tags: TAGS[placeType] ?? TAGS['utility-yard'],
+    tags: TAGS[sceneType] ?? TAGS['utility-yard'],
     parts: frozenParts,
     metrics: summarizeRouteOwnedPlaceParts(frozenParts),
     invariant: 'dense authored identity stays inside the route-owned footprint; collision remains sparse and render detail stays instanced',

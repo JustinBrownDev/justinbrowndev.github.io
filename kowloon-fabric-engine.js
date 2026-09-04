@@ -51,6 +51,7 @@ import {
 import { guardFamilyForContext, guardOpeningWidth, planFlightGuardPair, planHorizontalGuardSpan, splitHorizontalGuardSpan } from './world/guardrail-authority.js';
 import { normalizeTransportSurface, planExteriorTransportNetwork, transportSurfaceIntersection } from './world/exterior-transport-network.js';
 import { planRouteOwnedRooftopPlaces } from './world/route-owned-rooftop-places.js';
+import { planRouteOwnedPlazaPlaces } from './world/route-owned-plaza-places.js';
 import { planFastFacadeArchitecture } from './world/fast-facade-architecture.js';
 import { buildExteriorDebugSnapshot, emitExteriorDebugSnapshot } from './world/exterior-debug-summary.js';
 import { EXTERIOR_CIRCULATION_DEBT, planExteriorStreetLayerPolicy } from './world/exterior-street-layer-policy.js';
@@ -1552,6 +1553,79 @@ export function createKowloonFabricEngine({
                     placeId: place.id,
                     placeType: place.placeType,
                     surfaceId: place.surfaceId,
+                    partRole: part.role,
+                });
+            }
+        }
+        return plan;
+    }
+
+
+    function realizeRouteOwnedPlazaPlaces({ chunk, field, physics, transforms, entities, maxPlaces = 6 }) {
+        const plan = planRouteOwnedPlazaPlaces({
+            plazas: entities.filter(entity => entity.kind === 'plaza'),
+            blockers: physics.props ?? [],
+            stableKey: `${worldSeed}:${chunk.key}:${field}:route-owned-plaza-places`,
+            field,
+            maxPlaces,
+        });
+        physics.routeOwnedPlazaPlacePlan = plan;
+        const registry = physics.routeOwnedPlazaPlaces ?? (physics.routeOwnedPlazaPlaces = []);
+        for (const place of plan.places) {
+            registry.push(place);
+            entities.push({
+                id: place.id,
+                kind: 'route-owned-plaza-place',
+                placeType: place.placeType,
+                sceneType: place.sceneType,
+                field: place.field,
+                plazaId: place.plazaId,
+                siteId: place.siteId,
+                cellId: place.cellId,
+                x: place.x, z: place.z, y: place.y,
+                halfX: place.halfX, halfZ: place.halfZ,
+                routeOwnership: place.routeOwnership,
+                traversalContract: place.traversalContract,
+                sceneSchema: place.sceneSchema,
+                sceneVersion: place.sceneVersion,
+                sceneVariant: place.sceneVariant,
+                sceneTags: place.sceneTags,
+                sceneMetrics: place.sceneMetrics,
+            });
+            for (const part of place.parts) {
+                const renderSink = part.renderClass === 'paint'
+                    ? transforms.interiorPaint
+                    : (part.emissive || part.renderClass === 'emissive')
+                        ? transforms.windows
+                        : transforms.props;
+                renderSink.push({
+                    x: part.x, y: part.y, z: part.z,
+                    sx: part.sx, sy: part.sy, sz: part.sz,
+                    ry: part.ry ?? 0,
+                    color: part.color,
+                    routeOwnedPlazaPlace: true,
+                    placeId: place.id,
+                    placeType: place.placeType,
+                    plazaId: place.plazaId,
+                    cellId: place.cellId,
+                    partRole: part.role,
+                    authoredPlaceEmissive: part.emissive === true,
+                    authoredPlaceRenderClass: part.renderClass ?? 'prop',
+                    authoredPlaceDetailTier: part.detailTier ?? 'structure',
+                    sceneVersion: place.sceneVersion,
+                    sceneVariant: place.sceneVariant,
+                });
+                if (!part.collision) continue;
+                physics.props.push({
+                    x: part.x, z: part.z,
+                    radius: Math.max(0.16, Math.min(part.sx, part.sz) * 0.43),
+                    yMin: part.y - part.sy * 0.5,
+                    height: part.y + part.sy * 0.5,
+                    supportKind: 'route-owned-plaza-place',
+                    placeId: place.id,
+                    placeType: place.placeType,
+                    plazaId: place.plazaId,
+                    cellId: place.cellId,
                     partRole: part.role,
                 });
             }
@@ -6264,9 +6338,15 @@ export function createKowloonFabricEngine({
                 let climbTiers = 0;
                 let climbHeight = 0;
                 let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+                const footprintCells = [];
                 for (const cell of site.cells) {
                     const cellCx = cx0 - half + (cell.col + 0.5) * cellSize;
                     const cellCz = cz0 - half + (cell.row + 0.5) * cellSize;
+                    footprintCells.push({
+                        id: `${siteEntityId}:cell:${cell.col},${cell.row}`,
+                        col: cell.col, row: cell.row,
+                        x: cellCx, z: cellCz, halfX: cellSize * 0.5, halfZ: cellSize * 0.5,
+                    });
                     minX = Math.min(minX, cellCx - cellSize * 0.5);
                     maxX = Math.max(maxX, cellCx + cellSize * 0.5);
                     minZ = Math.min(minZ, cellCz - cellSize * 0.5);
@@ -6295,7 +6375,10 @@ export function createKowloonFabricEngine({
                     z: (minZ + maxZ) * 0.5,
                     halfX: (maxX - minX) * 0.5,
                     halfZ: (maxZ - minZ) * 0.5,
+                    siteId: site.id,
                     compoundCells: site.cells.map(cell => ({ col: cell.col, row: cell.row })),
+                    footprintCells,
+                    roadAdjacent: plan.realRoadFaces > 0,
                     clutter,
                     climbTiers,
                     climbHeight,
@@ -6361,6 +6444,9 @@ export function createKowloonFabricEngine({
             chunk, field: 'ground', physics, transforms, entities,
             transportNetwork: exteriorTransportNetwork, maxPlaces: 8,
         });
+        const routeOwnedPlazaPlaces = realizeRouteOwnedPlazaPlaces({
+            chunk, field: 'ground', physics, transforms, entities, maxPlaces: 6,
+        });
         const exteriorDebugSnapshot = buildExteriorDebugSnapshot({
             chunk, physics, entities, exteriorTransportNetwork,
         });
@@ -6382,6 +6468,7 @@ export function createKowloonFabricEngine({
             exteriorTransportNetwork,
             cavernWallStairs: cavernWallStairs.length,
             routeOwnedRooftopPlaces: routeOwnedRooftopPlaces.stats,
+            routeOwnedPlazaPlaces: routeOwnedPlazaPlaces.stats,
             buildingFootprintInvariant,
             hangingLayer,
             structuralFallback,

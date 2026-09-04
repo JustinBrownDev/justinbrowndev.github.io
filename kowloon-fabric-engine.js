@@ -50,6 +50,7 @@ import {
 } from './world/stair-volume-contract.js';
 import { guardFamilyForContext, guardOpeningWidth, planFlightGuardPair, planHorizontalGuardSpan, splitHorizontalGuardSpan } from './world/guardrail-authority.js';
 import { normalizeTransportSurface, planExteriorTransportNetwork, transportSurfaceIntersection } from './world/exterior-transport-network.js';
+import { planRouteOwnedRooftopPlaces } from './world/route-owned-rooftop-places.js';
 import { planFastFacadeArchitecture } from './world/fast-facade-architecture.js';
 import { buildExteriorDebugSnapshot, emitExteriorDebugSnapshot } from './world/exterior-debug-summary.js';
 import { EXTERIOR_CIRCULATION_DEBT, planExteriorStreetLayerPolicy } from './world/exterior-street-layer-policy.js';
@@ -1484,6 +1485,64 @@ export function createKowloonFabricEngine({
         }
         physics.exteriorTransportNetwork = { ...plan, realized, stairLinks, walkwayLinks, roofCrossovers, jumpLinks, unions, surfaceOwnership };
         return physics.exteriorTransportNetwork;
+    }
+
+
+    function realizeRouteOwnedRooftopPlaces({ chunk, field, physics, transforms, entities, transportNetwork, maxPlaces = 8 }) {
+        const plan = planRouteOwnedRooftopPlaces({
+            surfaces: physics.exteriorTransportSurfaces ?? [],
+            transportNetwork,
+            reservations: physics.circulationReservations ?? [],
+            blockers: physics.roofTransportBlockers ?? [],
+            stableKey: `${worldSeed}:${chunk.key}:${field}:route-owned-rooftop-places`,
+            field,
+            maxPlaces,
+        });
+        physics.routeOwnedRooftopPlacePlan = plan;
+        const registry = physics.routeOwnedRooftopPlaces ?? (physics.routeOwnedRooftopPlaces = []);
+        for (const place of plan.places) {
+            registry.push(place);
+            entities.push({
+                id: place.id,
+                kind: 'route-owned-rooftop-place',
+                placeType: place.placeType,
+                field: place.field,
+                surfaceId: place.surfaceId,
+                siteId: place.siteId,
+                moduleKey: place.moduleKey,
+                x: place.x, z: place.z, y: place.y,
+                halfX: place.halfX, halfZ: place.halfZ,
+                routeOwnership: place.routeOwnership,
+                traversalContract: place.traversalContract,
+            });
+            for (const part of place.parts) {
+                const renderSink = part.emissive ? transforms.windows : transforms.props;
+                renderSink.push({
+                    x: part.x, y: part.y, z: part.z,
+                    sx: part.sx, sy: part.sy, sz: part.sz,
+                    color: part.color,
+                    routeOwnedRooftopPlace: true,
+                    placeId: place.id,
+                    placeType: place.placeType,
+                    surfaceId: place.surfaceId,
+                    partRole: part.role,
+                    authoredPlaceEmissive: part.emissive === true,
+                });
+                if (!part.collision) continue;
+                physics.props.push({
+                    x: part.x, z: part.z,
+                    radius: Math.max(0.16, Math.min(part.sx, part.sz) * 0.43),
+                    yMin: part.y - part.sy * 0.5,
+                    height: part.y + part.sy * 0.5,
+                    supportKind: 'route-owned-rooftop-place',
+                    placeId: place.id,
+                    placeType: place.placeType,
+                    surfaceId: place.surfaceId,
+                    partRole: part.role,
+                });
+            }
+        }
+        return plan;
     }
 
     function realizeFastVerticalRoute({ physics, transforms, wallList, plan }) {
@@ -5575,12 +5634,17 @@ export function createKowloonFabricEngine({
             field: 'ceiling', entities: entities.filter(entity => entity.kind === 'building'),
             physics: aggregate.physics, transforms: aggregate.transforms, maxRoutes: 2,
         });
+        const routeOwnedRooftopPlaces = realizeRouteOwnedRooftopPlaces({
+            chunk: phaseChunk, field: 'ceiling', physics: aggregate.physics, transforms: aggregate.transforms,
+            entities, transportNetwork: exteriorTransportNetwork, maxPlaces: 7,
+        });
         attachFabricMeshes(root, aggregate.transforms, `ceiling:${chunk.key}`);
         const payload = {
             formatVersion: WORLD_FORMAT_VERSION,
             ownerId, root, physics: aggregate.physics, entities,
             buildings, plazas, skybridges, ladders, ladderRungs, cavernWallStairs: cavernWallStairs.length,
             exteriorTransportNetwork,
+            routeOwnedRooftopPlaces: routeOwnedRooftopPlaces.stats,
             structuralFallback: field.structuralFallback ?? null,
             ceilingCity: true,
             ceilingSourceChunk: source,
@@ -6279,6 +6343,10 @@ export function createKowloonFabricEngine({
             field: 'ground', entities: entities.filter(entity => entity.kind === 'building'),
             physics, transforms, maxRoutes: 2,
         });
+        const routeOwnedRooftopPlaces = realizeRouteOwnedRooftopPlaces({
+            chunk, field: 'ground', physics, transforms, entities,
+            transportNetwork: exteriorTransportNetwork, maxPlaces: 8,
+        });
         const exteriorDebugSnapshot = buildExteriorDebugSnapshot({
             chunk, physics, entities, exteriorTransportNetwork,
         });
@@ -6299,6 +6367,7 @@ export function createKowloonFabricEngine({
             skybridges,
             exteriorTransportNetwork,
             cavernWallStairs: cavernWallStairs.length,
+            routeOwnedRooftopPlaces: routeOwnedRooftopPlaces.stats,
             buildingFootprintInvariant,
             hangingLayer,
             structuralFallback,

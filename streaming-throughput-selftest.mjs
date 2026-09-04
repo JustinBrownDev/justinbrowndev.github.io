@@ -53,7 +53,7 @@ assert.equal(stats.localRenderRing.ready, 25, '5x5 structural render ring must b
 assert.equal(stats.localPrefetchRing.ready, 49, '7x7 structural prefetch ring must be READY');
 assert.equal(stats.ready, 49, 'spawn + 48 procedural chunks expected');
 assert.equal(scene.children.length, 48, 'procedural roots should be direct scene children; spawn is authored elsewhere');
-assert.equal(owners.size, 48, 'every procedural READY chunk must own active physics');
+assert.equal(owners.size, scene.children.length * 2, 'every procedural READY chunk must own ground + hanging peer physics');
 const visibleRoots = scene.children.filter(root => root.userData.worldChunkRoot && root.visible);
 assert.equal(visibleRoots.length, 24, 'only procedural roots inside 5x5 render ring should be visible');
 for (const root of scene.children) {

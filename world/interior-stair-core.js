@@ -216,7 +216,7 @@ export function planInteriorSwitchbackStairCore({
 }
 
 
-export function planInteriorStairCoreWithArchitectureReplan({
+export function planInteriorStairCoreStructuralFeasibility({
   modulePlans = [],
   primaryModule = null,
   floorH,
@@ -225,7 +225,7 @@ export function planInteriorStairCoreWithArchitectureReplan({
   stableKey = 'interior-switchback',
   maxConsumedModules = Infinity,
 } = {}) {
-  const result = planStructuralFeasibility({
+  return planStructuralFeasibility({
     modulePlans,
     primaryModule,
     floorH,
@@ -235,5 +235,9 @@ export function planInteriorStairCoreWithArchitectureReplan({
     maxConsumedModules,
     planStairCore: planInteriorSwitchbackStairCore,
   });
+}
+
+export function planInteriorStairCoreWithArchitectureReplan(args = {}) {
+  const result = planInteriorStairCoreStructuralFeasibility(args);
   return result.accepted ? result : null;
 }

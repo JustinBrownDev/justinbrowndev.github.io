@@ -3380,6 +3380,8 @@ function maybeLogWorldDiagnostics(now) {
     const prefetch = stats.localPrefetchRing ?? {};
     const health = stats.richnessHealth ?? {};
     const states = stats.states ?? {};
+    const failureDiagnostics = stats.failureDiagnostics ?? {};
+    const failedKeys = (failureDiagnostics.recent ?? []).slice(0, 4).map(item => item.key).join(',');
     const assets = adornmentLoadQueue.stats();
     const playerChunk = worldChunkStreamer.playerChunkCoords();
     const streamFocusKey = `${playerChunk.x},${playerChunk.z}`;
@@ -3451,6 +3453,8 @@ function maybeLogWorldDiagnostics(now) {
         + ' building=' + (states.building ?? 0)
         + ' ready=' + (states.ready ?? 0)
         + ' failed=' + (states.failed ?? 0)
+        + ' failedVisible=' + (failureDiagnostics.visible ?? 0)
+        + (failedKeys ? ' failedKeys=' + failedKeys : '')
         + ' | ' + formatAdornmentQueueStats(assets)
         + ' | authored=' + (playerNearAuthoredSpawn() ? 'near' : 'far')
         + ' structural=' + authoredStructuralReadySiteIds.size + '/' + buildingSites.length

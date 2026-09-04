@@ -33,7 +33,8 @@ import {
 import { classifyPhysicalUse } from './world/physical-use.js';
 import { deriveStairFlight, gameplayTraversalEnvelope, resolvePhysicalTruth } from './world/physical-truth.js';
 import { BUILDING_SLAB_THICKNESS, storyCeilingLocalY } from './world/interior-geometry-policy.js';
-import { planInteriorStairCoreWithArchitectureReplan } from './world/interior-stair-core.js';
+import { planInteriorStairCoreStructuralFeasibility } from './world/interior-stair-core.js';
+import { recoverCellFootprintForCirculation } from './world/architecture/circulation-footprint-recovery.js';
 import { planBuildingSidecar } from './world/architecture/building-plan-sidecar.js';
 import { assertBuildingPlanAuthority, promoteBuildingPlanAuthority } from './world/architecture/building-plan-authority.js';
 import { createSemanticPlanCache, semanticPlanCacheKey } from './world/architecture/semantic-plan-runtime.js';
@@ -1750,7 +1751,7 @@ export function createKowloonFabricEngine({
     // clutter, mezzanines and authored enrichment remain deferred by the profile.
     function* buildBroadStrokesCompoundSteps({
         chunk, site, siteIdOf, openSiteIds, topology, siteSignature, siteSeed, structureProfile,
-        physics, transforms, materialIndex, modulePlans, moduleByKey, primaryModule,
+        physics, transforms, materialIndex, modulePlans, moduleByKey, primaryModule, primaryStairArchitecture,
         floorH, archetype, physicalUse, physicalTruth, servicePhysicalTruth, stairPhysicalTruth,
         districtBuildingPolicy, districtBuildingContext,
         floorConnectivityRepair, courtyard, courtyardSuppressedForConnectivity,
@@ -1809,16 +1810,10 @@ export function createKowloonFabricEngine({
         // Solve the ordinary 2/4-flight stair before realization. If the preferred
         // module is too small, the structural plan consumes connected module area
         // and carries that band to spine height instead of compressing the story.
-        const primaryStairArchitecture = planInteriorStairCoreWithArchitectureReplan({
-            modulePlans,
-            primaryModule,
-            floorH,
-            physicalTruth: stairPhysicalTruth,
-            traversalEnvelope,
-            stableKey: `${chunk.key}:${siteSignature}:${primaryModule.key}:switchback-core`,
-        });
-        if (!primaryStairArchitecture) {
-            throw new Error(`${chunk.key}:${siteSignature}:${primaryModule.key}: stair core has no legal rectangular architectural footprint in this compound`);
+        if (!primaryStairArchitecture?.accepted) {
+            const error = new Error(`${chunk.key}:${siteSignature}:${primaryModule.key}: precommitted structural feasibility missing`);
+            error.code = 'JWEB_STRUCTURAL_FEASIBILITY_PRECOMMIT_MISSING';
+            throw error;
         }
         const primaryStairCore = primaryStairArchitecture.core;
         if (primaryStairArchitecture.replanned) {
@@ -2999,6 +2994,76 @@ export function createKowloonFabricEngine({
             modulePlans.push({ key, cell, edgeKinds, floors, rect });
         }
 
+        // CUT 20R.2: massing is still a proposal until required circulation fits.
+        // Existing compound area is tried first. If setbacks consumed too much of
+        // the allocated primary cell, reclaim that cell envelope before portals,
+        // apertures, collision or geometry become authoritative.
+        let primaryModule = modulePlans.find(module => module.key === primaryKey) || modulePlans[0];
+        const stairFeasibilityArgs = () => ({
+            modulePlans,
+            primaryModule,
+            floorH,
+            physicalTruth: stairPhysicalTruth,
+            traversalEnvelope,
+            stableKey: `${chunk.key}:${siteSignature}:${primaryModule.key}:switchback-core`,
+        });
+        let primaryStairArchitecture = planInteriorStairCoreStructuralFeasibility(stairFeasibilityArgs());
+        if (!primaryStairArchitecture.accepted) {
+            const failedBeforeRecovery = primaryStairArchitecture;
+            const recovery = recoverCellFootprintForCirculation({
+                module: primaryModule, geometryAdapter, cx0, cz0, half, cellSize,
+            });
+            if (recovery) {
+                const originalRect = primaryModule.rect;
+                primaryModule.rect = { ...recovery.rect };
+                const recovered = planInteriorStairCoreStructuralFeasibility(stairFeasibilityArgs());
+                if (recovered.accepted) {
+                    primaryStairArchitecture = Object.freeze({
+                        ...recovered,
+                        replanned: true,
+                        underlyingReplanMode: recovered.replanMode,
+                        replanMode: 'expand-primary-cell-footprint',
+                        footprintRecovery: recovery,
+                        replanHistory: Object.freeze([
+                            ...(failedBeforeRecovery.replanHistory ?? []),
+                            Object.freeze({
+                                action: 'expand-primary-cell-footprint', result: 'accepted',
+                                moduleKey: String(primaryModule.key),
+                                originalRect: recovery.originalRect, recoveredRect: recovery.rect,
+                            }),
+                            ...(recovered.replanHistory ?? []),
+                        ]),
+                    });
+                } else {
+                    primaryModule.rect = originalRect;
+                    primaryStairArchitecture = Object.freeze({
+                        ...recovered,
+                        footprintRecovery: recovery,
+                        replanHistory: Object.freeze([
+                            ...(failedBeforeRecovery.replanHistory ?? []),
+                            Object.freeze({
+                                action: 'expand-primary-cell-footprint', result: 'rejected',
+                                moduleKey: String(primaryModule.key),
+                                originalRect: recovery.originalRect, recoveredRect: recovery.rect,
+                            }),
+                            ...(recovered.replanHistory ?? []),
+                        ]),
+                    });
+                }
+            }
+        }
+        if (!primaryStairArchitecture.accepted) {
+            const error = new Error(`${chunk.key}:${siteSignature}:${primaryModule.key}: structural proposal rejected before realization (${primaryStairArchitecture.rejectionReason ?? 'unknown'})`);
+            error.code = 'JWEB_STRUCTURAL_FEASIBILITY_REJECTED';
+            error.structuralFeasibility = {
+                chunkKey: chunk.key, siteSignature, moduleKey: primaryModule.key,
+                rejectionReason: primaryStairArchitecture.rejectionReason ?? null,
+                replanHistory: primaryStairArchitecture.replanHistory ?? [],
+                footprintRecovery: primaryStairArchitecture.footprintRecovery ?? null,
+            };
+            throw error;
+        }
+
         const bridgePortals = bridgePortalsBySite?.get(site.id) ?? [];
         const bridgeOpeningKeys = new Set();
         const bridgeOpeningByKey = new Map();
@@ -3053,7 +3118,7 @@ export function createKowloonFabricEngine({
 
         // The vertical spine must be the tallest module so every other occupied
         // floor can be reached laterally through same-site openings.
-        let primaryModule = modulePlans.find(module => module.key === primaryKey) || modulePlans[0];
+        primaryModule = modulePlans.find(module => module.key === primaryKey) || modulePlans[0];
         for (const module of modulePlans) module.floors = Math.min(module.floors, primaryModule.floors);
         const ceilingAlignedModules = structureProfile?.floorAlignment === 'ceiling';
         // Ground compounds grow from floor zero upward, so their connectivity repair
@@ -3076,7 +3141,7 @@ export function createKowloonFabricEngine({
         if (GENERATION_LANES.broadStrokesOnly || ceilingAlignedModules) {
             return yield* buildBroadStrokesCompoundSteps({
                 chunk, site, siteIdOf, openSiteIds, topology, siteSignature, siteSeed, structureProfile,
-                physics, transforms, materialIndex, modulePlans, moduleByKey, primaryModule,
+                physics, transforms, materialIndex, modulePlans, moduleByKey, primaryModule, primaryStairArchitecture,
                 floorH, archetype, physicalUse, physicalTruth, servicePhysicalTruth, stairPhysicalTruth,
                 districtBuildingPolicy, districtBuildingContext,
                 floorConnectivityRepair, courtyard, courtyardSuppressedForConnectivity,
@@ -3183,16 +3248,10 @@ export function createKowloonFabricEngine({
         // Solve the ordinary 2/4-flight stair before realization. If the preferred
         // module is too small, the structural plan consumes connected module area
         // and carries that band to spine height instead of compressing the story.
-        const primaryStairArchitecture = planInteriorStairCoreWithArchitectureReplan({
-            modulePlans,
-            primaryModule,
-            floorH,
-            physicalTruth: stairPhysicalTruth,
-            traversalEnvelope,
-            stableKey: `${chunk.key}:${siteSignature}:${primaryModule.key}:switchback-core`,
-        });
-        if (!primaryStairArchitecture) {
-            throw new Error(`${chunk.key}:${siteSignature}:${primaryModule.key}: stair core has no legal rectangular architectural footprint in this compound`);
+        if (!primaryStairArchitecture?.accepted) {
+            const error = new Error(`${chunk.key}:${siteSignature}:${primaryModule.key}: precommitted structural feasibility missing`);
+            error.code = 'JWEB_STRUCTURAL_FEASIBILITY_PRECOMMIT_MISSING';
+            throw error;
         }
         const primaryStairCore = primaryStairArchitecture.core;
         if (primaryStairArchitecture.replanned) {

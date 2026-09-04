@@ -12,7 +12,7 @@ import {
     worldChunkKey,
     worldWeirdnessAt,
 } from './world-contract.js';
-import { refinementCoverageFloorRank } from './world/neighborhood-refinement-priority.js';
+import { REFINEMENT_COVERAGE_WAVE, refinementCoverageFloorRank } from './world/neighborhood-refinement-priority.js';
 
 export { deterministicChunkSeed, hashString32, worldWeirdnessAt } from './world-contract.js';
 
@@ -150,6 +150,10 @@ export function createWorldChunkStreamer({
             lastPublicationWarningAt: 0,
             payload: null,
             error: null,
+            failedAt: 0,
+            failureCode: null,
+            failureMessage: null,
+            failureLabel: null,
             lastRefinedSerial: 0,
             refinementTurns: 0,
         };
@@ -194,6 +198,25 @@ export function createWorldChunkStreamer({
 
     function shouldBeVisible(chunk, center = playerChunkCoords()) {
         return ringDistance(chunk, center) <= renderRadiusChunks;
+    }
+
+    function failedChunkSummary(radius = renderRadiusChunks) {
+        const center = playerChunkCoords();
+        const failed = [...chunks.values()].filter(chunk => chunk.state === CHUNK_STATE.FAILED);
+        const visible = failed.filter(chunk => ringDistance(chunk, center) <= radius);
+        const recent = [...failed]
+            .sort((a, b) => (Number(b.failedAt) || 0) - (Number(a.failedAt) || 0) || String(a.key).localeCompare(String(b.key)))
+            .slice(0, 8)
+            .map(chunk => Object.freeze({
+                key: chunk.key,
+                code: chunk.failureCode ?? null,
+                message: chunk.failureMessage ?? null,
+                label: chunk.failureLabel ?? null,
+                failedAt: Number(chunk.failedAt) || 0,
+                ring: ringDistance(chunk, center),
+                visible: ringDistance(chunk, center) <= radius,
+            }));
+        return Object.freeze({ resident: failed.length, visible: visible.length, recent: Object.freeze(recent) });
     }
 
     // WORLD-LIVENESS CONTRACT:
@@ -737,7 +760,9 @@ export function createWorldChunkStreamer({
             // the same wave. Prefetch detail remains strictly behind visible work.
             const focusRank = visibilityRank > 0 ? 3 : ring === 0 ? 0 : ring === 1 ? 1 : 2;
             const firstPassPending = visibilityRank === 0 && !chunkVisibleFirstPassComplete(chunk);
-            const floorRank = refinementCoverageFloorRank(chunk.payload.refinement, { visible: visibilityRank === 0 });
+            const floorRank = firstPassPending
+                ? REFINEMENT_COVERAGE_WAVE.FIRST_PASS
+                : refinementCoverageFloorRank(chunk.payload.refinement, { visible: visibilityRank === 0 });
             const semanticFocus = firstPassPending && semanticFirstPassTarget(chunk) !== null;
             const serial = chunk.lastRefinedSerial || 0;
             const priority = chunkPriorityScore(chunk);
@@ -849,8 +874,16 @@ export function createWorldChunkStreamer({
             return chunk;
         } catch (error) {
             chunk.error = error;
+            chunk.failedAt = performance.now();
+            chunk.failureCode = error?.code ? String(error.code) : null;
+            chunk.failureMessage = String(error?.message ?? error);
+            chunk.failureLabel = String(label ?? 'world chunk');
             failureCount++;
             state(chunk, CHUNK_STATE.FAILED);
+            console.error?.('[world-chunk-failed]', {
+                key: chunk.key, label: chunk.failureLabel, code: chunk.failureCode,
+                message: chunk.failureMessage, structuralFeasibility: error?.structuralFeasibility ?? null,
+            });
             throw error;
         }
     }
@@ -1146,6 +1179,7 @@ export function createWorldChunkStreamer({
             unloads: unloadCount,
             pruned: pruneCount,
             failures: failureCount,
+            failureDiagnostics: failedChunkSummary(renderRadiusChunks),
             busy,
             throughput: {
                 builds: buildCount,

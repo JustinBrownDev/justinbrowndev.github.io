@@ -617,7 +617,7 @@ function debugLabel(context, opportunity) {
     return [`[ DISTRICT: ${district} ]`, `PROGRAM: ${program}  LAYER: ${layer}`];
 }
 
-export function compileSemanticContext({ chunk, payload, tasks = [], debugWeight = 0.18 } = {}) {
+export function compileSemanticContext({ chunk, payload, tasks = [], debugWeight = 0 } = {}) {
     if (!chunk || !payload || !Array.isArray(tasks)) throw new Error('compileSemanticContext requires chunk, payload, and tasks');
     const districtComposition = attachDistrictBlockComposition(payload, payload.districtBlockComposition ?? compileDistrictBlockComposition({ chunk, payload }));
     const district = {

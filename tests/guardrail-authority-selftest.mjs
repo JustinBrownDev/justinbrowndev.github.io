@@ -18,6 +18,9 @@ assert.ok(municipal.bodyThickness >= 0.16 && municipal.construction === 'solid-m
 
 assert.equal(guardFamilyForContext({ supportKind: 'scaffold-rail' }), 'fire-escape-pipe');
 assert.equal(guardFamilyForContext({ supportKind: 'parapet' }), 'municipal-concrete');
+const traversalParapet = guardProfile('roof-traversal-parapet');
+assert.ok(traversalParapet.height < 0.65, 'transport-roof parapet must sit safely below the controller max-step threshold');
+assert.equal(traversalParapet.construction, 'solid-mold');
 assert.equal(guardFamilyForContext({ physicalUse: 'residential-lodging', visualRole: 'stair' }), 'residential-civic-bar');
 assert.equal(guardFamilyForContext({ physicalUse: 'industrial-service', visualRole: 'transport-stair' }), 'fire-escape-pipe');
 assert.equal(guardFamilyForContext({ physicalUse: 'assembly-institutional', visualRole: 'stair' }), 'residential-civic-bar');

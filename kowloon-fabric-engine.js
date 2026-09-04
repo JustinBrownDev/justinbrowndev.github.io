@@ -71,6 +71,7 @@ import {
 import {
     connectorOpeningWidth,
     createBridgeConnector,
+    createJumpConnector,
     createLandingConnector,
     createPortalConnector,
     createRampConnector,
@@ -366,6 +367,7 @@ export function createKowloonFabricEngine({
     microCells = 9,
     landmarkSpacingChunks = 4,
     yieldControl = null,
+    gameplayTraversalProfile = null,
 } = {}) {
     if (!THREE || !scene || !playerPhysics) throw new Error('createKowloonFabricEngine requires THREE, scene, playerPhysics');
     const addStreamRoot = typeof directSceneAdd === 'function' ? directSceneAdd : scene.add.bind(scene);
@@ -400,7 +402,7 @@ export function createKowloonFabricEngine({
     const windowMat = new THREE.MeshStandardMaterial({ color: 0x8fa9a8, emissive: 0x182827, emissiveIntensity: 0.5, roughness: 0.35 });
     const interiorPaintMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.93, metalness: 0.0 });
     const interiorPaintPalette = Object.freeze([0xc98f7a, 0x8fa99a, 0xd0bd82, 0x8f9eb8, 0xb58ca5, 0x9f956f, 0x7fa7a8, 0xb88c73]);
-    const traversalEnvelope = gameplayTraversalEnvelope();
+    const traversalEnvelope = gameplayTraversalEnvelope(gameplayTraversalProfile ?? {});
     const wallMats = [
         new THREE.MeshStandardMaterial({ color: 0xb6ae9c, roughness: 0.82 }),
         new THREE.MeshStandardMaterial({ color: 0x9ca99d, roughness: 0.84 }),
@@ -1331,14 +1333,16 @@ export function createKowloonFabricEngine({
         const surfaceOwnership = reconcileTransportPlatformOwnership({ physics, transforms });
         const surfaces = exteriorTransportSurfaces(physics);
         const plan = planExteriorTransportNetwork({
-            surfaces, blockedRects: physics.fastStairThroats ?? [],
-            maxLinks: 10, maxStairLinks: 6, stableKey,
+            surfaces, blockedRects: [...(physics.fastStairThroats ?? []), ...(physics.roofTransportBlockers ?? [])],
+            maxLinks: 10, maxStairLinks: 6, maxJumpLinks: 6, stableKey, traversalEnvelope,
         });
         const byId = new Map(surfaces.map(surface => [surface.id, surface]));
         const edgeRegistry = physics.exteriorTransportEdges ?? (physics.exteriorTransportEdges = []);
         let realized = 0;
         let stairLinks = 0;
         let walkwayLinks = 0;
+        let jumpLinks = 0;
+        let roofCrossovers = 0;
         let unions = 0;
         for (const link of plan.links) {
             const a = byId.get(link.aId), b = byId.get(link.bId);
@@ -1391,6 +1395,42 @@ export function createKowloonFabricEngine({
                 realized++;
                 continue;
             }
+            if (link.kind === 'roof-crossover-link') {
+                const openingWidth = link.clearWidth + Math.max(0.18, traversalEnvelope.playerRadius);
+                const parapetCuts = carveTransportRailGap({ physics, transforms, surfaceId: a.id, point: link.aPoint, width: openingWidth })
+                    + carveTransportRailGap({ physics, transforms, surfaceId: b.id, point: link.bPoint, width: openingWidth });
+                reserveTransportJunction({ physics, surface: a, point: link.aPoint, width: link.clearWidth,
+                    id: `${link.id}:a-junction`, peerSurfaceId: b.id });
+                reserveTransportJunction({ physics, surface: b, point: link.bPoint, width: link.clearWidth,
+                    id: `${link.id}:b-junction`, peerSurfaceId: a.id });
+                edgeRegistry.push({ ...link, source: 'roof-crossover-link', parapetCuts });
+                roofCrossovers++;
+                realized++;
+                continue;
+            }
+            if (link.kind === 'jump-link') {
+                const openingWidth = link.clearWidth + Math.max(0.24, traversalEnvelope.playerRadius * 1.25);
+                const parapetCuts = carveTransportRailGap({ physics, transforms, surfaceId: a.id, point: link.aPoint, width: openingWidth })
+                    + carveTransportRailGap({ physics, transforms, surfaceId: b.id, point: link.bPoint, width: openingWidth });
+                reserveTransportJunction({ physics, surface: a, point: link.aPoint, width: link.clearWidth,
+                    id: `${link.id}:a-junction`, peerSurfaceId: b.id });
+                reserveTransportJunction({ physics, surface: b, point: link.bPoint, width: link.clearWidth,
+                    id: `${link.id}:b-junction`, peerSurfaceId: a.id });
+                registerSemanticConnector(physics, createJumpConnector({
+                    id: `${link.id}:connector`, axis: link.axis, from: link.aEdge, to: link.bEdge,
+                    fixedCoord: link.fixedCoord, halfWidth: link.halfWidth, y0: link.y0, y1: link.y1,
+                    apexHeight: link.apexHeight, source: 'exterior-transport-network', visualRole: 'roof-crossover',
+                    physicalTruth: a.physicalTruth ?? b.physicalTruth, traversalEnvelope,
+                    metadata: {
+                        transportLinkId: link.id, aSurfaceId: a.id, bSurfaceId: b.id,
+                        traversalAuthority: link.traversalAuthority, maxRange: link.maxRange, gap: link.gap, rise: link.rise,
+                    },
+                }));
+                edgeRegistry.push({ ...link, source: 'jump-link', parapetCuts });
+                jumpLinks++;
+                realized++;
+                continue;
+            }
             if (link.kind === 'stair-link') {
                 const lower = byId.get(link.lowerId), upper = byId.get(link.upperId);
                 if (!lower || !upper) continue;
@@ -1437,7 +1477,7 @@ export function createKowloonFabricEngine({
                 realized++;
             }
         }
-        physics.exteriorTransportNetwork = { ...plan, realized, stairLinks, walkwayLinks, unions, surfaceOwnership };
+        physics.exteriorTransportNetwork = { ...plan, realized, stairLinks, walkwayLinks, roofCrossovers, jumpLinks, unions, surfaceOwnership };
         return physics.exteriorTransportNetwork;
     }
 
@@ -1617,7 +1657,7 @@ export function createKowloonFabricEngine({
                 metadata: {
                     routeId: plan.id, landingId: landing.id, family: plan.family, shape: plan.shape,
                     graphAuthority: plan.graphAuthority ?? null,
-                    support: landing.support, generated: true, deckKind: 'exterior-street-layer',
+                    support: landing.support, generated: true, deckKind: 'exterior-street-layer', surfaceId: deckSurface.id,
                     stairThroat: throat,
                 },
             });
@@ -1732,7 +1772,13 @@ export function createKowloonFabricEngine({
         const center = Number.isFinite(opening?.center) ? clamp(Number(opening.center), lo, hi) : (lo + hi) * 0.5;
         const gap0 = Math.max(lo, center - requestedWidth * 0.5);
         const gap1 = Math.min(hi, center + requestedWidth * 0.5);
-        const family = guardFamilyForContext({ supportKind: 'parapet', visualRole: 'roof-parapet', physicalUse });
+        // A roof that participates in the transport graph gets a low concrete
+        // parapet that the actual controller can vault/step. Non-transport roofs
+        // keep the full municipal guard profile. Selected links still carve a
+        // complete mouth, so the graph remains the authority for intentional exits.
+        const family = surfaceId
+            ? 'roof-traversal-parapet'
+            : guardFamilyForContext({ supportKind: 'parapet', visualRole: 'roof-parapet', physicalUse });
         let serial = 0;
         const emit = (a, b) => {
             if (!(b > a + 0.04)) return;
@@ -1741,7 +1787,7 @@ export function createKowloonFabricEngine({
                 x1: horizontal ? a : fixed, z1: horizontal ? fixed : a,
                 x2: horizontal ? b : fixed, z2: horizontal ? fixed : b,
                 y: roofY, family, supportKind: 'parapet',
-                metadata: { side, physicalUse, visualRole: 'roof-parapet' },
+                metadata: { side, physicalUse, visualRole: surfaceId ? 'roof-traversal-parapet' : 'roof-parapet' },
             };
             if (surfaceId) emitTransportRail({ ...args, wallList: null, surfaceId, guardFamily: family });
             else emitGuardSpanFromAuthority({ ...args, id: `roof-parapet:${side}:${rect.cx}:${rect.cz}:${roofY}:${serial++}` });
@@ -2063,7 +2109,7 @@ export function createKowloonFabricEngine({
                 yMin: roofY - 0.02, yMax: roofY + 0.02,
             });
         };
-        const roofClearForTransport = module => roofTopperAllowsTransport(module) && !roofIntersectsInteriorCore(module);
+        const roofClearForTransport = module => roofTopperAllowsTransport(module); // core openings are explicit transport blockers, not whole-roof disqualifiers
 
         // CUT 12: exterior circulation is accepted against building mass before
         // facade walls/slabs render. An aperture is only a semantic handoff point:
@@ -2655,41 +2701,61 @@ export function createKowloonFabricEngine({
                 .map(([key, value]) => ({ dirKey: key.slice(module.key.length + 1), ...value }));
             let roofSurface = null;
             if (roofClearForTransport(module)) {
-                const publishedRoof = publishTransportSurfaceSlab({
-                    physics, transforms,
-                    rawSurface: {
-                        id: `${chunk.key}:${siteSignature}:${module.key}:roof-street-layer`,
-                        kind: 'clear-roof-street-layer',
-                        x: roofRect.cx, z: roofRect.cz, hx: roofRect.width * 0.5, hz: roofRect.depth * 0.5, y: roofY,
-                        siteId: site.id, moduleKey: module.key, routeId: null,
-                        networkKey: `roof:${site.id}:${module.key}`,
-                        reachable: localRoofAccess.length > 0,
-                        priority: 'circulation-candidate', physicalTruth: servicePhysicalTruth,
-                    },
-                    supportKind: 'roof', slabT: 0.12,
-                });
-                roofSurface = publishedRoof.surface;
-                for (const overlap of publishedRoof.overlaps) smoothTransportUnion({ physics, transforms, a: roofSurface, b: overlap });
-            } else {
+                const rawRoofSurface = {
+                    id: `${chunk.key}:${siteSignature}:${module.key}:roof-street-layer`,
+                    kind: 'clear-roof-street-layer',
+                    x: roofRect.cx, z: roofRect.cz, hx: roofRect.width * 0.5, hz: roofRect.depth * 0.5, y: roofY,
+                    siteId: site.id, moduleKey: module.key, routeId: null,
+                    networkKey: `roof:${site.id}:${module.key}`,
+                    reachable: localRoofAccess.length > 0 || roofHasInteriorCoreOpening,
+                    priority: 'circulation-candidate', physicalTruth: servicePhysicalTruth,
+                };
                 if (roofHasInteriorCoreOpening) {
                     addNotchedFloor(physics.platforms, roofRect.cx, roofRect.cz,
-                        roofRect.width, roofRect.depth,
-                        roofY, primaryStairSlabOpeningReservation.x, primaryStairSlabOpeningReservation.z,
+                        roofRect.width, roofRect.depth, roofY,
+                        primaryStairSlabOpeningReservation.x, primaryStairSlabOpeningReservation.z,
                         primaryStairSlabOpeningReservation.halfX * 2, primaryStairSlabOpeningReservation.halfZ * 2, 'roof');
                     addRenderedNotchedSlab(transforms, roofRect.cx, roofRect.cz,
-                        roofRect.width, roofRect.depth,
-                        roofY, primaryStairSlabOpeningReservation.x, primaryStairSlabOpeningReservation.z,
+                        roofRect.width, roofRect.depth, roofY,
+                        primaryStairSlabOpeningReservation.x, primaryStairSlabOpeningReservation.z,
                         primaryStairSlabOpeningReservation.halfX * 2, primaryStairSlabOpeningReservation.halfZ * 2,
-
                         { moduleKey: module.key, structuralSurfaceKind: 'roof-surface', surfaceAuthority: 'roof' });
-                } else {
-                    addRectPlatform(physics.platforms, roofRect.cx, roofRect.cz, roofRect.width, roofRect.depth, roofY, 'roof');
-                    transforms.slabs.push({
-                        x: roofRect.cx, y: roofY - 0.06, z: roofRect.cz,
-                        sx: roofRect.width, sy: 0.12, sz: roofRect.depth, moduleKey: module.key, ceilingRoofSlab: ceilingAligned || undefined,
-                        structuralSurfaceKind: 'roof-surface', surfaceAuthority: 'roof',
+                    roofSurface = registerExteriorTransportSurface(physics, rawRoofSurface);
+                    const blockers = physics.roofTransportBlockers ?? (physics.roofTransportBlockers = []);
+                    blockers.push({
+                        id: `${rawRoofSurface.id}:core-opening`,
+                        x: primaryStairSlabOpeningReservation.x, z: primaryStairSlabOpeningReservation.z,
+                        hx: primaryStairSlabOpeningReservation.halfX + traversalEnvelope.playerRadius,
+                        hz: primaryStairSlabOpeningReservation.halfZ + traversalEnvelope.playerRadius,
+                        y: roofY, clearanceKind: 'roof-core-opening', surfaceId: roofSurface.id,
                     });
+                } else {
+                    const publishedRoof = publishTransportSurfaceSlab({ physics, transforms, rawSurface: rawRoofSurface, supportKind: 'roof', slabT: 0.12 });
+                    roofSurface = publishedRoof.surface;
+                    for (const overlap of publishedRoof.overlaps) smoothTransportUnion({ physics, transforms, a: roofSurface, b: overlap });
                 }
+                if (roofHasInteriorCoreOpening && coreSpaceIds.length) {
+                    const roofCoreSpaceId = coreSpaceIds[coreSpaceIds.length - 1];
+                    const roofCoreJunction = createLandingConnector({
+                        id: `${chunk.key}:${siteSignature}:${module.key}:roof-core-junction`,
+                        x: primaryStairSlabOpeningReservation.x, z: primaryStairSlabOpeningReservation.z,
+                        halfX: Math.min(roofSurface.hx, Math.max(0.42, primaryStairSlabOpeningReservation.halfX)),
+                        halfZ: Math.min(roofSurface.hz, Math.max(0.42, primaryStairSlabOpeningReservation.halfZ)),
+                        y: roofY, source: 'compound-stair-roof-junction', visualRole: 'roof-access',
+                        reservationKind: 'roof-access-junction', fromSpaceId: roofCoreSpaceId, physicalTruth: stairPhysicalTruth,
+                        metadata: { moduleKey: module.key, floor: moduleFloorBase(module) + module.floors, surfaceId: roofSurface.id,
+                            portalFamily: 'roof-access', graphAuthority: 'persistent-interior-stair-core' },
+                    });
+                    roofCoreJunction.spaceIds = [roofCoreSpaceId];
+                    registerSemanticConnector(physics, roofCoreJunction);
+                }
+            } else {
+                addRectPlatform(physics.platforms, roofRect.cx, roofRect.cz, roofRect.width, roofRect.depth, roofY, 'roof');
+                transforms.slabs.push({
+                    x: roofRect.cx, y: roofY - 0.06, z: roofRect.cz,
+                    sx: roofRect.width, sy: 0.12, sz: roofRect.depth, moduleKey: module.key, ceilingRoofSlab: ceilingAligned || undefined,
+                    structuralSurfaceKind: 'roof-surface', surfaceAuthority: 'roof',
+                });
             }
             for (const dir of KOWLOON_DIRS) {
                 let exposed = module.edgeKinds[dir.key] !== 'internal';

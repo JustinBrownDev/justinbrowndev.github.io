@@ -65,6 +65,8 @@ export function buildExteriorDebugSnapshot({ chunk, physics = {}, entities = [],
   const surfaces = physics.exteriorTransportSurfaces ?? [];
   const network = exteriorTransportNetwork ?? physics.exteriorTransportNetwork ?? {};
   const edges = physics.exteriorTransportEdges ?? [];
+  const networkReachable = new Set(Array.isArray(network.reachableSurfaceIds) ? network.reachableSurfaceIds.map(String) : []);
+  const surfaceReachable = surface => networkReachable.size ? networkReachable.has(String(surface.id)) : surface.reachable !== false;
   const scaffoldRoutes = physics.scaffoldCirculationRoutes ?? [];
   const fastRoutes = physics.fastVerticalRoutes ?? [];
   const guardSpans = physics.guardSpans ?? [];
@@ -84,8 +86,8 @@ export function buildExteriorDebugSnapshot({ chunk, physics = {}, entities = [],
     transport: Object.freeze({
       surfaces: surfaces.length,
       surfaceKinds: countBy(surfaces, item => item.kind),
-      reachableSurfaces: surfaces.filter(item => item.reachable !== false).length,
-      unreachableClearRoofs: surfaces.filter(item => item.kind === 'clear-roof-street-layer' && item.reachable === false).length,
+      reachableSurfaces: surfaces.filter(surfaceReachable).length,
+      unreachableClearRoofs: surfaces.filter(item => item.kind === 'clear-roof-street-layer' && !surfaceReachable(item)).length,
       edges: edges.length,
       edgeKinds: countBy(edges, item => item.kind ?? item.source),
       plannedLinks: Array.isArray(network.links) ? network.links.length : 0,
@@ -93,6 +95,8 @@ export function buildExteriorDebugSnapshot({ chunk, physics = {}, entities = [],
       unions: Number(network.unions) || 0,
       walkways: Number(network.walkwayLinks) || 0,
       stairLinks: Number(network.stairLinks) || 0,
+      roofCrossovers: Number(network.roofCrossovers) || 0,
+      jumpLinks: Number(network.jumpLinks) || 0,
       rejectedBlockedLinks: Number(network.rejectionCounts?.blocked) || 0,
       rejectedOverlappingLinks: Number(network.rejectionCounts?.overlapping) || 0,
       reconciledTransportPlatformsBefore: Number(network.surfaceOwnership?.before) || 0,

@@ -2069,6 +2069,15 @@ cityFabricEngine = createKowloonFabricEngine({
     THREE, scene, playerPhysics, directSceneAdd: _origSceneAdd, chunkSize: STREAM_CHUNK_SIZE, worldSeed: SEED, spawnChunkKey: '0,0',
     landmarkSpacingChunks: CONFIG.streaming.landmarkSpacingChunks,
     yieldControl: cooperativeFabricBuildYield,
+    gameplayTraversalProfile: {
+        playerRadius: CONFIG.camera.playerRadius,
+        bodyHeight: PHYSICS_TUNING.bodyHeight,
+        maxStep: PHYSICS_TUNING.maxStepHeight,
+        jumpSpeed: PHYSICS_TUNING.jumpSpeed,
+        gravity: PHYSICS_TUNING.gravity,
+        horizontalSpeed: CONFIG.movement.speed,
+        sprintMultiplier: CONFIG.movement.sprintMultiplier,
+    },
 });
 const spawnSingularManifest = createSpawnSingularManifest(SEED, signatureInstances);
 const authoredOriginChunkPayload = cityFabricEngine.buildAuthoredOriginChunk({ singulars: spawnSingularManifest });

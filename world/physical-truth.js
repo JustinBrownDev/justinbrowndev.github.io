@@ -406,12 +406,46 @@ export function deriveStairFlight({ rise, truth, stableKey = '', availableRun = 
     });
 }
 
-export function gameplayTraversalEnvelope({ playerRadius = 0.22, bodyHeight = 1.80, maxStep = 0.65 } = {}) {
+export function gameplayTraversalEnvelope({
+    playerRadius = 0.22,
+    bodyHeight = 1.80,
+    maxStep = 0.65,
+    jumpSpeed = 5.5,
+    gravity = -16,
+    horizontalSpeed = 4.5,
+    sprintMultiplier = 1.7,
+    jumpSafetyFactor = 0.72,
+    minJumpLandingDepth = 0.85,
+} = {}) {
+    const gravityMagnitude = Math.max(0.001, Math.abs(Number(gravity) || 16));
+    const resolvedJumpSpeed = Math.max(0, Number(jumpSpeed) || 0);
+    const resolvedHorizontalSpeed = Math.max(0, Number(horizontalSpeed) || 0);
+    const resolvedSprintMultiplier = Math.max(1, Number(sprintMultiplier) || 1);
+    const safety = clamp(Number(jumpSafetyFactor) || 0.72, 0.35, 0.95);
+    const apexHeight = resolvedJumpSpeed * resolvedJumpSpeed / (2 * gravityMagnitude);
+    const sameLevelFlightTime = resolvedJumpSpeed > 0 ? (2 * resolvedJumpSpeed / gravityMagnitude) : 0;
+    const easySameLevelRange = resolvedHorizontalSpeed * sameLevelFlightTime * safety;
+    const sprintSameLevelRange = resolvedHorizontalSpeed * resolvedSprintMultiplier * sameLevelFlightTime * safety;
+    const bidirectionalRise = Math.min(Math.max(0, Number(maxStep) || 0), apexHeight * 0.55);
     return Object.freeze({
         schema: GAMEPLAY_TRAVERSAL_SCHEMA,
         playerRadius,
         bodyHeight,
         maxStep,
+        jump: Object.freeze({
+            jumpSpeed: resolvedJumpSpeed,
+            gravityMagnitude,
+            horizontalSpeed: resolvedHorizontalSpeed,
+            sprintMultiplier: resolvedSprintMultiplier,
+            safetyFactor: safety,
+            apexHeight,
+            sameLevelFlightTime,
+            easySameLevelRange,
+            sprintSameLevelRange,
+            maxBidirectionalRise: bidirectionalRise,
+            minLandingDepth: Math.max(0.55, Number(minJumpLandingDepth) || 0.85),
+            authority: 'gameplay-controller-ballistic-envelope',
+        }),
         authority: 'gameplay-controller-not-architecture',
         mayRelaxTraversal: true,
         architecturalInput: false,

@@ -345,6 +345,63 @@ export function createBridgeConnector({
     });
 }
 
+export function createJumpConnector({
+    id,
+    axis,
+    from,
+    to,
+    fixedCoord,
+    halfWidth,
+    y0,
+    y1,
+    apexHeight = 0,
+    source = 'roof-jump-crossover',
+    visualRole = 'roof-crossover',
+    physicalTruth = null,
+    traversalEnvelope = null,
+    metadata = null,
+} = {}) {
+    if (!id || !['x', 'z'].includes(axis)) throw new Error('jump connector requires id and x/z axis');
+    const resolvedHalfWidth = positive('halfWidth', Number(halfWidth));
+    const start = finite('from', Number(from));
+    const end = finite('to', Number(to));
+    const fixed = finite('fixedCoord', Number(fixedCoord));
+    const lowerY = Math.min(finite('y0', Number(y0)), finite('y1', Number(y1)));
+    const upperY = Math.max(Number(y0), Number(y1));
+    const bodyHeight = Math.max(1.2, Number(traversalEnvelope?.bodyHeight) || 1.8);
+    const playerRadius = Math.max(0.05, Number(traversalEnvelope?.playerRadius) || 0.22);
+    const arcTop = upperY + Math.max(0, Number(apexHeight) || 0) + bodyHeight;
+    const lo = Math.min(start, end), hi = Math.max(start, end);
+    const center = (lo + hi) * 0.5;
+    const reservation = createBoxCirculationReservation({
+        id: `${id}:sweep`,
+        kind: 'jump-sweep',
+        x: axis === 'x' ? center : fixed,
+        z: axis === 'x' ? fixed : center,
+        halfX: axis === 'x' ? (hi - lo) * 0.5 + playerRadius : resolvedHalfWidth + playerRadius,
+        halfZ: axis === 'x' ? resolvedHalfWidth + playerRadius : (hi - lo) * 0.5 + playerRadius,
+        yMin: lowerY,
+        yMax: arcTop,
+        source,
+        metadata: { connectorId: id, visualRole, traversalAuthority: traversalEnvelope?.jump?.authority ?? null, ...(metadata || {}) },
+    });
+    return {
+        schema: SEMANTIC_CONNECTOR_SCHEMA,
+        id, kind: 'jump', source, visualRole,
+        fromSpaceId: null, toSpaceId: null,
+        endpoints: [
+            axis === 'x' ? { id: `${id}:a`, x: start, y: Number(y0), z: fixed } : { id: `${id}:a`, x: fixed, y: Number(y0), z: start },
+            axis === 'x' ? { id: `${id}:b`, x: end, y: Number(y1), z: fixed } : { id: `${id}:b`, x: fixed, y: Number(y1), z: end },
+        ],
+        sweep: { type: 'jump', axis, from: start, to: end, fixedCoord: fixed, halfWidth: resolvedHalfWidth, y0: Number(y0), y1: Number(y1), apexHeight: Math.max(0, Number(apexHeight) || 0), arcTop },
+        reservations: [reservation],
+        primaryReservation: reservation,
+        physicalTruth: physicalTruth ?? null,
+        traversalEnvelope: traversalEnvelope ?? null,
+        metadata: { portalFamily: 'roof-crossover', accessible: false, spaceBindingMode: 'transport-surface-only', ...(metadata || {}) },
+    };
+}
+
 export function createFireEscapeConnector({
     id,
     x,
@@ -519,7 +576,9 @@ export function ensureSemanticConnectorAuthority(physics, spacePlans = []) {
             .filter(Boolean)
             .map(id => String(id))
             .filter(id => knownSpaceIds.has(id)))];
-        const inferredSpaceIds = connectorSpaceIds(connector, spacePlans);
+        const inferredSpaceIds = connector?.metadata?.spaceBindingMode === 'transport-surface-only'
+            ? []
+            : connectorSpaceIds(connector, spacePlans);
         const spaceIds = [...explicitSpaceIds];
         for (const id of inferredSpaceIds) if (!spaceIds.includes(id)) spaceIds.push(id);
         preservedExplicitBindings += explicitSpaceIds.length;

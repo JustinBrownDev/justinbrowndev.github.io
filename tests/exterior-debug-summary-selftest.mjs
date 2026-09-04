@@ -8,7 +8,7 @@ const clean = buildExteriorDebugSnapshot({
       { id: 'a', kind: 'balcony-street-layer', x: 0, z: 0, hx: 1, hz: 1, y: 3, reachable: true },
       { id: 'b', kind: 'clear-roof-street-layer', x: 3, z: 0, hx: 1, hz: 1, y: 3, reachable: false },
     ],
-    exteriorTransportNetwork: { links: [], realized: 0, unions: 0, walkwayLinks: 0, stairLinks: 0 },
+    exteriorTransportNetwork: { links: [], realized: 0, unions: 0, walkwayLinks: 0, stairLinks: 0, jumpLinks: 0 },
     platforms: [
       { surfaceId: 'a', x: 0, z: 0, hx: 1, hz: 1, y: 3 },
       { surfaceId: 'b', x: 3, z: 0, hx: 1, hz: 1, y: 3 },
@@ -21,6 +21,8 @@ assert.equal(clean.schema, EXTERIOR_DEBUG_SNAPSHOT_SCHEMA);
 assert.equal(clean.transport.duplicatePlatformOverlaps, 0);
 assert.equal(clean.transport.stairThroatConflicts, 0);
 assert.equal(clean.transport.unreachableClearRoofs, 1);
+assert.equal(clean.transport.roofCrossovers, 0);
+assert.equal(clean.transport.jumpLinks, 0);
 assert.equal(clean.facade.portalFrames, 1);
 assert.deepEqual(clean.issues, []);
 

@@ -4,9 +4,8 @@ export const WORLD_CIRCULATION_SCHEMA = 'jweb.world-circulation.v1';
 // TODO(JWEB-CIRCULATION-SKY-TRUNK): Add a thick, blocky, high-capacity sky-route
 //   arterial/catwalk class. Smaller catwalks, stairs, ladders and traversals branch
 //   from it; graph capacity/route class should be authoritative before geometry.
-// TODO(JWEB-CIRCULATION-ROOF-HOPS): Make roof-to-roof traversal systematic.
-//   Publish legal parapet jump/crossover edges and shape eligible parapets to be
-//   jumpable. Never infer traversability from visual proximity alone.
+// Roof-to-roof crossings are now physical exterior-transport edges. Only selected
+// ballistic-envelope links enter this graph; visual proximity never proves traversal.
 // TODO(JWEB-CIRCULATION-PRIORITY): Once unified circulation readiness is stable,
 //   schedule it after structural liveness and before ordinary visible refinement.
 
@@ -116,6 +115,7 @@ function components(adjacency, nodeById) {
             nodeIds,
             spaceIds: nodeIds.filter(nodeId => nodeById.get(nodeId)?.kind === 'space'),
             worldNodeIds: nodeIds.filter(nodeId => nodeById.get(nodeId)?.kind === 'world'),
+            transportNodeIds: nodeIds.filter(nodeId => nodeById.get(nodeId)?.kind === 'transport'),
         });
     }
     return { componentByNode, members };
@@ -136,11 +136,25 @@ export function compileWorldCirculationGraph(spatialTopology = {}) {
     });
     const edgeByPair = new Map();
 
+    const transportSurfaceById = new Map();
+    for (const surface of spatialTopology.transportSurfaces ?? []) {
+        const id = text(surface?.id);
+        if (!id) continue;
+        transportSurfaceById.set(id, surface);
+        addNode(adjacency, nodeById, id, {
+            kind: 'transport', layer: surface?.layer ?? 'ground', external: false,
+            sourceSurfaceId: surface?.sourceId ?? null, transportKind: surface?.kind ?? 'exterior-street-layer',
+            x: finite(surface?.x), z: finite(surface?.z), y: finite(surface?.y),
+            siteId: surface?.siteId ?? null, moduleKey: surface?.moduleKey ?? null,
+        });
+    }
+
     // Planned adjacency is architectural intent only. It may drive door/hall
     // generation, but it MUST NOT prove that a human can move between spaces.
     const plannedAdjacencies = (spatialTopology.edges ?? []).filter(edge => edge?.kind === 'adjacent-space');
 
     let physicalConnectorEdges = 0;
+    let transportJunctionEdges = 0;
     let crossLayerEdges = 0;
     for (const connector of spatialTopology.connectors ?? []) {
         for (const [a, b] of connectorPairs(connector, spaceById)) {
@@ -152,6 +166,35 @@ export function compileWorldCirculationGraph(spatialTopology = {}) {
             physicalConnectorEdges++;
             if ((spaceById.get(a)?.layer ?? 'ground') !== (spaceById.get(b)?.layer ?? 'ground')) crossLayerEdges++;
         }
+        const connectorSpaceIds = sortedUnique(connector?.spaceIds ?? []).filter(id => spaceById.has(id));
+        const connectorTransportIds = sortedUnique(connector?.transportSurfaceIds ?? []).filter(id => transportSurfaceById.has(id));
+        for (const spaceId of connectorSpaceIds) for (const transportId of connectorTransportIds) {
+            const added = addUndirected(adjacency, edgeByPair, spaceId, transportId, {
+                kind: 'transport-junction', id: connector.id ?? null, connectorKind: connector.kind ?? null,
+                authority: 'semantic-connector+exterior-transport-surface', source: connector.source ?? null,
+            });
+            if (added) transportJunctionEdges++;
+        }
+    }
+
+    let transportEdges = 0;
+    let roofCrossoverEdges = 0;
+    let jumpEdges = 0;
+    for (const edge of spatialTopology.transportEdges ?? []) {
+        const a = text(edge?.aId), b = text(edge?.bId);
+        if (!transportSurfaceById.has(a) || !transportSurfaceById.has(b)) continue;
+        const transportKind = edge?.kind ?? edge?.source ?? 'transport-link';
+        const added = addUndirected(adjacency, edgeByPair, a, b, {
+            kind: 'transport', id: edge?.id ?? null, transportKind,
+            authority: 'exterior-transport-network', source: edge?.source ?? null,
+            gap: Number.isFinite(Number(edge?.gap)) ? Number(edge.gap) : null,
+            rise: Number.isFinite(Number(edge?.rise)) ? Number(edge.rise) : null,
+            traversalAuthority: edge?.traversalAuthority ?? null,
+        });
+        if (!added) continue;
+        transportEdges++;
+        if (transportKind === 'roof-crossover-link' || edge?.source === 'roof-crossover-link') roofCrossoverEdges++;
+        if (transportKind === 'jump-link' || edge?.source === 'jump-link') jumpEdges++;
     }
 
     let portalEdges = 0;
@@ -256,7 +299,7 @@ export function compileWorldCirculationGraph(spatialTopology = {}) {
     }));
     return {
         schema: WORLD_CIRCULATION_SCHEMA,
-        authority: 'physical-connectors-and-access-portals',
+        authority: 'physical-connectors-access-portals-and-exterior-transport',
         unifiedLayers: true,
         sourceSchema: spatialTopology.schema ?? null,
         chunkKey: spatialTopology.chunkKey ?? null,
@@ -275,9 +318,14 @@ export function compileWorldCirculationGraph(spatialTopology = {}) {
         stats: {
             spaces: spaceById.size,
             worldNodes: worldIds.length,
+            transportNodes: transportSurfaceById.size,
             circulationNodes: nodeById.size,
             circulationEdges: edgeRecords.length,
             physicalConnectorEdges,
+            transportEdges,
+            transportJunctionEdges,
+            roofCrossoverEdges,
+            jumpEdges,
             portalEdges,
             plannedAdjacencies: plannedAdjacencies.length,
             crossLayerEdges,
@@ -287,6 +335,8 @@ export function compileWorldCirculationGraph(spatialTopology = {}) {
             explicitEgressFailures: explicitFailures.length,
             reachableSpaces,
             unreachableSpaces: Math.max(0, spaceById.size - reachableSpaces),
+            reachableTransportNodes: [...transportSurfaceById.keys()].filter(id => route.has(id)).length,
+            unreachableTransportNodes: [...transportSurfaceById.keys()].filter(id => !route.has(id)).length,
             maxHopsToExit: buildings.reduce((max, building) => Math.max(max, building.maxHopsToExit), 0),
         },
     };

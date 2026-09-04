@@ -39,6 +39,10 @@ const forgivingPlayer = gameplayTraversalEnvelope({ maxStep: 0.65 });
 assert.equal(forgivingPlayer.maxStep, 0.65);
 assert.equal(forgivingPlayer.architecturalInput, false);
 assert.ok(publicFlight.riserHeight < forgivingPlayer.maxStep, 'gameplay step forgiveness must not become stair geometry');
+assert.ok(forgivingPlayer.jump.apexHeight > 0.9 && forgivingPlayer.jump.apexHeight < 1.0);
+assert.ok(forgivingPlayer.jump.easySameLevelRange > 2.1 && forgivingPlayer.jump.easySameLevelRange < 2.4);
+assert.ok(forgivingPlayer.jump.maxBidirectionalRise <= forgivingPlayer.maxStep);
+assert.equal(forgivingPlayer.jump.authority, 'gameplay-controller-ballistic-envelope');
 
 assert.equal(programCompatibleWithPhysicalUse('auto_shop', industrialUse), true);
 assert.equal(programCompatibleWithPhysicalUse('motel_room', industrialUse), false);

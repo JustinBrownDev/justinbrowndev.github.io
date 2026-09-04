@@ -239,14 +239,46 @@ export function compileSpatialTopologyGraph({ chunk, payload } = {}) {
     }
 
     const rawConnectorById = new Map();
+    const rawConnectorLayerById = new Map();
     let duplicateConnectorIds = 0;
     for (const scope of scopes) for (const raw of scope.payload.physics?.semanticConnectors ?? []) {
         const id = String(raw?.id ?? '');
         if (!id) continue;
         if (rawConnectorById.has(id)) { duplicateConnectorIds++; continue; }
         rawConnectorById.set(id, raw);
+        rawConnectorLayerById.set(id, scope.layer);
     }
     const rawConnectors = [...rawConnectorById.values()];
+
+    const transportSurfaces = [];
+    const transportSurfaceNodeByLayerId = new Map();
+    let duplicateTransportSurfaceIds = 0;
+    for (const scope of scopes) for (const raw of scope.payload.physics?.exteriorTransportSurfaces ?? []) {
+        const sourceId = String(raw?.id ?? '');
+        if (!sourceId) continue;
+        const lookupKey = `${scope.layer}\u001f${sourceId}`;
+        if (transportSurfaceNodeByLayerId.has(lookupKey)) { duplicateTransportSurfaceIds++; continue; }
+        const id = `transport:${scope.layer}:${sourceId}`;
+        transportSurfaceNodeByLayerId.set(lookupKey, id);
+        transportSurfaces.push({
+            id, sourceId, layer: scope.layer, kind: raw.kind ?? 'exterior-street-layer',
+            x: finite(raw.x), z: finite(raw.z), hx: finite(raw.hx), hz: finite(raw.hz), y: finite(raw.y),
+            reachable: raw.reachable !== false, siteId: raw.siteId ?? null, moduleKey: raw.moduleKey ?? null,
+            routeId: raw.routeId ?? null, networkKey: raw.networkKey ?? null, priority: raw.priority ?? null,
+        });
+    }
+    const transportEdges = [];
+    for (const scope of scopes) for (const raw of scope.payload.physics?.exteriorTransportEdges ?? []) {
+        const aId = transportSurfaceNodeByLayerId.get(`${scope.layer}\u001f${String(raw?.aId ?? '')}`);
+        const bId = transportSurfaceNodeByLayerId.get(`${scope.layer}\u001f${String(raw?.bId ?? '')}`);
+        if (!aId || !bId || aId === bId) continue;
+        transportEdges.push({
+            ...raw,
+            id: String(raw?.id ?? `transport-edge:${scope.layer}:${transportEdges.length}`),
+            layer: scope.layer, aId, bId,
+            sourceAId: String(raw?.aId ?? ''), sourceBId: String(raw?.bId ?? ''),
+        });
+    }
 
     const surfaces = compileSurfaces({ entities });
     const surfaceById = new Map(surfaces.map(item => [item.id, item]));
@@ -282,10 +314,15 @@ export function compileSpatialTopologyGraph({ chunk, payload } = {}) {
 
     for (const raw of rawConnectors) {
         const portal = portalById.get(String(raw.id)) ?? null;
+        const connectorLayer = rawConnectorLayerById.get(String(raw.id)) ?? 'ground';
+        const connectorTransportSurfaceId = raw.metadata?.surfaceId
+            ? transportSurfaceNodeByLayerId.get(`${connectorLayer}\u001f${String(raw.metadata.surfaceId)}`) ?? null
+            : null;
         const connector = {
-            id: raw.id, kind: raw.kind, source: raw.source ?? null, visualRole: raw.visualRole ?? null,
+            id: raw.id, kind: raw.kind, source: raw.source ?? null, visualRole: raw.visualRole ?? null, layer: connectorLayer,
             fromSpaceId: raw.fromSpaceId ?? null, toSpaceId: raw.toSpaceId ?? null,
-            spaceIds: [...(raw.spaceIds ?? [])], reservationIds: [], apertureIds: [], portalIds: portal ? [portal.id] : [], endpointCount: raw.endpoints?.length ?? 0,
+            spaceIds: [...(raw.spaceIds ?? [])], transportSurfaceIds: connectorTransportSurfaceId ? [connectorTransportSurfaceId] : [],
+            reservationIds: [], apertureIds: [], portalIds: portal ? [portal.id] : [], endpointCount: raw.endpoints?.length ?? 0,
             metadata: raw.metadata ?? null,
         };
         pushUnique(connector.spaceIds, connector.fromSpaceId);
@@ -436,9 +473,11 @@ export function compileSpatialTopologyGraph({ chunk, payload } = {}) {
         chunkKey: chunk.key,
         layers: scopes.map(scope => scope.layer),
         spaces, surfaces, apertures, portals, accessEndpoints, noClutterRegions, connectors, reservations, instances, edges,
+        transportSurfaces, transportEdges,
         stats: {
-            payloadScopes: scopes.length, duplicateEntityIds, duplicateSpaceIds, duplicateConnectorIds,
+            payloadScopes: scopes.length, duplicateEntityIds, duplicateSpaceIds, duplicateConnectorIds, duplicateTransportSurfaceIds,
             spaces: spaces.length, surfaces: surfaces.length, apertures: apertures.length, portals: portals.length,
+            transportSurfaces: transportSurfaces.length, transportEdges: transportEdges.length,
             accessEndpoints: accessEndpoints.length, noClutterRegions: noClutterRegions.length, connectors: connectors.length,
             reservations: reservations.length, instances: instances.length, edges: edges.length,
             orphanReservations, orphanApertures, unboundEntranceFaces, danglingConnectorSpaces, danglingPortalSpaces, unboundPortalApertures,

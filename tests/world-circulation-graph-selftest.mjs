@@ -41,7 +41,7 @@ const base = {
 const graph = compileWorldCirculationGraph(base);
 assert.equal(graph.schema, WORLD_CIRCULATION_SCHEMA);
 assert.equal(graph.unifiedLayers, true);
-assert.equal(graph.authority, 'physical-connectors-and-access-portals');
+assert.equal(graph.authority, 'physical-connectors-access-portals-and-exterior-transport');
 assert.equal(graph.stats.worldNodes, 1);
 assert.equal(graph.stats.plannedAdjacencies, 1);
 assert.equal(graph.stats.physicalConnectorEdges, 2);

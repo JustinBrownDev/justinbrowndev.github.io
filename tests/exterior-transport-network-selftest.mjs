@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { resolvePhysicalTruth } from '../world/physical-truth.js';
 import {
+  classifyRoofJumpConnection,
   classifyTransportConnection,
   planExteriorTransportNetwork,
   transportSurfaceIntersection,
@@ -81,6 +82,56 @@ const roof = s('roof:D', 14.0, 0.2, 2.0, 1.6, 6.4, {
 const roofUnion = classifyTransportConnection({ ...upperC, reachable: true }, roof);
 assert.equal(roofUnion.kind, 'surface-union', 'clear roof may join a live street layer through a real usable overlap');
 
+
+
+const crossoverRoofA = s('roof:cross:A', 0, 12, 2.0, 1.5, 6.4, {
+  siteId: 20, kind: 'clear-roof-street-layer', reachable: true, routeId: null,
+});
+const crossoverRoofB = s('roof:cross:B', 4.0, 12, 2.0, 1.5, 6.4, {
+  siteId: 21, kind: 'clear-roof-street-layer', reachable: false, routeId: null,
+});
+const crossover = classifyTransportConnection(crossoverRoofA, crossoverRoofB);
+assert.equal(crossover.kind, 'roof-crossover-link', 'touching roof plates are parapet crossovers, not fake zero-distance jumps');
+assert.equal(crossover.gap, 0);
+
+const jumpRoofA = s('roof:jump:A', 0, 8, 2.0, 1.5, 6.4, {
+  siteId: 10, kind: 'clear-roof-street-layer', reachable: true, routeId: null,
+});
+const jumpRoofB = s('roof:jump:B', 5.7, 8, 1.7, 1.5, 6.4, {
+  siteId: 11, kind: 'clear-roof-street-layer', reachable: false, routeId: null,
+});
+const jump = classifyTransportConnection(jumpRoofA, jumpRoofB);
+assert.equal(jump.kind, 'jump-link', 'near same-height clear roofs use the conservative gameplay jump envelope before a built walkway');
+assert.ok(jump.gap > 1.9 && jump.gap < 2.1);
+assert.ok(jump.gap <= jump.maxRange);
+assert.equal(jump.traversalAuthority, 'gameplay-controller-ballistic-envelope');
+
+const farJumpRoof = s('roof:jump:far', 6.25, 8, 1.7, 1.5, 6.4, {
+  siteId: 12, kind: 'clear-roof-street-layer', reachable: false, routeId: null,
+});
+assert.equal(classifyTransportConnection(jumpRoofA, farJumpRoof).kind, 'walkway-link',
+  'a roof gap beyond the conservative jump range must fall back to built transport, not inferred jumping');
+
+const raisedJumpRoof = s('roof:jump:raised', 5.15, 8, 1.7, 1.5, 6.8, {
+  siteId: 13, kind: 'clear-roof-street-layer', reachable: false, routeId: null,
+});
+const raisedRelation = classifyTransportConnection(jumpRoofA, raisedJumpRoof);
+assert.equal(raisedRelation.kind, 'jump-link', 'small bidirectional roof rise remains a legal conservative jump');
+assert.ok(raisedRelation.rise > 0.39 && raisedRelation.rise < 0.41);
+
+const tooHighRoof = s('roof:jump:high', 5.15, 8, 1.7, 1.5, 7.25, {
+  siteId: 14, kind: 'clear-roof-street-layer', reachable: false, routeId: null,
+});
+assert.notEqual(classifyTransportConnection(jumpRoofA, tooHighRoof)?.kind, 'jump-link',
+  'height difference outside the bidirectional envelope must not become a jump');
+
+const jumpPlan = planExteriorTransportNetwork({
+  surfaces: [jumpRoofA, jumpRoofB], maxLinks: 4, maxStairLinks: 2, maxJumpLinks: 2,
+  stableKey: 'roof-jump-network',
+});
+assert.equal(jumpPlan.linkCounts.jump, 1);
+assert.equal(jumpPlan.links[0].kind, 'jump-link');
+
 const plan = planExteriorTransportNetwork({
   surfaces: [balconyA, catwalkOverlap, balconyB, { ...upperC, reachable: true }, roof],
   maxLinks: 8,
@@ -96,5 +147,5 @@ assert.ok(plan.links.some(link => link.aId === roof.id || link.bId === roof.id),
 console.log('[exterior-transport-network-selftest] PASS', {
   links: plan.links.map(link => link.kind),
   rejections: plan.rejectionCounts,
-  invariant: 'junctions need usable overlap; selected links keep clearance around reserved stair throats and cannot pile onto the same mouth',
+  invariant: 'junctions need usable overlap; roof jumps require the gameplay ballistic envelope and real landing depth; selected links keep clearance around reserved stair throats',
 });

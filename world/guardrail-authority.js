@@ -22,6 +22,16 @@ const PROFILES = Object.freeze({
     postSpacing: 0.90,
     collisionThickness: 0.10,
   }),
+  'roof-traversal-parapet': Object.freeze({
+    family: 'roof-traversal-parapet',
+    construction: 'solid-mold',
+    material: 'concrete',
+    height: 0.54,
+    bodyThickness: 0.18,
+    capThickness: 0.22,
+    capHeight: 0.06,
+    collisionThickness: 0.18,
+  }),
   'municipal-concrete': Object.freeze({
     family: 'municipal-concrete',
     construction: 'solid-mold',

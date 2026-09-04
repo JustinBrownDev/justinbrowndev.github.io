@@ -35,6 +35,10 @@ const places = payload.entities.filter(entity => entity.kind === 'route-owned-pl
 assert.ok(plazas.length >= 1, 'deterministic spawn-adjacent fixture must contain a real generated plaza');
 assert.ok(places.length >= 1, 'real generated plaza must receive a street-level authored place');
 assert.equal(payload.routeOwnedPlazaPlaces.realized, places.length);
+assert.ok(payload.routeOwnedPlazaPlaces.districtKey, 'generated street-place stats must publish deterministic district identity');
+assert.ok(payload.routeOwnedPlazaPlaces.neighborhoodRole, 'generated street-place stats must publish the chunk neighborhood role');
+assert.ok(payload.routeOwnedPlazaPlaces.districtSignatureType, 'generated street-place stats must publish the chunk signature family');
+assert.equal(payload.routeOwnedPlazaPlaces.activeTypes.length, 5, 'generated chunk must use the district-limited five-family palette');
 
 const plazaById = new Map(plazas.map(plaza => [plaza.id, plaza]));
 for (const place of places) {
@@ -44,6 +48,10 @@ for (const place of places) {
   assert.equal(host.kowloonServiceVoid, false);
   assert.ok(Array.isArray(host.footprintCells) && host.footprintCells.some(cell => cell.id === place.cellId));
   assert.equal(place.routeOwnership, 'world-street-plaza-circulation');
+  assert.equal(place.districtKey, payload.routeOwnedPlazaPlaces.districtKey);
+  assert.equal(place.neighborhoodRole, payload.routeOwnedPlazaPlaces.neighborhoodRole);
+  assert.equal(place.districtSignatureType, payload.routeOwnedPlazaPlaces.districtSignatureType);
+  assert.ok(payload.routeOwnedPlazaPlaces.activeTypes.includes(place.placeType));
   assert.ok(place.sceneMetrics.parts >= 12);
   assert.ok(place.sceneMetrics.paintParts >= 3);
   assert.ok(place.sceneMetrics.emissiveParts >= 2);
@@ -71,6 +79,10 @@ console.log('[generated-route-owned-plaza-places-selftest] PASS', {
   streetPlaceTypes: new Set(places.map(place => place.placeType)).size,
   streetSceneParts: payload.routeOwnedPlazaPlaces.sceneParts,
   streetApproachParts: payload.routeOwnedPlazaPlaces.sceneApproachParts,
+  districtKey: payload.routeOwnedPlazaPlaces.districtKey,
+  neighborhoodRole: payload.routeOwnedPlazaPlaces.neighborhoodRole,
+  signatureType: payload.routeOwnedPlazaPlaces.districtSignatureType,
+  activeTypes: payload.routeOwnedPlazaPlaces.activeTypes,
   circulationComponents: circulation.stats.components,
   reachableSpaces: circulation.stats.reachableSpaces,
   reachableTransportNodes: circulation.stats.reachableTransportNodes,

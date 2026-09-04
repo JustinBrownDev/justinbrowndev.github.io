@@ -1,7 +1,7 @@
 import { buildRouteOwnedPlaceScene, summarizeRouteOwnedPlaceParts } from './route-owned-place-scenes.js';
 
 export const ROUTE_OWNED_PLAZA_PLACE_SCHEMA = 'jweb.route-owned-plaza-place.v1';
-export const ROUTE_OWNED_PLAZA_PLACE_PLAN_SCHEMA = 'jweb.route-owned-plaza-place-plan.v1';
+export const ROUTE_OWNED_PLAZA_PLACE_PLAN_SCHEMA = 'jweb.route-owned-plaza-place-plan.v2';
 
 export const ROUTE_OWNED_PLAZA_PLACE_TYPES = Object.freeze([
   Object.freeze({ placeType: 'street-bodega', sceneType: 'roof-bodega' }),
@@ -30,6 +30,70 @@ function stableHash(text) {
     h = Math.imul(h, 16777619) >>> 0;
   }
   return h >>> 0;
+}
+
+const DISTRICT_ROLE_NAMES = Object.freeze([
+  'market-block',
+  'reuse-block',
+  'arts-block',
+  'repair-block',
+  'refuge-block',
+  'works-block',
+  'fuel-block',
+]);
+const FAMILY_OFFSETS = Object.freeze([0, 2, 5, 1, 4, 3, 6]);
+function mod(value, divisor) { return ((value % divisor) + divisor) % divisor; }
+function floorDiv(value, divisor) { return Math.floor(Number(value) / divisor); }
+
+export function routeOwnedPlazaDistrictProfile({
+  worldSeed = 0,
+  chunkX = 0,
+  chunkZ = 0,
+  field = 'ground',
+} = {}) {
+  const count = ROUTE_OWNED_PLAZA_PLACE_TYPES.length;
+  const x = Math.trunc(finite(chunkX));
+  const z = Math.trunc(finite(chunkZ));
+  const seedSalt = stableHash(`${worldSeed}:${field}:street-place-signature-lattice`) % count;
+
+  // A 7-phase lattice makes every cardinal neighbor choose a different signature
+  // family without any neighbor-state synchronization. Horizontal movement advances
+  // one family; vertical movement advances three. Neither can alias modulo seven.
+  const signatureIndex = mod(seedSalt + x + z * 3, count);
+  const districtX = floorDiv(x, 3);
+  const districtZ = floorDiv(z, 3);
+  const themeIndex = stableHash(`${worldSeed}:${field}:street-place-district:${districtX},${districtZ}`) % count;
+
+  const orderedIndices = [];
+  const addIndex = index => {
+    index = mod(index, count);
+    if (!orderedIndices.includes(index)) orderedIndices.push(index);
+  };
+  addIndex(signatureIndex);
+  addIndex(themeIndex);
+  for (const offset of FAMILY_OFFSETS) addIndex(signatureIndex + offset);
+
+  const activeIndices = orderedIndices.slice(0, Math.min(5, count));
+  const activeTypes = activeIndices.map(index => ROUTE_OWNED_PLAZA_PLACE_TYPES[index]);
+  const signatureType = ROUTE_OWNED_PLAZA_PLACE_TYPES[signatureIndex];
+  const themeType = ROUTE_OWNED_PLAZA_PLACE_TYPES[themeIndex];
+  const familyQuotas = Object.fromEntries(activeTypes.map((type, index) => [type.placeType, index === 0 ? 2 : 1]));
+  const familySchedule = [];
+  for (const type of activeTypes) familySchedule.push(type);
+  if (familySchedule.length && familySchedule.length < 6) familySchedule.push(signatureType);
+
+  return Object.freeze({
+    districtKey: `${districtX},${districtZ}`,
+    districtTheme: DISTRICT_ROLE_NAMES[themeIndex],
+    districtThemeType: themeType.placeType,
+    neighborhoodRole: DISTRICT_ROLE_NAMES[signatureIndex],
+    signatureType: signatureType.placeType,
+    signatureIndex,
+    activeTypes: Object.freeze(activeTypes.map(type => type.placeType)),
+    familyQuotas: Object.freeze(familyQuotas),
+    familySchedule: Object.freeze(familySchedule),
+    adjacencyInvariant: 'cardinal-neighbor chunks cannot share the same street-place signature family; each chunk emphasizes one family while retaining a five-family local vocabulary',
+  });
 }
 function rectsOverlap(a, b, clearance = 0) {
   return Math.abs(finite(a.x) - finite(b.x)) < finite(a.halfX ?? a.hx) + finite(b.halfX ?? b.hx) + clearance
@@ -85,6 +149,9 @@ export function planRouteOwnedPlazaPlaces({
   blockers = [],
   stableKey = 'route-owned-plaza-places',
   field = 'ground',
+  worldSeed = 0,
+  chunkX = 0,
+  chunkZ = 0,
   density = DEFAULT_DENSITY,
   maxPlaces = 6,
   minPlaces = 1,
@@ -106,7 +173,10 @@ export function planRouteOwnedPlazaPlaces({
   const target = hosts.length
     ? Math.min(Math.max(0, Math.floor(maxPlaces)), Math.max(Math.min(Math.floor(minPlaces), hosts.length), Math.round(hosts.length * clamp(density, 0, 1))))
     : 0;
-  const typeOffset = stableHash(`${stableKey}:${field}:type-offset`) % ROUTE_OWNED_PLAZA_PLACE_TYPES.length;
+  const districtProfile = routeOwnedPlazaDistrictProfile({ worldSeed, chunkX, chunkZ, field });
+  const familySchedule = districtProfile.familySchedule.length
+    ? districtProfile.familySchedule
+    : ROUTE_OWNED_PLAZA_PLACE_TYPES;
   const places = [];
   const occupied = [];
   let rejectedBlockers = 0;
@@ -115,8 +185,8 @@ export function planRouteOwnedPlazaPlaces({
 
   for (const plaza of hosts) {
     if (places.length >= target) break;
-    const type = ROUTE_OWNED_PLAZA_PLACE_TYPES[(typeOffset + places.length) % ROUTE_OWNED_PLAZA_PLACE_TYPES.length];
-    const quarterTurns = stableHash(`${stableKey}:${field}:${plaza.id}:orientation`) & 3;
+    const type = familySchedule[places.length % familySchedule.length];
+    const quarterTurns = (stableHash(`${stableKey}:${field}:${plaza.id}:orientation`) + districtProfile.signatureIndex) & 3;
     const swapped = (quarterTurns & 1) === 1;
     const baseHalfX = 0.96, baseHalfZ = 0.78;
     const halfX = swapped ? baseHalfZ : baseHalfX;
@@ -159,6 +229,11 @@ export function planRouteOwnedPlazaPlaces({
       quarterTurns,
       routeOwnership: 'world-street-plaza-circulation',
       traversalContract: 'road-adjacent-plaza + host-cell-central-cross-clear + blocker-clear',
+      districtKey: districtProfile.districtKey,
+      districtTheme: districtProfile.districtTheme,
+      districtThemeType: districtProfile.districtThemeType,
+      neighborhoodRole: districtProfile.neighborhoodRole,
+      districtSignatureType: districtProfile.signatureType,
     };
     const scene = buildRouteOwnedPlaceScene(place, {
       stableKey: `${stableKey}:${field}:${plaza.id}:${type.placeType}`,
@@ -183,6 +258,7 @@ export function planRouteOwnedPlazaPlaces({
   return Object.freeze({
     schema: ROUTE_OWNED_PLAZA_PLACE_PLAN_SCHEMA,
     field,
+    districtProfile,
     places: Object.freeze(places),
     stats: Object.freeze({
       hosts: hosts.length,
@@ -200,7 +276,15 @@ export function planRouteOwnedPlazaPlaces({
       sceneMicroParts: sceneMetrics.microParts,
       sceneIdentityParts: sceneMetrics.identityParts,
       sceneApproachParts: sceneMetrics.approachParts,
-      invariant: 'street-level authored places occupy only real road-adjacent plaza cells; the host-cell traversal cross and pre-existing physical clutter remain clear; approach identity stays inside the owned pad and adds no collision',
+      districtKey: districtProfile.districtKey,
+      districtTheme: districtProfile.districtTheme,
+      districtThemeType: districtProfile.districtThemeType,
+      neighborhoodRole: districtProfile.neighborhoodRole,
+      districtSignatureType: districtProfile.signatureType,
+      activeTypes: districtProfile.activeTypes,
+      familyQuotas: districtProfile.familyQuotas,
+      adjacencyInvariant: districtProfile.adjacencyInvariant,
+      invariant: 'street-level authored places occupy only real road-adjacent plaza cells; the host-cell traversal cross and pre-existing physical clutter remain clear; deterministic district quotas prevent adjacent chunks from reading as copies without adding cross-chunk runtime state',
     }),
   });
 }

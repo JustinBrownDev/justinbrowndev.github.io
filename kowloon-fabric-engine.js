@@ -1567,6 +1567,9 @@ export function createKowloonFabricEngine({
             blockers: physics.props ?? [],
             stableKey: `${worldSeed}:${chunk.key}:${field}:route-owned-plaza-places`,
             field,
+            worldSeed,
+            chunkX: chunk.x,
+            chunkZ: chunk.z,
             maxPlaces,
         });
         physics.routeOwnedPlazaPlacePlan = plan;
@@ -1586,6 +1589,11 @@ export function createKowloonFabricEngine({
                 halfX: place.halfX, halfZ: place.halfZ,
                 routeOwnership: place.routeOwnership,
                 traversalContract: place.traversalContract,
+                districtKey: place.districtKey,
+                districtTheme: place.districtTheme,
+                districtThemeType: place.districtThemeType,
+                neighborhoodRole: place.neighborhoodRole,
+                districtSignatureType: place.districtSignatureType,
                 sceneSchema: place.sceneSchema,
                 sceneVersion: place.sceneVersion,
                 sceneVariant: place.sceneVariant,

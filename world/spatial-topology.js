@@ -445,7 +445,11 @@ export function compileSpatialTopologyGraph({ chunk, payload } = {}) {
         },
     };
     const circulation = compileWorldCirculationGraph(graph);
-    assertWorldCirculationGraph(circulation);
+    // Once a building declares a real exterior egress portal, every authored
+    // interior space must reach it through physical connector authority. Buildings
+    // with no declared exterior portal remain observable rather than hard-failed;
+    // this gate specifically prevents partial/false egress graphs from shipping.
+    assertWorldCirculationGraph(circulation, { requireExplicitEgress: true });
     graph.circulation = circulation;
     graph.stats.circulation = circulation.stats;
     for (const scope of scopes) {

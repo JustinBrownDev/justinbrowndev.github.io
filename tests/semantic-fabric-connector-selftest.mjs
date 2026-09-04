@@ -8,6 +8,7 @@ import {
   createPortalConnector,
   createRampConnector,
   createStairConnector,
+  ensureSemanticConnectorAuthority,
   registerSemanticConnector,
   semanticPortalForRect,
 } from '../world/semantic-connectors.js';
@@ -71,6 +72,32 @@ assert.deepEqual(
   'connector-first publication must preserve established physical reservation kinds',
 );
 assert.equal(scaffoldFlight.kind, 'fire-escape', 'semantic connector kind remains semantic even when its physical reservation keeps the legacy contract');
+
+// Regression: BuildingPlan may explicitly bind a persistent stair to every floor
+// even when simplified endpoint geometry only discovers the bottom/top spaces.
+// The semantic-authority reconciliation pass may augment that binding, never erase
+// an authoritative middle-floor stop.
+const coreSpaces = [0, 1, 2].map(floor => ({
+  id: `test:core:floor:${floor}`,
+  floor, yBase: floor * 3.15, floorH: 3.15,
+  bounds: { minX: -1, maxX: 1, minZ: -1, maxZ: 1, yMin: floor * 3.15, yMax: (floor + 1) * 3.15 },
+}));
+const authoritativeStair = {
+  schema: SEMANTIC_CONNECTOR_SCHEMA,
+  id: 'test:authoritative-stair', kind: 'stair', source: 'building-plan-authority', visualRole: 'vertical-spine',
+  fromSpaceId: coreSpaces[0].id, toSpaceId: coreSpaces[2].id,
+  spaceIds: coreSpaces.map(space => space.id),
+  endpoints: [
+    { id: 'test:authoritative-stair:bottom', x: 0, y: 0, z: 0 },
+    { id: 'test:authoritative-stair:top', x: 0, y: 6.3, z: 0 },
+  ],
+  reservations: [], metadata: { buildingPlanId: 'test:plan' },
+};
+const authorityPhysics = { circulationReservations: [], semanticConnectors: [authoritativeStair] };
+const authorityStats = ensureSemanticConnectorAuthority(authorityPhysics, coreSpaces);
+assert.deepEqual(authoritativeStair.spaceIds, coreSpaces.map(space => space.id),
+  'semantic reconciliation must preserve every explicit persistent-core floor binding');
+assert.equal(authorityStats.preservedExplicitBindings, 3);
 
 const fabricSource = fs.readFileSync(new URL('../kowloon-fabric-engine.js', import.meta.url), 'utf8');
 for (const needle of [

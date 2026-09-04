@@ -501,9 +501,29 @@ export function ensureSemanticConnectorAuthority(physics, spacePlans = []) {
         synthesized++;
     }
 
+    const knownSpaceIds = new Set(spacePlans.map(plan => String(plan?.id ?? '')).filter(Boolean));
+    let preservedExplicitBindings = 0;
+    let inferredBindings = 0;
     let resolvedEdges = 0;
     for (const connector of connectors) {
-        const spaceIds = connectorSpaceIds(connector, spacePlans);
+        // Structural/BuildingPlan authorities may already know every semantic space
+        // served by a connector (especially a persistent stair spanning many floors).
+        // Geometric inference is allowed to discover additional bindings, but must
+        // never erase an explicit middle-floor stop merely because only the stair's
+        // endpoints intersect that floor's simplified geometry.
+        const explicitSpaceIds = [...new Set([
+            connector.fromSpaceId,
+            ...(connector.spaceIds ?? []),
+            connector.toSpaceId,
+        ]
+            .filter(Boolean)
+            .map(id => String(id))
+            .filter(id => knownSpaceIds.has(id)))];
+        const inferredSpaceIds = connectorSpaceIds(connector, spacePlans);
+        const spaceIds = [...explicitSpaceIds];
+        for (const id of inferredSpaceIds) if (!spaceIds.includes(id)) spaceIds.push(id);
+        preservedExplicitBindings += explicitSpaceIds.length;
+        inferredBindings += inferredSpaceIds.filter(id => !explicitSpaceIds.includes(id)).length;
         connector.spaceIds = spaceIds;
         if (!connector.fromSpaceId && spaceIds[0]) connector.fromSpaceId = spaceIds[0];
         if (!connector.toSpaceId && spaceIds[1]) connector.toSpaceId = spaceIds[1];
@@ -524,6 +544,8 @@ export function ensureSemanticConnectorAuthority(physics, spacePlans = []) {
         reservations: reservations.length,
         synthesized,
         resolvedEdges,
+        preservedExplicitBindings,
+        inferredBindings,
         orphanReservations: reservations.filter(reservation => reservation.semanticConnectorEligible !== false && !reservation.connectorId).length,
     };
 }

@@ -1,3 +1,5 @@
+import { buildRouteOwnedPlaceScene, summarizeRouteOwnedPlaceParts } from './route-owned-place-scenes.js';
+
 export const ROUTE_OWNED_ROOFTOP_PLACE_SCHEMA = 'jweb.route-owned-rooftop-place.v1';
 export const ROUTE_OWNED_ROOFTOP_PLACE_PLAN_SCHEMA = 'jweb.route-owned-rooftop-place-plan.v1';
 
@@ -126,95 +128,6 @@ function candidatePads(surface, { halfX, halfZ, margin, stableKey }) {
   return raw.slice(shift).concat(raw.slice(0, shift));
 }
 
-function localToWorld(place, lx, lz) {
-  const quarter = place.quarterTurns & 3;
-  if (quarter === 0) return { x: place.x + lx, z: place.z + lz };
-  if (quarter === 1) return { x: place.x - lz, z: place.z + lx };
-  if (quarter === 2) return { x: place.x - lx, z: place.z - lz };
-  return { x: place.x + lz, z: place.z - lx };
-}
-
-function localSize(place, sx, sz) {
-  return (place.quarterTurns & 1) ? { sx: sz, sz: sx } : { sx, sz };
-}
-
-function part(place, role, { x = 0, z = 0, y = 0, sx = 0.3, sy = 0.3, sz = 0.3, color = 0x777777, collision = false, emissive = false } = {}) {
-  const p = localToWorld(place, x, z);
-  const size = localSize(place, sx, sz);
-  return Object.freeze({
-    role,
-    x: p.x, z: p.z, y: place.y + y,
-    sx: size.sx, sy, sz: size.sz,
-    color,
-    collision,
-    emissive,
-  });
-}
-
-const PALETTES = Object.freeze({
-  'roof-bodega': Object.freeze([0xc75d3b, 0xe0ba69, 0x3f6167, 0xd6d2c4]),
-  'thrift-stall': Object.freeze([0x805d8c, 0xca8a8b, 0x7e9a78, 0xe1c07a]),
-  'gallery-terrace': Object.freeze([0xd6d5cf, 0x30343a, 0x9b3d47, 0x7893a8]),
-  'repair-bay': Object.freeze([0x5f6d72, 0xc98b46, 0x3f4246, 0x9d6d4d]),
-  refuge: Object.freeze([0x617b69, 0xd9c888, 0x7d8d91, 0xb15448]),
-  'utility-yard': Object.freeze([0x66706d, 0x9c9b83, 0xd0a64e, 0x4d5556]),
-  'fuel-kiosk': Object.freeze([0x527ea3, 0xd84a42, 0xe8dfc6, 0x42464d]),
-});
-
-function realizeScene(place) {
-  const c = PALETTES[place.placeType] ?? PALETTES['utility-yard'];
-  const parts = [part(place, 'paint-pad', { y: 0.025, sx: place.halfX * 1.85, sy: 0.05, sz: place.halfZ * 1.85, color: c[3] })];
-  const add = (role, spec) => parts.push(part(place, role, spec));
-
-  if (place.placeType === 'roof-bodega') {
-    add('kiosk-body', { z: 0.22, y: 0.78, sx: 1.25, sy: 1.56, sz: 0.76, color: c[0], collision: true });
-    add('counter', { z: -0.30, y: 0.55, sx: 1.45, sy: 0.82, sz: 0.30, color: c[3], collision: true });
-    add('awning', { z: -0.20, y: 1.78, sx: 1.85, sy: 0.09, sz: 1.05, color: c[1] });
-    add('sign-bar', { z: 0.56, y: 1.78, sx: 1.30, sy: 0.30, sz: 0.08, color: c[2], emissive: true });
-    add('crate-a', { x: -0.62, z: -0.56, y: 0.22, sx: 0.42, sy: 0.44, sz: 0.42, color: c[1], collision: true });
-    add('crate-b', { x: -0.20, z: -0.62, y: 0.17, sx: 0.32, sy: 0.34, sz: 0.34, color: c[0] });
-  } else if (place.placeType === 'thrift-stall') {
-    add('canopy', { y: 1.92, sx: 1.95, sy: 0.10, sz: 1.42, color: c[1] });
-    add('rack-a', { x: -0.48, y: 0.83, sx: 0.12, sy: 1.42, sz: 1.12, color: c[0], collision: true });
-    add('rack-b', { x: 0.48, y: 0.83, sx: 0.12, sy: 1.42, sz: 1.12, color: c[2], collision: true });
-    add('bin-a', { x: -0.25, z: -0.43, y: 0.24, sx: 0.52, sy: 0.48, sz: 0.38, color: c[3] });
-    add('bin-b', { x: 0.38, z: -0.42, y: 0.20, sx: 0.40, sy: 0.40, sz: 0.42, color: c[1] });
-  } else if (place.placeType === 'gallery-terrace') {
-    add('gallery-wall', { z: 0.48, y: 1.04, sx: 1.72, sy: 2.02, sz: 0.10, color: c[0], collision: true });
-    add('art-panel-a', { x: -0.46, z: 0.41, y: 1.12, sx: 0.52, sy: 0.78, sz: 0.04, color: c[2], emissive: true });
-    add('art-panel-b', { x: 0.43, z: 0.41, y: 1.18, sx: 0.48, sy: 0.90, sz: 0.04, color: c[3], emissive: true });
-    add('plinth-a', { x: -0.40, z: -0.36, y: 0.32, sx: 0.34, sy: 0.64, sz: 0.34, color: c[1], collision: true });
-    add('plinth-b', { x: 0.42, z: -0.30, y: 0.24, sx: 0.38, sy: 0.48, sz: 0.38, color: c[1] });
-  } else if (place.placeType === 'repair-bay') {
-    add('workbench', { z: 0.18, y: 0.48, sx: 1.55, sy: 0.72, sz: 0.62, color: c[1], collision: true });
-    add('tool-cabinet', { x: 0.60, z: 0.50, y: 0.84, sx: 0.46, sy: 1.68, sz: 0.42, color: c[0], collision: true });
-    add('parts-bin', { x: -0.58, z: -0.38, y: 0.30, sx: 0.48, sy: 0.60, sz: 0.52, color: c[3], collision: true });
-    add('hoist-top', { y: 1.84, sx: 1.70, sy: 0.10, sz: 0.12, color: c[2] });
-    add('hoist-post-a', { x: -0.72, y: 0.94, sx: 0.10, sy: 1.80, sz: 0.10, color: c[2] });
-    add('hoist-post-b', { x: 0.72, y: 0.94, sx: 0.10, sy: 1.80, sz: 0.10, color: c[2] });
-  } else if (place.placeType === 'refuge') {
-    add('shelter-canopy', { y: 1.88, sx: 1.95, sy: 0.12, sz: 1.44, color: c[1] });
-    add('bench-a', { x: -0.42, y: 0.31, sx: 0.66, sy: 0.40, sz: 0.34, color: c[0], collision: true });
-    add('bench-b', { x: 0.42, y: 0.31, sx: 0.66, sy: 0.40, sz: 0.34, color: c[0], collision: true });
-    add('water-cabinet', { z: 0.48, y: 0.66, sx: 0.54, sy: 1.30, sz: 0.42, color: c[2], collision: true });
-    add('marker', { z: 0.62, y: 1.48, sx: 0.58, sy: 0.26, sz: 0.08, color: c[3], emissive: true });
-  } else if (place.placeType === 'fuel-kiosk') {
-    add('fuel-canopy', { y: 2.02, sx: 1.90, sy: 0.12, sz: 1.34, color: c[2] });
-    add('pump-a', { x: -0.43, y: 0.62, sx: 0.40, sy: 1.24, sz: 0.46, color: c[0], collision: true });
-    add('pump-b', { x: 0.43, y: 0.62, sx: 0.40, sy: 1.24, sz: 0.46, color: c[1], collision: true });
-    add('service-box', { z: 0.52, y: 0.48, sx: 0.84, sy: 0.94, sz: 0.38, color: c[3], collision: true });
-    add('price-band', { z: 0.70, y: 1.55, sx: 1.16, sy: 0.28, sz: 0.08, color: c[1], emissive: true });
-  } else {
-    add('utility-cabinet-a', { x: -0.46, y: 0.72, sx: 0.62, sy: 1.42, sz: 0.62, color: c[0], collision: true });
-    add('utility-cabinet-b', { x: 0.38, z: 0.18, y: 0.55, sx: 0.54, sy: 1.08, sz: 0.70, color: c[1], collision: true });
-    add('service-plinth', { z: -0.48, y: 0.22, sx: 1.18, sy: 0.42, sz: 0.42, color: c[2], collision: true });
-    add('pipe-header', { y: 1.58, sx: 1.52, sy: 0.12, sz: 0.12, color: c[3] });
-    add('pipe-post-a', { x: -0.66, y: 0.85, sx: 0.10, sy: 1.48, sz: 0.10, color: c[3] });
-    add('pipe-post-b', { x: 0.66, y: 0.85, sx: 0.10, sy: 1.48, sz: 0.10, color: c[3] });
-  }
-  return Object.freeze(parts);
-}
-
 export function planRouteOwnedRooftopPlaces({
   surfaces = [],
   transportNetwork = null,
@@ -308,7 +221,15 @@ export function planRouteOwnedRooftopPlaces({
       routeOwnership: 'authoritative-exterior-transport-network',
       traversalContract: 'reachable-host + central-cross-clear + reservation-clear',
     };
-    place.parts = realizeScene(place);
+    const scene = buildRouteOwnedPlaceScene(place, {
+      stableKey: `${stableKey}:${field}:${surface.id}:scene`,
+    });
+    place.sceneSchema = scene.schema;
+    place.sceneVersion = scene.version;
+    place.sceneVariant = scene.variant;
+    place.sceneTags = scene.tags;
+    place.sceneMetrics = scene.metrics;
+    place.parts = scene.parts;
     Object.freeze(place);
     places.push(place);
     occupied.push(accepted);
@@ -316,6 +237,7 @@ export function planRouteOwnedRooftopPlaces({
   }
 
   const byType = Object.fromEntries(ROUTE_OWNED_ROOFTOP_PLACE_TYPES.map(type => [type, places.filter(place => place.placeType === type).length]));
+  const sceneMetrics = summarizeRouteOwnedPlaceParts(places.flatMap(place => place.parts ?? []));
   return Object.freeze({
     schema: ROUTE_OWNED_ROOFTOP_PLACE_PLAN_SCHEMA,
     field,
@@ -333,7 +255,13 @@ export function planRouteOwnedRooftopPlaces({
       rejectedOverlap,
       requiredSurfaces: required.size,
       reachableSurfaces: reachable.size,
-      invariant: 'authored rooftop places consume only reachable required roof surfaces and keep the central route cross, junction spokes, and circulation reservations clear',
+      sceneParts: sceneMetrics.parts,
+      sceneCollisionParts: sceneMetrics.collisionParts,
+      sceneEmissiveParts: sceneMetrics.emissiveParts,
+      scenePaintParts: sceneMetrics.paintParts,
+      sceneMicroParts: sceneMetrics.microParts,
+      sceneIdentityParts: sceneMetrics.identityParts,
+      invariant: 'authored rooftop places consume only reachable required roof surfaces; dense scene identity stays footprint-bound while the central route cross, junction spokes, and circulation reservations remain clear',
     }),
   });
 }

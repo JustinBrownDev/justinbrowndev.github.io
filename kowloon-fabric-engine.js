@@ -1514,12 +1514,22 @@ export function createKowloonFabricEngine({
                 halfX: place.halfX, halfZ: place.halfZ,
                 routeOwnership: place.routeOwnership,
                 traversalContract: place.traversalContract,
+                sceneSchema: place.sceneSchema,
+                sceneVersion: place.sceneVersion,
+                sceneVariant: place.sceneVariant,
+                sceneTags: place.sceneTags,
+                sceneMetrics: place.sceneMetrics,
             });
             for (const part of place.parts) {
-                const renderSink = part.emissive ? transforms.windows : transforms.props;
+                const renderSink = part.renderClass === 'paint'
+                    ? transforms.interiorPaint
+                    : (part.emissive || part.renderClass === 'emissive')
+                        ? transforms.windows
+                        : transforms.props;
                 renderSink.push({
                     x: part.x, y: part.y, z: part.z,
                     sx: part.sx, sy: part.sy, sz: part.sz,
+                    ry: part.ry ?? 0,
                     color: part.color,
                     routeOwnedRooftopPlace: true,
                     placeId: place.id,
@@ -1527,6 +1537,10 @@ export function createKowloonFabricEngine({
                     surfaceId: place.surfaceId,
                     partRole: part.role,
                     authoredPlaceEmissive: part.emissive === true,
+                    authoredPlaceRenderClass: part.renderClass ?? 'prop',
+                    authoredPlaceDetailTier: part.detailTier ?? 'structure',
+                    sceneVersion: place.sceneVersion,
+                    sceneVariant: place.sceneVariant,
                 });
                 if (!part.collision) continue;
                 physics.props.push({

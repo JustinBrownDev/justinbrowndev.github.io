@@ -6,6 +6,12 @@ import {
   routeSpokeRectanglesForSurface,
 } from '../world/route-owned-rooftop-places.js';
 
+import {
+  ROUTE_OWNED_PLACE_SCENE_VERSION,
+  ROUTE_OWNED_PLACE_SCENE_VARIANTS,
+  routeOwnedScenePartWithinFootprint,
+} from '../world/route-owned-place-scenes.js';
+
 const surfaces = Array.from({ length: 12 }, (_, index) => ({
   id: `roof:${index}`,
   kind: 'clear-roof-street-layer',
@@ -53,9 +59,20 @@ for (const place of first.places) {
       && Math.abs(place.z - spoke.z) < place.halfZ + spoke.halfZ + 0.12;
     assert.equal(overlaps, false, `${place.id}: footprint must leave a clear spoke from each transport junction to the central route cross`);
   }
+  assert.equal(place.sceneVersion, ROUTE_OWNED_PLACE_SCENE_VERSION);
+  assert.ok(Number.isInteger(place.sceneVariant) && place.sceneVariant >= 0 && place.sceneVariant < ROUTE_OWNED_PLACE_SCENE_VARIANTS);
+  assert.ok(place.sceneTags.length >= 3, `${place.id}: authored scene must carry a stable semantic identity`);
+  assert.ok(place.parts.length >= 12, `${place.id}: authored scene must be visibly enriched`);
   assert.ok(place.parts.some(part => part.role === 'paint-pad'), `${place.id}: authored scene must establish a visual floor/paint identity`);
+  assert.ok(place.parts.filter(part => part.renderClass === 'paint').length >= 3, `${place.id}: paint identity must use the matte paint lane`);
+  assert.ok(place.parts.some(part => part.emissive), `${place.id}: authored scene must contain an emissive identity cue`);
   assert.ok(place.parts.some(part => part.collision), `${place.id}: authored scene must contain at least one physically present object`);
+  for (const part of place.parts) assert.ok(routeOwnedScenePartWithinFootprint(place, part, 0.025), `${place.id}:${part.role}: scene detail escaped its route-owned footprint`);
 }
+assert.equal(first.stats.sceneParts, first.places.reduce((sum, place) => sum + place.parts.length, 0));
+assert.ok(first.stats.scenePaintParts >= first.places.length * 3);
+assert.ok(first.stats.sceneEmissiveParts >= first.places.length);
+assert.ok(first.stats.sceneMicroParts >= first.places.length * 3);
 
 console.log('[route-owned-rooftop-places-selftest] PASS', {
   realized: first.places.length,
@@ -63,5 +80,9 @@ console.log('[route-owned-rooftop-places-selftest] PASS', {
   distinctTypes: first.stats.distinctTypes,
   byType: first.stats.byType,
   rejectedReservations: first.stats.rejectedReservations,
+  sceneParts: first.stats.sceneParts,
+  scenePaintParts: first.stats.scenePaintParts,
+  sceneEmissiveParts: first.stats.sceneEmissiveParts,
+  sceneMicroParts: first.stats.sceneMicroParts,
   invariant: first.stats.invariant,
 });

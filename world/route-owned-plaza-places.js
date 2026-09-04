@@ -199,7 +199,8 @@ export function planRouteOwnedPlazaPlaces({
       scenePaintParts: sceneMetrics.paintParts,
       sceneMicroParts: sceneMetrics.microParts,
       sceneIdentityParts: sceneMetrics.identityParts,
-      invariant: 'street-level authored places occupy only real road-adjacent plaza cells; the host-cell traversal cross and pre-existing physical clutter remain clear',
+      sceneApproachParts: sceneMetrics.approachParts,
+      invariant: 'street-level authored places occupy only real road-adjacent plaza cells; the host-cell traversal cross and pre-existing physical clutter remain clear; approach identity stays inside the owned pad and adds no collision',
     }),
   });
 }

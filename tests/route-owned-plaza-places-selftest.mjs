@@ -62,11 +62,18 @@ for (const place of first.places) {
   assert.ok(place.parts.some(part => part.renderClass === 'paint'));
   assert.ok(place.parts.some(part => part.emissive));
   assert.ok(place.parts.some(part => part.collision));
+  const approach = place.parts.filter(part => part.detailTier === 'approach');
+  assert.ok(approach.length >= 4, `${place.id}: street place needs approach-scale identity`);
+  assert.ok(approach.some(part => part.emissive), `${place.id}: approach identity needs a luminous marker`);
+  assert.ok(approach.some(part => part.renderClass === 'paint'), `${place.id}: approach identity needs a painted ground cue`);
+  assert.equal(approach.some(part => part.collision), false, `${place.id}: approach identity must not widen plaza collision`);
+  assert.ok(Math.max(...approach.map(part => part.y + part.sy * 0.5)) >= 2.70, `${place.id}: identity marker must read above ordinary waist-height clutter`);
   for (const part of place.parts) assert.ok(routeOwnedScenePartWithinFootprint(place, part, 0.025));
 }
 assert.equal(first.stats.sceneParts, first.places.reduce((sum, place) => sum + place.parts.length, 0));
-assert.ok(first.stats.scenePaintParts >= first.places.length * 3);
+assert.ok(first.stats.scenePaintParts >= first.places.length * 4);
 assert.ok(first.stats.sceneMicroParts >= first.places.length * 3);
+assert.ok(first.stats.sceneApproachParts >= first.places.length * 4);
 
 const aliased = first.places.find(place => place.placeType === 'street-bodega' || place.placeType === 'gallery-pocket');
 if (aliased) assert.notEqual(aliased.placeType, aliased.sceneType, 'street semantics may reuse an existing visual grammar without lying about place identity');

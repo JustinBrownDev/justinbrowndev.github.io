@@ -1,5 +1,5 @@
-export const ROUTE_OWNED_PLACE_SCENE_SCHEMA = 'jweb.route-owned-place-scene.v2';
-export const ROUTE_OWNED_PLACE_SCENE_VERSION = 2;
+export const ROUTE_OWNED_PLACE_SCENE_SCHEMA = 'jweb.route-owned-place-scene.v3';
+export const ROUTE_OWNED_PLACE_SCENE_VERSION = 3;
 export const ROUTE_OWNED_PLACE_SCENE_VARIANTS = 3;
 
 const EPS = 1e-6;
@@ -74,6 +74,49 @@ function basePaint(place, c, add, variant) {
   add('paint-pad', { y: 0.025, sx: 1.80, sy: 0.05, sz: 1.40, color: c[3], renderClass: 'paint', detailTier: 'surface' });
   add('paint-stripe-a', { x: variant === 1 ? -0.38 : 0.38, y: 0.055, sx: 0.10, sy: 0.025, sz: 1.28, color: c[0], renderClass: 'paint', detailTier: 'surface' });
   add('paint-stripe-b', { z: variant === 2 ? 0.32 : -0.32, y: 0.058, sx: 1.64, sy: 0.026, sz: 0.08, color: c[1], renderClass: 'paint', detailTier: 'surface' });
+}
+
+function streetApproachIdentity(place, sceneType, c, add, variant) {
+  if (place?.routeOwnership !== 'world-street-plaza-circulation') return;
+
+  // Cut 21J: street places need an identity that reads before the player is
+  // standing inside the 2m pad. Keep it wholly inside the already-owned plaza
+  // footprint and non-colliding: circulation owns the ground, this layer only
+  // adds cheap instanced paint + emissive silhouette above it.
+  const mastX = variant === 1 ? -0.66 : 0.66;
+  const bandZ = variant === 2 ? 0.42 : -0.42;
+  add('street-approach-band', {
+    z: bandZ, y: 0.066, sx: 1.46, sy: 0.022, sz: 0.14,
+    color: c[0], renderClass: 'paint', detailTier: 'approach',
+  });
+  add('street-identity-mast', {
+    x: mastX, z: 0.20, y: 1.42, sx: 0.09, sy: 2.72, sz: 0.09,
+    color: c[4], detailTier: 'approach',
+  });
+  add('street-identity-lightbox', {
+    x: mastX, z: 0.20, y: 2.46, sx: 0.46, sy: 0.54, sz: 0.10,
+    color: c[2], emissive: true, detailTier: 'approach',
+  });
+
+  if (sceneType === 'roof-bodega') {
+    add('street-glyph-retail', { x: mastX, z: 0.14, y: 2.46, sx: 0.26, sy: 0.08, sz: 0.03, color: c[1], emissive: true, detailTier: 'approach' });
+  } else if (sceneType === 'thrift-stall') {
+    add('street-glyph-thrift-a', { x: mastX - 0.10, z: 0.14, y: 2.52, sx: 0.10, sy: 0.22, sz: 0.03, color: c[1], emissive: true, detailTier: 'approach' });
+    add('street-glyph-thrift-b', { x: mastX + 0.10, z: 0.14, y: 2.40, sx: 0.10, sy: 0.22, sz: 0.03, color: c[3], emissive: true, detailTier: 'approach' });
+  } else if (sceneType === 'gallery-terrace') {
+    add('street-glyph-gallery', { x: mastX, z: 0.14, y: 2.46, sx: 0.22, sy: 0.22, sz: 0.03, color: c[4], emissive: true, detailTier: 'approach' });
+  } else if (sceneType === 'repair-bay') {
+    add('street-glyph-repair', { x: mastX, z: 0.14, y: 2.46, sx: 0.28, sy: 0.07, sz: 0.03, color: c[1], emissive: true, detailTier: 'approach' });
+    add('street-glyph-repair-stem', { x: mastX, z: 0.14, y: 2.46, sx: 0.07, sy: 0.28, sz: 0.03, color: c[1], emissive: true, detailTier: 'approach' });
+  } else if (sceneType === 'refuge') {
+    add('street-glyph-refuge', { x: mastX, z: 0.14, y: 2.46, sx: 0.20, sy: 0.20, sz: 0.03, color: c[3], emissive: true, detailTier: 'approach' });
+  } else if (sceneType === 'utility-yard') {
+    add('street-glyph-utility-a', { x: mastX - 0.09, z: 0.14, y: 2.46, sx: 0.07, sy: 0.28, sz: 0.03, color: c[2], emissive: true, detailTier: 'approach' });
+    add('street-glyph-utility-b', { x: mastX + 0.09, z: 0.14, y: 2.46, sx: 0.07, sy: 0.28, sz: 0.03, color: c[2], emissive: true, detailTier: 'approach' });
+  } else if (sceneType === 'fuel-kiosk') {
+    add('street-glyph-fuel-top', { x: mastX, z: 0.14, y: 2.54, sx: 0.28, sy: 0.08, sz: 0.03, color: c[1], emissive: true, detailTier: 'approach' });
+    add('street-glyph-fuel-bottom', { x: mastX, z: 0.14, y: 2.36, sx: 0.28, sy: 0.08, sz: 0.03, color: c[4], emissive: true, detailTier: 'approach' });
+  }
 }
 
 function bodega(place, c, add, variant) {
@@ -194,6 +237,7 @@ export function summarizeRouteOwnedPlaceParts(parts = []) {
     paintParts: parts.filter(item => item.renderClass === 'paint').length,
     microParts: parts.filter(item => item.detailTier === 'micro').length,
     identityParts: parts.filter(item => item.detailTier === 'identity').length,
+    approachParts: parts.filter(item => item.detailTier === 'approach').length,
   });
 }
 
@@ -219,6 +263,7 @@ export function buildRouteOwnedPlaceScene(place, { stableKey = 'route-owned-plac
   const add = (role, spec) => parts.push(part(place, role, spec));
   basePaint(place, c, add, resolvedVariant);
   (BUILDERS[sceneType] ?? utility)(place, c, add, resolvedVariant);
+  streetApproachIdentity(place, sceneType, c, add, resolvedVariant);
   for (const item of parts) {
     if (!routeOwnedScenePartWithinFootprint(place, item, 0.025)) {
       throw new Error(`${place?.id ?? placeType}:${item.role}: scene part escapes route-owned footprint`);
@@ -234,6 +279,6 @@ export function buildRouteOwnedPlaceScene(place, { stableKey = 'route-owned-plac
     tags: TAGS[sceneType] ?? TAGS['utility-yard'],
     parts: frozenParts,
     metrics: summarizeRouteOwnedPlaceParts(frozenParts),
-    invariant: 'dense authored identity stays inside the route-owned footprint; collision remains sparse and render detail stays instanced',
+    invariant: 'dense authored identity stays inside the route-owned footprint; street approach identity is non-colliding paint/emissive silhouette and render detail stays instanced',
   });
 }

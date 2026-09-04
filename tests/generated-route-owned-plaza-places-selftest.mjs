@@ -46,8 +46,15 @@ for (const place of places) {
   assert.equal(place.routeOwnership, 'world-street-plaza-circulation');
   assert.ok(place.sceneMetrics.parts >= 12);
   assert.ok(place.sceneMetrics.paintParts >= 3);
-  assert.ok(place.sceneMetrics.emissiveParts >= 1);
+  assert.ok(place.sceneMetrics.emissiveParts >= 2);
   assert.ok(place.sceneMetrics.microParts >= 3);
+  assert.ok(place.sceneMetrics.approachParts >= 4);
+  const realized = (payload.physics.routeOwnedPlazaPlaces ?? []).find(item => item.id === place.id);
+  assert.ok(realized, `${place.id}: realized street place must remain in physics registry`);
+  const approach = realized.parts.filter(part => part.detailTier === 'approach');
+  assert.equal(approach.some(part => part.collision), false);
+  assert.ok(approach.some(part => part.emissive));
+  assert.ok(approach.some(part => part.renderClass === 'paint'));
 }
 
 const circulation = payload.worldCirculation;
@@ -63,6 +70,7 @@ console.log('[generated-route-owned-plaza-places-selftest] PASS', {
   streetPlaces: places.length,
   streetPlaceTypes: new Set(places.map(place => place.placeType)).size,
   streetSceneParts: payload.routeOwnedPlazaPlaces.sceneParts,
+  streetApproachParts: payload.routeOwnedPlazaPlaces.sceneApproachParts,
   circulationComponents: circulation.stats.components,
   reachableSpaces: circulation.stats.reachableSpaces,
   reachableTransportNodes: circulation.stats.reachableTransportNodes,

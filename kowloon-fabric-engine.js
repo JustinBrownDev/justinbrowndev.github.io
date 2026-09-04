@@ -903,20 +903,6 @@ export function createKowloonFabricEngine({
                 flightId: flight.id,
             };
             physics.ramps.push(ramp);
-            physics.circulationReservations.push(createRampCirculationReservation({
-                id: `${plan.id}:${flight.id}:reservation`,
-                kind: 'scaffold-ramp',
-                axis: flight.axis,
-                from: flight.from,
-                to: flight.to,
-                fixedCoord: flight.fixedCoord,
-                halfWidth: flight.halfWidth,
-                y0: flight.y0,
-                y1: flight.y1,
-                capsuleRadius: Math.max(0.22, Number(plan.playerCapsuleRadius) || 0.28),
-                headroom: Math.max(1.95, Number(plan.headroom) || 2.05),
-                source: 'exterior-scaffold-circulation',
-            }));
             emitFlightGuardPairFromAuthority({
                 physics, transforms, idPrefix: `${flight.id}:guard`,
                 axis: flight.axis, from: flight.from, to: flight.to, fixedCoord: flight.fixedCoord,

@@ -7,58 +7,68 @@ import {
 } from '../world/circulation-graph.js';
 
 const spaces = [
-    { id: 'b:entry', entityId: 'building:b', floor: 0, yBase: 0 },
-    { id: 'b:room0', entityId: 'building:b', floor: 0, yBase: 0 },
-    { id: 'b:core1', entityId: 'building:b', floor: 1, yBase: 3.15 },
-    { id: 'b:room1', entityId: 'building:b', floor: 1, yBase: 3.15 },
-    { id: 'sealed:room', entityId: 'building:sealed', floor: 0, yBase: 0 },
+    { id: 'ground:entry', entityId: 'building:ground', layer: 'ground', floor: 0, yBase: 0 },
+    { id: 'ground:room', entityId: 'building:ground', layer: 'ground', floor: 1, yBase: 3.15 },
+    { id: 'hanging:room', entityId: 'building:hanging', layer: 'hanging', floor: 4, yBase: 12.6 },
+    { id: 'ground:isolated', entityId: 'building:ground', layer: 'ground', floor: 0, yBase: 0 },
 ];
 const base = {
     schema: 'jweb.spatial-topology.v1',
     chunkKey: '2,0',
     spaces,
+    // This is intent only. If it enters the traversable graph, the isolated room
+    // would falsely pass egress.
     edges: [
-        { id: 'adj:0', kind: 'adjacent-space', fromId: 'b:entry', toId: 'b:room0', metadata: { authority: 'building-plan' } },
-        { id: 'adj:1', kind: 'adjacent-space', fromId: 'b:core1', toId: 'b:room1', metadata: { authority: 'building-plan' } },
+        { id: 'adj:false-proof', kind: 'adjacent-space', fromId: 'ground:entry', toId: 'ground:isolated', metadata: { authority: 'building-plan' } },
     ],
     connectors: [
-        { id: 'stair:b', kind: 'stair', source: 'compound-stair', spaceIds: ['b:entry', 'b:core1'] },
-        { id: 'door:entry', kind: 'door', source: 'compound-entrance', spaceIds: ['b:entry'], fromSpaceId: 'b:entry', toSpaceId: '2,0:street' },
+        { id: 'stair:ground', kind: 'stair', source: 'compound-stair', spaceIds: ['ground:entry', 'ground:room'] },
+        { id: 'ladder:cross-layer', kind: 'ladder', source: 'cavern-ladder-circulation', spaceIds: ['ground:room', 'hanging:room'] },
     ],
     portals: [
         {
-            id: 'door:entry', connectorType: 'door', family: 'main-entrance',
+            id: 'door:world', connectorType: 'door', family: 'main-entrance',
             traversal: { traversable: true, role: 'public-access' },
-            linkedSpaceIds: ['b:entry', '2,0:street'], buildingIds: ['building:b'],
+            linkedSpaceIds: ['ground:entry', '2,0:street'], buildingIds: ['building:ground'],
         },
-        // Interior door-like data must NOT become an exit because both endpoints
-        // are real authored spaces.
         {
             id: 'door:inside', connectorType: 'door', family: 'entrance',
-            traversal: { traversable: true }, linkedSpaceIds: ['b:entry', 'b:room0'], buildingIds: ['building:b'],
+            traversal: { traversable: true }, linkedSpaceIds: ['ground:entry', 'ground:room'], buildingIds: ['building:ground'],
         },
     ],
 };
 
 const graph = compileWorldCirculationGraph(base);
 assert.equal(graph.schema, WORLD_CIRCULATION_SCHEMA);
+assert.equal(graph.unifiedLayers, true);
+assert.equal(graph.authority, 'physical-connectors-and-access-portals');
+assert.equal(graph.stats.worldNodes, 1);
+assert.equal(graph.stats.plannedAdjacencies, 1);
+assert.equal(graph.stats.physicalConnectorEdges, 2);
+assert.equal(graph.stats.portalEdges, 1);
+assert.equal(graph.stats.crossLayerEdges, 1);
 assert.equal(graph.stats.explicitExitPortals, 1);
-assert.equal(graph.stats.explicitEgressBuildings, 1);
-assert.equal(graph.stats.explicitEgressFailures, 0);
-assert.equal(graph.routes['b:entry'].distanceToExit, 0);
-assert.equal(graph.routes['b:room0'].nextSpaceId, 'b:entry');
-assert.equal(graph.routes['b:room1'].distanceToExit, 2);
-assert.deepEqual(circulationRouteForSpace(graph, 'b:room1').map(item => item.spaceId), ['b:room1', 'b:core1', 'b:entry']);
-assert.equal(graph.buildings.find(item => item.entityId === 'building:sealed').explicitEgress, false);
-assertWorldCirculationGraph(graph, { requireExplicitEgress: true });
+assert.equal(graph.stats.reachableSpaces, 3);
+assert.equal(graph.stats.unreachableSpaces, 1);
+assert.ok(graph.nodes.some(node => node.kind === 'world' && node.id === '2,0:street'));
+assert.ok(graph.edges.every(edge => edge.links.every(link => link.kind !== 'planned-adjacency')));
+assert.equal(graph.routes['ground:entry'].nextNodeId, '2,0:street');
+assert.equal(graph.routes['ground:entry'].distanceToExit, 0);
+assert.equal(graph.routes['hanging:room'].distanceToExit, 2);
+assert.equal(graph.routes['ground:isolated'], undefined, 'planned adjacency must not prove traversal');
+assert.deepEqual(
+    circulationRouteForSpace(graph, 'hanging:room').map(item => item.nodeId),
+    ['hanging:room', 'ground:room', 'ground:entry', '2,0:street'],
+);
+assertWorldCirculationGraph(graph);
 
 const broken = compileWorldCirculationGraph({
     ...base,
-    spaces: [...spaces, { id: 'b:orphan', entityId: 'building:b', floor: 2, yBase: 6.3 }],
+    spaces: [...spaces, { id: 'ground:orphan', entityId: 'building:ground', layer: 'ground', floor: 2, yBase: 6.3 }],
 });
 assert.equal(broken.stats.explicitEgressFailures, 1);
 assert.throws(() => assertWorldCirculationGraph(broken, { requireExplicitEgress: true }), /explicit-egress building failures/);
 
 const repeat = compileWorldCirculationGraph(base);
-assert.deepEqual(repeat, graph, 'circulation graph must be deterministic');
-console.log('world-circulation-graph-selftest: ok', graph.stats);
+assert.deepEqual(repeat, graph, 'unified circulation graph must be deterministic');
+console.log('[world-circulation-graph-selftest] PASS', graph.stats);

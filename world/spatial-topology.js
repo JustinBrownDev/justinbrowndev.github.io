@@ -129,9 +129,9 @@ function bestSurface(surfaceIndex, connector, endpoint) {
     return nearestSurface(fallbackPool, endpoint);
 }
 
-function normalizeSpace(space) {
+function normalizeSpace(space, layer = 'ground') {
     return {
-        id: space.id, kind: 'space', chunkKey: space.chunkKey ?? null, entityId: space.entityId ?? null,
+        id: space.id, kind: 'space', layer, chunkKey: space.chunkKey ?? null, entityId: space.entityId ?? null,
         moduleKey: space.moduleKey ?? null, moduleKeys: [...(space.moduleKeys ?? (space.moduleKey ? [space.moduleKey] : []))],
         floor: finite(space.floor), yBase: finite(space.yBase),
         floorH: finite(space.floorH, 3.15), bounds: space.bounds ? { ...space.bounds } : null,
@@ -195,16 +195,65 @@ function accessEndpointNodes(portals) {
     return [...byId.values()];
 }
 
+export function circulationPayloadScopes(payload) {
+    const scopes = [];
+    const seen = new Set();
+    const visit = (candidate, layer) => {
+        if (!candidate || typeof candidate !== 'object' || seen.has(candidate)) return;
+        seen.add(candidate);
+        scopes.push({ layer, payload: candidate });
+        const hanging = candidate?.hangingLayer?.payload;
+        if (hanging) visit(hanging, layer === 'ground' ? 'hanging' : `${layer}:hanging`);
+    };
+    visit(payload, 'ground');
+    return scopes;
+}
+
 export function compileSpatialTopologyGraph({ chunk, payload } = {}) {
     if (!chunk || !payload) throw new Error('compileSpatialTopologyGraph requires chunk and payload');
-    const surfaces = compileSurfaces(payload);
+    const scopes = circulationPayloadScopes(payload);
+    const entityById = new Map();
+    let duplicateEntityIds = 0;
+    for (const scope of scopes) for (const entity of scope.payload.entities ?? []) {
+        const id = String(entity?.id ?? '');
+        if (!id) continue;
+        if (entityById.has(id)) { duplicateEntityIds++; continue; }
+        entityById.set(id, entity);
+    }
+    const entities = [...entityById.values()];
+
+    const spaces = [];
+    const seenSpaceIds = new Set();
+    let duplicateSpaceIds = 0;
+    for (const scope of scopes) {
+        const sourceSpaces = scope.payload.semanticTopologySpaces?.length
+            ? scope.payload.semanticTopologySpaces
+            : (scope.payload.semanticSpaces ?? []);
+        for (const sourceSpace of sourceSpaces) {
+            const id = String(sourceSpace?.id ?? '');
+            if (!id) continue;
+            if (seenSpaceIds.has(id)) { duplicateSpaceIds++; continue; }
+            seenSpaceIds.add(id);
+            spaces.push(normalizeSpace(sourceSpace, scope.layer));
+        }
+    }
+
+    const rawConnectorById = new Map();
+    let duplicateConnectorIds = 0;
+    for (const scope of scopes) for (const raw of scope.payload.physics?.semanticConnectors ?? []) {
+        const id = String(raw?.id ?? '');
+        if (!id) continue;
+        if (rawConnectorById.has(id)) { duplicateConnectorIds++; continue; }
+        rawConnectorById.set(id, raw);
+    }
+    const rawConnectors = [...rawConnectorById.values()];
+
+    const surfaces = compileSurfaces({ entities });
     const surfaceById = new Map(surfaces.map(item => [item.id, item]));
     const surfaceJoinIndex = indexSurfacesForPortalJoin(surfaces);
-    const sourceSpaces = payload.semanticTopologySpaces?.length ? payload.semanticTopologySpaces : (payload.semanticSpaces ?? []);
-    const spaces = sourceSpaces.map(normalizeSpace);
     const spaceById = new Map(spaces.map(item => [item.id, item]));
     const spaceJoinIndex = indexSpacesForSurfaceJoin(spaces);
-    const portals = compileAccessPortals({ physics: payload.physics, spaces, entities: payload.entities ?? [] });
+    const portals = compileAccessPortals({ connectors: rawConnectors, spaces, entities });
     const portalById = new Map(portals.map(item => [item.id, item]));
     const accessEndpoints = accessEndpointNodes(portals);
     const noClutterRegions = portals.flatMap(portalNoClutterRegions);
@@ -215,11 +264,13 @@ export function compileSpatialTopologyGraph({ chunk, payload } = {}) {
         protectionByPortal.set(region.portalId, list);
     }
 
-    if (payload.physics) {
-        payload.physics.accessPortals = portals;
-        for (const raw of payload.physics.semanticConnectors ?? []) raw.accessPortal = portalById.get(String(raw.id)) ?? null;
+    for (const scope of scopes) {
+        if (scope.payload.physics) {
+            scope.payload.physics.accessPortals = portals;
+            for (const raw of scope.payload.physics.semanticConnectors ?? []) raw.accessPortal = portalById.get(String(raw.id)) ?? null;
+        }
+        scope.payload.accessPortals = portals;
     }
-    payload.accessPortals = portals;
 
     const apertures = [];
     const connectors = [];
@@ -229,7 +280,7 @@ export function compileSpatialTopologyGraph({ chunk, payload } = {}) {
     const edges = [];
     const reservationOwner = new Map();
 
-    for (const raw of payload.physics?.semanticConnectors ?? []) {
+    for (const raw of rawConnectors) {
         const portal = portalById.get(String(raw.id)) ?? null;
         const connector = {
             id: raw.id, kind: raw.kind, source: raw.source ?? null, visualRole: raw.visualRole ?? null,
@@ -285,7 +336,7 @@ export function compileSpatialTopologyGraph({ chunk, payload } = {}) {
         }
     }
 
-    for (const raw of payload.physics?.circulationReservations ?? []) {
+    for (const scope of scopes) for (const raw of scope.payload.physics?.circulationReservations ?? []) {
         reservations.push({
             id: raw.id ?? null, kind: raw.kind ?? 'circulation', connectorId: raw.connectorId ?? raw.metadata?.connectorId ?? reservationOwner.get(raw.id) ?? null,
             source: raw.source ?? null, x: finite(raw.x, null), z: finite(raw.z, null), halfX: finite(raw.halfX, null), halfZ: finite(raw.halfZ, null),
@@ -293,7 +344,7 @@ export function compileSpatialTopologyGraph({ chunk, payload } = {}) {
         });
     }
 
-    for (const placement of payload.semanticPlacements ?? []) {
+    for (const scope of scopes) for (const placement of scope.payload.semanticPlacements ?? []) {
         const instance = {
             id: placement.instanceId, kind: 'instance', assetId: placement.assetId ?? null, entityId: placement.entityId ?? null,
             spaceId: placement.spaceId ?? null, moduleKey: placement.moduleKey ?? null, floor: finite(placement.floor),
@@ -364,7 +415,7 @@ export function compileSpatialTopologyGraph({ chunk, payload } = {}) {
     }
 
     let unboundEntranceFaces = 0;
-    for (const entity of payload.entities ?? []) {
+    for (const entity of entities) {
         for (const face of entity.entranceFaces ?? []) {
             const matched = apertures.some(aperture => aperture.entityId === entity.id
                 && aperture.moduleKey === face.moduleKey
@@ -383,8 +434,10 @@ export function compileSpatialTopologyGraph({ chunk, payload } = {}) {
         schema: SPATIAL_TOPOLOGY_SCHEMA,
         ownerId: payload.ownerId ?? null,
         chunkKey: chunk.key,
+        layers: scopes.map(scope => scope.layer),
         spaces, surfaces, apertures, portals, accessEndpoints, noClutterRegions, connectors, reservations, instances, edges,
         stats: {
+            payloadScopes: scopes.length, duplicateEntityIds, duplicateSpaceIds, duplicateConnectorIds,
             spaces: spaces.length, surfaces: surfaces.length, apertures: apertures.length, portals: portals.length,
             accessEndpoints: accessEndpoints.length, noClutterRegions: noClutterRegions.length, connectors: connectors.length,
             reservations: reservations.length, instances: instances.length, edges: edges.length,
@@ -395,11 +448,14 @@ export function compileSpatialTopologyGraph({ chunk, payload } = {}) {
     assertWorldCirculationGraph(circulation);
     graph.circulation = circulation;
     graph.stats.circulation = circulation.stats;
-    payload.worldCirculation = circulation;
-    payload.spatialTopology = graph;
-    for (const entity of payload.entities ?? []) entity.spatialTopologyId = entity.id;
-    for (const space of payload.semanticSpaces ?? []) space.spatialTopologyId = space.id;
-    for (const placement of payload.semanticPlacements ?? []) placement.spatialTopologyId = placement.instanceId;
+    for (const scope of scopes) {
+        scope.payload.worldCirculation = circulation;
+        scope.payload.spatialTopology = graph;
+        for (const entity of scope.payload.entities ?? []) entity.spatialTopologyId = entity.id;
+        for (const space of scope.payload.semanticSpaces ?? []) space.spatialTopologyId = space.id;
+        for (const space of scope.payload.semanticTopologySpaces ?? []) space.spatialTopologyId = space.id;
+        for (const placement of scope.payload.semanticPlacements ?? []) placement.spatialTopologyId = placement.instanceId;
+    }
     return graph;
 }
 

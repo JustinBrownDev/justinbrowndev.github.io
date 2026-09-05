@@ -360,3 +360,78 @@ This rule also applies to a tower with only one exterior exchange: there may be 
 - a multi-exchange collector compiles into one real world-circulation component through Building Plan door/core connectors and bridge connectors;
 - a missing exchange binding fails closed before a promised sky route can survive;
 - all 21Q sectional, endpoint, hanging-band and bridge-architecture invariants remain intact.
+
+## Cut 21S — City route composition and hanging lateral throughput
+
+21S moves circulation authority one level above individual bridge selection. Local exterior crossings are now composed into bounded multi-building route spines before elevation, width, and bridge architecture are chosen.
+
+### Composed city routes
+
+`world/city-route-composer.js` builds a site graph from bridge candidates and selects a deterministic primary spine inside each connected component. The primary route is deliberately bounded: a connected component does **not** automatically become one arterial, so local and branch circulation remain visible as a separate hierarchy.
+
+Primary route edges share a preferred sectional band, with the overlap-rich vertical midpoint remaining an attractor rather than a clamp. Intermediate towers on the route are marked as transfer segments. Their incoming/outgoing endpoints carry the same route identity into `towerTransferDemandsForPortals()`, which gives same-route portal pairs explicit priority. 21R therefore consumes the route composer's decision as a real Building Plan obligation instead of independently choosing a different transfer pair.
+
+The authority chain is now:
+
+```text
+CITY ROUTE COMPOSER
+        ->
+local exterior crossing
+        ->
+city-exchange portal
+        ->
+21R PUBLIC_THROUGH interior spine
+        ->
+persistent stair/core when needed
+        ->
+city-exchange portal
+        ->
+next exterior crossing
+```
+
+### Hanging arterial morphology
+
+A major hanging route is no longer represented by simply making every point-to-point span enormous.
+
+For hanging primary routes:
+
+- cross-gap spans stay bridge/catwalk scale;
+- the route's bulk moves to exterior facade-running galleries;
+- galleries run tangent to the host building face and collect lateral movement at the exchange band;
+- each gallery publishes a canonical exterior transport surface and explicit physical surface-union edges into the unified world-circulation graph;
+- gallery width can reach sky-street scale while the crossing span remains narrower;
+- hanging galleries visibly attach to the host structure with upper suspension braces and wall anchors.
+
+This creates the intended distinction:
+
+```text
+BUILDING FACADE  ================= FAT LATERAL SKY STREET
+                         |
+                         | narrower exterior crossing
+                         |
+                    OTHER BUILDING
+```
+
+rather than treating a fat route as an oversized point-to-point plank.
+
+### Structural support and bulk coupling
+
+Large bridge architecture now receives explicit support structure. Collector and sky-street bridge families add deterministic facade braces from above or below; hanging heavy crossings prefer upper support.
+
+Stair bulk is also coupled to actual circulation width. The shared facade-stair authority accepts a width override while retaining the proven tread/riser/run/headroom kernel. High-network-value exterior stairs may therefore widen their real walkable flights and landings together with their structural mass. If a facade cannot physically fit the widened stair, planning falls back to the proven physical-truth width rather than deleting the route.
+
+Permanent invariant:
+
+> **Bulk is not a cosmetic shell around a skinny path.** When a circulation family becomes materially larger, its usable path and landings grow with it, while canonical stair rise/run physics remain unchanged.
+
+### 21S regression expectations
+
+- the composer creates bounded primary route spines while preserving branch/local circulation;
+- same-route intermediate-tower exchanges become authoritative 21R transfer demands;
+- short primary routes hold coherent vertical bands rather than independently choosing elevations;
+- hanging primary crossings remain below sky-street width while facade galleries carry the wider lateral route;
+- facade galleries stay wholly exterior, run tangent to building faces, and publish supported canonical transport surfaces;
+- every gallery participates in unified world circulation through explicit physical surface-union edges;
+- bulkier stair variants widen actual flights and landings without changing canonical riser/tread geometry;
+- major bridge structures expose visible above/below support members;
+- 21Q sectional/bridge invariants and 21R transfer-serving tower authority remain intact.

@@ -1,3 +1,5 @@
+import { composeCityRoutes } from './city-route-composer.js';
+
 export const SECTIONAL_CIRCULATION_SCHEMA = 'jweb.sectional-circulation.v1';
 
 export const CIRCULATION_CLASS = Object.freeze({
@@ -100,6 +102,7 @@ export function assignBridgeSectionBands({
   stableKey = 'sectional-bridge-bands',
 } = {}) {
   const plans = Array.isArray(bridgePlans) ? bridgePlans : [];
+  const cityRouteComposition = composeCityRoutes({ bridgePlans: plans, field, stableKey: `${stableKey}:composer` });
   const fh = Math.max(0.25, finite(floorHeight, 3.15));
   const cy = Math.max(fh * 2, finite(ceilingY, 34.02));
   const midY = cy * 0.5;
@@ -127,7 +130,18 @@ export function assignBridgeSectionBands({
     const jitter = unit(hash, 16) - 0.5;
     const weird = clamp(weirdness, 0, 1);
     let targetNorm;
-    if (branch < 0.68) {
+    if (plan.cityRouteRole === 'primary-spine' && Number.isFinite(Number(plan.cityRoutePreferredBandNorm))) {
+      const routeJitter = (unit(hash ^ 0x6d2b79f5, 3) - 0.5) * 0.055;
+      const routeCount = Math.max(0, Math.floor(Number(plan.cityRoutePrimaryEdgeCount) || 0));
+      const routeOrder = Math.max(0, Math.floor(Number(plan.routeCompositionOrder) || 0));
+      // Normal routes hold a coherent band. Very long synthetic/district routes
+      // are allowed to step between broad vertical sections so one arterial does
+      // not collapse the whole city onto a single altitude.
+      const sectionShift = routeCount > 12
+        ? (unit(stableHash(`${stableKey}:route-section:${plan.cityRouteId}:${Math.floor(routeOrder / 6)}`), 4) - 0.5) * 0.52
+        : 0;
+      targetNorm = Number(plan.cityRoutePreferredBandNorm) + routeJitter + sectionShift;
+    } else if (branch < 0.68) {
       const spread = 0.18 + (1 - degreeScore) * 0.18 + weird * 0.04;
       targetNorm = 0.5 + jitter * spread;
     } else if (branch < 0.84) {
@@ -163,16 +177,28 @@ export function assignBridgeSectionBands({
 
     const worldY = actualWorldY({ field, floor, depthBand, ceilingY: cy, floorHeight: fh });
     const midpointScore = clamp(1 - Math.abs(worldY - midY) / Math.max(fh, midY), 0, 1);
-    const importance = clamp(midpointScore * 0.52 + degreeScore * 0.34 + unit(hash ^ 0xc2b2ae35, 2) * 0.14, 0, 1);
+    const routeStrength = clamp(Number(plan.cityRouteStrength) || 0, 0, 1);
+    const importance = clamp(midpointScore * 0.42 + degreeScore * 0.26 + routeStrength * 0.22 + unit(hash ^ 0xc2b2ae35, 2) * 0.10, 0, 1);
     let widthClass;
     if (importance >= 0.70) widthClass = 'sky-street';
     else if (importance >= 0.54) widthClass = 'collector';
     else widthClass = 'local';
+    // Hanging primary routes express their bulk laterally along facades. The
+    // point-to-point crossing stays bridge/catwalk scale; a separate exterior
+    // facade gallery receives the sky-street width and carries throughput.
+    const hangingPrimary = field === 'ceiling' && plan.cityRouteRole === 'primary-spine' && plan.hangingLateralThroughput === true;
+    const galleryWidthClass = hangingPrimary ? (importance >= 0.64 ? 'sky-street' : 'collector') : null;
+    if (hangingPrimary && widthClass === 'sky-street') widthClass = 'collector';
     const width = widthClass === 'sky-street'
       ? 2.75 + unit(hash ^ 0x27d4eb2f, 1) * 1.35
       : widthClass === 'collector'
         ? 1.55 + unit(hash ^ 0x165667b1, 3) * 0.85
         : 0.94 + unit(hash ^ 0xd3a2646c, 5) * 0.46;
+    const facadeGalleryWidth = galleryWidthClass === 'sky-street'
+      ? 3.05 + unit(hash ^ 0x31415927, 2) * 1.35
+      : galleryWidthClass === 'collector'
+        ? 2.20 + unit(hash ^ 0x27182818, 4) * 0.70
+        : null;
     const routeCharacter = degreeScore > 0.82
       ? ROUTE_CHARACTER.VERTICAL_COLLECTOR
       : degreeScore > 0.30
@@ -194,6 +220,9 @@ export function assignBridgeSectionBands({
       widthClass,
       routeCharacter,
       architectureFamily,
+      facadeGalleryWidth,
+      facadeGalleryWidthClass: galleryWidthClass,
+      crossingRole: hangingPrimary ? 'catwalk-crossing' : (widthClass === 'sky-street' ? 'sky-street-span' : 'bridge-span'),
       circulationClass: CIRCULATION_CLASS.EXTERIOR,
       exchangeClass: CIRCULATION_CLASS.EXCHANGE,
       traversalPermission: TRAVERSAL_PERMISSION.PUBLIC_THROUGH,
@@ -206,6 +235,9 @@ export function assignBridgeSectionBands({
       endpoint.worldBandY = worldY;
       endpoint.routeCharacter = routeCharacter;
       endpoint.widthClass = widthClass;
+      endpoint.facadeGalleryWidth = facadeGalleryWidth;
+      endpoint.facadeGalleryWidthClass = galleryWidthClass;
+      endpoint.crossingRole = hangingPrimary ? 'catwalk-crossing' : 'bridge-span';
       endpoint.sectionBandAuthority = SECTIONAL_CIRCULATION_SCHEMA;
       endpoint.traversalPermission = TRAVERSAL_PERMISSION.PUBLIC_THROUGH;
     }
@@ -213,9 +245,9 @@ export function assignBridgeSectionBands({
     bandHistogram.set(bandKey, (bandHistogram.get(bandKey) ?? 0) + 1);
     midpointWeightedWidth += width * midpointScore;
     widthTotal += width;
-    if (widthClass === 'sky-street') skyStreets++;
-    else if (widthClass === 'collector') collectors++;
-    else local++;
+    if (galleryWidthClass === 'sky-street' || widthClass === 'sky-street') skyStreets++;
+    if (widthClass === 'collector') collectors++;
+    else if (widthClass === 'local') local++;
   }
 
   const active = plans.filter(plan => plan.enabled !== false);
@@ -246,6 +278,7 @@ export function assignBridgeSectionBands({
     midpointY: midY,
     averageWidth: plans.length ? widthTotal / plans.length : 0,
     midpointWeightedAverageWidth: plans.length ? midpointWeightedWidth / plans.length : 0,
+    cityRouteComposition,
     bands: Object.freeze([...bandHistogram.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([band, count]) => Object.freeze({ band, count }))),
     invariant: 'midpoint is a weighted attractor; exterior bridge slabs remain exterior and endpoint-owned',
   });
@@ -265,15 +298,18 @@ export function towerTransferDemandsForPortals(portals = [], { siteId = null, fi
       const aGlobalFloor = Number.isFinite(Number(a.globalFloor)) ? Number(a.globalFloor) : null;
       const bGlobalFloor = Number.isFinite(Number(b.globalFloor)) ? Number(b.globalFloor) : null;
       const faceChange = a.dirKey !== b.dirKey;
+      const sameComposedRoute = !!a.cityRouteId && a.cityRouteId === b.cityRouteId
+        && a.cityRouteRole === 'primary-spine' && b.cityRouteRole === 'primary-spine';
       // Once facade endpoints are resolved, the shared/global structural floor is
       // the transfer truth. Ceiling-depth/local-floor values remain planning
       // coordinates and must not manufacture a vertical demand after rebasing.
       const vertical = aGlobalFloor !== null && bGlobalFloor !== null
         ? aGlobalFloor !== bGlobalFloor
         : aBand !== bBand;
-      if (!faceChange && !vertical) continue;
-      const score = (vertical ? 3 : 0) + (faceChange ? 2 : 0) + ((a.routeCharacter === ROUTE_CHARACTER.VERTICAL_COLLECTOR || b.routeCharacter === ROUTE_CHARACTER.VERTICAL_COLLECTOR) ? 2 : 0);
-      pairs.push({ a, b, score, tie: stableHash(`${stableKey}:${a.id}:${b.id}`), vertical, faceChange });
+      if (!faceChange && !vertical && !sameComposedRoute) continue;
+      const score = (sameComposedRoute ? 8 : 0) + (vertical ? 3 : 0) + (faceChange ? 2 : 0)
+        + ((a.routeCharacter === ROUTE_CHARACTER.VERTICAL_COLLECTOR || b.routeCharacter === ROUTE_CHARACTER.VERTICAL_COLLECTOR) ? 2 : 0);
+      pairs.push({ a, b, score, tie: stableHash(`${stableKey}:${a.id}:${b.id}`), vertical, faceChange, sameComposedRoute });
     }
   }
   pairs.sort((a, b) => b.score - a.score || a.tie - b.tie);
@@ -292,6 +328,8 @@ export function towerTransferDemandsForPortals(portals = [], { siteId = null, fi
     requiresVerticalTransfer: pair.vertical,
     requiresFacadeChange: pair.faceChange,
     routeCharacter: pair.vertical ? ROUTE_CHARACTER.TOWER_TRANSFER : ROUTE_CHARACTER.INTERIOR_HEAVY,
+    cityRouteId: pair.sameComposedRoute ? pair.a.cityRouteId : null,
+    composedRouteTransfer: pair.sameComposedRoute,
     traversalPermission: TRAVERSAL_PERMISSION.PUBLIC_THROUGH,
     requestedCirculation: Object.freeze([CIRCULATION_CLASS.EXCHANGE, CIRCULATION_CLASS.INTERIOR, CIRCULATION_CLASS.EXCHANGE]),
     verificationAuthority: 'compileWorldCirculationGraph',

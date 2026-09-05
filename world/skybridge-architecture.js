@@ -30,7 +30,7 @@ function diagonalBetween(axis, a, b, fixed, thickness, metadata) {
  */
 export function planSkybridgeArchitecture({
   id = 'bridge', axis = 'x', from = 0, to = 1, fixedCoord = 0, y = 0, width = 1,
-  family = 'simple-guarded', widthClass = 'local', stableKey = null,
+  family = 'simple-guarded', widthClass = 'local', stableKey = null, supportModeHint = null,
 } = {}) {
   const start = finite(from), end = finite(to);
   const lo = Math.min(start, end), hi = Math.max(start, end);
@@ -129,6 +129,32 @@ export function planSkybridgeArchitecture({
     sideBeam(edgeB, y - 0.18);
   }
 
+  let supportMode = null;
+  let supportParts = 0;
+  if ((widthClass === 'collector' || widthClass === 'sky-street') && span > 2.6) {
+    supportMode = supportModeHint === 'hung-from-above' || supportModeHint === 'braced-from-below'
+      ? supportModeHint
+      : (unit(hash ^ 0xa24baed4, 5) < 0.48 ? 'hung-from-above' : 'braced-from-below');
+    const direction = supportMode === 'hung-from-above' ? 1 : -1;
+    const anchorRise = direction * (widthClass === 'sky-street' ? 2.9 : 2.15);
+    const reach = Math.min(span * 0.24, Math.max(1.35, w * 0.82));
+    for (const [wallAlong, deckAlong] of [[lo, lo + reach], [hi, hi - reach]]) {
+      for (const fixed of [edgeA, edgeB]) {
+        const brace = diagonalBetween(
+          axis,
+          { along: deckAlong, y: y - 0.26 },
+          { along: wallAlong, y: y + anchorRise },
+          fixed,
+          beamT * (widthClass === 'sky-street' ? 1.18 : 1.02),
+          { ...metadata, bridgeSupport: true, supportMode, structuralRole: supportMode === 'hung-from-above' ? 'upper-facade-brace' : 'lower-facade-brace' },
+        );
+        metal.push(brace); supportParts++;
+      }
+      crossBeam(wallAlong, y + anchorRise, beamT * 1.18, w + 0.28);
+      supportParts++;
+    }
+  }
+
   if (widthClass === 'sky-street') {
     const portalFrameInset = Math.min(1.0, span * 0.10);
     const frameY = y + 1.45;
@@ -157,6 +183,8 @@ export function planSkybridgeArchitecture({
     metal: Object.freeze(metal),
     concrete: Object.freeze(concrete),
     parts: metal.length + concrete.length,
+    supportMode,
+    supportParts,
     traversalAuthority: 'canonical-transport-slab-unchanged',
   });
 }

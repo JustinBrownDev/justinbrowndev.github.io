@@ -114,7 +114,12 @@ function routeForModuleSide({ entity, module, side, field, popularity, truth }) 
   if (![fp.cx, fp.cz, fp.halfX, fp.halfZ].every(Number.isFinite) || fp.halfX <= 0 || fp.halfZ <= 0) return null;
 
   const routeId = `${entity.id}:cavern-wall-stair:${module.key}:${side}`;
-  const stair = planAlternatingFacadeStair({
+  const baseStairWidth = Math.max(0.72, finite(truth?.stair?.widthSI, 0.90));
+  const networkBulk = Math.min(1, Math.max(0, (popularity - 4) / 24));
+  const transferBulk = Math.min(1, Math.max(0, finite(entity?.bridgePortalCount) / 4));
+  const routeWidthScale = 1 + networkBulk * 0.42 + transferBulk * 0.30;
+  const requestedClearWidth = Math.min(2.15, baseStairWidth * routeWidthScale);
+  const planAtWidth = clearWidth => planAlternatingFacadeStair({
     routeId: `${routeId}:geometry`,
     fp,
     side,
@@ -126,9 +131,15 @@ function routeForModuleSide({ entity, module, side, field, popularity, truth }) 
     wallGap: 0.16,
     landingTangentSize: Math.max(
       finite(truth?.stair?.landingDepthSI, 1.10),
-      finite(truth?.stair?.widthSI, 0.96) * 1.45,
+      clearWidth * 1.45,
     ),
+    clearWidthOverride: clearWidth,
   });
+  let stair = planAtWidth(requestedClearWidth);
+  // Width is a scaling preference, not permission to delete a proven route. If a
+  // narrow facade cannot fit the bulkier version, fall back to physical-truth
+  // width while keeping the canonical tread/riser geometry untouched.
+  if (!stair && requestedClearWidth > baseStairWidth * 1.04) stair = planAtWidth(baseStairWidth);
   if (!stair) return null;
 
   const landings = stair.landings.map((landing, index) => Object.freeze({
@@ -182,6 +193,7 @@ function routeForModuleSide({ entity, module, side, field, popularity, truth }) 
     servedFloors: availableFloors,
     floorH,
     stairWidth: stair.clearWidth,
+    routeWidthScale: stair.clearWidth / baseStairWidth,
     landingDepth: stair.landingTangentSize,
     topology: 'landing-routed-cavern-wall-zigzag',
     geometryAuthority: FACADE_STAIR_AUTHORITY_SCHEMA,

@@ -178,6 +178,7 @@ export function planAlternatingFacadeStair({
   laneGap = null,
   landingTangentSize = null,
   preferredLandingTangents = null,
+  clearWidthOverride = null,
 } = {}) {
   const count = Math.max(0, Math.floor(Number(floors) || 0));
   const rise = Number(floorH);
@@ -185,7 +186,7 @@ export function planAlternatingFacadeStair({
   const geometry = faceGeometry(fp, side);
   if (!geometry) return null;
 
-  const clearWidth = clamp(Number(physicalTruth.stair.widthSI) || 0.9, 0.72, 1.45);
+  const clearWidth = clamp(Number.isFinite(Number(clearWidthOverride)) ? Number(clearWidthOverride) : (Number(physicalTruth.stair.widthSI) || 0.9), 0.72, 2.40);
   const halfWidth = clearWidth * 0.5;
   const doorWidth = Number(physicalTruth?.door?.clearWidth?.realizedSI) || clearWidth;
   // Preserve the proven zig-zag topology, but size its horizontal circulation

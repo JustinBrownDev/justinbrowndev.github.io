@@ -25,6 +25,7 @@ import {
     resolveCeilingDepthBand,
 } from './world/sectional-circulation.js';
 import { planSkybridgeArchitecture } from './world/skybridge-architecture.js';
+import { planFacadeRouteGallery } from './world/facade-route-gallery.js';
 import {
     CAVERN_LADDER_APERTURE_DEPTH,
     CAVERN_LADDER_APERTURE_WIDTH,
@@ -2525,7 +2526,9 @@ export function createKowloonFabricEngine({
                 const validScaffolds = scaffoldCandidates.map(face => {
                     const seed = hashString32(`${siteSeed}:scaffold:${face.module.key}:${face.dir.side}`);
                     const moduleDepth = Math.min(face.module.rect.halfX, face.module.rect.halfZ);
-                    const scaffoldEnvelopeDepth = Math.max(1.2, Math.min(2.4, moduleDepth * 0.72));
+                    const scaffoldBulkScale = 1 + Math.min(0.62, (bridgePortals?.length ?? 0) * 0.13);
+                    const scaffoldClearWidth = Math.min(2.20, (Number(servicePhysicalTruth?.stair?.widthSI) || 0.90) * scaffoldBulkScale);
+                    const scaffoldEnvelopeDepth = Math.max(1.2, Math.min(3.35, Math.max(moduleDepth * 0.72, scaffoldClearWidth * 2.15)));
                     const plan = planExteriorScaffoldRoute({
                         fp: face.module.rect,
                         siteId: site.id,
@@ -2535,6 +2538,7 @@ export function createKowloonFabricEngine({
                         side: face.dir.side,
                         seed,
                         physicalTruth: servicePhysicalTruth,
+                        clearWidthOverride: scaffoldClearWidth,
                         maxExteriorDepth: scaffoldEnvelopeDepth,
                         routeId: `${chunk.key}:${siteSignature}:${face.module.key}:scaffold:${face.dir.side}`,
                     });
@@ -3757,7 +3761,9 @@ export function createKowloonFabricEngine({
         if (scaffoldCandidates.length) {
             const scaffoldPresenceRng = mulberry32(hashString32(`${siteSeed}:scaffold-presence`));
             if (scaffoldPresenceRng() < intensity.scaffoldChance) {
-                const scaffoldEnvelopeDepth = Math.max(1.2, Math.min(2.4, cellSize * 0.34));
+                const scaffoldBulkScale = 1 + Math.min(0.62, (bridgePortals?.length ?? 0) * 0.13);
+                const scaffoldClearWidth = Math.min(2.20, (Number(servicePhysicalTruth?.stair?.widthSI) || 0.90) * scaffoldBulkScale);
+                const scaffoldEnvelopeDepth = Math.max(1.2, Math.min(3.35, Math.max(cellSize * 0.34, scaffoldClearWidth * 2.15)));
                 const validScaffolds = scaffoldCandidates.map(face => {
                     const seed = hashString32(`${siteSeed}:scaffold:${face.module.key}:${face.dir.side}`);
                     const plan = planExteriorScaffoldRoute({
@@ -3769,6 +3775,7 @@ export function createKowloonFabricEngine({
                         side: face.dir.side,
                         seed,
                         physicalTruth: servicePhysicalTruth,
+                        clearWidthOverride: scaffoldClearWidth,
                         maxExteriorDepth: scaffoldEnvelopeDepth,
                         routeId: `${chunk.key}:${siteSignature}:${face.module.key}:scaffold:${face.dir.side}`,
                     });
@@ -4771,6 +4778,7 @@ export function createKowloonFabricEngine({
             id: bridge.id, axis: bridge.axis, from, to, fixedCoord, y, width,
             family: bridge.architectureFamily ?? 'simple-guarded', widthClass: bridge.widthClass ?? 'local',
             stableKey: `${worldSeed}:${bridge.id}:bridge-architecture`,
+            supportModeHint: hanging && (bridge.widthClass === 'collector' || bridge.widthClass === 'sky-street') ? 'hung-from-above' : null,
         });
         transforms.guardMetal.push(...bridgeArchitecture.metal);
         transforms.guardConcrete.push(...bridgeArchitecture.concrete);
@@ -4778,7 +4786,9 @@ export function createKowloonFabricEngine({
         architectureRegistry.push(Object.freeze({
             schema: bridgeArchitecture.schema, bridgeId: bridge.id,
             family: bridgeArchitecture.family, widthClass: bridgeArchitecture.widthClass,
-            parts: bridgeArchitecture.parts, span: bridgeArchitecture.span, width: bridgeArchitecture.width,
+            parts: bridgeArchitecture.parts, supportParts: bridgeArchitecture.supportParts ?? 0,
+            supportMode: bridgeArchitecture.supportMode ?? null,
+            span: bridgeArchitecture.span, width: bridgeArchitecture.width,
             worldBandY: y, midpointScore: bridge.midpointScore ?? null,
             traversalAuthority: bridgeArchitecture.traversalAuthority,
         }));
@@ -4800,6 +4810,93 @@ export function createKowloonFabricEngine({
         aEntity.skybridges = (aEntity.skybridges || 0) + 1;
         bEntity.skybridges = (bEntity.skybridges || 0) + 1;
         return true;
+    }
+
+
+    function realizeFacadeRouteGalleries({ field = 'ceiling', bridgePlans = [], entityBySite, physics, transforms }) {
+        if (field !== 'ceiling' || !(entityBySite instanceof Map)) return Object.freeze({ schema: 'jweb.facade-route-gallery-summary.v1', field, planned: 0, realized: 0, supportParts: 0 });
+        const seen = new Set();
+        const registry = physics.facadeRouteGalleries ?? (physics.facadeRouteGalleries = []);
+        let planned = 0, realized = 0, supportParts = 0;
+        for (const bridge of bridgePlans ?? []) {
+            for (const [siteId, endpoint, moduleKey] of [
+                [bridge.aSiteId, bridge.aEndpoint, bridge.aModuleKey],
+                [bridge.bSiteId, bridge.bEndpoint, bridge.bModuleKey],
+            ]) {
+                const galleryWidth = Number(endpoint?.facadeGalleryWidth ?? bridge.facadeGalleryWidth);
+                if (!endpoint?.resolved || !(galleryWidth > Number(bridge.width ?? 0) + 0.35) || endpoint.hangingLateralThroughput !== true) continue;
+                const entity = entityBySite.get(siteId);
+                const module = entity?.footprintModules?.find(candidate => candidate.key === moduleKey);
+                if (!entity || !module) continue;
+                const routeId = endpoint.cityRouteId ?? bridge.cityRouteId ?? bridge.id;
+                const dedupe = `${routeId}:${siteId}:${endpoint.globalFloor ?? endpoint.floor}:${endpoint.side}:${moduleKey}`;
+                if (seen.has(dedupe)) continue;
+                seen.add(dedupe); planned++;
+                const gallery = planFacadeRouteGallery({
+                    id: `${routeId}:site:${siteId}:gallery:${endpoint.globalFloor ?? endpoint.floor}:${endpoint.side}`,
+                    routeId, endpoint, module, field,
+                    width: galleryWidth,
+                    widthClass: endpoint.facadeGalleryWidthClass ?? bridge.facadeGalleryWidthClass ?? 'sky-street',
+                    floorHeight: entity.floorH ?? HANGING_CITY_FLOOR_HEIGHT,
+                    stableKey: `${worldSeed}:${routeId}:${siteId}:${moduleKey}:${endpoint.id}`,
+                });
+                if (!gallery) continue;
+                const rawSurface = {
+                    id: `${gallery.id}:surface`, kind: 'hanging-facade-route-gallery',
+                    ...gallery.surface,
+                    routeId, galleryId: gallery.id, networkKey: routeId,
+                    reachable: true, priority: 'walkway-authority',
+                    endpointAuthority: endpoint.endpointAuthority ?? 'bridge-facade-endpoint-v1',
+                    architectureFamily: 'facade-route-gallery', widthClass: gallery.widthClass,
+                    routeCharacter: bridge.routeCharacter ?? 'EXTERIOR_HEAVY',
+                    traversalPermission: endpoint.traversalPermission ?? 'PUBLIC_THROUGH',
+                };
+                const published = publishTransportSurfaceSlab({
+                    physics, transforms, rawSurface,
+                    supportKind: 'hanging-facade-route-gallery',
+                    slabT: gallery.widthClass === 'sky-street' ? 0.18 : 0.14,
+                });
+                const surface = published.surface;
+                emitTransportRail({
+                    physics, transforms, wallList: transforms.wallGroups[0], surfaceId: surface.id,
+                    ...gallery.outerEdge, y: surface.y,
+                });
+                for (const edge of gallery.endEdges) emitTransportRail({
+                    physics, transforms, wallList: transforms.wallGroups[0], surfaceId: surface.id,
+                    ...edge, y: surface.y,
+                });
+                const transportEdges = physics.exteriorTransportEdges ?? (physics.exteriorTransportEdges = []);
+                for (const overlap of published.overlaps) {
+                    smoothTransportUnion({
+                        physics, transforms, a: surface, b: overlap,
+                        width: Math.min(gallery.width, Math.max(1.2, Number(bridge.width) || 1.2)),
+                    });
+                    if (!transportEdges.some(edge => (edge.aId === surface.id && edge.bId === overlap.id) || (edge.aId === overlap.id && edge.bId === surface.id))) {
+                        transportEdges.push({
+                            id: `${gallery.id}:union:${overlap.id}`,
+                            kind: 'surface-union', source: 'facade-route-gallery-union',
+                            aId: surface.id, bId: overlap.id,
+                            routeId, galleryId: gallery.id,
+                            traversalAuthority: 'physical-surface-overlap',
+                        });
+                    }
+                }
+                transforms.guardMetal.push(...gallery.metal, ...gallery.supports);
+                registry.push(Object.freeze({
+                    schema: gallery.schema, id: gallery.id, routeId, siteId, moduleKey,
+                    endpointId: endpoint.id, surfaceId: surface.id,
+                    width: gallery.width, length: gallery.length,
+                    widthClass: gallery.widthClass, supportMode: gallery.supportMode,
+                    crossingBridgeId: bridge.id,
+                }));
+                supportParts += gallery.supports.length;
+                realized++;
+            }
+        }
+        return Object.freeze({
+            schema: 'jweb.facade-route-gallery-summary.v1', field, planned, realized, supportParts,
+            invariant: 'major hanging routes put their bulk along building facades; point-to-point spans remain crossing connectors',
+        });
     }
 
     const districtLandmarkTypes = Object.freeze(['spire', 'stack', 'gatehouse', 'archive', 'beacon']);
@@ -6066,6 +6163,11 @@ export function createKowloonFabricEngine({
             skybridges++;
         }
 
+        const facadeRouteGalleries = realizeFacadeRouteGalleries({
+            field: 'ceiling', bridgePlans, entityBySite,
+            physics: aggregate.physics, transforms: aggregate.transforms,
+        });
+
         // Hanging roofs publish the same authoritative transport topology as the
         // ground city.  Closing this graph before the cavern-wall fallback means
         // roof streets, skybridges and the cross-level ladders share one physical
@@ -6088,6 +6190,7 @@ export function createKowloonFabricEngine({
             ownerId, root, physics: aggregate.physics, entities,
             buildings, plazas, skybridges, ladders, ladderRungs, cavernWallStairs: cavernWallStairs.length,
             skybridgePlanning: { planned: bridgePlans.length, realized: skybridges, authority: 'ceiling-field-peer-planner' },
+            facadeRouteGalleries,
             exteriorTransportNetwork,
             routeOwnedRooftopPlaces: routeOwnedRooftopPlaces.stats,
             structuralFallback: field.structuralFallback ?? null,
@@ -6105,6 +6208,7 @@ export function createKowloonFabricEngine({
             source,
             payload,
             buildings, plazas, skybridges, ladders, ladderRungs, cavernWallStairs: cavernWallStairs.length,
+            facadeRouteGalleries,
             independentCount: buildings,
             dualPolarityCount: 0,
         };

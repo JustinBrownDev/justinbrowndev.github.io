@@ -81,12 +81,13 @@ export function planExteriorScaffoldRoute({
   facadeMargin = 0.18,
   wallGap = 0.10,
   routeId = null,
+  clearWidthOverride = null,
 } = {}) {
   const count = Math.max(0, Math.floor(Number(floors) || 0));
   const rise = Number(floorH);
   if (count < 2 || !(rise > 0) || !physicalTruth?.stair) return null;
   const id = routeId ?? `scaffold:${siteId ?? 'site'}:${moduleKey ?? 'module'}:${side}:${seed}`;
-  const clearWidth = finitePositive(physicalTruth.stair.widthSI, 0.9);
+  const clearWidth = finitePositive(clearWidthOverride, finitePositive(physicalTruth.stair.widthSI, 0.9));
   const doorWidth = finitePositive(physicalTruth?.door?.clearWidth?.realizedSI, 0.9);
   const doorHeight = finitePositive(physicalTruth?.door?.clearHeight?.realizedSI, 2.0);
   const landingTangentSize = Math.max(
@@ -107,6 +108,7 @@ export function planExteriorScaffoldRoute({
     facadeMargin: Math.max(0.10, Number(facadeMargin) || 0),
     wallGap: Math.max(0.08, Number(wallGap) || 0),
     landingTangentSize,
+    clearWidthOverride: clearWidth,
   });
   if (!geometry) return null;
 

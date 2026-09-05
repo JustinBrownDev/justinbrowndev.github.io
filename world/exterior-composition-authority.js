@@ -30,7 +30,7 @@ export const EXTERIOR_MEDIA_SCHEMA = 'jweb.semantic-media-surface.v1';
 
 const MANAGED_BUILDING_EXTERIOR_KINDS = new Set([
     'sign', 'awning', 'graffiti', 'flyer', 'pipe', 'ivy', 'security',
-    'elevator-hardware', 'street-fixture', 'roof-clutter', 'roof-topper',
+    'service-hardware', 'elevator-hardware', 'street-fixture', 'roof-clutter', 'roof-topper',
     'spray-cans', 'semantic-context-prop', 'exterior-prop-field',
 ]);
 

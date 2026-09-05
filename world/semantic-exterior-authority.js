@@ -8,6 +8,7 @@ const TASK_ROLE_PREFERENCES = Object.freeze({
     pipe: ['facade-service-band', 'wall-mounted-prop-zone', 'portal-flank-wall-zone', 'connector-service-zone'],
     ivy: ['wall-mounted-prop-zone', 'facade-poster-zone'],
     security: ['portal-lintel-zone', 'portal-flank-wall-zone', 'wall-mounted-prop-zone'],
+    'service-hardware': ['facade-service-band', 'wall-mounted-prop-zone', 'connector-service-zone'],
     'elevator-hardware': ['wall-mounted-prop-zone', 'portal-flank-wall-zone'],
     'street-fixture': ['portal-flank-ground-zone', 'ground-edge-zone', 'connector-service-zone', 'beside-door-zone'],
     'spray-cans': ['portal-flank-ground-zone', 'ground-edge-zone'],

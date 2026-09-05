@@ -244,6 +244,31 @@ function keepTaskUnderCommonDiagnosticCut(task) {
     return false;
 }
 
+// 21N: additive post-handoff richness. These kinds are deliberately cosmetic:
+// they do not own doors, circulation, blocking topology, or semantic interior
+// placement. That keeps progressive enrichment safe to request after READY.
+export const PROGRESSIVE_EXTERIOR_DETAIL_KINDS = Object.freeze([
+    'graffiti', 'pipe', 'awning', 'flyer', 'ivy', 'security',
+    'service-hardware', 'elevator-hardware', 'spray-cans', 'overhead-cable',
+]);
+const PROGRESSIVE_EXTERIOR_DETAIL_KIND_SET = new Set(PROGRESSIVE_EXTERIOR_DETAIL_KINDS);
+export function isProgressiveExteriorDetailKind(kind) {
+    return PROGRESSIVE_EXTERIOR_DETAIL_KIND_SET.has(String(kind ?? ''));
+}
+
+function applyCommonDiagnosticCut(tasks, applyDiagnosticCut = true) {
+    return CUT_COMMON_KOWLOON_ENRICHMENT && applyDiagnosticCut
+        ? tasks.filter(keepTaskUnderCommonDiagnosticCut)
+        : tasks;
+}
+
+function detailTaskIdentity(task) {
+    return [
+        task?.kind ?? '', task?.entityId ?? '', task?.otherEntityId ?? '',
+        task?.seed ?? '', task?.semanticOpportunityId ?? '', task?.assetId ?? '',
+    ].join('|');
+}
+
 export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDetailPhysics = null } = {}) {
     if (!THREE) throw new Error('createKowloonFabricEnrichment requires THREE');
 
@@ -822,7 +847,7 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
         return hashString32(`${worldSeed}:chunk-detail:${chunk.key}:${entityId}:${kind}:${index}`);
     }
 
-    function planBuildingTasks(chunk, entity) {
+    function planBuildingTasks(chunk, entity, { applyDiagnosticCut = true } = {}) {
         const seed = taskSeed(chunk, entity.id, 'plan');
         const rng = mulberry32(seed);
         const tasks = [];
@@ -1034,10 +1059,10 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
             kind: 'roof-topper', entityId: entity.id, topper: entity.roofTopper,
             seed: taskSeed(chunk, entity.id, 'roof-topper'),
         });
-        return CUT_COMMON_KOWLOON_ENRICHMENT ? tasks.filter(keepTaskUnderCommonDiagnosticCut) : tasks;
+        return applyCommonDiagnosticCut(tasks, applyDiagnosticCut);
     }
 
-    function planPlazaTasks(chunk, entity) {
+    function planPlazaTasks(chunk, entity, { applyDiagnosticCut = true } = {}) {
         const rng = mulberry32(taskSeed(chunk, entity.id, 'plaza-plan'));
         const tasks = [];
         const density = clamp(entity.detailDensity ?? 1, 0, 1);
@@ -1058,7 +1083,7 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
             z: entity.z + (rng() - 0.5) * Math.max(1.1, (entity.halfZ || 2) * 0.72),
             title, subtitle, seed,
         });
-        return CUT_COMMON_KOWLOON_ENRICHMENT ? tasks.filter(keepTaskUnderCommonDiagnosticCut) : tasks;
+        return applyCommonDiagnosticCut(tasks, applyDiagnosticCut);
     }
 
     function firstPassClass(taskOrKind) {
@@ -1154,7 +1179,7 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
 
 
 
-    function planOverheadCableTasks(chunk, entities) {
+    function planOverheadCableTasks(chunk, entities, { applyDiagnosticCut = true } = {}) {
         const buildings = (entities || []).filter(entity => entity.kind === 'building' || entity.kind === 'district-landmark');
         const tasks = [];
         const seen = new Set();
@@ -1175,16 +1200,16 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
                 tasks.push({ kind: 'overhead-cable', entityId: a.id, otherEntityId: b.id, axis, seed: hashString32(`${worldSeed}:cable-task:${chunk.key}:${identity}`) });
             }
         }
-        return CUT_COMMON_KOWLOON_ENRICHMENT ? tasks.filter(keepTaskUnderCommonDiagnosticCut) : tasks;
+        return applyCommonDiagnosticCut(tasks, applyDiagnosticCut);
     }
 
-    function plan(chunk, entities) {
+    function plan(chunk, entities, { applyDiagnosticCut = true } = {}) {
         const tasks = [];
         for (const entity of entities || []) {
-            if (entity.kind === 'building' || entity.kind === 'district-landmark') tasks.push(...planBuildingTasks(chunk, entity));
-            else if (entity.kind === 'plaza') tasks.push(...planPlazaTasks(chunk, entity));
+            if (entity.kind === 'building' || entity.kind === 'district-landmark') tasks.push(...planBuildingTasks(chunk, entity, { applyDiagnosticCut }));
+            else if (entity.kind === 'plaza') tasks.push(...planPlazaTasks(chunk, entity, { applyDiagnosticCut }));
         }
-        tasks.push(...planOverheadCableTasks(chunk, entities));
+        tasks.push(...planOverheadCableTasks(chunk, entities, { applyDiagnosticCut }));
         // CONVERGENCE SCHEDULER: preserve the exact deterministic corpus, but
         // require only one meaningful visible publication per entity before the
         // neighborhood may leave first-pass mode. Second/third features deepen later.
@@ -1214,6 +1239,112 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
             startedAt: 0,
             completedAt: layered.tasks.length ? 0 : performance.now(),
         };
+    }
+
+    function progressiveState(state) {
+        if (!state.progressiveEnrichment) {
+            state.progressiveEnrichment = {
+                requested: false,
+                planned: false,
+                complete: !CUT_COMMON_KOWLOON_ENRICHMENT,
+                taskCount: 0,
+                rawTaskCount: 0,
+                planningSteps: 0,
+                planningUnits: 0,
+                planningTotalUnits: 0,
+                compiler: null,
+                attempted: 0,
+                published: 0,
+                noOp: 0,
+                failed: 0,
+                requestedAt: 0,
+                plannedAt: 0,
+                completedAt: 0,
+            };
+        }
+        return state.progressiveEnrichment;
+    }
+
+    function rawProgressiveExteriorTasks(chunk, payload) {
+        if (!CUT_COMMON_KOWLOON_ENRICHMENT) return [];
+        const state = payload?.refinement;
+        if (!state) return [];
+        const existing = new Set((state.tasks ?? []).map(detailTaskIdentity));
+        return plan(chunk, payload.entities, { applyDiagnosticCut: false }).tasks.filter(task =>
+            isProgressiveExteriorDetailKind(task.kind)
+            && !keepTaskUnderCommonDiagnosticCut(task)
+            && !existing.has(detailTaskIdentity(task))
+        );
+    }
+
+    function requestProgressive(payload) {
+        const state = payload?.refinement;
+        if (!state || state.phase === DETAIL_PHASE.DISPOSED || !CUT_COMMON_KOWLOON_ENRICHMENT) return false;
+        const progressive = progressiveState(state);
+        if (progressive.requested || progressive.complete) return false;
+        progressive.requested = true;
+        progressive.requestedAt = performance.now();
+        return true;
+    }
+
+    function advanceProgressivePlanning(chunk, payload) {
+        const state = payload?.refinement;
+        if (!state) return { progressed: false, done: true, appended: 0, phase: 'none' };
+        const progressive = progressiveState(state);
+        if (!progressive.requested || progressive.planned || progressive.complete) {
+            return { progressed: false, done: true, appended: 0, phase: progressive.complete ? 'complete' : 'idle' };
+        }
+        if (!progressive.compiler) {
+            const rawTasks = rawProgressiveExteriorTasks(chunk, payload);
+            progressive.rawTaskCount = rawTasks.length;
+            if (!rawTasks.length) {
+                progressive.planned = true;
+                progressive.complete = true;
+                progressive.plannedAt = performance.now();
+                progressive.completedAt = progressive.plannedAt;
+                return { progressed: true, done: true, appended: 0, phase: 'empty' };
+            }
+            // Reuse the authoritative exterior compiler, but only with the already-
+            // deterministic omitted cosmetic candidates. Service/context synthesis is
+            // intentionally disabled here; 21N deepens what skeleton skipped rather
+            // than inventing a second exterior program after READY.
+            progressive.compiler = createExteriorCompositionCompiler({
+                chunk,
+                payload,
+                authoredTasks: rawTasks,
+            });
+            progressive.planningTotalUnits = progressive.compiler.totalUnits;
+        }
+        const result = progressive.compiler.step({ maxUnits: 1 }) ?? {};
+        progressive.planningSteps++;
+        progressive.planningUnits = Number(result.unitsCompleted) || progressive.planningUnits;
+        progressive.planningTotalUnits = Number(result.totalUnits) || progressive.planningTotalUnits;
+        if (!progressive.compiler.done) {
+            return { progressed: true, done: false, appended: 0, phase: result.phase ?? progressive.compiler.phase ?? 'planning' };
+        }
+
+        const existing = new Set((state.tasks ?? []).map(detailTaskIdentity));
+        const selected = (progressive.compiler.result?.tasks ?? []).filter(task =>
+            isProgressiveExteriorDetailKind(task.kind)
+            && !keepTaskUnderCommonDiagnosticCut(task)
+            && !existing.has(detailTaskIdentity(task))
+        ).map(task => ({
+            ...task,
+            firstPassBundle: false,
+            progressiveEnrichment: true,
+        }));
+        progressive.compiler = null;
+        progressive.planned = true;
+        progressive.plannedAt = performance.now();
+        progressive.taskCount = selected.length;
+        if (!selected.length) {
+            progressive.complete = true;
+            progressive.completedAt = progressive.plannedAt;
+            return { progressed: true, done: true, appended: 0, phase: 'complete-empty' };
+        }
+        state.tasks.push(...selected);
+        state.phase = DETAIL_PHASE.STRUCTURAL_READY;
+        return { progressed: true, done: true, appended: selected.length, phase: 'complete' };
     }
 
     function getEntity(payload, id) {
@@ -1768,7 +1899,9 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
 
     function hasPending(payload) {
         const state = payload?.refinement;
-        return !!state && state.phase !== DETAIL_PHASE.DISPOSED && state.cursor < state.tasks.length;
+        if (!state || state.phase === DETAIL_PHASE.DISPOSED) return false;
+        const progressive = progressiveState(state);
+        return state.cursor < state.tasks.length || (progressive.requested && !progressive.complete);
     }
 
     function taskRuntimePosition(payload, task) {
@@ -1829,6 +1962,29 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
     function pump(chunk, payload, { maxSteps = 1, maxMillis = 2, playerPosition = null } = {}) {
         const state = payload?.refinement;
         if (!state || state.phase === DETAIL_PHASE.DISPOSED) return { progressed: false, steps: 0, complete: true, pending: 0, elapsedMs: 0 };
+        if (state.cursor >= state.tasks.length) {
+            const planningStart = performance.now();
+            const planning = advanceProgressivePlanning(chunk, payload);
+            if (planning.progressed) {
+                const pending = Math.max(0, state.tasks.length - state.cursor) + (planning.done ? 0 : 1);
+                return {
+                    progressed: true,
+                    steps: 1,
+                    attempted: 0,
+                    published: 0,
+                    noOp: 0,
+                    failed: 0,
+                    complete: !hasPending(payload),
+                    pending,
+                    elapsedMs: performance.now() - planningStart,
+                    lastKind: `progressive-plan:${planning.phase}`,
+                    firstPassComplete: !!state.firstPassComplete,
+                    firstPassEntitiesComplete: state.firstPassEntitiesComplete,
+                    firstPassEntityTarget: state.firstPassEntityTarget,
+                    progressiveEnrichment: { ...progressiveState(state), compiler: undefined },
+                };
+            }
+        }
         if (!hasPending(payload)) {
             state.phase = DETAIL_PHASE.READY;
             if (!state.completedAt) state.completedAt = performance.now();
@@ -1851,11 +2007,13 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
             const stepStart = performance.now();
             attempted++;
             state.attempted++;
+            if (task.progressiveEnrichment) progressiveState(state).attempted++;
             try {
                 const didPublish = applyTask(chunk, payload, task);
                 if (didPublish) {
                     published++;
                     state.published++;
+                    if (task.progressiveEnrichment) progressiveState(state).published++;
                     state.completed = state.published;
                     recordExteriorCoverageResult(state, task, true);
                     if (task.firstPassBundle) {
@@ -1873,12 +2031,14 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
                 } else {
                     noOp++;
                     state.noOp++;
+                    if (task.progressiveEnrichment) progressiveState(state).noOp++;
                     recordExteriorCoverageResult(state, task, false, 'realizer-noop');
                     settleFirstPassMiss(state, task);
                 }
             } catch (error) {
                 failed++;
                 state.failed++;
+                if (task.progressiveEnrichment) progressiveState(state).failed++;
                 state.failures = state.failed;
                 recordExteriorCoverageResult(state, task, false, 'realizer-error');
                 settleFirstPassMiss(state, task);
@@ -1892,6 +2052,11 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
         }
         const complete = state.cursor >= state.tasks.length;
         if (complete) {
+            const progressive = progressiveState(state);
+            if (progressive.planned && !progressive.complete) {
+                progressive.complete = true;
+                progressive.completedAt = performance.now();
+            }
             state.phase = DETAIL_PHASE.READY;
             state.completedAt = performance.now();
         }
@@ -1909,6 +2074,7 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
             firstPassComplete: !!state.firstPassComplete,
             firstPassEntitiesComplete: state.firstPassEntitiesComplete,
             firstPassEntityTarget: state.firstPassEntityTarget,
+            progressiveEnrichment: { ...progressiveState(state), compiler: undefined },
             // A full snapshot scans remaining tasks and aggregates diagnostics. Keep the
             // incremental runtime counters hot, but pay the snapshot cost only once when
             // this payload finishes instead of after every one-task refinement turn.
@@ -1931,6 +2097,7 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
         // so the bounded scan is O(candidate-count), not O(candidates * entities).
         payload.entityById = new Map((payload.entities ?? []).map(entity => [entity.id, entity]));
         const state = plan(chunk, payload.entities);
+        progressiveState(state);
         state.semanticLayout = solveSemanticLayout({
             chunk,
             payload,
@@ -2116,6 +2283,7 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
         DETAIL_PHASE,
         initializePayload,
         initializePayloadCooperative,
+        requestProgressive,
         hasPending,
         pump,
         disposePayload,

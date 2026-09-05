@@ -3278,6 +3278,9 @@ let authoredOptimizerNextAt = 0;
 let backgroundEnrichmentReleased = false;
 let authoredAssetLaneOpened = false;
 let authoredBackgroundQueueNear = false;
+let progressiveEnrichmentNextAt = 0;
+let progressiveEnrichmentRequests = 0;
+let progressiveEnrichmentPayloads = 0;
 
 function playerNearAuthoredSpawn() {
     return pointNearRegion(camera.position, {
@@ -3335,6 +3338,72 @@ function maybeReleaseBackgroundEnrichment() {
     authoredBackgroundQueueNear = true;
     console.log('[asset-event] widen-after-prefetch-and-authored-structure | ' + formatAdornmentQueueStats());
     return true;
+}
+
+function requestProgressivePayload(chunk, payload, { authored = false } = {}) {
+    if (!payload || GENERATION_LANES.microEnrichment) return 0;
+    const result = cityFabricEngine.requestProgressiveDeepening(chunk, payload);
+    const requested = Number(result?.requested) || 0;
+    if (!requested) return 0;
+    progressiveEnrichmentRequests++;
+    progressiveEnrichmentPayloads += requested;
+    if (authored && cityFabricEngine.hasPendingRefinement(chunk, payload)
+        && !unifiedSpawnFabricRefinementQueue.includes(payload)) {
+        unifiedSpawnFabricRefinementQueue.push(payload);
+    }
+    return requested;
+}
+
+function maybeRequestProgressiveEnrichment(now, worldStats, nearAuthoredSpawn) {
+    // Full profile already planned all enrichment during the initial pass. 21N is
+    // only the additive skeleton -> rich path, and it starts after the playable
+    // render ring exists so first control / structure never waits on micro detail.
+    if (GENERATION_LANES.microEnrichment || !worldChunkStreamer || now < progressiveEnrichmentNextAt) return 0;
+    if (!worldStats?.localRenderRing?.complete) return 0;
+
+    const desktop = QUALITY === CONFIG.quality.desktop;
+    const radius = desktop ? 1 : 0;
+    const playerChunk = worldChunkStreamer.playerChunkCoords();
+    const streamed = [...worldChunkStreamer.chunks.values()]
+        .filter(chunk => chunk?.state === 'ready' && chunk.renderPublished && chunk.payload
+            && Math.abs(chunk.x - playerChunk.x) <= radius
+            && Math.abs(chunk.z - playerChunk.z) <= radius)
+        .sort((a, b) => {
+            const ad = (a.x - playerChunk.x) ** 2 + (a.z - playerChunk.z) ** 2;
+            const bd = (b.x - playerChunk.x) ** 2 + (b.z - playerChunk.z) ** 2;
+            return ad - bd || a.key.localeCompare(b.key);
+        });
+
+    let requested = 0;
+    for (const chunk of streamed) {
+        requested += requestProgressivePayload(chunk, chunk.payload);
+        if (requested) break;
+    }
+
+    if (!requested && nearAuthoredSpawn && _spawnDistrictStructuresComplete) {
+        const authored = [...unifiedSpawnFabricPayloads.values()]
+            .filter(payload => payload?.entity)
+            .sort((a, b) => {
+                const ae = a.entity, be = b.entity;
+                const adx = (ae.x ?? 0) - camera.position.x, adz = (ae.z ?? 0) - camera.position.z;
+                const bdx = (be.x ?? 0) - camera.position.x, bdz = (be.z ?? 0) - camera.position.z;
+                return adx * adx + adz * adz - (bdx * bdx + bdz * bdz);
+            });
+        for (const payload of authored) {
+            requested += requestProgressivePayload(payload.chunk ?? { key: '0,0' }, payload, { authored: true });
+            if (requested) break;
+        }
+        if (!requested && authoredCeilingOverlayPayload) {
+            requested += requestProgressivePayload(
+                authoredCeilingOverlayPayload.chunk ?? { key: '0,0' },
+                authoredCeilingOverlayPayload,
+                { authored: true },
+            );
+        }
+    }
+
+    progressiveEnrichmentNextAt = now + (desktop ? 90 : 180);
+    return requested;
 }
 
 const WORLD_DIAGNOSTIC_INTERVAL_MS = 2000;
@@ -3613,6 +3682,10 @@ function animate(now = performance.now()) {
     });
     const authoredDeepLane = streamingGear === WORLD_STREAMING_GEAR.LOCAL_DEEPEN;
     syncAuthoredBackgroundQueueLocality(playerNearSpawn);
+    const progressiveRequested = maybeRequestProgressiveEnrichment(now, liveWorldStats, playerNearSpawn);
+    if (progressiveRequested) runtimeLatency.record('progressive-enrichment.request', 0, {
+        requested: progressiveRequested, totalRequests: progressiveEnrichmentRequests, payloads: progressiveEnrichmentPayloads,
+    });
 
     // The finite authored district is a bounded locality lane, not a global gate.
     // Streaming gear controls how much time it gets; physical proximity controls
@@ -4019,6 +4092,11 @@ window.__debug = {
             authority: 'KowloonFabricEngine',
             adornmentQueue: adornmentLoadQueue.stats(),
             backgroundEnrichmentReleased,
+            progressiveEnrichment: {
+                enabled: !GENERATION_LANES.microEnrichment,
+                requests: progressiveEnrichmentRequests,
+                payloads: progressiveEnrichmentPayloads,
+            },
             failedCityAssets: failedCityAssetLoads.size,
             failedRealModels: failedRealModelLoads.size,
             failedPhotos: failedPhotoLoads.size,

@@ -6978,6 +6978,11 @@ export function createKowloonFabricEngine({
         enrichment.disposeShared();
     }
 
+    const requestProgressiveDeepening = (_chunk, payload) => {
+        const ground = enrichment.requestProgressive(payload);
+        const hanging = enrichment.requestProgressive(payload?.hangingLayer?.payload);
+        return { requested: Number(ground) + Number(hanging), ground, hanging };
+    };
     const hasPendingRefinement = (_chunk, payload) => enrichment.hasPending(payload) || enrichment.hasPending(payload?.hangingLayer?.payload);
     const refine = (chunk, payload, budget) => {
         const hangingPayload = payload?.hangingLayer?.payload ?? null;
@@ -6992,5 +6997,5 @@ export function createKowloonFabricEngine({
     };
     const planningCacheStats = () => buildingPlanCache.stats();
 
-    return { build, buildAuthoredOriginChunk, buildAuthoredCeilingOverlay, buildAuthoredSite, buildAuthoredSiteSteps, buildAuthoredPlaza, buildAuthoredSurfacePatch, buildAuthoredBridge, planAuthoredBridgeNetwork, commit, setVisible, verifyReady, unload, refine, hasPendingRefinement, planChunk, districtLandmarkFor, planningCacheStats, crossChunkSeamStats, disposeShared };
+    return { build, buildAuthoredOriginChunk, buildAuthoredCeilingOverlay, buildAuthoredSite, buildAuthoredSiteSteps, buildAuthoredPlaza, buildAuthoredSurfacePatch, buildAuthoredBridge, planAuthoredBridgeNetwork, commit, setVisible, verifyReady, unload, requestProgressiveDeepening, refine, hasPendingRefinement, planChunk, districtLandmarkFor, planningCacheStats, crossChunkSeamStats, disposeShared };
 }

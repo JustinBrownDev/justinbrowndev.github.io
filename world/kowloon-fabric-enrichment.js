@@ -16,6 +16,7 @@ import { EXTERIOR_FIRST_PASS_KIND_ORDER, EXTERIOR_TASK_KIND_PRIORITY, compareExt
 import { attachSpectacleMedia, compileExteriorCompositionAuthority, createExteriorCompositionCompiler } from './exterior-composition-authority.js';
 import { createExteriorCoverageRuntime, exteriorCoverageSnapshot, noteMicroAheadCoverageViolation, recordExteriorCoverageResult } from './exterior-composition-runtime.js';
 import { runCooperativeCompiler } from './architecture/semantic-plan-runtime.js';
+import { planPortalBoundInteriorPlaces } from './portal-bound-interior-places.js';
 import { recipeContextFromExteriorTask, resolveDisplayRecipe } from '../content/sign-visual-language.js';
 import { renderDisplayCanvas } from '../systems/sign-display-renderer.js';
 
@@ -1265,6 +1266,30 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
         return state.progressiveEnrichment;
     }
 
+    function progressiveInteriorState(state) {
+        if (!state.progressiveInteriorEnrichment) {
+            state.progressiveInteriorEnrichment = {
+                requested: false,
+                planned: false,
+                complete: false,
+                taskCount: 0,
+                rawTaskCount: 0,
+                bindingCount: 0,
+                eligiblePortals: 0,
+                attempted: 0,
+                published: 0,
+                noOp: 0,
+                failed: 0,
+                requestedAt: 0,
+                plannedAt: 0,
+                completedAt: 0,
+                planSchema: null,
+                layout: null,
+            };
+        }
+        return state.progressiveInteriorEnrichment;
+    }
+
     function rawProgressiveExteriorTasks(chunk, payload) {
         if (!CUT_COMMON_KOWLOON_ENRICHMENT) return [];
         const state = payload?.refinement;
@@ -1281,13 +1306,29 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
         const state = payload?.refinement;
         if (!state || state.phase === DETAIL_PHASE.DISPOSED || !CUT_COMMON_KOWLOON_ENRICHMENT) return false;
         const progressive = progressiveState(state);
-        if (progressive.requested || progressive.complete) return false;
-        progressive.requested = true;
-        progressive.requestedAt = performance.now();
+        if (!progressive.complete) {
+            if (progressive.requested) return false;
+            progressive.requested = true;
+            progressive.requestedAt = performance.now();
+            return true;
+        }
+
+        // 21O: a second, strictly narrower handoff stage may carry an authored
+        // street-place identity through an already-real public entrance. Hanging
+        // payloads and chunks without route-owned plaza places stay exterior-only.
+        const interior = progressiveInteriorState(state);
+        if (interior.requested || interior.complete) return false;
+        if (!(payload?.physics?.routeOwnedPlazaPlaces?.length > 0)) {
+            interior.complete = true;
+            interior.completedAt = performance.now();
+            return false;
+        }
+        interior.requested = true;
+        interior.requestedAt = performance.now();
         return true;
     }
 
-    function advanceProgressivePlanning(chunk, payload) {
+    function advanceProgressiveExteriorPlanning(chunk, payload) {
         const state = payload?.refinement;
         if (!state) return { progressed: false, done: true, appended: 0, phase: 'none' };
         const progressive = progressiveState(state);
@@ -1345,6 +1386,69 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
         state.tasks.push(...selected);
         state.phase = DETAIL_PHASE.STRUCTURAL_READY;
         return { progressed: true, done: true, appended: selected.length, phase: 'complete' };
+    }
+
+    function advanceProgressiveInteriorPlanning(chunk, payload) {
+        const state = payload?.refinement;
+        if (!state) return { progressed: false, done: true, appended: 0, phase: 'none' };
+        const interior = progressiveInteriorState(state);
+        if (!interior.requested || interior.planned || interior.complete) {
+            return { progressed: false, done: true, appended: 0, phase: interior.complete ? 'interior-complete' : 'interior-idle' };
+        }
+
+        const portalPlan = planPortalBoundInteriorPlaces({ chunk, payload });
+        const rawTasks = [...(portalPlan.tasks ?? [])];
+        interior.planSchema = portalPlan.schema ?? null;
+        interior.rawTaskCount = rawTasks.length;
+        interior.bindingCount = portalPlan.bindings?.length ?? 0;
+        interior.eligiblePortals = portalPlan.eligiblePortals ?? 0;
+        if (!rawTasks.length) {
+            interior.planned = true;
+            interior.complete = true;
+            interior.plannedAt = performance.now();
+            interior.completedAt = interior.plannedAt;
+            return { progressed: true, done: true, appended: 0, phase: 'interior-empty' };
+        }
+
+        // The portal planner caps this stage at three zero-collision paint marks.
+        // Each transform has already passed SpacePlan with allowCirculation=false;
+        // no semantic connector/access-portal/context authority is regenerated.
+        interior.layout = {
+            schema: 'jweb.portal-bound-interior-layout.v1',
+            planned: rawTasks.length,
+            solved: rawTasks.filter(task => !!task.semanticPlacement).length,
+            unresolved: rawTasks.filter(task => !task.semanticPlacement).length,
+            spaces: new Set(rawTasks.map(task => task.portalBoundInteriorPlace?.spaceId).filter(Boolean)).size,
+            placements: rawTasks.filter(task => !!task.semanticPlacement).length,
+        };
+        const existing = new Set((state.tasks ?? []).map(detailTaskIdentity));
+        const selected = rawTasks.filter(task =>
+            task.kind === 'portal-bound-interior-place'
+            && !!task.semanticPlacement
+            && !!task.portalBoundInteriorPlace
+            && !existing.has(detailTaskIdentity(task))
+        ).map(task => ({
+            ...task,
+            firstPassBundle: false,
+            progressiveInteriorEnrichment: true,
+        }));
+        interior.planned = true;
+        interior.plannedAt = performance.now();
+        interior.taskCount = selected.length;
+        if (!selected.length) {
+            interior.complete = true;
+            interior.completedAt = interior.plannedAt;
+            return { progressed: true, done: true, appended: 0, phase: 'interior-complete-empty' };
+        }
+        state.tasks.push(...selected);
+        state.phase = DETAIL_PHASE.STRUCTURAL_READY;
+        return { progressed: true, done: true, appended: selected.length, phase: 'interior-complete' };
+    }
+
+    function advanceProgressivePlanning(chunk, payload) {
+        const exterior = advanceProgressiveExteriorPlanning(chunk, payload);
+        if (exterior.progressed) return exterior;
+        return advanceProgressiveInteriorPlanning(chunk, payload);
     }
 
     function getEntity(payload, id) {
@@ -1651,6 +1755,51 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
         return group;
     }
 
+    function createPortalBoundInteriorPlace(payload, task) {
+        const placement = task?.semanticPlacement;
+        const binding = task?.portalBoundInteriorPlace;
+        if (!placement || !binding) return null;
+        const reservation = placement.reservation;
+        if (!reserveDetailBox(
+            payload,
+            placement.x, placement.z,
+            reservation?.halfX ?? 0.42, reservation?.halfZ ?? 0.26,
+            reservation?.yMin ?? placement.y - 0.03,
+            reservation?.yMax ?? placement.y + 0.04,
+            0.02,
+        )) return null;
+        const accent = Number(binding.accentColor) || 0x66aacc;
+        const secondary = Number(binding.secondaryColor) || 0xd6d2c4;
+        const accentMat = new THREE.MeshStandardMaterial({
+            color: accent, emissive: accent, emissiveIntensity: 0.28, roughness: 0.62,
+        });
+        const secondaryMat = new THREE.MeshStandardMaterial({ color: secondary, roughness: 0.90 });
+        payload.detailResources.materials.add(accentMat);
+        payload.detailResources.materials.add(secondaryMat);
+        const group = new THREE.Group();
+        group.name = `portal-bound-interior-place:${binding.placeType ?? 'place'}`;
+        group.position.set(placement.x, placement.y, placement.z);
+        group.rotation.y = placement.rotY ?? 0;
+        const pad = new THREE.Mesh(unitBox, secondaryMat);
+        pad.name = 'portal-bound-place-paint-pad';
+        pad.scale.set(0.82, 0.022, 0.44);
+        const stripe = new THREE.Mesh(unitBox, accentMat);
+        stripe.name = 'portal-bound-place-paint-stripe';
+        stripe.position.y = 0.014;
+        stripe.scale.set(0.58, 0.016, 0.085);
+        const tick = new THREE.Mesh(unitBox, accentMat);
+        tick.name = 'portal-bound-place-paint-tick';
+        tick.position.set(-0.24, 0.016, 0.10);
+        tick.scale.set(0.07, 0.018, 0.22);
+        group.add(pad, stripe, tick);
+        group.userData.chunkCosmetic = true;
+        group.userData.detailKind = task.kind;
+        group.userData.portalBoundInteriorPlace = { ...binding };
+        group.userData.semanticSpaceId = binding.spaceId ?? null;
+        group.userData.semanticPlaceContinuity = 'existing-public-portal';
+        return group;
+    }
+
     function createSemanticContextProp(payload, task) {
         const def = SEMANTIC_INTERIOR_ASSET_BY_ID.get(task.assetId);
         const placement = task.semanticPlacement;
@@ -1876,6 +2025,7 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
         else if (task.kind === 'street-fixture') object = createStreetFixture(payload, task);
         else if (task.kind === 'exterior-prop-field') object = exteriorPropField.realize(payload, task);
         else if (task.kind === 'semantic-context-prop') object = createSemanticContextProp(payload, task);
+        else if (task.kind === 'portal-bound-interior-place') object = createPortalBoundInteriorPlace(payload, task);
         else if (String(task.kind).startsWith('semantic-')) object = createSemanticInterior(payload, task);
         else if (task.kind === 'overhead-cable') object = createOverheadCable(payload, task);
         else if (task.kind === 'roof-clutter') object = createRoofClutter(payload, task);
@@ -1901,7 +2051,10 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
         const state = payload?.refinement;
         if (!state || state.phase === DETAIL_PHASE.DISPOSED) return false;
         const progressive = progressiveState(state);
-        return state.cursor < state.tasks.length || (progressive.requested && !progressive.complete);
+        const interior = progressiveInteriorState(state);
+        return state.cursor < state.tasks.length
+            || (progressive.requested && !progressive.complete)
+            || (interior.requested && !interior.complete);
     }
 
     function taskRuntimePosition(payload, task) {
@@ -1982,6 +2135,7 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
                     firstPassEntitiesComplete: state.firstPassEntitiesComplete,
                     firstPassEntityTarget: state.firstPassEntityTarget,
                     progressiveEnrichment: { ...progressiveState(state), compiler: undefined },
+                    progressiveInteriorEnrichment: { ...progressiveInteriorState(state), layout: progressiveInteriorState(state).layout ? { ...progressiveInteriorState(state).layout } : null },
                 };
             }
         }
@@ -2008,12 +2162,14 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
             attempted++;
             state.attempted++;
             if (task.progressiveEnrichment) progressiveState(state).attempted++;
+            if (task.progressiveInteriorEnrichment) progressiveInteriorState(state).attempted++;
             try {
                 const didPublish = applyTask(chunk, payload, task);
                 if (didPublish) {
                     published++;
                     state.published++;
                     if (task.progressiveEnrichment) progressiveState(state).published++;
+                    if (task.progressiveInteriorEnrichment) progressiveInteriorState(state).published++;
                     state.completed = state.published;
                     recordExteriorCoverageResult(state, task, true);
                     if (task.firstPassBundle) {
@@ -2032,6 +2188,7 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
                     noOp++;
                     state.noOp++;
                     if (task.progressiveEnrichment) progressiveState(state).noOp++;
+                    if (task.progressiveInteriorEnrichment) progressiveInteriorState(state).noOp++;
                     recordExteriorCoverageResult(state, task, false, 'realizer-noop');
                     settleFirstPassMiss(state, task);
                 }
@@ -2039,6 +2196,7 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
                 failed++;
                 state.failed++;
                 if (task.progressiveEnrichment) progressiveState(state).failed++;
+                if (task.progressiveInteriorEnrichment) progressiveInteriorState(state).failed++;
                 state.failures = state.failed;
                 recordExteriorCoverageResult(state, task, false, 'realizer-error');
                 settleFirstPassMiss(state, task);
@@ -2056,6 +2214,11 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
             if (progressive.planned && !progressive.complete) {
                 progressive.complete = true;
                 progressive.completedAt = performance.now();
+            }
+            const interior = progressiveInteriorState(state);
+            if (interior.planned && !interior.complete) {
+                interior.complete = true;
+                interior.completedAt = performance.now();
             }
             state.phase = DETAIL_PHASE.READY;
             state.completedAt = performance.now();
@@ -2075,6 +2238,7 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
             firstPassEntitiesComplete: state.firstPassEntitiesComplete,
             firstPassEntityTarget: state.firstPassEntityTarget,
             progressiveEnrichment: { ...progressiveState(state), compiler: undefined },
+            progressiveInteriorEnrichment: { ...progressiveInteriorState(state), layout: progressiveInteriorState(state).layout ? { ...progressiveInteriorState(state).layout } : null },
             // A full snapshot scans remaining tasks and aggregates diagnostics. Keep the
             // incremental runtime counters hot, but pay the snapshot cost only once when
             // this payload finishes instead of after every one-task refinement turn.
@@ -2098,6 +2262,7 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
         payload.entityById = new Map((payload.entities ?? []).map(entity => [entity.id, entity]));
         const state = plan(chunk, payload.entities);
         progressiveState(state);
+        progressiveInteriorState(state);
         state.semanticLayout = solveSemanticLayout({
             chunk,
             payload,

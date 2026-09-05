@@ -173,6 +173,12 @@ function normalizeAccessAnchors(accessAnchors = []) {
     dr: Number(anchor?.dr) || 0,
     floor: Math.max(0, Math.floor(Number(anchor?.floor) || 0)),
     connectorId: anchor?.connectorId ?? null,
+    endpointId: anchor?.endpointId ?? null,
+    bridgeId: anchor?.bridgeId ?? null,
+    routeCharacter: anchor?.routeCharacter ?? null,
+    traversalPermission: anchor?.traversalPermission ?? null,
+    circulationClass: anchor?.circulationClass ?? null,
+    authority: anchor?.authority ?? null,
   }));
 }
 
@@ -709,6 +715,135 @@ function rootAnchor({ floor, baseFloor = 0, rootSpace, grid, accessAnchors, rese
   return { x: (grid.bounds.minX + grid.bounds.maxX) * 0.5, z: (grid.bounds.minZ + grid.bounds.maxZ) * 0.5, source: 'floor-center' };
 }
 
+function transferRouteSpace(spaces) {
+  return spaces.find(space => space.role === 'circulation' && space.circulationShape === 'occupancy-hallway')
+    ?? spaces.find(space => space.role === 'circulation')
+    ?? spaces.find(space => space.role === 'entry')
+    ?? null;
+}
+
+function pathCellKey(ix, iz) { return `${ix},${iz}`; }
+
+function directOrthogonalGridPath(grid, start, end, horizontalFirst, routeSpaceKey) {
+  const result = [];
+  let ix = start.ix, iz = start.iz;
+  const visit = (x, z) => {
+    const cell = grid.byKey.get(pathCellKey(x, z));
+    if (!cell || (cell.spaceId && cell.spaceId !== routeSpaceKey)) return false;
+    if (!result.includes(cell)) result.push(cell);
+    return true;
+  };
+  if (!visit(ix, iz)) return null;
+  const moveX = () => {
+    while (ix !== end.ix) {
+      ix += ix < end.ix ? 1 : -1;
+      if (!visit(ix, iz)) return false;
+    }
+    return true;
+  };
+  const moveZ = () => {
+    while (iz !== end.iz) {
+      iz += iz < end.iz ? 1 : -1;
+      if (!visit(ix, iz)) return false;
+    }
+    return true;
+  };
+  const ok = horizontalFirst ? (moveX() && moveZ()) : (moveZ() && moveX());
+  return ok ? result : null;
+}
+
+function shortestGridPath(grid, start, end, routeSpaceKey) {
+  const directA = directOrthogonalGridPath(grid, start, end, true, routeSpaceKey);
+  const directB = directOrthogonalGridPath(grid, start, end, false, routeSpaceKey);
+  if (directA && directB) return directA.length <= directB.length ? directA : directB;
+  if (directA) return directA;
+  if (directB) return directB;
+
+  const queue = [start];
+  const parent = new Map([[start.key, null]]);
+  while (queue.length) {
+    const current = queue.shift();
+    if (current.key === end.key) break;
+    const next = neighborsOf(current, grid)
+      .filter(cell => (!cell.spaceId || cell.spaceId === routeSpaceKey) && !parent.has(cell.key))
+      .sort((a, b) => {
+        const ad = Math.abs(a.ix - end.ix) + Math.abs(a.iz - end.iz);
+        const bd = Math.abs(b.ix - end.ix) + Math.abs(b.iz - end.iz);
+        return ad - bd || a.key.localeCompare(b.key);
+      });
+    for (const cell of next) {
+      parent.set(cell.key, current.key);
+      queue.push(cell);
+    }
+  }
+  if (!parent.has(end.key)) return null;
+  const path = [];
+  let cursor = end.key;
+  while (cursor) {
+    const cell = grid.byKey.get(cursor);
+    if (cell) path.push(cell);
+    cursor = parent.get(cursor);
+  }
+  path.reverse();
+  return path;
+}
+
+function preclaimCityExchangeRoutes({ spaces, floor, grid, reservations, accessAnchors }) {
+  const exchangeAnchors = accessAnchors
+    .filter(anchor => anchor.floor === floor && anchor.kind === 'city-exchange')
+    .sort((a, b) => a.id.localeCompare(b.id));
+  if (!exchangeAnchors.length) return { claimed: 0, transferSpace: null, bindings: [], routes: [] };
+
+  const routeSpace = transferRouteSpace(spaces);
+  if (!routeSpace) throw new Error(`building plan floor ${floor}: city exchange requires an entry/circulation space`);
+  const activeReservations = reservations.filter(reservation => reservationHitsFloor(reservation, grid.y0, grid.y1));
+  const coreReservation = activeReservations.find(reservation => String(reservation.kind).toLowerCase() === 'stair-shaft')
+    ?? activeReservations.find(reservation => /stair|core|shaft/i.test(String(reservation.kind)))
+    ?? null;
+  if (!coreReservation) throw new Error(`building plan floor ${floor}: city exchange cannot reach a persistent stair/core reservation`);
+
+  const coreCell = nearestCell(grid.cells, { x: coreReservation.x, z: coreReservation.z }, cell =>
+    (!cell.spaceId || cell.spaceId === routeSpace.key) && cellEligibleForSpace(cell, routeSpace));
+  if (!coreCell) throw new Error(`building plan floor ${floor}: persistent stair/core has no traversable plan cell`);
+
+  const bindings = [];
+  const routes = [];
+  const claimedKeys = new Set();
+  for (const anchor of exchangeAnchors) {
+    const anchorCell = nearestCell(grid.cells, { x: anchor.x, z: anchor.z }, cell =>
+      (!cell.spaceId || cell.spaceId === routeSpace.key) && cellEligibleForSpace(cell, routeSpace));
+    if (!anchorCell) throw new Error(`building plan floor ${floor}: city exchange ${anchor.id} has no interior landing cell`);
+    const path = shortestGridPath(grid, anchorCell, coreCell, routeSpace.key);
+    if (!path?.length) throw new Error(`building plan floor ${floor}: city exchange ${anchor.id} cannot route to persistent core`);
+    for (const cell of path) {
+      if (cell.spaceId && cell.spaceId !== routeSpace.key) throw new Error(`building plan floor ${floor}: city exchange route collided with ${cell.spaceId}`);
+      cell.spaceId = routeSpace.key;
+      claimedKeys.add(cell.key);
+    }
+    bindings.push({
+      anchorId: anchor.id,
+      endpointId: anchor.endpointId,
+      bridgeId: anchor.bridgeId,
+      floor,
+      spaceKey: routeSpace.key,
+      traversalPermission: anchor.traversalPermission ?? 'PUBLIC_THROUGH',
+      routeCharacter: anchor.routeCharacter ?? 'TOWER_TRANSFER',
+      circulationClass: 'boundary-exchange',
+      authority: anchor.authority ?? 'jweb.tower-transfer-authority.v1',
+    });
+    routes.push({
+      anchorId: anchor.id,
+      endpointId: anchor.endpointId,
+      coreReservationId: coreReservation.id,
+      spaceKey: routeSpace.key,
+      cellKeys: path.map(cell => cell.key),
+      directness: path.length <= Math.abs(anchorCell.ix - coreCell.ix) + Math.abs(anchorCell.iz - coreCell.iz) + 1
+        ? 'orthogonal-direct' : 'grid-detour',
+    });
+  }
+  return { claimed: claimedKeys.size, transferSpace: routeSpace, bindings, routes };
+}
+
 function graphBfsOrder(spaces, edges, rootKey) {
   const byKey = new Map(spaces.map(s => [s.key, s]));
   // In full reversal the backbone is not merely a semantic wish: it is the
@@ -965,6 +1100,7 @@ function attemptMinimumProgramPlacement({
     minimumCellCountForSpace(space, grid, floorH),
   ]));
   const hallwayClaim = preclaimOccupancyHallway(spaces, grid);
+  const cityExchangeClaim = preclaimCityExchangeRoutes({ spaces, floor, grid, reservations, accessAnchors });
   const rootPoint = rootAnchor({ floor, baseFloor, rootSpace, grid, accessAnchors, reservations });
   const rootSeed = grid.cells.some(cell => cell.spaceId === rootSpace.key)
     ? null
@@ -974,6 +1110,12 @@ function attemptMinimumProgramPlacement({
     spaceKey: hallwayClaim.hallway.key,
     kind: 'preclaimed-occupancy-hallway',
     cellCount: hallwayClaim.claimed,
+  });
+  if (cityExchangeClaim.claimed) geometryNotes.push({
+    spaceKey: cityExchangeClaim.transferSpace?.key ?? null,
+    kind: 'preclaimed-city-transfer-spine',
+    cellCount: cityExchangeClaim.claimed,
+    endpointIds: cityExchangeClaim.bindings.map(binding => binding.endpointId),
   });
 
   for (let ordinal = 0; ordinal < order.length; ordinal++) {
@@ -1049,7 +1191,12 @@ function attemptMinimumProgramPlacement({
     };
   }).filter(item => item.shortfallCells > 0);
 
-  return { topology, rootSpace, order, parent, minimumCellsByKey, geometryNotes, shortfalls };
+  return {
+    topology, rootSpace, order, parent, minimumCellsByKey, geometryNotes, shortfalls,
+    cityExchangeBindings: cityExchangeClaim.bindings,
+    cityTransferRoutes: cityExchangeClaim.routes,
+    cityTransferSpaceKey: cityExchangeClaim.transferSpace?.key ?? null,
+  };
 }
 
 function chooseChildSeed({ space, parentKey, grid, profile, stableKey }) {
@@ -1225,7 +1372,7 @@ function resolvedDoorWidth(physicalTruth) {
       || 0.86);
 }
 
-function openingsFromTopology({ grid, edges, rootKey, accessAnchors, physicalTruth, stableKey, floor, baseFloor = 0 }) {
+function openingsFromTopology({ grid, edges, rootKey, accessAnchors, cityExchangeBindings = [], physicalTruth, stableKey, floor, baseFloor = 0 }) {
   const boundaries = boundaryCandidates(grid);
   const width = resolvedDoorWidth(physicalTruth);
   const openings = [];
@@ -1249,13 +1396,16 @@ function openingsFromTopology({ grid, edges, rootKey, accessAnchors, physicalTru
       topologySource: edge.source,
     });
   }
-  if (floor === baseFloor && rootKey) {
-    for (const anchor of accessAnchors.filter(a => a.floor === floor)) {
+  if (rootKey) {
+    for (const anchor of accessAnchors.filter(a => a.floor === floor
+      && (floor === baseFloor || a.kind === 'city-exchange'))) {
+      const binding = cityExchangeBindings.find(item => item.anchorId === anchor.id) ?? null;
+      const cityExchange = anchor.kind === 'city-exchange';
       openings.push({
         id: `${stableKey}:entrance:${anchor.id}`,
         kind: anchor.kind,
-        fromSpaceKey: 'street',
-        toSpaceKey: rootKey,
+        fromSpaceKey: cityExchange ? `exterior:${anchor.endpointId ?? anchor.id}` : 'street',
+        toSpaceKey: cityExchange ? (binding?.spaceKey ?? rootKey) : rootKey,
         width,
         height: Math.max(1.95, Number(physicalTruth?.door?.clearHeight?.realizedSI) || 2.03),
         x: anchor.x,
@@ -1264,7 +1414,10 @@ function openingsFromTopology({ grid, edges, rootKey, accessAnchors, physicalTru
         dc: anchor.dc,
         dr: anchor.dr,
         connectorId: anchor.connectorId,
-        topologySource: 'authoritative-access-anchor',
+        endpointId: anchor.endpointId ?? null,
+        bridgeId: anchor.bridgeId ?? null,
+        traversalPermission: anchor.traversalPermission ?? null,
+        topologySource: cityExchange ? 'authoritative-city-exchange-anchor' : 'authoritative-access-anchor',
       });
     }
   }
@@ -1437,6 +1590,11 @@ function planFloor({
       regions: compactSpaceCells(cells, grid.cellSize),
       facadePattern: s.facadePattern,
       structuralReservationIds: [...new Set(cells.map(c => c.structuralReservationId).filter(Boolean))],
+      ...(s.key === minimumPlacement.cityTransferSpaceKey ? {
+        circulationClass: 'interior',
+        traversalPermission: 'PUBLIC_THROUGH',
+        cityTransferSpine: true,
+      } : {}),
     };
   }).filter(s => s.cellCount > 0);
 
@@ -1460,11 +1618,17 @@ function planFloor({
     spaces: realizedSpaces, desiredEdges, grid, rootKey: rootSpace.key, stableKey: `${stableKey}:floor:${floor}`,
   });
   const realizedEdges = realizedTopology.edges;
+  const cityExchangeBindings = (minimumPlacement.cityExchangeBindings ?? []).map(binding => {
+    const space = realizedSpaces.find(candidate => candidate.key === binding.spaceKey);
+    if (!space) throw new Error(`building plan floor ${floor}: city exchange ${binding.endpointId ?? binding.anchorId} lost its transfer space`);
+    return { ...binding, spaceId: space.id };
+  });
   const openingPlan = openingsFromTopology({
     grid,
     edges: realizedEdges,
     rootKey: rootSpace.key,
     accessAnchors,
+    cityExchangeBindings,
     physicalTruth,
     stableKey,
     floor,
@@ -1499,6 +1663,8 @@ function planFloor({
     desiredEdges,
     edges: realizedEdges,
     openings: openingPlan.openings,
+    cityExchangeBindings,
+    cityTransferRoutes: minimumPlacement.cityTransferRoutes ?? [],
     facadeIntents: facadeIntents({ spaces, grid, profile }),
     inversionOperations: topology.inversionOperations,
     diagnostics: {
@@ -1533,6 +1699,10 @@ function planFloor({
       circulationWidthHealthy: realizedSpaces
         .filter(space => space.role === 'circulation' || space.role === 'entry')
         .every(space => space.regions.some(region => Math.min(region.halfX * 2, region.halfZ * 2) + EPS >= minimumClearWidth)),
+      cityExchangeBindingCount: cityExchangeBindings.length,
+      cityTransferRouteCount: minimumPlacement.cityTransferRoutes?.length ?? 0,
+      cityTransferSpineCellCount: minimumPlacement.cityTransferRoutes
+        ? new Set(minimumPlacement.cityTransferRoutes.flatMap(route => route.cellKeys ?? [])).size : 0,
       occupancyHallway: occupancyHallway ? {
         spaceKey: occupancyHallway.key,
         axis: occupancyHallway.corridorAxis,
@@ -1659,6 +1829,8 @@ export function planBuildingSidecar({
     && (f.diagnostics.minimumProgramShortfallCells ?? 0) === 0);
   const droppedSpacesForPhysicalArea = floors.reduce((sum, f) => sum + (f.diagnostics.droppedSpaceKeysForPhysicalArea?.length ?? 0), 0);
   const circulationDeferredModuleBands = floors.reduce((sum, f) => sum + (f.diagnostics.circulationDeferredModuleCount ?? 0), 0);
+  const cityExchangeBindingCount = floors.reduce((sum, f) => sum + (f.cityExchangeBindings?.length ?? 0), 0);
+  const cityTransferRouteCount = floors.reduce((sum, f) => sum + (f.cityTransferRoutes?.length ?? 0), 0);
 
   const result = {
     schema: SCHEMA,
@@ -1712,6 +1884,8 @@ export function planBuildingSidecar({
       humanScaleHealthy,
       droppedSpacesForPhysicalArea,
       circulationDeferredModuleBands,
+      cityExchangeBindingCount,
+      cityTransferRouteCount,
       readyForFabricEmission: topologyHealthy && unclaimedCells === 0 && humanScaleHealthy,
     },
   };

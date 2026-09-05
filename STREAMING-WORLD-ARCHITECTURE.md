@@ -297,3 +297,66 @@ The visual family may add beams, frames, trusses, hangers, canopies and large po
 - all large-form bridge families remain visual-only wrappers around canonical traversal;
 - all four mixed-city section archetypes occur deterministically in a population;
 - legacy endpoint, semantic-connector, cavern, hanging-floor and exterior-solid-volume safety tests continue to pass.
+
+## Cut 21R — Transfer-serving tower authority
+
+21R turns the circulation demands introduced in 21Q from descriptive intent into a Building Plan obligation. A tower that accepts a resolved skybridge exchange now has to make architectural room for that exchange before ordinary program territory is allowed to consume the floor.
+
+### Exterior exchange -> public interior spine
+
+Every resolved bridge portal is converted into a `city-exchange` Building Plan access anchor on its **global structural floor**. This is important for hanging buildings: the ceiling-local floor number remains useful to shell generation, but it is not the semantic floor address used by the shared Building Plan.
+
+Before normal room growth, the floor planner:
+
+1. identifies the existing persistent stair/core reservation;
+2. selects the existing entry/circulation space as the public transfer spine;
+3. reserves a real orthogonal/grid route from each city-exchange facade anchor back to that core;
+4. makes ordinary room growth form around those claimed cells;
+5. emits an explicit city-exchange threshold owned by the bound public circulation space.
+
+This is intentionally **not** a new stair implementation. The existing stair reservation, tread/riser/ramp geometry, headroom and collision authority remain unchanged. 21R only makes the floor plan preserve a legitimate horizontal approach to that already-proven vertical kernel.
+
+### Fail-closed transfer promises
+
+`world/architecture/tower-transfer-authority.js` verifies the resulting Building Plan after promotion.
+
+- Every resolved facade exchange must have an authoritative Building Plan binding, even if it is the tower's only skybridge.
+- Exchange bindings may terminate only in `PUBLIC_THROUGH` entry/circulation space.
+- That space must physically own the exact persistent core reservation on its floor.
+- A multi-exchange demand must have a public semantic path between endpoint spaces.
+- A demand marked as vertical must actually consume at least one persistent vertical-core handoff.
+- Missing, private, orphaned or unrealized bindings reject the transfer instead of allowing exterior geometry to imply a route that does not exist.
+
+This establishes the first authoritative form of:
+
+```text
+EXTERIOR SKYBRIDGE
+        ->
+CITY-EXCHANGE THRESHOLD
+        ->
+PUBLIC INTERIOR SPINE
+        ->
+EXISTING PERSISTENT STAIR/CORE
+        ->
+PUBLIC INTERIOR SPINE
+        ->
+CITY-EXCHANGE THRESHOLD
+        ->
+EXTERIOR SKYBRIDGE
+```
+
+### Endpoint semantic authority
+
+A resolved bridge endpoint already owns its facade aperture and Building Plan exchange binding. Bridge semantic connectors therefore consult that explicit binding **before** geometric point-containment fallback. A bridge may not silently bind to an adjacent storage/private/program room merely because its endpoint lies inside that room's raster region.
+
+This rule also applies to a tower with only one exterior exchange: there may be no through-tower demand pair yet, but the accepted bridge still has to enter legitimate public circulation.
+
+### 21R regression expectations
+
+- existing Building Plan behavior is unchanged when no city exchanges exist;
+- a low facade exchange and a high facade exchange compile through the existing persistent core without changing stair physics;
+- hanging exchange anchors use the shared/global Building Plan floor rather than their ceiling-local floor index;
+- every runtime bridge connector terminates in the exact authoritative exchange-bound semantic space at both ends;
+- a multi-exchange collector compiles into one real world-circulation component through Building Plan door/core connectors and bridge connectors;
+- a missing exchange binding fails closed before a promised sky route can survive;
+- all 21Q sectional, endpoint, hanging-band and bridge-architecture invariants remain intact.

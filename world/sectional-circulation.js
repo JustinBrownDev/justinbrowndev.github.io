@@ -262,8 +262,15 @@ export function towerTransferDemandsForPortals(portals = [], { siteId = null, fi
       const a = usable[i], b = usable[j];
       const aBand = field === 'ceiling' ? Number(a.ceilingDepthBand) : Number(a.floor);
       const bBand = field === 'ceiling' ? Number(b.ceilingDepthBand) : Number(b.floor);
+      const aGlobalFloor = Number.isFinite(Number(a.globalFloor)) ? Number(a.globalFloor) : null;
+      const bGlobalFloor = Number.isFinite(Number(b.globalFloor)) ? Number(b.globalFloor) : null;
       const faceChange = a.dirKey !== b.dirKey;
-      const vertical = aBand !== bBand;
+      // Once facade endpoints are resolved, the shared/global structural floor is
+      // the transfer truth. Ceiling-depth/local-floor values remain planning
+      // coordinates and must not manufacture a vertical demand after rebasing.
+      const vertical = aGlobalFloor !== null && bGlobalFloor !== null
+        ? aGlobalFloor !== bGlobalFloor
+        : aBand !== bBand;
       if (!faceChange && !vertical) continue;
       const score = (vertical ? 3 : 0) + (faceChange ? 2 : 0) + ((a.routeCharacter === ROUTE_CHARACTER.VERTICAL_COLLECTOR || b.routeCharacter === ROUTE_CHARACTER.VERTICAL_COLLECTOR) ? 2 : 0);
       pairs.push({ a, b, score, tie: stableHash(`${stableKey}:${a.id}:${b.id}`), vertical, faceChange });
@@ -280,6 +287,8 @@ export function towerTransferDemandsForPortals(portals = [], { siteId = null, fi
     toEndpointId: pair.b.id,
     fromBand: field === 'ceiling' ? pair.a.ceilingDepthBand : pair.a.floor,
     toBand: field === 'ceiling' ? pair.b.ceilingDepthBand : pair.b.floor,
+    fromGlobalFloor: Number.isFinite(Number(pair.a.globalFloor)) ? Number(pair.a.globalFloor) : null,
+    toGlobalFloor: Number.isFinite(Number(pair.b.globalFloor)) ? Number(pair.b.globalFloor) : null,
     requiresVerticalTransfer: pair.vertical,
     requiresFacadeChange: pair.faceChange,
     routeCharacter: pair.vertical ? ROUTE_CHARACTER.TOWER_TRANSFER : ROUTE_CHARACTER.INTERIOR_HEAVY,

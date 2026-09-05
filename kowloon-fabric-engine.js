@@ -44,6 +44,7 @@ import { recoverCellFootprintForCirculation } from './world/architecture/circula
 import { collapseSolidComponentsIntoSuperstructureSites, superstructureFallbackDecision } from './world/superstructure-fallback.js';
 import { planBuildingSidecar } from './world/architecture/building-plan-sidecar.js';
 import { assertBuildingPlanAuthority, promoteBuildingPlanAuthority } from './world/architecture/building-plan-authority.js';
+import { applyTowerTransferAuthority, cityExchangeAnchorsForPortals } from './world/architecture/tower-transfer-authority.js';
 import { createSemanticPlanCache, semanticPlanCacheKey } from './world/architecture/semantic-plan-runtime.js';
 import { accessAnchorsForBuildingPortals, compileAccessPortals } from './world/access-portals.js';
 import { compileDistrictBlockComposition, districtBuildingPolicyForEntity, districtContextForEntity } from './world/district-block-composition.js';
@@ -211,10 +212,25 @@ function normalizeCeilingModuleFloorConnectivity(modulePlans, primaryModule, bri
             module.floors = depthBand;
             deepened.set(module.key, (deepened.get(module.key) ?? 0) + (depthBand - before));
         }
+        // Keep the requested shared depth now, but defer local-floor derivation.
+        // A later exchange can deepen this same target/path; calculating localFloor
+        // here would then become stale and could collapse distinct world bands onto
+        // the same floor after final floorBase values are assigned.
+        portal.ceilingDepthBand = depthBand;
+    }
+
+    // Second pass: all module depths are final. Convert each ceiling-depth demand
+    // into the target module's local floor from that final structure so
+    // floorBase + localFloor remains the shared world floor band.
+    for (const portal of bridgePortals) {
+        const target = modulePlans.find(module => module.key === portal.moduleKey);
+        if (!target) continue;
+        const depthBand = Math.min(
+            Math.max(1, Number(primaryModule.floors) || 1),
+            Math.max(1, Math.floor(Number(portal.ceilingDepthBand) || 1)),
+        );
         const band = resolveCeilingDepthBand({ moduleFloors: target.floors, primaryFloors: primaryModule.floors, depthBand });
         portal.ceilingDepthBand = band.depthBand;
-        // Local floor differs from module to module, but floorBase + localFloor
-        // resolves to the same world floor band under ceiling alignment.
         portal.floor = band.localFloor;
     }
     return {
@@ -2324,12 +2340,19 @@ export function createKowloonFabricEngine({
         });
 
         const accessPortals = compileAccessPortals({ connectors: [...entranceConnectorByKey.values()] });
-        const accessAnchors = accessAnchorsForBuildingPortals(accessPortals);
+        const entranceAccessAnchors = accessAnchorsForBuildingPortals(accessPortals);
+        const cityExchangeAnchors = cityExchangeAnchorsForPortals(bridgePortals, {
+            siteId: site.id,
+            field: ceilingAligned ? 'ceiling' : 'ground',
+        });
+        const accessAnchors = [...entranceAccessAnchors, ...cityExchangeAnchors];
+        const transferPlanFingerprint = hashString32(cityExchangeAnchors
+            .map(anchor => `${anchor.endpointId}:${anchor.floor}:${anchor.side}`).sort().join('|'));
         const buildingPlanKey = semanticPlanCacheKey({
             worldSeed,
             chunkKey: chunk.key,
             entityId: buildingPlanEntityId,
-            planKind: 'building-plan-authority',
+            planKind: `building-plan-authority:transfer:${transferPlanFingerprint}`,
         });
         const buildingPlan = buildingPlanCache.getOrCreate(buildingPlanKey, () => promoteBuildingPlanAuthority(planBuildingSidecar({
             worldSeed,
@@ -2369,6 +2392,10 @@ export function createKowloonFabricEngine({
             entityId: buildingPlanEntityId,
         }));
         assertBuildingPlanAuthority(buildingPlan);
+        const cityTransferAuthority = applyTowerTransferAuthority(buildingPlan, {
+            demands: cityTransferDemands,
+            portals: bridgePortals,
+        });
 
         const groundFloorPlan = buildingPlan.floors.find(floor => floor.floor === 0) ?? buildingPlan.floors[0];
         const groundRoot = groundFloorPlan?.spaces?.find(space => space.key === groundFloorPlan.rootSpaceKey) ?? groundFloorPlan?.spaces?.[0];
@@ -2582,7 +2609,7 @@ export function createKowloonFabricEngine({
             center: portal.side === 'north' || portal.side === 'south' ? Number(portal.x) : Number(portal.z),
         });
         const makeRoomAccessDemand = (face, floor, { source = 'fast-vertical-room-portal', anchorPortal = null } = {}) => {
-            const roomSpace = buildingPlanSpaceForModuleFloor(face.module.key, floor, face.dir.side);
+            const roomSpace = buildingPlanSpaceForModuleFloor(face.module.key, moduleFloorBase(face.module) + floor, face.dir.side);
             if (!roomSpace) throw new Error(`${chunk.key}:${siteSignature}:${face.module.key}:floor:${floor}: occupancy access demand has no Building Plan space`);
             const roomSpaceId = roomSpace.id;
             const layerSpaceId = `${chunk.key}:${siteSignature}:${face.module.key}:street-layer:${floor}`;
@@ -3242,6 +3269,7 @@ export function createKowloonFabricEngine({
             suppressInteriorEnrichment: true,
             bridgePortalCount: bridgeOpeningKeys.size,
             cityTransferDemands: [...cityTransferDemands],
+            cityTransferAuthority,
             facades,
             compoundBounds: bounds,
             kowloonIntensity: chunk.weirdness.sampled,
@@ -3539,6 +3567,7 @@ export function createKowloonFabricEngine({
                 : tangent;
             Object.assign(portal, {
                 floor: portalFloor,
+                globalFloor: moduleFloorBase(module) + portalFloor,
                 side: dir.side, tangent, x, z,
                 y: ceilingAlignedModules ? moduleFloorLocalY(module, portalFloor, floorH) : portalFloor * floorH,
                 width, height, depth,
@@ -3904,12 +3933,19 @@ export function createKowloonFabricEngine({
         // order or an independent interior entrance roll. Structural connector IDs
         // remain the physical identity carried by each Portal.
         const accessPortals = compileAccessPortals({ connectors: [...entranceConnectorByKey.values()] });
-        const accessAnchors = accessAnchorsForBuildingPortals(accessPortals);
+        const entranceAccessAnchors = accessAnchorsForBuildingPortals(accessPortals);
+        const cityExchangeAnchors = cityExchangeAnchorsForPortals(bridgePortals, {
+            siteId: site.id,
+            field: ceilingAlignedModules ? 'ceiling' : 'ground',
+        });
+        const accessAnchors = [...entranceAccessAnchors, ...cityExchangeAnchors];
+        const transferPlanFingerprint = hashString32(cityExchangeAnchors
+            .map(anchor => `${anchor.endpointId}:${anchor.floor}:${anchor.side}`).sort().join('|'));
         const buildingPlanKey = semanticPlanCacheKey({
             worldSeed,
             chunkKey: chunk.key,
             entityId: buildingPlanEntityId,
-            planKind: 'building-plan-authority',
+            planKind: `building-plan-authority:transfer:${transferPlanFingerprint}`,
         });
         const buildingPlan = buildingPlanCache.getOrCreate(buildingPlanKey, () => promoteBuildingPlanAuthority(planBuildingSidecar({
             worldSeed,
@@ -3949,6 +3985,10 @@ export function createKowloonFabricEngine({
             entityId: buildingPlanEntityId,
         }));
         assertBuildingPlanAuthority(buildingPlan);
+        const cityTransferAuthority = applyTowerTransferAuthority(buildingPlan, {
+            demands: cityTransferDemands,
+            portals: bridgePortals,
+        });
 
         const groundFloorPlan = buildingPlan.floors.find(floor => floor.floor === 0) ?? buildingPlan.floors[0];
         const groundRoot = groundFloorPlan?.spaces?.find(space => space.key === groundFloorPlan.rootSpaceKey) ?? groundFloorPlan?.spaces?.[0];
@@ -4506,7 +4546,7 @@ export function createKowloonFabricEngine({
             courtyardCell: courtyard ? { col: courtyard.col, row: courtyard.row } : null,
             courtyardSuppressedForConnectivity,
             moduleCount: modulePlans.length,
-            footprintModules: modulePlans.map(module => ({ ...module.rect, floors: module.floors, key: module.key })),
+            footprintModules: modulePlans.map(module => ({ ...module.rect, floors: module.floors, floorBase: moduleFloorBase(module), key: module.key })),
             modularSetbacks: Math.max(0, new Set(floorCounts).size - 1) + Math.max(0, modulePlans.length - 1),
             floorConnectivityRepair,
             heightVariance: Math.max(...floorCounts) - Math.min(...floorCounts),
@@ -4537,6 +4577,7 @@ export function createKowloonFabricEngine({
             suppressInteriorEnrichment: !!structureProfile?.suppressInteriorClutter,
             bridgePortalCount: bridgeOpeningKeys.size,
             cityTransferDemands: [...cityTransferDemands],
+            cityTransferAuthority,
             facades,
             compoundBounds: bounds,
             kowloonIntensity: weird,
@@ -4593,7 +4634,17 @@ export function createKowloonFabricEngine({
         return { tiers, topY };
     }
 
-    function semanticSpaceIdForEntity(entity, moduleKey, floor, point = null) {
+    function semanticSpaceIdForEntity(entity, moduleKey, floor, point = null, endpointId = null) {
+        // A resolved skybridge endpoint has already been consumed by Building Plan
+        // authority. Prefer that explicit exchange binding over geometric point
+        // containment so the semantic bridge cannot silently terminate in a
+        // private/storage room adjacent to the facade.
+        if (endpointId) {
+            const authoritativeBinding = entity?.cityTransferAuthority?.bindings?.find(binding => binding.endpointId === endpointId)
+                ?? (entity?.buildingPlan?.floors ?? []).flatMap(candidate => candidate.cityExchangeBindings ?? [])
+                    .find(binding => binding.endpointId === endpointId);
+            if (authoritativeBinding?.spaceId) return authoritativeBinding.spaceId;
+        }
         const planned = (entity?.buildingPlan?.topologySpaces ?? [])
             .filter(space => space.floor === floor && (!moduleKey || space.moduleKeys?.includes(moduleKey)));
         if (planned.length) {
@@ -4618,6 +4669,8 @@ export function createKowloonFabricEngine({
         const fallbackFloor = Number.isFinite(Number(bridge.floor)) ? Number(bridge.floor) : 1;
         const aFloor = Number.isFinite(Number(aEndpoint?.floor)) ? Number(aEndpoint.floor) : fallbackFloor;
         const bFloor = Number.isFinite(Number(bEndpoint?.floor)) ? Number(bEndpoint.floor) : fallbackFloor;
+        const aSemanticFloor = Number.isFinite(Number(aEndpoint?.globalFloor)) ? Number(aEndpoint.globalFloor) : aFloor;
+        const bSemanticFloor = Number.isFinite(Number(bEndpoint?.globalFloor)) ? Number(bEndpoint.globalFloor) : bFloor;
         if (!aModule || !bModule || aModule.floors <= aFloor || bModule.floors <= bFloor) return false;
         const floorH = Math.min(aEntity.floorH || 3.15, bEntity.floorH || 3.15);
         let y = Number.isFinite(Number(bridge.worldBandY)) ? Number(bridge.worldBandY) : ((aFloor + bFloor) * 0.5 * floorH);
@@ -4678,16 +4731,16 @@ export function createKowloonFabricEngine({
             id: `${bridge.id}:connector`, axis: bridge.axis, from, to, fixedCoord, halfWidth: width * 0.5, y,
             source: 'skybridge', visualRole: bridge.variant || 'skybridge',
             fromSpaceId: bridge.axis === 'x'
-                ? semanticSpaceIdForEntity(aEntity, bridge.aModuleKey, aFloor, { x: from, z: fixedCoord })
-                : semanticSpaceIdForEntity(aEntity, bridge.aModuleKey, aFloor, { x: fixedCoord, z: from }),
+                ? semanticSpaceIdForEntity(aEntity, bridge.aModuleKey, aSemanticFloor, { x: from, z: fixedCoord }, aEndpoint?.id ?? null)
+                : semanticSpaceIdForEntity(aEntity, bridge.aModuleKey, aSemanticFloor, { x: fixedCoord, z: from }, aEndpoint?.id ?? null),
             toSpaceId: bridge.axis === 'x'
-                ? semanticSpaceIdForEntity(bEntity, bridge.bModuleKey, bFloor, { x: to, z: fixedCoord })
-                : semanticSpaceIdForEntity(bEntity, bridge.bModuleKey, bFloor, { x: fixedCoord, z: to }),
+                ? semanticSpaceIdForEntity(bEntity, bridge.bModuleKey, bSemanticFloor, { x: to, z: fixedCoord }, bEndpoint?.id ?? null)
+                : semanticSpaceIdForEntity(bEntity, bridge.bModuleKey, bSemanticFloor, { x: fixedCoord, z: to }, bEndpoint?.id ?? null),
             physicalTruth: bridgeTruth,
             metadata: {
                 bridgeId: bridge.id, surfaceId: rawSurface.id,
                 variant: bridge.variant || 'skybridge', floor: aFloor === bFloor ? aFloor : null,
-                aFloor, bFloor,
+                aFloor, bFloor, aSemanticFloor, bSemanticFloor,
                 ceilingDepthBand: bridge.ceilingDepthBand ?? null,
                 worldBandY: bridge.worldBandY ?? y,
                 architectureFamily: bridge.architectureFamily ?? 'simple-guarded',

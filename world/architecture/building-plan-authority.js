@@ -250,6 +250,9 @@ export function compileBuildingPlanTopologySpaces(plan, { chunkKey = plan?.chunk
         semanticProgram: space.semanticProgram,
         privacy: space.privacy,
         daylight: space.daylight,
+        circulationClass: space.circulationClass ?? null,
+        traversalPermission: space.traversalPermission ?? null,
+        cityTransferSpine: space.cityTransferSpine === true,
         centroid: space.centroid ? { ...space.centroid } : null,
         regions: (space.regions ?? []).map(region => ({ ...region })),
         structuralReservationIds: [...(space.structuralReservationIds ?? [])],
@@ -394,6 +397,11 @@ export function inspectBuildingPlan(plan) {
       reservationId: plan.verticalCore.reservationId,
       floorSpaceIds: [...plan.verticalCore.floorSpaceIds],
     } : null,
+    cityTransfers: plan?.cityTransferAuthority ? {
+      requested: plan.cityTransferAuthority.requested,
+      realized: plan.cityTransferAuthority.realized,
+      routeIds: (plan.cityTransferAuthority.routes ?? []).map(route => route.id),
+    } : null,
     floors: (plan?.floors ?? []).map(floor => ({
       floor: floor.floor,
       rootSpaceId: fullSpaceId(floor, floor.rootSpaceKey),
@@ -441,6 +449,23 @@ export function assertBuildingPlanAuthority(plan, { requirePersistentCore = true
   for (const space of plan.topologySpaces.filter(space => space.role === 'circulation' || space.role === 'entry')) {
     if (!plan.circulationClearances.some(clearance => clearance.spaceId === space.id)) {
       throw new Error(`building plan circulation space ${space.id} lacks protected clearance`);
+    }
+  }
+  const topologyById = new Map(plan.topologySpaces.map(space => [space.id, space]));
+  for (const floor of plan.floors ?? []) {
+    for (const binding of floor.cityExchangeBindings ?? []) {
+      const space = topologyById.get(binding.spaceId);
+      if (!space) throw new Error(`building plan city exchange ${binding.endpointId ?? binding.anchorId} lacks semantic space`);
+      if (space.role !== 'circulation' && space.role !== 'entry') {
+        throw new Error(`building plan city exchange ${binding.endpointId ?? binding.anchorId} landed in ${space.role} instead of circulation`);
+      }
+      if (space.traversalPermission !== 'PUBLIC_THROUGH') {
+        throw new Error(`building plan city exchange ${binding.endpointId ?? binding.anchorId} is not PUBLIC_THROUGH`);
+      }
+      const persistentCoreReservationId = plan.verticalCore?.reservationId ?? null;
+      if (!persistentCoreReservationId || !space.structuralReservationIds.includes(persistentCoreReservationId)) {
+        throw new Error(`building plan city exchange ${binding.endpointId ?? binding.anchorId} does not reach persistent core ${persistentCoreReservationId ?? 'missing'} on floor ${floor.floor}`);
+      }
     }
   }
 

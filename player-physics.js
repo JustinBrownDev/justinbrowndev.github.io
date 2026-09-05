@@ -272,7 +272,13 @@ export function createPlayerPhysics(options) {
         return rectContains(p, x, z, platformSupportMargin(p));
     }
 
-    function rampHeightAt(r, x, z, margin = supportMargin) {
+    function rampSupportMargin(r) {
+        return r?.supportMargin === null || r?.supportMargin === undefined
+            ? supportMargin
+            : Math.max(__qp2, Number(r.supportMargin) || __qp2);
+    }
+
+    function rampHeightAt(r, x, z, margin = rampSupportMargin(r)) {
         const along = r.axis === 'x' ? x : z;
         const cross = r.axis === 'x' ? z : x;
         if (Math.abs(cross - r.fixedCoord) > r.halfWidth + margin) return null;
@@ -857,7 +863,23 @@ export function createPlayerPhysics(options) {
         return { x, z, feetY: targetFeetY, leavesGround };
     }
 
+    function airborneRampBlocksAt(x, z, currentFeetY) {
+        const bodyTop = currentFeetY + bodyHeight;
+        for (const r of querySpatial(rampIndex, x, z)) {
+            if (!physicsItemActive(r)) continue;
+            const y = rampHeightAt(r, x, z);
+            if (y === null) continue;
+            // A ramp is a walkable top surface, but while airborne its rising side is
+            // still solid. Without this sweep the capsule can enter below the local
+            // stair surface horizontally, bypass the lower tread/ramp, and emerge
+            // through the flight. Contact at/below the feet remains traversable.
+            if (y > currentFeetY + CONTACT_EPS && y < bodyTop - CONTACT_EPS) return true;
+        }
+        return false;
+    }
+
     function airborneCandidate(x, z, currentFeetY) {
+        if (airborneRampBlocksAt(x, z, currentFeetY)) return null;
         if (!poseIsValid(x, z, currentFeetY)) return null;
         return { x, z, feetY: currentFeetY, leavesGround: true };
     }

@@ -49,6 +49,7 @@ import {
 } from './world/stair-volume-contract.js';
 import { guardFamilyForContext, guardOpeningWidth, planFlightGuardPair, planHorizontalGuardSpan, splitHorizontalGuardSpan } from './world/guardrail-authority.js';
 import { normalizeTransportSurface, planExteriorTransportNetwork, transportSurfaceIntersection } from './world/exterior-transport-network.js';
+import { planCrossChunkTransportPair } from './world/cross-chunk-transport-seams.js';
 import { planRouteOwnedRooftopPlaces } from './world/route-owned-rooftop-places.js';
 import { planRouteOwnedPlazaPlaces } from './world/route-owned-plaza-places.js';
 import { planFastFacadeArchitecture } from './world/fast-facade-architecture.js';
@@ -386,6 +387,8 @@ export function createKowloonFabricEngine({
         },
     });
     const committedOwners = new Set();
+    const committedChunkPayloads = new Map();
+    const crossChunkTransportPairs = new Map();
     const buildingPlanCache = createSemanticPlanCache({ maxEntries: 1024 });
     let authoredOriginChunkPayload = null;
     if (microCells < 5 || microCells % 2 === 0) throw new Error('microCells must be an odd integer >= 5');
@@ -6521,6 +6524,291 @@ export function createKowloonFabricEngine({
         return payload;
     }
 
+    function crossChunkCoordKey(chunk) {
+        if (!chunk || !Number.isFinite(Number(chunk.x)) || !Number.isFinite(Number(chunk.z))) return null;
+        return `${Math.trunc(Number(chunk.x))},${Math.trunc(Number(chunk.z))}`;
+    }
+
+    function crossChunkCapable(payload) {
+        return (!!payload?.portals && !!payload?.hangingLayer?.payload?.physics)
+            || (!!payload?.ceilingCity && !!payload?.physics);
+    }
+
+    function pushCrossChunkMetadata(payload, seam) {
+        if (!payload || !seam?.id) return;
+        const list = payload.crossChunkTransportSeams ?? (payload.crossChunkTransportSeams = []);
+        if (!list.some(item => item?.id === seam.id)) list.push(seam);
+        if (seam.field === 'hanging') {
+            const hangingPayload = payload.hangingLayer?.payload ?? null;
+            if (hangingPayload) {
+                const hangingList = hangingPayload.crossChunkTransportSeams ?? (hangingPayload.crossChunkTransportSeams = []);
+                if (!hangingList.some(item => item?.id === seam.id)) hangingList.push(seam);
+            }
+        }
+    }
+
+    function removeCrossChunkMetadata(payload, seamId) {
+        if (!payload || !seamId) return;
+        if (Array.isArray(payload.crossChunkTransportSeams)) {
+            payload.crossChunkTransportSeams = payload.crossChunkTransportSeams.filter(item => item?.id !== seamId);
+        }
+        const hangingPayload = payload.hangingLayer?.payload ?? null;
+        if (hangingPayload && Array.isArray(hangingPayload.crossChunkTransportSeams)) {
+            hangingPayload.crossChunkTransportSeams = hangingPayload.crossChunkTransportSeams.filter(item => item?.id !== seamId);
+        }
+    }
+
+    function buildCrossChunkSkyStreetRoot(plan) {
+        if (!plan || plan.kind !== 'hanging-sky-street-seam') return null;
+        const { transforms, physics } = createFabricBuffers();
+        physics.crossChunkTransportSeams = [plan];
+        physics.crossChunkTransportEdges = [{
+            id: `${plan.id}:edge`,
+            kind: 'cross-chunk-sky-street-seam',
+            field: 'hanging',
+            edgeKey: plan.edgeKey,
+            aSurfaceId: plan.firstSurfaceId,
+            bSurfaceId: plan.secondSurfaceId,
+            firstChunkKey: plan.firstChunkKey,
+            secondChunkKey: plan.secondChunkKey,
+            y: plan.y,
+            gap: plan.gap,
+        }];
+
+        const span = Math.abs(Number(plan.to) - Number(plan.from));
+        const center = (Number(plan.to) + Number(plan.from)) * 0.5;
+        const rawSurface = {
+            id: `${plan.id}:surface`,
+            kind: 'cross-chunk-sky-street-seam',
+            x: plan.axis === 'x' ? center : Number(plan.fixedCoord),
+            z: plan.axis === 'x' ? Number(plan.fixedCoord) : center,
+            hx: plan.axis === 'x' ? span * 0.5 : Number(plan.halfWidth),
+            hz: plan.axis === 'x' ? Number(plan.halfWidth) : span * 0.5,
+            y: Number(plan.y),
+            routeId: plan.id,
+            networkKey: plan.edgeKey,
+            reachable: true,
+            priority: 'cross-chunk-seam',
+            field: 'hanging',
+            firstChunkKey: plan.firstChunkKey,
+            secondChunkKey: plan.secondChunkKey,
+        };
+        const { surface } = publishTransportSurfaceSlab({
+            physics, transforms, rawSurface,
+            supportKind: 'cross-chunk-sky-street-seam',
+            slabT: 0.12,
+        });
+
+        const lo = Math.min(Number(plan.from), Number(plan.to));
+        const hi = Math.max(Number(plan.from), Number(plan.to));
+        const halfWidth = Number(plan.halfWidth);
+        const fixed = Number(plan.fixedCoord);
+        const railMetadata = {
+            transportKind: 'cross-chunk-sky-street-seam',
+            visualRole: 'sky-street-boundary-guard',
+            routeId: plan.id,
+            edgeKey: plan.edgeKey,
+            physicalUse: 'public-circulation',
+        };
+        if (plan.axis === 'x') {
+            emitTransportRail({
+                physics, transforms, surfaceId: surface.id,
+                x1: lo, z1: fixed - halfWidth, x2: hi, z2: fixed - halfWidth, y: plan.y,
+                supportKind: 'cross-chunk-sky-street-rail', metadata: railMetadata,
+            });
+            emitTransportRail({
+                physics, transforms, surfaceId: surface.id,
+                x1: lo, z1: fixed + halfWidth, x2: hi, z2: fixed + halfWidth, y: plan.y,
+                supportKind: 'cross-chunk-sky-street-rail', metadata: railMetadata,
+            });
+        } else {
+            emitTransportRail({
+                physics, transforms, surfaceId: surface.id,
+                x1: fixed - halfWidth, z1: lo, x2: fixed - halfWidth, z2: hi, y: plan.y,
+                supportKind: 'cross-chunk-sky-street-rail', metadata: railMetadata,
+            });
+            emitTransportRail({
+                physics, transforms, surfaceId: surface.id,
+                x1: fixed + halfWidth, z1: lo, x2: fixed + halfWidth, z2: hi, y: plan.y,
+                supportKind: 'cross-chunk-sky-street-rail', metadata: railMetadata,
+            });
+        }
+
+        const connector = createBridgeConnector({
+            id: `${plan.id}:connector`,
+            axis: plan.axis,
+            from: plan.from,
+            to: plan.to,
+            fixedCoord: plan.fixedCoord,
+            halfWidth: plan.halfWidth,
+            y: plan.y,
+            source: 'cross-chunk-transport-seam',
+            visualRole: 'cross-chunk-sky-street',
+            metadata: {
+                edgeKey: plan.edgeKey,
+                firstChunkKey: plan.firstChunkKey,
+                secondChunkKey: plan.secondChunkKey,
+                firstSurfaceId: plan.firstSurfaceId,
+                secondSurfaceId: plan.secondSurfaceId,
+                ownership: 'canonical-cardinal-pair',
+            },
+        });
+        registerSemanticConnector(physics, connector);
+
+        const root = new THREE.Group();
+        root.name = `cross-chunk-seam:${plan.edgeKey}`;
+        root.userData.noSpatialChunk = true;
+        root.userData.crossChunkTransportSeam = true;
+        root.userData.crossChunkEdgeKey = plan.edgeKey;
+        root.userData.worldChunkOwnerId = plan.ownerId;
+        root.userData.renderAuthority = 'KowloonFabricEngine';
+        root.userData.streamAuthority = 'CrossChunkTransportSeam';
+        root.visible = false;
+        attachFabricMeshes(root, transforms, `cross-chunk:${plan.edgeKey}`);
+        freezeChunkRoot(root);
+        return { root, physics, surface };
+    }
+
+    function syncCrossChunkPairVisibility(record) {
+        if (!record?.root) return false;
+        const peersVisible = !!record.first?.payload?.root?.visible && !!record.second?.payload?.root?.visible;
+        record.root.visible = peersVisible && record.physicsActivationState === 'active';
+        record.visible = record.root.visible;
+        return record.visible;
+    }
+
+    function publishCrossChunkPairMetadata(record) {
+        if (!record) return;
+        for (const seam of [record.plan?.groundRoad, record.plan?.skyStreet]) {
+            if (!seam) continue;
+            pushCrossChunkMetadata(record.first?.payload, seam);
+            pushCrossChunkMetadata(record.second?.payload, seam);
+        }
+    }
+
+    function unpublishCrossChunkPairMetadata(record) {
+        if (!record) return;
+        for (const seam of [record.plan?.groundRoad, record.plan?.skyStreet]) {
+            if (!seam) continue;
+            removeCrossChunkMetadata(record.first?.payload, seam.id);
+            removeCrossChunkMetadata(record.second?.payload, seam.id);
+        }
+    }
+
+    function createCrossChunkTransportPair(first, second, plan) {
+        if (!first || !second || !plan || crossChunkTransportPairs.has(plan.edgeKey)) return crossChunkTransportPairs.get(plan?.edgeKey) ?? null;
+        const record = {
+            edgeKey: plan.edgeKey,
+            plan,
+            first,
+            second,
+            root: null,
+            physics: null,
+            ownerId: plan.skyStreet?.ownerId ?? null,
+            physicsActivationState: 'active',
+            physicsDeferredReason: null,
+            visible: false,
+        };
+        crossChunkTransportPairs.set(plan.edgeKey, record);
+        publishCrossChunkPairMetadata(record);
+
+        if (plan.skyStreet) {
+            const built = buildCrossChunkSkyStreetRoot(plan.skyStreet);
+            record.root = built?.root ?? null;
+            record.physics = built?.physics ?? null;
+            if (record.root) {
+                addStreamRoot(record.root);
+                record.root.updateMatrixWorld(true);
+            }
+            if (record.physics && record.ownerId) {
+                try {
+                    const physicsRecord = playerPhysics.registerOwnedWorld(record.ownerId, record.physics, {
+                        onActivationChange: nextRecord => {
+                            record.physicsActivationState = nextRecord?.activationState ?? 'active';
+                            record.physicsDeferredReason = nextRecord?.deferredReason ?? null;
+                            syncCrossChunkPairVisibility(record);
+                        },
+                    });
+                    committedOwners.add(record.ownerId);
+                    record.physicsActivationState = physicsRecord?.activationState ?? 'active';
+                    record.physicsDeferredReason = physicsRecord?.deferredReason ?? null;
+                } catch (error) {
+                    unpublishCrossChunkPairMetadata(record);
+                    if (record.root?.parent) record.root.parent.remove(record.root);
+                    record.root?.clear?.();
+                    crossChunkTransportPairs.delete(record.edgeKey);
+                    throw error;
+                }
+            }
+            syncCrossChunkPairVisibility(record);
+        }
+        return record;
+    }
+
+    function reconcileCrossChunkTransportPairs(chunk, payload) {
+        if (!crossChunkCapable(payload)) return [];
+        const x = Math.trunc(Number(chunk?.x));
+        const z = Math.trunc(Number(chunk?.z));
+        if (!Number.isFinite(x) || !Number.isFinite(z)) return [];
+        const created = [];
+        for (const [nx, nz] of [[x - 1, z], [x + 1, z], [x, z - 1], [x, z + 1]]) {
+            const neighbor = committedChunkPayloads.get(`${nx},${nz}`);
+            if (!neighbor || neighbor.payload === payload || !crossChunkCapable(neighbor.payload)) continue;
+            const plan = planCrossChunkTransportPair({
+                aChunk: chunk, aPayload: payload,
+                bChunk: neighbor.chunk, bPayload: neighbor.payload,
+                chunkSize, worldSeed,
+            });
+            if (!plan) continue;
+            const existing = crossChunkTransportPairs.get(plan.edgeKey);
+            if (existing) {
+                syncCrossChunkPairVisibility(existing);
+                continue;
+            }
+            const pair = createCrossChunkTransportPair({ chunk, payload }, neighbor, plan);
+            if (pair) created.push(pair);
+        }
+        return created;
+    }
+
+    function releaseCrossChunkTransportPair(record) {
+        if (!record) return;
+        unpublishCrossChunkPairMetadata(record);
+        if (record.ownerId && record.physics) {
+            playerPhysics.unregisterOwnedWorld(record.ownerId);
+            committedOwners.delete(record.ownerId);
+        }
+        if (record.root?.parent) record.root.parent.remove(record.root);
+        record.root?.clear?.();
+        crossChunkTransportPairs.delete(record.edgeKey);
+        record.visible = false;
+    }
+
+    function releaseCrossChunkTransportPairsForPayload(payload) {
+        for (const record of [...crossChunkTransportPairs.values()]) {
+            if (record.first?.payload === payload || record.second?.payload === payload) releaseCrossChunkTransportPair(record);
+        }
+    }
+
+    function syncCrossChunkTransportPairsForPayload(payload) {
+        for (const record of crossChunkTransportPairs.values()) {
+            if (record.first?.payload === payload || record.second?.payload === payload) syncCrossChunkPairVisibility(record);
+        }
+    }
+
+    function crossChunkSeamStats() {
+        const records = [...crossChunkTransportPairs.values()];
+        return Object.freeze({
+            committedChunks: committedChunkPayloads.size,
+            activePairs: records.length,
+            groundRoadHandoffs: records.filter(record => !!record.plan?.groundRoad).length,
+            skyStreetSeams: records.filter(record => !!record.plan?.skyStreet).length,
+            visibleSkyStreetSeams: records.filter(record => !!record.plan?.skyStreet && record.visible).length,
+            edgeKeys: Object.freeze(records.map(record => record.edgeKey).sort()),
+            ownerIds: Object.freeze(records.map(record => record.ownerId).filter(Boolean).sort()),
+        });
+    }
+
     // Render and collision are one owner-level authority unit. Streamer visibility
     // is a REQUEST; actual publication additionally requires the physics owner to be
     // active. If late geometry intersects the player, player-physics stages the whole
@@ -6594,14 +6882,24 @@ export function createKowloonFabricEngine({
             payload.hangingPhysicsDeferredReason = null;
         }
         payload.committed = true;
+        const crossChunkKey = crossChunkCoordKey(chunk);
+        if (crossChunkKey && crossChunkCapable(payload)) {
+            const previous = committedChunkPayloads.get(crossChunkKey);
+            if (previous?.payload && previous.payload !== payload) releaseCrossChunkTransportPairsForPayload(previous.payload);
+            committedChunkPayloads.set(crossChunkKey, { chunk, payload });
+        }
         applyPayloadVisibility(payload);
+        reconcileCrossChunkTransportPairs(chunk, payload);
+        syncCrossChunkTransportPairsForPayload(payload);
         return payload;
     }
 
     function setVisible(chunk, payload, visible) {
         if (!payload || !payload.root) return false;
         payload.requestedVisible = !!visible;
-        return applyPayloadVisibility(payload);
+        const actual = applyPayloadVisibility(payload);
+        syncCrossChunkTransportPairsForPayload(payload);
+        return actual;
     }
 
     function verifyReady(chunk, payload, expectedVisible) {
@@ -6627,6 +6925,9 @@ export function createKowloonFabricEngine({
 
     async function unload(chunk, payload) {
         if (!payload) return;
+        releaseCrossChunkTransportPairsForPayload(payload);
+        const crossChunkKey = crossChunkCoordKey(chunk);
+        if (crossChunkKey && committedChunkPayloads.get(crossChunkKey)?.payload === payload) committedChunkPayloads.delete(crossChunkKey);
         if (payload.authoredOriginComposite) {
             for (const component of payload.components || []) {
                 if (component?.physicsPublished) playerPhysics.unregisterOwnedWorld(component.ownerId);
@@ -6657,6 +6958,8 @@ export function createKowloonFabricEngine({
     }
 
     function disposeShared() {
+        for (const record of [...crossChunkTransportPairs.values()]) releaseCrossChunkTransportPair(record);
+        committedChunkPayloads.clear();
         unitBox.dispose();
         unitPlane.dispose();
         roadMat.dispose();
@@ -6689,5 +6992,5 @@ export function createKowloonFabricEngine({
     };
     const planningCacheStats = () => buildingPlanCache.stats();
 
-    return { build, buildAuthoredOriginChunk, buildAuthoredCeilingOverlay, buildAuthoredSite, buildAuthoredSiteSteps, buildAuthoredPlaza, buildAuthoredSurfacePatch, buildAuthoredBridge, planAuthoredBridgeNetwork, commit, setVisible, verifyReady, unload, refine, hasPendingRefinement, planChunk, districtLandmarkFor, planningCacheStats, disposeShared };
+    return { build, buildAuthoredOriginChunk, buildAuthoredCeilingOverlay, buildAuthoredSite, buildAuthoredSiteSteps, buildAuthoredPlaza, buildAuthoredSurfacePatch, buildAuthoredBridge, planAuthoredBridgeNetwork, commit, setVisible, verifyReady, unload, refine, hasPendingRefinement, planChunk, districtLandmarkFor, planningCacheStats, crossChunkSeamStats, disposeShared };
 }

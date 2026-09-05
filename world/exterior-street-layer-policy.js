@@ -2,10 +2,6 @@ export const EXTERIOR_STREET_LAYER_POLICY_SCHEMA = 'jweb.exterior-street-layer-p
 
 export const EXTERIOR_CIRCULATION_DEBT = Object.freeze([
   Object.freeze({
-    tag: 'CIRC_DEBT_CROSS_CHUNK_STREETS',
-    meaning: 'street-layer v2 stitches transport surfaces inside one generated chunk; cross-chunk elevated street continuity remains future work',
-  }),
-  Object.freeze({
     tag: 'CIRC_DEBT_INTERIOR_EGRESS',
     meaning: 'exterior connectivity does not yet prove realistic interior-room-to-door routes in skeleton',
   }),

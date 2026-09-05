@@ -34,7 +34,8 @@ assert.ok(!policyMod.EXTERIOR_CIRCULATION_DEBT.some(item => item.tag === 'CIRC_D
   '11 closes real-room authority by binding skeleton exterior demands to Building Plan spaces');
 assert.ok(!policyMod.EXTERIOR_CIRCULATION_DEBT.some(item => item.tag === 'CIRC_DEBT_STANDALONE_FIRE_ESCAPE_HEADROOM'),
   '06 resolves standalone scaffold headroom by replacing the old landing geometry');
-assert.ok(policyMod.EXTERIOR_CIRCULATION_DEBT.some(item => item.tag === 'CIRC_DEBT_CROSS_CHUNK_STREETS'));
+assert.ok(!policyMod.EXTERIOR_CIRCULATION_DEBT.some(item => item.tag === 'CIRC_DEBT_CROSS_CHUNK_STREETS'),
+  '21M resolves cross-chunk street authority with shared ground road handoffs and canonical hanging sky-street seams');
 
 const truth = physical.resolvePhysicalTruth({
   physicalUse: 'industrial-service', role: 'maintenance-access', weirdness: 0.35,

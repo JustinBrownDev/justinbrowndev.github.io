@@ -517,3 +517,48 @@ This prevents an architectural false promise where a long gallery survives while
 - final hanging exchange bands respect post-landmark physical tower capacity;
 - galleries fail closed against actual emitted bridge IDs;
 - existing cavern wall-stair fallback, 21Q section authority, 21R transfer authority, and 21S route composition remain green.
+
+## Cut 21U — Believable Building Plans
+
+21U changes the normal near-city Building Plan primitive from greedy room growth toward corridor/core-first rectangular planning. The existing raster remains the physical verification substrate, but it is no longer the preferred architectural authoring method for ordinary rooms.
+
+### Rectangle-first near-city rooms
+
+For conventional/near-city architectural phases, ordinary spaces now attempt a complete rectangular minimum envelope before any cell-by-cell fallback. Repeated residential occupancies are packed directly against a real occupancy hallway; the hallway now applies on a qualifying base floor as well as upper floors. Weighted growth expands whole rectangle edges where possible instead of accreting arbitrary cells.
+
+Private rooms are strict: once a legitimate rectangle exists, residual floor closure may not turn it into an articulated blob. On awkward compound footprints, disconnected leftover pockets are assigned to flexible service/support territory instead. This deliberately makes service architecture absorb irregular leftovers before bedrooms do.
+
+The far/inverted city retains the previous freedom to loosen these invariants. Rectangle-first planning is architectural causality, not a global sterilizer.
+
+### Traversal permissions are Building Plan truth
+
+Each realized space now publishes a traversal permission derived conservatively from its role:
+
+- entry / circulation / public -> `PUBLIC_THROUGH`
+- shared -> `SEMI_PUBLIC_THROUGH`
+- work / program -> `STAFF_THROUGH`
+- service -> `SERVICE_THROUGH`
+- private -> `PRIVATE_DESTINATION_ONLY`
+- storage -> `NO_THROUGH`
+
+These permissions survive Building Plan promotion so later city-route composition can distinguish a legitimate public transfer spine from a bedroom, staff workroom, service zone or destination-only private room.
+
+### Circulation frontage instead of ground-floor frontage
+
+A public program opportunity is no longer assumed to be valuable merely because it is on the literal ground floor. When a floor has an authoritative city-exchange/public transfer spine, rectangle placement strongly prefers usable public/shared/work frontage that touches that route and also owns exterior facade.
+
+The resulting `circulationFrontage` record is intentionally program-neutral. It says that a real rectangular bay is structurally suited to a storefront, gallery, lobby, counter, workshop threshold or similar public-facing use. Actual program selection remains deferred to the program-architecture pass; 21U establishes the architecture that lets a shop on floor 6 be more natural than an irrelevant shop on floor 0 when floor 6 is the local street.
+
+### Doors get architectural placement authority
+
+Interior doors are no longer chosen by a stable hash from every topologically valid shared-wall cell. Candidate openings are scored for useful wall return and directness between space centroids, with deterministic noise only as a tie-breaker. Narrow shared walls can still force an edge condition, but ordinary walls prefer an actual architectural return rather than routinely placing doors almost in corners.
+
+### 21U regression expectations
+
+- near-city repeated private rooms are single rectangles with zero neck cells in the residential population fixture;
+- every repeated occupancy remains directly served by its hallway;
+- elevated public city-exchange floors can produce route-facing public envelopes with real exterior frontage;
+- private rooms are destination-only and cannot silently become city through-routes;
+- service/support territory, not bedrooms, absorbs unavoidable irregular compound leftovers;
+- Building Plan authority, 21R transfer-serving towers, 21S route composition, 21T route-driven massing, cavern circulation and hanging-city unified reachability remain intact;
+- far architectural inversion remains free to relax rectangle-first planning.

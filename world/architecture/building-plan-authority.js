@@ -252,7 +252,10 @@ export function compileBuildingPlanTopologySpaces(plan, { chunkKey = plan?.chunk
         daylight: space.daylight,
         circulationClass: space.circulationClass ?? null,
         traversalPermission: space.traversalPermission ?? null,
+        throughRoutingEligible: space.throughRoutingEligible === true,
         cityTransferSpine: space.cityTransferSpine === true,
+        regularity: space.regularity ? { ...space.regularity } : null,
+        circulationFrontage: space.circulationFrontage ? { ...space.circulationFrontage } : null,
         centroid: space.centroid ? { ...space.centroid } : null,
         regions: (space.regions ?? []).map(region => ({ ...region })),
         structuralReservationIds: [...(space.structuralReservationIds ?? [])],
@@ -431,7 +434,13 @@ export function inspectBuildingPlan(plan) {
 export function assertBuildingPlanAuthority(plan, { requirePersistentCore = true } = {}) {
   if (!plan || plan.authoritySchema !== BUILDING_PLAN_AUTHORITY_SCHEMA) throw new Error('building plan authority schema missing');
   if (!plan.diagnostics?.topologyHealthy) throw new Error('building plan topology is not connected');
-  if ((plan.diagnostics?.unclaimedRasterCellCount ?? 0) !== 0) throw new Error('building plan left unclaimed plan cells');
+  if ((plan.diagnostics?.unclaimedRasterCellCount ?? 0) !== 0) {
+    const floorCounts = (plan.floors ?? [])
+      .filter(floor => (floor.diagnostics?.unclaimedCellCount ?? 0) > 0)
+      .map(floor => `${floor.floor}:${floor.diagnostics.unclaimedCellCount}`)
+      .join(',');
+    throw new Error(`building plan ${plan.entityId ?? plan.deterministicKey ?? 'unknown'} left unclaimed plan cells (${plan.diagnostics.unclaimedRasterCellCount}; floors ${floorCounts || 'unknown'}; grammar ${plan.grammar?.id ?? 'unknown'})`);
+  }
   for (const floor of plan.floors ?? []) {
     if (floor.diagnostics?.circulationWidthHealthy === false) {
       throw new Error(`building plan floor ${floor.floor} violates resolved circulation clear width`);

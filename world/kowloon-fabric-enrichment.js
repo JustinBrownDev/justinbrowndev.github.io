@@ -16,7 +16,7 @@ import { EXTERIOR_FIRST_PASS_KIND_ORDER, EXTERIOR_TASK_KIND_PRIORITY, compareExt
 import { attachSpectacleMedia, compileExteriorCompositionAuthority, createExteriorCompositionCompiler } from './exterior-composition-authority.js';
 import { createExteriorCoverageRuntime, exteriorCoverageSnapshot, noteMicroAheadCoverageViolation, recordExteriorCoverageResult } from './exterior-composition-runtime.js';
 import { runCooperativeCompiler } from './architecture/semantic-plan-runtime.js';
-import { planPortalBoundInteriorPlaces } from './portal-bound-interior-places.js';
+import { hasPortalBoundInteriorPlaceSources, planPortalBoundInteriorPlaces } from './portal-bound-interior-places.js';
 import { recipeContextFromExteriorTask, resolveDisplayRecipe } from '../content/sign-visual-language.js';
 import { renderDisplayCanvas } from '../systems/sign-display-renderer.js';
 
@@ -1313,12 +1313,12 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
             return true;
         }
 
-        // 21O: a second, strictly narrower handoff stage may carry an authored
-        // street-place identity through an already-real public entrance. Hanging
-        // payloads and chunks without route-owned plaza places stay exterior-only.
+        // 21P: after exterior deepening, carry an already-authored place identity
+        // through an already-real public entrance. Ground uses route-owned plaza
+        // places; hanging city uses its authoritative route-owned rooftop places.
         const interior = progressiveInteriorState(state);
         if (interior.requested || interior.complete) return false;
-        if (!(payload?.physics?.routeOwnedPlazaPlaces?.length > 0)) {
+        if (!hasPortalBoundInteriorPlaceSources(payload)) {
             interior.complete = true;
             interior.completedAt = performance.now();
             return false;
@@ -1410,11 +1410,12 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
             return { progressed: true, done: true, appended: 0, phase: 'interior-empty' };
         }
 
-        // The portal planner caps this stage at three zero-collision paint marks.
-        // Each transform has already passed SpacePlan with allowCirculation=false;
+        // The portal planner caps this stage at three zero-collision family fixtures.
+        // Each footprint has already passed SpacePlan with allowCirculation=false;
         // no semantic connector/access-portal/context authority is regenerated.
         interior.layout = {
-            schema: 'jweb.portal-bound-interior-layout.v1',
+            schema: 'jweb.portal-bound-interior-layout.v2',
+            layer: portalPlan.layer ?? (payload?.ceilingCity ? 'hanging' : 'ground'),
             planned: rawTasks.length,
             solved: rawTasks.filter(task => !!task.semanticPlacement).length,
             unresolved: rawTasks.filter(task => !task.semanticPlacement).length,
@@ -1763,9 +1764,9 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
         if (!reserveDetailBox(
             payload,
             placement.x, placement.z,
-            reservation?.halfX ?? 0.42, reservation?.halfZ ?? 0.26,
-            reservation?.yMin ?? placement.y - 0.03,
-            reservation?.yMax ?? placement.y + 0.04,
+            reservation?.halfX ?? 0.46, reservation?.halfZ ?? 0.30,
+            reservation?.yMin ?? placement.y - 0.02,
+            reservation?.yMax ?? placement.y + 1.22,
             0.02,
         )) return null;
         const accent = Number(binding.accentColor) || 0x66aacc;
@@ -1777,26 +1778,61 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
         payload.detailResources.materials.add(accentMat);
         payload.detailResources.materials.add(secondaryMat);
         const group = new THREE.Group();
-        group.name = `portal-bound-interior-place:${binding.placeType ?? 'place'}`;
+        group.name = `portal-bound-interior-place:${binding.fixtureFamily ?? binding.placeType ?? 'place'}`;
         group.position.set(placement.x, placement.y, placement.z);
         group.rotation.y = placement.rotY ?? 0;
-        const pad = new THREE.Mesh(unitBox, secondaryMat);
-        pad.name = 'portal-bound-place-paint-pad';
-        pad.scale.set(0.82, 0.022, 0.44);
-        const stripe = new THREE.Mesh(unitBox, accentMat);
-        stripe.name = 'portal-bound-place-paint-stripe';
-        stripe.position.y = 0.014;
-        stripe.scale.set(0.58, 0.016, 0.085);
-        const tick = new THREE.Mesh(unitBox, accentMat);
-        tick.name = 'portal-bound-place-paint-tick';
-        tick.position.set(-0.24, 0.016, 0.10);
-        tick.scale.set(0.07, 0.018, 0.22);
-        group.add(pad, stripe, tick);
+        const addBox = (name, material, x, y, z, sx, sy, sz) => {
+            const mesh = new THREE.Mesh(unitBox, material);
+            mesh.name = name;
+            mesh.position.set(x, y, z);
+            mesh.scale.set(sx, sy, sz);
+            group.add(mesh);
+            return mesh;
+        };
+        addBox('portal-bound-place-paint-pad', secondaryMat, 0, 0.011, 0, 0.84, 0.022, 0.46);
+        addBox('portal-bound-place-identity-stripe', accentMat, 0, 0.026, -0.17, 0.58, 0.018, 0.075);
+        const family = String(binding.fixtureFamily ?? 'utility-cabinet');
+        if (family === 'bodega-counter') {
+            addBox('bodega-counter', interiorWoodMat, 0, 0.36, 0.06, 0.76, 0.68, 0.24);
+            addBox('bodega-counter-front', accentMat, 0, 0.42, -0.075, 0.58, 0.22, 0.035);
+            for (const x of [-0.24, 0, 0.24]) addBox('bodega-shelf-stock', secondaryMat, x, 0.79, 0.09, 0.15, 0.18, 0.15);
+        } else if (family === 'thrift-rack') {
+            addBox('thrift-rack-rail', securityMat, 0, 0.82, 0.06, 0.72, 0.055, 0.055);
+            for (const x of [-0.31, 0.31]) addBox('thrift-rack-post', securityMat, x, 0.45, 0.06, 0.055, 0.80, 0.055);
+            for (const x of [-0.20, 0, 0.20]) addBox('thrift-garment', x === 0 ? accentMat : secondaryMat, x, 0.57, 0.06, 0.14, 0.38, 0.10);
+        } else if (family === 'gallery-plinth') {
+            addBox('gallery-plinth', secondaryMat, 0, 0.24, 0.07, 0.42, 0.44, 0.30);
+            addBox('gallery-object', accentMat, 0, 0.61, 0.07, 0.20, 0.30, 0.18);
+            addBox('gallery-label', elevatorDoorMat, 0.26, 0.35, -0.10, 0.18, 0.12, 0.025);
+            addBox('gallery-backdrop', interiorWoodMat, -0.31, 0.64, 0.14, 0.08, 0.88, 0.16);
+        } else if (family === 'repair-bench') {
+            addBox('repair-bench-top', interiorWoodMat, 0, 0.58, 0.05, 0.78, 0.12, 0.28);
+            for (const x of [-0.32, 0.32]) addBox('repair-bench-leg', securityMat, x, 0.30, 0.05, 0.07, 0.56, 0.07);
+            addBox('repair-tool-rail', accentMat, 0, 0.95, 0.15, 0.62, 0.07, 0.045);
+            for (const x of [-0.22, 0, 0.22]) addBox('repair-tool', roofHardwareMat, x, 0.83, 0.15, 0.035, 0.18, 0.035);
+        } else if (family === 'refuge-supplies') {
+            addBox('refuge-bench', interiorWoodMat, -0.06, 0.34, 0.06, 0.70, 0.16, 0.28);
+            for (const x of [-0.27, 0.15]) addBox('refuge-bench-leg', securityMat, x, 0.17, 0.06, 0.06, 0.32, 0.06);
+            addBox('refuge-supply-bin', secondaryMat, 0.28, 0.62, 0.08, 0.22, 0.38, 0.22);
+            addBox('refuge-marker', accentMat, -0.25, 0.73, 0.09, 0.18, 0.38, 0.035);
+        } else if (family === 'service-console') {
+            addBox('service-console', elevatorMat, 0, 0.47, 0.05, 0.70, 0.86, 0.28);
+            addBox('service-screen', accentMat, 0, 0.63, -0.105, 0.38, 0.24, 0.035);
+            addBox('service-keypad', elevatorDoorMat, 0.24, 0.39, -0.11, 0.12, 0.14, 0.03);
+            addBox('service-price-band', secondaryMat, -0.24, 0.91, 0.05, 0.16, 0.24, 0.08);
+        } else {
+            addBox('utility-cabinet', elevatorMat, 0, 0.52, 0.07, 0.66, 0.96, 0.26);
+            addBox('utility-panel', accentMat, 0, 0.58, -0.075, 0.34, 0.34, 0.035);
+            for (const x of [-0.24, 0.24]) addBox('utility-pipe', roofHardwareMat, x, 0.62, 0.14, 0.055, 0.82, 0.055);
+            addBox('utility-service-label', secondaryMat, 0, 1.03, 0.08, 0.34, 0.10, 0.06);
+        }
         group.userData.chunkCosmetic = true;
         group.userData.detailKind = task.kind;
         group.userData.portalBoundInteriorPlace = { ...binding };
         group.userData.semanticSpaceId = binding.spaceId ?? null;
         group.userData.semanticPlaceContinuity = 'existing-public-portal';
+        group.userData.portalBoundFixtureFamily = family;
+        group.userData.portalBoundLayer = binding.layer ?? (payload?.ceilingCity ? 'hanging' : 'ground');
         return group;
     }
 

@@ -1,4 +1,4 @@
-export const CITY_ROUTE_COMPOSER_SCHEMA = 'jweb.city-route-composer.v1';
+export const CITY_ROUTE_COMPOSER_SCHEMA = 'jweb.city-route-composer.v2';
 
 function stableHash(text) {
   let h = 2166136261 >>> 0;
@@ -6,8 +6,53 @@ function stableHash(text) {
   return h >>> 0;
 }
 function unit(hash, shift = 0) { return ((hash >>> shift) & 0xffff) / 0xffff; }
+function finite(value, fallback = 0) { const n = Number(value); return Number.isFinite(n) ? n : fallback; }
 function edgeKey(edge) { return String(edge?.id ?? `${edge?.aSiteId}:${edge?.bSiteId}`); }
 function nodeKey(value) { return String(value); }
+
+function normalizedGeometry(siteGeometry) {
+  if (siteGeometry instanceof Map) return siteGeometry;
+  const out = new Map();
+  for (const [key, value] of Object.entries(siteGeometry ?? {})) out.set(nodeKey(key), value);
+  return out;
+}
+function geometryFor(map, siteId) { return map.get(siteId) ?? map.get(nodeKey(siteId)) ?? null; }
+function centerOf(raw) {
+  if (!raw) return null;
+  const bounds = raw.bounds ?? raw;
+  const minX = finite(bounds.minX, NaN), maxX = finite(bounds.maxX, NaN);
+  const minZ = finite(bounds.minZ, NaN), maxZ = finite(bounds.maxZ, NaN);
+  if ([minX, maxX, minZ, maxZ].every(Number.isFinite)) return { x: (minX + maxX) * 0.5, z: (minZ + maxZ) * 0.5 };
+  const x = finite(raw.x, NaN), z = finite(raw.z, NaN);
+  return Number.isFinite(x) && Number.isFinite(z) ? { x, z } : null;
+}
+function boundsOf(raw, margin = 0) {
+  if (!raw) return null;
+  const b = raw.bounds ?? raw;
+  let minX = finite(b.minX, NaN), maxX = finite(b.maxX, NaN), minZ = finite(b.minZ, NaN), maxZ = finite(b.maxZ, NaN);
+  if (![minX, maxX, minZ, maxZ].every(Number.isFinite)) {
+    const c = centerOf(raw); const hx = finite(raw.halfX, NaN), hz = finite(raw.halfZ, NaN);
+    if (!c || !Number.isFinite(hx) || !Number.isFinite(hz)) return null;
+    minX = c.x - hx; maxX = c.x + hx; minZ = c.z - hz; maxZ = c.z + hz;
+  }
+  return { minX: minX - margin, maxX: maxX + margin, minZ: minZ - margin, maxZ: maxZ + margin };
+}
+function segmentHitsRect(a, b, rect) {
+  if (!a || !b || !rect) return false;
+  let t0 = 0, t1 = 1;
+  const dx = b.x - a.x, dz = b.z - a.z;
+  const clips = [
+    [-dx, a.x - rect.minX], [dx, rect.maxX - a.x],
+    [-dz, a.z - rect.minZ], [dz, rect.maxZ - a.z],
+  ];
+  for (const [p, q] of clips) {
+    if (Math.abs(p) < 1e-9) { if (q < 0) return false; continue; }
+    const r = q / p;
+    if (p < 0) { if (r > t1) return false; if (r > t0) t0 = r; }
+    else { if (r < t0) return false; if (r < t1) t1 = r; }
+  }
+  return t0 <= t1;
+}
 
 function componentsFor(plans) {
   const adjacency = new Map();
@@ -66,34 +111,48 @@ function shortestPath(component, start, goal) {
   return { nodes, edges };
 }
 
-function primaryPath(component, stableKey) {
-  if (component.nodes.length < 2) return { nodes: [...component.nodes], edges: [] };
+function pathGeometry(path, geometry) {
+  const first = centerOf(geometryFor(geometry, path.nodes[0]));
+  const last = centerOf(geometryFor(geometry, path.nodes.at(-1)));
+  if (!first || !last) return { span: path.edges.length, absorbed: [] };
+  const absorbed = [];
+  for (const siteId of path.nodes.slice(1, -1)) {
+    const rect = boundsOf(geometryFor(geometry, siteId), 0.75);
+    if (rect && segmentHitsRect(first, last, rect)) absorbed.push(siteId);
+  }
+  return { span: Math.hypot(last.x - first.x, last.z - first.z), absorbed };
+}
+
+function primaryPath(component, stableKey, geometry) {
+  if (component.nodes.length < 2) return { nodes: [...component.nodes], edges: [], absorbed: [], span: 0 };
   let best = null;
   for (let i = 0; i < component.nodes.length; i++) {
     for (let j = i + 1; j < component.nodes.length; j++) {
       const path = shortestPath(component, component.nodes[i], component.nodes[j]);
       if (!path) continue;
+      const geo = pathGeometry(path, geometry);
       const endpointDegree = (component.adjacency.get(path.nodes[0])?.size ?? 0) + (component.adjacency.get(path.nodes.at(-1))?.size ?? 0);
       const tie = stableHash(`${stableKey}:${path.nodes.join('>')}`);
-      const score = path.edges.length * 100 - endpointDegree * 2;
-      if (!best || score > best.score || (score === best.score && tie < best.tie)) best = { ...path, score, tie };
+      // Long district paths still dominate, but a path whose direct desire would
+      // physically run through intermediate tower mass is especially valuable:
+      // those towers can become route segments instead of obstacles.
+      const score = path.edges.length * 100 + geo.absorbed.length * 42 + Math.min(36, geo.span * 0.20) - endpointDegree * 2;
+      if (!best || score > best.score || (score === best.score && tie < best.tie)) best = { ...path, ...geo, score, tie };
     }
   }
-  if (!best) return { nodes: [...component.nodes.slice(0, 1)], edges: [] };
-  // A connected component is not automatically one arterial. Keep a strong
-  // multi-building spine, but leave the rest as local/branch circulation so the
-  // route hierarchy does not swallow an entire district into one giant skyway.
-  const cap = 6 + (stableHash(`${stableKey}:primary-span-cap`) % 4);
+  if (!best) return { nodes: [...component.nodes.slice(0, 1)], edges: [], absorbed: [], span: 0 };
+  // Keep hierarchy, but permit a genuinely long thoroughfare. The ceiling city
+  // gets the longest cap because its primary gallery is meant to read as a street
+  // threading several buildings, not a two-building landing pair.
+  const cap = 7 + (stableHash(`${stableKey}:primary-span-cap`) % 4);
   if (best.edges.length <= cap) return best;
   const maxStart = best.edges.length - cap;
   const centerStart = Math.floor(maxStart * 0.5);
   const jitter = (stableHash(`${stableKey}:primary-window`) % 3) - 1;
   const start = Math.max(0, Math.min(maxStart, centerStart + jitter));
-  return {
-    ...best,
-    edges: best.edges.slice(start, start + cap),
-    nodes: best.nodes.slice(start, start + cap + 1),
-  };
+  const sliced = { ...best, edges: best.edges.slice(start, start + cap), nodes: best.nodes.slice(start, start + cap + 1) };
+  const geo = pathGeometry(sliced, geometry);
+  return { ...sliced, ...geo };
 }
 
 /**
@@ -101,22 +160,23 @@ function primaryPath(component, stableKey) {
  * individual bridge chooses its elevation or architecture. Buildings on the
  * primary path are intentional route segments; crossing spans remain exterior.
  */
-export function composeCityRoutes({ bridgePlans = [], field = 'ground', stableKey = 'city-routes' } = {}) {
+export function composeCityRoutes({ bridgePlans = [], field = 'ground', stableKey = 'city-routes', siteGeometry = null } = {}) {
   const plans = Array.isArray(bridgePlans) ? bridgePlans : [];
+  const geometry = normalizedGeometry(siteGeometry);
   const components = componentsFor(plans);
   const routeSummaries = [];
   const transferSites = new Set();
+  const absorbedInterveningTowerIds = new Set();
+  const siteDemand = new Map();
   let primaryEdges = 0, branchEdges = 0, lateralThroughputSites = 0;
 
   components.forEach((component, componentIndex) => {
-    const primary = primaryPath(component, `${stableKey}:component:${componentIndex}`);
+    const primary = primaryPath(component, `${stableKey}:component:${componentIndex}`, geometry);
     const primaryEdgeIds = new Set(primary.edges.map(edgeKey));
     const routeHash = stableHash(`${stableKey}:${field}:${componentIndex}:${primary.nodes.join('|')}`);
     const routeId = `${stableKey}:route:${componentIndex}`;
-    // Major routes generally live near the overlap-rich middle, but retain enough
-    // deterministic spread to avoid creating one magic pedestrian altitude.
-    const preferredBandNorm = 0.5 + (unit(routeHash, 8) - 0.5) * 0.22;
-    const routeStrength = Math.min(1, 0.35 + primary.edges.length * 0.16 + component.edges.length * 0.035);
+    const preferredBandNorm = 0.5 + (unit(routeHash, 8) - 0.5) * 0.20;
+    const routeStrength = Math.min(1, 0.40 + primary.edges.length * 0.095 + component.edges.length * 0.025 + primary.absorbed.length * 0.055);
 
     const primaryDegree = new Map();
     for (const edge of primary.edges) {
@@ -124,8 +184,19 @@ export function composeCityRoutes({ bridgePlans = [], field = 'ground', stableKe
       primaryDegree.set(a, (primaryDegree.get(a) ?? 0) + 1);
       primaryDegree.set(b, (primaryDegree.get(b) ?? 0) + 1);
     }
+    const absorbed = new Set(primary.absorbed);
     for (const [siteId, degree] of primaryDegree) {
       if (degree >= 2) transferSites.add(siteId);
+      if (absorbed.has(siteId)) absorbedInterveningTowerIds.add(siteId);
+      const role = degree >= 2 ? 'transfer' : 'endpoint';
+      siteDemand.set(siteId, Object.freeze({
+        siteId, routeId, field, role, primaryDegree: degree,
+        strength: routeStrength,
+        preferredBandNorm,
+        absorbedInterveningTower: absorbed.has(siteId),
+        routeEdgeCount: primary.edges.length,
+        routeSpan: primary.span,
+      }));
     }
 
     const siteGalleryDemand = field === 'ceiling' && primary.edges.length >= 2;
@@ -137,17 +208,23 @@ export function composeCityRoutes({ bridgePlans = [], field = 'ground', stableKe
         cityRouteRole: primaryRole ? 'primary-spine' : 'branch',
         cityRouteComponent: componentIndex,
         cityRoutePreferredBandNorm: primaryRole ? preferredBandNorm : null,
-        cityRouteStrength: primaryRole ? routeStrength : Math.max(0.20, routeStrength * 0.48),
+        cityRouteStrength: primaryRole ? routeStrength : Math.max(0.20, routeStrength * 0.44),
         routeCompositionOrder: primaryRole ? primary.edges.findIndex(candidate => edgeKey(candidate) === edgeKey(edge)) : null,
         cityRoutePrimaryEdgeCount: primary.edges.length,
+        cityRouteSpan: primary.span,
+        cityRouteAbsorbedTowerCount: primary.absorbed.length,
         intermediateTowerRoute: primaryRole && primary.nodes.length >= 3,
         hangingLateralThroughput: primaryRole && siteGalleryDemand,
       });
       for (const endpoint of [edge.aEndpoint, edge.bEndpoint]) {
         if (!endpoint) continue;
+        const siteId = endpoint === edge.aEndpoint ? nodeKey(edge.aSiteId) : nodeKey(edge.bSiteId);
         endpoint.cityRouteId = routeId;
         endpoint.cityRouteRole = edge.cityRouteRole;
         endpoint.hangingLateralThroughput = edge.hangingLateralThroughput;
+        endpoint.cityRouteStrength = edge.cityRouteStrength;
+        endpoint.cityRouteSpan = primary.span;
+        endpoint.absorbedInterveningTower = absorbed.has(siteId);
       }
       if (primaryRole) primaryEdges++; else branchEdges++;
     }
@@ -159,8 +236,10 @@ export function composeCityRoutes({ bridgePlans = [], field = 'ground', stableKe
       primaryNodes: Object.freeze([...primary.nodes]),
       primaryEdgeIds: Object.freeze(primary.edges.map(edgeKey)),
       branchEdgeIds: Object.freeze(component.edges.filter(edge => !primaryEdgeIds.has(edgeKey(edge))).map(edgeKey)),
+      absorbedInterveningTowerIds: Object.freeze([...primary.absorbed]),
       preferredBandNorm,
       routeStrength,
+      routeSpan: primary.span,
       field,
     }));
   });
@@ -173,7 +252,10 @@ export function composeCityRoutes({ bridgePlans = [], field = 'ground', stableKe
     primaryEdges,
     branchEdges,
     transferSiteIds: Object.freeze([...transferSites]),
+    absorbedInterveningTowerIds: Object.freeze([...absorbedInterveningTowerIds]),
+    absorbedInterveningTowerCount: absorbedInterveningTowerIds.size,
+    siteRouteDemands: Object.freeze([...siteDemand.values()]),
     lateralThroughputSites,
-    invariant: 'local exterior crossings compose into multi-building routes; intermediate towers are intentional transfer segments',
+    invariant: 'district route intent prefers long multi-building spines; towers lying in the direct desire line are intentionally absorbed as transfer segments',
   });
 }

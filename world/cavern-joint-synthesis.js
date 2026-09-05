@@ -1,4 +1,4 @@
-export const CAVERN_JOINT_SYNTHESIS_SCHEMA = 'jweb.cavern-joint-synthesis.v2';
+export const CAVERN_JOINT_SYNTHESIS_SCHEMA = 'jweb.cavern-joint-synthesis.v3';
 
 function finite(value, fallback = 0) {
   const n = Number(value);
@@ -42,6 +42,13 @@ function freezeDecision(plan, floors, blockers, horizontal, sectionArchetypes = 
     occupiedHeight: acceptedFloors * fh,
     blockers: Object.freeze([...blockers].sort()),
     sectionArchetypes: Object.freeze([...sectionArchetypes].sort()),
+    routeDemandScore: Math.max(0, Math.min(1, finite(plan.routeDemandScore, 0))),
+    routeRole: plan.routeRole ?? null,
+    routeId: plan.routeId ?? null,
+    routePreferredBandNorm: Number.isFinite(Number(plan.routePreferredBandNorm)) ? Number(plan.routePreferredBandNorm) : null,
+    absorbedInterveningTower: plan.absorbedInterveningTower === true,
+    routeDrivenHeightTarget: Number.isFinite(Number(plan.routeDrivenHeightTarget)) ? Number(plan.routeDrivenHeightTarget) : null,
+    baseDesiredFloors: Number.isFinite(Number(plan.baseDesiredFloors)) ? Number(plan.baseDesiredFloors) : null,
     horizontal,
   });
 }
@@ -102,14 +109,37 @@ function collectorPairFloorCaps(ground, ceiling, availableHeight, dominant = 'gr
   return { ground: Math.min(gd, g), ceiling: Math.min(cd, c) };
 }
 
-function sectionArchetypeForPair(ground, ceiling, stableKey = null) {
-  if (!stableKey) return 'midsection-braid';
-  const h = stableHash(`${stableKey}:${ground.id}:${ceiling.id}`);
+function routeDemandScore(plan) {
+  let score = Math.max(0, Math.min(1, finite(plan?.routeDemandScore, 0)));
+  if (plan?.routeRole === 'transfer') score += 0.14;
+  if (plan?.absorbedInterveningTower === true) score += 0.12;
+  return Math.max(0, Math.min(1, score));
+}
+
+function sectionDecisionForPair(ground, ceiling, stableKey = null) {
+  const h = stableHash(`${stableKey ?? 'section'}:${ground.id}:${ceiling.id}`);
   const u = h / 0xffffffff;
-  if (u < 0.24) return 'upright-collector';
-  if (u < 0.48) return 'hanging-collector';
-  if (u < 0.82) return 'midsection-braid';
-  return 'central-void';
+  const groundRouteScore = routeDemandScore(ground);
+  const ceilingRouteScore = routeDemandScore(ceiling);
+  const maxRoute = Math.max(groundRouteScore, ceilingRouteScore);
+  const minRoute = Math.min(groundRouteScore, ceilingRouteScore);
+  let archetype;
+  let routeDriven = false;
+
+  if (maxRoute >= 0.34) {
+    routeDriven = true;
+    if (groundRouteScore >= 0.60 && groundRouteScore > ceilingRouteScore + 0.13) archetype = 'upright-collector';
+    else if (ceilingRouteScore >= 0.60 && ceilingRouteScore > groundRouteScore + 0.13) archetype = 'hanging-collector';
+    else if (minRoute >= 0.36 || Math.abs(groundRouteScore - ceilingRouteScore) <= 0.12) archetype = 'midsection-braid';
+    else archetype = groundRouteScore > ceilingRouteScore ? 'upright-collector' : 'hanging-collector';
+  } else {
+    if (!stableKey) archetype = 'midsection-braid';
+    else if (u < 0.24) archetype = 'upright-collector';
+    else if (u < 0.48) archetype = 'hanging-collector';
+    else if (u < 0.82) archetype = 'midsection-braid';
+    else archetype = 'central-void';
+  }
+  return Object.freeze({ archetype, routeDriven, groundRouteScore, ceilingRouteScore });
 }
 
 function pairFloorCaps(ground, ceiling, availableHeight, archetype) {
@@ -147,12 +177,15 @@ export function reconcileCavernFloorBudgets({
   const cArchetypes = new Map(ceiling.map(plan => [String(plan.id), new Set()]));
   const overlapsResolved = [];
   const archetypeCounts = new Map();
+  let routeDrivenPairs = 0;
+  let absorbedRoutePairs = 0;
 
   for (const g of ground) {
     if (!g.horizontal) continue;
     for (const c of ceiling) {
       if (!c.horizontal || !overlaps(g.horizontal, c.horizontal)) continue;
-      const sectionArchetype = sectionArchetypeForPair(g, c, stableKey);
+      const sectionDecision = sectionDecisionForPair(g, c, stableKey);
+      const sectionArchetype = sectionDecision.archetype;
       const caps = pairFloorCaps(g, c, usableHeight, sectionArchetype);
       gFloors.set(String(g.id), Math.min(gFloors.get(String(g.id)), caps.ground));
       cFloors.set(String(c.id), Math.min(cFloors.get(String(c.id)), caps.ceiling));
@@ -161,10 +194,16 @@ export function reconcileCavernFloorBudgets({
       gArchetypes.get(String(g.id)).add(sectionArchetype);
       cArchetypes.get(String(c.id)).add(sectionArchetype);
       archetypeCounts.set(sectionArchetype, (archetypeCounts.get(sectionArchetype) ?? 0) + 1);
+      if (sectionDecision.routeDriven) routeDrivenPairs++;
+      if (g.absorbedInterveningTower === true || c.absorbedInterveningTower === true) absorbedRoutePairs++;
       overlapsResolved.push(Object.freeze({
         groundId: String(g.id), ceilingId: String(c.id),
         groundCap: caps.ground, ceilingCap: caps.ceiling,
         sectionArchetype,
+        routeDriven: sectionDecision.routeDriven,
+        groundRouteScore: sectionDecision.groundRouteScore,
+        ceilingRouteScore: sectionDecision.ceilingRouteScore,
+        absorbedInterveningTower: g.absorbedInterveningTower === true || c.absorbedInterveningTower === true,
       }));
     }
   }
@@ -185,6 +224,8 @@ export function reconcileCavernFloorBudgets({
       groundPlans: ground.length,
       ceilingPlans: ceiling.length,
       overlaps: overlapsResolved.length,
+      routeDrivenPairs,
+      absorbedRoutePairs,
       groundRetained: groundDecisions.size,
       ceilingRetained: ceilingDecisions.size,
       sectionArchetypes: Object.freeze([...archetypeCounts.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([archetype, count]) => Object.freeze({ archetype, count }))),

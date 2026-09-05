@@ -100,9 +100,10 @@ export function assignBridgeSectionBands({
   weirdness = 0,
   fallbackFloors = field === 'ceiling' ? 6 : 5,
   stableKey = 'sectional-bridge-bands',
+  siteGeometry = null,
 } = {}) {
   const plans = Array.isArray(bridgePlans) ? bridgePlans : [];
-  const cityRouteComposition = composeCityRoutes({ bridgePlans: plans, field, stableKey: `${stableKey}:composer` });
+  const cityRouteComposition = composeCityRoutes({ bridgePlans: plans, field, stableKey: `${stableKey}:composer`, siteGeometry });
   const fh = Math.max(0.25, finite(floorHeight, 3.15));
   const cy = Math.max(fh * 2, finite(ceilingY, 34.02));
   const midY = cy * 0.5;

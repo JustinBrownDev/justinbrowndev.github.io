@@ -46,13 +46,15 @@ export function planSkybridgeArchitecture({
   const beamT = widthClass === 'sky-street' ? 0.18 : widthClass === 'collector' ? 0.14 : 0.10;
   const girderH = widthClass === 'sky-street' ? 0.46 : widthClass === 'collector' ? 0.34 : 0.24;
 
-  const sideBeam = (fixed, yy, thickness = beamT, height = girderH) => {
-    if (axis === 'x') pushBox(metal, { x: center, y: yy, z: fixed, sx: span, sy: height, sz: thickness }, metadata);
-    else pushBox(metal, { x: fixed, y: yy, z: center, sx: thickness, sy: height, sz: span }, metadata);
+  const sideBeam = (fixed, yy, thickness = beamT, height = girderH, extra = null) => {
+    const meta = extra ? { ...metadata, ...extra } : metadata;
+    if (axis === 'x') pushBox(metal, { x: center, y: yy, z: fixed, sx: span, sy: height, sz: thickness }, meta);
+    else pushBox(metal, { x: fixed, y: yy, z: center, sx: thickness, sy: height, sz: span }, meta);
   };
-  const crossBeam = (along, yy, thickness = beamT, depth = w + 0.18) => {
-    if (axis === 'x') pushBox(metal, { x: along, y: yy, z: fixedCoord, sx: thickness, sy: thickness, sz: depth }, metadata);
-    else pushBox(metal, { x: fixedCoord, y: yy, z: along, sx: depth, sy: thickness, sz: thickness }, metadata);
+  const crossBeam = (along, yy, thickness = beamT, depth = w + 0.18, extra = null) => {
+    const meta = extra ? { ...metadata, ...extra } : metadata;
+    if (axis === 'x') pushBox(metal, { x: along, y: yy, z: fixedCoord, sx: thickness, sy: thickness, sz: depth }, meta);
+    else pushBox(metal, { x: fixedCoord, y: yy, z: along, sx: depth, sy: thickness, sz: thickness }, meta);
   };
 
   if (family === 'simple-guarded') {
@@ -69,10 +71,10 @@ export function planSkybridgeArchitecture({
     for (let i = 0; i <= bays; i++) {
       const along = lo + span * (i / bays);
       for (const fixed of [edgeA, edgeB]) {
-        if (axis === 'x') pushBox(metal, { x: along, y: (y + topY) * 0.5, z: fixed, sx: beamT, sy: topY - y, sz: beamT }, metadata);
-        else pushBox(metal, { x: fixed, y: (y + topY) * 0.5, z: along, sx: beamT, sy: topY - y, sz: beamT }, metadata);
+        if (axis === 'x') pushBox(metal, { x: along, y: (y + topY) * 0.5, z: fixed, sx: beamT, sy: topY - y, sz: beamT }, { ...metadata, architectureRole: 'upper-frame-post', junctionYield: true });
+        else pushBox(metal, { x: fixed, y: (y + topY) * 0.5, z: along, sx: beamT, sy: topY - y, sz: beamT }, { ...metadata, architectureRole: 'upper-frame-post', junctionYield: true });
       }
-      crossBeam(along, topY, beamT, w + 0.24);
+      crossBeam(along, topY, beamT, w + 0.24, { architectureRole: 'upper-frame-crossbeam', junctionYield: true });
     }
     sideBeam(edgeA, y - 0.18);
     sideBeam(edgeB, y - 0.18);
@@ -87,20 +89,20 @@ export function planSkybridgeArchitecture({
     const bay = span / bays;
     for (const fixed of [edgeA, edgeB]) {
       sideBeam(fixed, y - 0.18);
-      sideBeam(fixed, trussTop, beamT, beamT);
+      sideBeam(fixed, trussTop, beamT, beamT, { architectureRole: 'upper-truss-chord', junctionYield: true });
       for (let i = 0; i <= bays; i++) {
         const along = lo + bay * i;
-        if (axis === 'x') pushBox(metal, { x: along, y: (y + trussTop) * 0.5, z: fixed, sx: beamT, sy: trussTop - y, sz: beamT }, metadata);
-        else pushBox(metal, { x: fixed, y: (y + trussTop) * 0.5, z: along, sx: beamT, sy: trussTop - y, sz: beamT }, metadata);
+        if (axis === 'x') pushBox(metal, { x: along, y: (y + trussTop) * 0.5, z: fixed, sx: beamT, sy: trussTop - y, sz: beamT }, { ...metadata, architectureRole: 'truss-post', junctionYield: true });
+        else pushBox(metal, { x: fixed, y: (y + trussTop) * 0.5, z: along, sx: beamT, sy: trussTop - y, sz: beamT }, { ...metadata, architectureRole: 'truss-post', junctionYield: true });
         if (i < bays) {
           const a = { along, y: i % 2 === 0 ? y + 0.08 : trussTop - 0.08 };
           const b = { along: along + bay, y: i % 2 === 0 ? trussTop - 0.08 : y + 0.08 };
-          pushBox(metal, diagonalBetween(axis, a, b, fixed, beamT * 0.78, metadata), {});
+          pushBox(metal, diagonalBetween(axis, a, b, fixed, beamT * 0.78, { ...metadata, architectureRole: 'truss-diagonal', junctionYield: true }), {});
         }
       }
     }
     if (family === 'through-truss') {
-      for (let i = 0; i <= bays; i += 2) crossBeam(lo + bay * i, trussTop, beamT, w + 0.16);
+      for (let i = 0; i <= bays; i += 2) crossBeam(lo + bay * i, trussTop, beamT, w + 0.16, { architectureRole: 'upper-truss-crossbeam', junctionYield: true });
     }
   } else if (family === 'underslung-arch') {
     sideBeam(edgeA, y - 0.14);
@@ -160,10 +162,10 @@ export function planSkybridgeArchitecture({
     const frameY = y + 1.45;
     for (const along of [lo + portalFrameInset, hi - portalFrameInset]) {
       for (const fixed of [edgeA, edgeB]) {
-        if (axis === 'x') pushBox(concrete, { x: along, y: frameY, z: fixed, sx: 0.28, sy: 2.9, sz: 0.28 }, metadata);
-        else pushBox(concrete, { x: fixed, y: frameY, z: along, sx: 0.28, sy: 2.9, sz: 0.28 }, metadata);
+        if (axis === 'x') pushBox(concrete, { x: along, y: frameY, z: fixed, sx: 0.28, sy: 2.9, sz: 0.28 }, { ...metadata, architectureRole: 'portal-frame-post', junctionYield: true });
+        else pushBox(concrete, { x: fixed, y: frameY, z: along, sx: 0.28, sy: 2.9, sz: 0.28 }, { ...metadata, architectureRole: 'portal-frame-post', junctionYield: true });
       }
-      crossBeam(along, y + 2.85, 0.22, w + 0.28);
+      crossBeam(along, y + 2.85, 0.22, w + 0.28, { architectureRole: 'portal-frame-crossbeam', junctionYield: true });
     }
   }
 

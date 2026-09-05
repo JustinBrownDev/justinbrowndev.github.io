@@ -18,6 +18,7 @@ import {
     planCeilingBuildingHeight,
 } from './world/hanging-city-topology.js';
 import { reconcileCavernFloorBudgets } from './world/cavern-joint-synthesis.js';
+import { composeCityRoutes } from './world/city-route-composer.js';
 import {
     SECTIONAL_CIRCULATION_SCHEMA,
     assignBridgeSectionBands,
@@ -26,6 +27,7 @@ import {
 } from './world/sectional-circulation.js';
 import { planSkybridgeArchitecture } from './world/skybridge-architecture.js';
 import { planFacadeRouteGallery } from './world/facade-route-gallery.js';
+import { carveJunctionYieldingParts } from './world/transport-junction-clearance.js';
 import {
     CAVERN_LADDER_APERTURE_DEPTH,
     CAVERN_LADDER_APERTURE_WIDTH,
@@ -3267,6 +3269,7 @@ export function createKowloonFabricEngine({
             roofTopper,
             circulationReservationCount: Math.max(0, (physics.circulationReservations?.length ?? 0) - broadCirculationStartCount),
             singularRecipe: structureProfile?.singularRecipe ?? null,
+            routeDrivenMassing: structureProfile?.routeDrivenMassing ? { ...structureProfile.routeDrivenMassing } : null,
             exteriorIdentity: structureProfile?.exteriorIdentity ? { ...structureProfile.exteriorIdentity } : null,
             exteriorMacroPreference: structureProfile?.exteriorMacroPreference ? { ...structureProfile.exteriorMacroPreference } : null,
             exteriorCompositionOwned: structureProfile?.exteriorCompositionOwned === true,
@@ -4578,6 +4581,7 @@ export function createKowloonFabricEngine({
             roofTopper,
             circulationReservationCount: physics.circulationReservations.length - circulationStartCount,
             singularRecipe: structureProfile?.singularRecipe ?? null,
+            routeDrivenMassing: structureProfile?.routeDrivenMassing ? { ...structureProfile.routeDrivenMassing } : null,
             exteriorIdentity: structureProfile?.exteriorIdentity ? { ...structureProfile.exteriorIdentity } : null,
             exteriorMacroPreference: structureProfile?.exteriorMacroPreference ? { ...structureProfile.exteriorMacroPreference } : null,
             exteriorCompositionOwned: structureProfile?.exteriorCompositionOwned === true,
@@ -4799,11 +4803,11 @@ export function createKowloonFabricEngine({
                 const along = from + (to - from) * (i / postCount);
                 const sag = Math.sin(Math.PI * (i / postCount)) * 0.38;
                 if (bridge.axis === 'x') {
-                    transforms.props.push({ x: along, y: y + 1.02 - sag, z: fixedCoord - width * 0.5, sx: 0.055, sy: 1.08 - sag, sz: 0.055 });
-                    transforms.props.push({ x: along, y: y + 1.02 - sag, z: fixedCoord + width * 0.5, sx: 0.055, sy: 1.08 - sag, sz: 0.055 });
+                    transforms.props.push({ x: along, y: y + 1.02 - sag, z: fixedCoord - width * 0.5, sx: 0.055, sy: 1.08 - sag, sz: 0.055, bridgeId: bridge.id, bridgeDecorativeRail: true, junctionYield: true });
+                    transforms.props.push({ x: along, y: y + 1.02 - sag, z: fixedCoord + width * 0.5, sx: 0.055, sy: 1.08 - sag, sz: 0.055, bridgeId: bridge.id, bridgeDecorativeRail: true, junctionYield: true });
                 } else {
-                    transforms.props.push({ x: fixedCoord - width * 0.5, y: y + 1.02 - sag, z: along, sx: 0.055, sy: 1.08 - sag, sz: 0.055 });
-                    transforms.props.push({ x: fixedCoord + width * 0.5, y: y + 1.02 - sag, z: along, sx: 0.055, sy: 1.08 - sag, sz: 0.055 });
+                    transforms.props.push({ x: fixedCoord - width * 0.5, y: y + 1.02 - sag, z: along, sx: 0.055, sy: 1.08 - sag, sz: 0.055, bridgeId: bridge.id, bridgeDecorativeRail: true, junctionYield: true });
+                    transforms.props.push({ x: fixedCoord + width * 0.5, y: y + 1.02 - sag, z: along, sx: 0.055, sy: 1.08 - sag, sz: 0.055, bridgeId: bridge.id, bridgeDecorativeRail: true, junctionYield: true });
                 }
             }
         }
@@ -4814,88 +4818,205 @@ export function createKowloonFabricEngine({
 
 
     function realizeFacadeRouteGalleries({ field = 'ceiling', bridgePlans = [], entityBySite, physics, transforms }) {
-        if (field !== 'ceiling' || !(entityBySite instanceof Map)) return Object.freeze({ schema: 'jweb.facade-route-gallery-summary.v1', field, planned: 0, realized: 0, supportParts: 0 });
-        const seen = new Set();
+        if (field !== 'ceiling' || !(entityBySite instanceof Map)) return Object.freeze({
+            schema: 'jweb.facade-route-gallery-summary.v2', field, planned: 0, realized: 0,
+            supportParts: 0, routeCount: 0, railCarves: 0, decorationCarves: 0,
+        });
         const registry = physics.facadeRouteGalleries ?? (physics.facadeRouteGalleries = []);
-        let planned = 0, realized = 0, supportParts = 0;
+        const groups = new Map();
+        const bridgeSpan = bridge => {
+            const a = bridge?.aEndpoint, b = bridge?.bEndpoint;
+            if (![a?.x, a?.z, b?.x, b?.z].every(value => Number.isFinite(Number(value)))) return null;
+            return Math.hypot(Number(a.x) - Number(b.x), Number(a.z) - Number(b.z));
+        };
+        const endpointWidthBudget = new Map();
         for (const bridge of bridgePlans ?? []) {
-            for (const [siteId, endpoint, moduleKey] of [
-                [bridge.aSiteId, bridge.aEndpoint, bridge.aModuleKey],
-                [bridge.bSiteId, bridge.bEndpoint, bridge.bModuleKey],
-            ]) {
-                const galleryWidth = Number(endpoint?.facadeGalleryWidth ?? bridge.facadeGalleryWidth);
-                if (!endpoint?.resolved || !(galleryWidth > Number(bridge.width ?? 0) + 0.35) || endpoint.hangingLateralThroughput !== true) continue;
-                const entity = entityBySite.get(siteId);
-                const module = entity?.footprintModules?.find(candidate => candidate.key === moduleKey);
-                if (!entity || !module) continue;
-                const routeId = endpoint.cityRouteId ?? bridge.cityRouteId ?? bridge.id;
-                const dedupe = `${routeId}:${siteId}:${endpoint.globalFloor ?? endpoint.floor}:${endpoint.side}:${moduleKey}`;
-                if (seen.has(dedupe)) continue;
-                seen.add(dedupe); planned++;
-                const gallery = planFacadeRouteGallery({
-                    id: `${routeId}:site:${siteId}:gallery:${endpoint.globalFloor ?? endpoint.floor}:${endpoint.side}`,
-                    routeId, endpoint, module, field,
-                    width: galleryWidth,
-                    widthClass: endpoint.facadeGalleryWidthClass ?? bridge.facadeGalleryWidthClass ?? 'sky-street',
-                    floorHeight: entity.floorH ?? HANGING_CITY_FLOOR_HEIGHT,
-                    stableKey: `${worldSeed}:${routeId}:${siteId}:${moduleKey}:${endpoint.id}`,
-                });
-                if (!gallery) continue;
-                const rawSurface = {
-                    id: `${gallery.id}:surface`, kind: 'hanging-facade-route-gallery',
-                    ...gallery.surface,
-                    routeId, galleryId: gallery.id, networkKey: routeId,
-                    reachable: true, priority: 'walkway-authority',
-                    endpointAuthority: endpoint.endpointAuthority ?? 'bridge-facade-endpoint-v1',
-                    architectureFamily: 'facade-route-gallery', widthClass: gallery.widthClass,
-                    routeCharacter: bridge.routeCharacter ?? 'EXTERIOR_HEAVY',
-                    traversalPermission: endpoint.traversalPermission ?? 'PUBLIC_THROUGH',
-                };
-                const published = publishTransportSurfaceSlab({
-                    physics, transforms, rawSurface,
-                    supportKind: 'hanging-facade-route-gallery',
-                    slabT: gallery.widthClass === 'sky-street' ? 0.18 : 0.14,
-                });
-                const surface = published.surface;
-                emitTransportRail({
-                    physics, transforms, wallList: transforms.wallGroups[0], surfaceId: surface.id,
-                    ...gallery.outerEdge, y: surface.y,
-                });
-                for (const edge of gallery.endEdges) emitTransportRail({
-                    physics, transforms, wallList: transforms.wallGroups[0], surfaceId: surface.id,
-                    ...edge, y: surface.y,
-                });
-                const transportEdges = physics.exteriorTransportEdges ?? (physics.exteriorTransportEdges = []);
-                for (const overlap of published.overlaps) {
-                    smoothTransportUnion({
-                        physics, transforms, a: surface, b: overlap,
-                        width: Math.min(gallery.width, Math.max(1.2, Number(bridge.width) || 1.2)),
-                    });
-                    if (!transportEdges.some(edge => (edge.aId === surface.id && edge.bId === overlap.id) || (edge.aId === overlap.id && edge.bId === surface.id))) {
-                        transportEdges.push({
-                            id: `${gallery.id}:union:${overlap.id}`,
-                            kind: 'surface-union', source: 'facade-route-gallery-union',
-                            aId: surface.id, bId: overlap.id,
-                            routeId, galleryId: gallery.id,
-                            traversalAuthority: 'physical-surface-overlap',
-                        });
-                    }
+            const a = bridge?.aEndpoint, b = bridge?.bEndpoint;
+            const aRequested = Number(a?.facadeGalleryWidth ?? bridge.facadeGalleryWidth);
+            const bRequested = Number(b?.facadeGalleryWidth ?? bridge.facadeGalleryWidth);
+            const aEligible = a?.hangingLateralThroughput === true && aRequested > Number(bridge.width ?? 0) + 0.35;
+            const bEligible = b?.hangingLateralThroughput === true && bRequested > Number(bridge.width ?? 0) + 0.35;
+            const span = bridgeSpan(bridge);
+            if (!(span > 0) || (!aEligible && !bEligible)) continue;
+            const crossingWidth = Math.max(0.9, Number(bridge.width) || 1.2);
+            const exposedMinimum = Math.max(0.9, crossingWidth * 0.72, span * 0.16);
+            const remaining = Math.max(0, span - exposedMinimum);
+            if (aEligible && bEligible) {
+                const minFat = 2.12;
+                if (remaining >= minFat * 2) {
+                    const aBudget = Math.min(aRequested, remaining * 0.5);
+                    const bBudget = Math.min(bRequested, remaining - aBudget);
+                    endpointWidthBudget.set(a.id, aBudget >= minFat ? aBudget : 0);
+                    endpointWidthBudget.set(b.id, bBudget >= minFat ? bBudget : 0);
+                } else {
+                    // On a narrow crossing, do not make two opposing galleries eat
+                    // the whole gap. One facade owns the fat street edge and the
+                    // opposite endpoint remains a real bridge landing.
+                    const ownerA = (hashString32(`${worldSeed}:${bridge.id}:gallery-owner`) & 1) === 0;
+                    const owner = ownerA ? a : b;
+                    const ownerRequested = ownerA ? aRequested : bRequested;
+                    const ownerBudget = Math.min(ownerRequested, remaining);
+                    if (ownerBudget >= minFat) endpointWidthBudget.set(owner.id, ownerBudget);
+                    endpointWidthBudget.set((ownerA ? b : a).id, 0);
                 }
-                transforms.guardMetal.push(...gallery.metal, ...gallery.supports);
-                registry.push(Object.freeze({
-                    schema: gallery.schema, id: gallery.id, routeId, siteId, moduleKey,
-                    endpointId: endpoint.id, surfaceId: surface.id,
-                    width: gallery.width, length: gallery.length,
-                    widthClass: gallery.widthClass, supportMode: gallery.supportMode,
-                    crossingBridgeId: bridge.id,
-                }));
-                supportParts += gallery.supports.length;
-                realized++;
+            } else {
+                const endpoint = aEligible ? a : b;
+                const requested = aEligible ? aRequested : bRequested;
+                endpointWidthBudget.set(endpoint.id, Math.min(requested, remaining));
             }
         }
+        const add = (bridge, siteId, endpoint, moduleKey, peerEndpoint) => {
+            const requestedRaw = Number(endpoint?.facadeGalleryWidth ?? bridge.facadeGalleryWidth);
+            const requested = endpointWidthBudget.has(endpoint?.id) ? endpointWidthBudget.get(endpoint.id) : requestedRaw;
+            if (!endpoint?.resolved || !(requested > Number(bridge.width ?? 0) + 0.35) || endpoint.hangingLateralThroughput !== true) return;
+            const entity = entityBySite.get(siteId);
+            const module = entity?.footprintModules?.find(candidate => candidate.key === moduleKey);
+            if (!entity || !module) return;
+            const routeId = endpoint.cityRouteId ?? bridge.cityRouteId ?? bridge.id;
+            const floorKey = endpoint.globalFloor ?? endpoint.floor;
+            const keyId = `${routeId}:${siteId}:${floorKey}:${endpoint.side}`;
+            if (!groups.has(keyId)) groups.set(keyId, {
+                key: keyId, routeId, siteId, floorKey, side: endpoint.side, entity, module,
+                endpoints: [], bridges: [], requestedWidth: 0, widthClass: 'collector', routeStrength: 0, routeSpan: 0,
+            });
+            const group = groups.get(keyId);
+            group.endpoints.push(endpoint);
+            group.bridges.push({ bridge, endpoint, peerEndpoint, span: bridgeSpan(bridge) });
+            group.requestedWidth = Math.max(group.requestedWidth, requested);
+            if ((endpoint.facadeGalleryWidthClass ?? bridge.facadeGalleryWidthClass) === 'sky-street') group.widthClass = 'sky-street';
+            group.routeStrength = Math.max(group.routeStrength, Number(endpoint.cityRouteStrength ?? bridge.cityRouteStrength) || 0);
+            group.routeSpan = Math.max(group.routeSpan, Number(endpoint.cityRouteSpan ?? bridge.cityRouteSpan) || 0);
+        };
+        for (const bridge of bridgePlans ?? []) {
+            add(bridge, bridge.aSiteId, bridge.aEndpoint, bridge.aModuleKey, bridge.bEndpoint);
+            add(bridge, bridge.bSiteId, bridge.bEndpoint, bridge.bModuleKey, bridge.aEndpoint);
+        }
+
+        let planned = groups.size, realized = 0, supportParts = 0, railCarves = 0, decorationCarves = 0, cornerUnions = 0;
+        let totalGalleryMeters = 0, huggedMeters = 0, unsupportedMeters = 0;
+        const routeIds = new Set();
+        const realizedByEndpoint = new Map();
+        const carveVisuals = (cut, y) => {
+            if (!cut) return 0;
+            let removed = 0;
+            for (const key of ['guardMetal', 'guardConcrete', 'props']) {
+                const carved = carveJunctionYieldingParts(transforms[key] ?? [], { intersection: cut, y, padding: 0.34 });
+                transforms[key] = [...carved.parts];
+                removed += carved.removed;
+            }
+            return removed;
+        };
+
+        for (const group of [...groups.values()].sort((a, b) => a.key.localeCompare(b.key))) {
+            // Crossing-level width allocation has already prevented opposing
+            // galleries from merging into one oversized platform. A group now
+            // consumes the widest legitimate budget granted to its facade.
+            const galleryWidth = group.requestedWidth;
+            if (!(galleryWidth >= 1.65)) continue;
+            const crossingWidth = Math.max(1.0, ...group.bridges.map(item => Number(item.bridge.width) || 0));
+            const gallery = planFacadeRouteGallery({
+                id: `${group.routeId}:site:${group.siteId}:gallery:${group.floorKey}:${group.side}`,
+                routeId: group.routeId,
+                endpoint: group.endpoints[0], module: group.module, field,
+                width: galleryWidth, widthClass: group.widthClass,
+                floorHeight: group.entity.floorH ?? HANGING_CITY_FLOOR_HEIGHT,
+                hostBounds: group.entity.compoundBounds,
+                footprintModules: group.entity.footprintModules,
+                routeStrength: group.routeStrength,
+                routeSpan: group.routeSpan,
+                crossingWidth,
+                junctionTangents: group.endpoints.slice(1).map(endpoint => endpoint.tangent),
+                stableKey: `${worldSeed}:${group.routeId}:${group.siteId}:${group.side}:${group.floorKey}`,
+            });
+            if (!gallery) continue;
+            const rawSurface = {
+                id: `${gallery.id}:surface`, kind: 'hanging-facade-route-gallery',
+                ...gallery.surface,
+                routeId: group.routeId, galleryId: gallery.id, networkKey: group.routeId,
+                reachable: true, priority: 'walkway-authority',
+                endpointAuthority: group.endpoints[0].endpointAuthority ?? 'bridge-facade-endpoint-v1',
+                architectureFamily: 'facade-route-gallery', widthClass: gallery.widthClass,
+                routeCharacter: group.bridges[0]?.bridge?.routeCharacter ?? 'EXTERIOR_HEAVY',
+                traversalPermission: group.endpoints[0].traversalPermission ?? 'PUBLIC_THROUGH',
+            };
+            const published = publishTransportSurfaceSlab({
+                physics, transforms, rawSurface,
+                supportKind: 'hanging-facade-route-gallery',
+                slabT: gallery.widthClass === 'sky-street' ? 0.18 : 0.14,
+            });
+            const surface = published.surface;
+            emitTransportRail({
+                physics, transforms, wallList: transforms.wallGroups[0], surfaceId: surface.id,
+                ...gallery.outerEdge, y: surface.y,
+            });
+            for (const edge of gallery.endEdges) emitTransportRail({
+                physics, transforms, wallList: transforms.wallGroups[0], surfaceId: surface.id,
+                ...edge, y: surface.y,
+            });
+            transforms.guardMetal.push(...gallery.metal, ...gallery.supports);
+            const transportEdges = physics.exteriorTransportEdges ?? (physics.exteriorTransportEdges = []);
+            for (const overlap of published.overlaps) {
+                const cut = transportSurfaceIntersection(surface, overlap) ?? transportRectIntersection(surface, overlap);
+                railCarves += smoothTransportUnion({
+                    physics, transforms, a: surface, b: overlap, intersection: cut,
+                    width: Math.min(gallery.width, Math.max(1.2, crossingWidth)),
+                });
+                decorationCarves += carveVisuals(cut, surface.y);
+                if (overlap.kind === 'hanging-facade-route-gallery' && overlap.routeId === group.routeId) cornerUnions++;
+                if (!transportEdges.some(edge => (edge.aId === surface.id && edge.bId === overlap.id) || (edge.aId === overlap.id && edge.bId === surface.id))) {
+                    transportEdges.push({
+                        id: `${gallery.id}:union:${overlap.id}`,
+                        kind: 'surface-union', source: 'facade-route-gallery-union',
+                        aId: surface.id, bId: overlap.id,
+                        routeId: group.routeId, galleryId: gallery.id,
+                        traversalAuthority: 'physical-surface-overlap',
+                    });
+                }
+            }
+            const endpointIds = group.endpoints.map(endpoint => endpoint.id);
+            for (const endpointId of endpointIds) realizedByEndpoint.set(endpointId, gallery);
+            registry.push(Object.freeze({
+                schema: gallery.schema, id: gallery.id, routeId: group.routeId, siteId: group.siteId,
+                endpointIds: Object.freeze(endpointIds), surfaceId: surface.id,
+                width: gallery.width, length: gallery.length,
+                widthClass: gallery.widthClass, supportMode: gallery.supportMode,
+                compoundFace: gallery.compoundFace,
+                cornerOverlap: gallery.cornerOverlap,
+                huggedLength: gallery.huggedLength,
+                unsupportedLength: gallery.unsupportedLength,
+                hugCoverage: gallery.hugCoverage,
+                crossingBridgeIds: Object.freeze(group.bridges.map(item => item.bridge.id)),
+            }));
+            supportParts += gallery.supports.length;
+            totalGalleryMeters += gallery.length;
+            huggedMeters += gallery.huggedLength;
+            unsupportedMeters += gallery.unsupportedLength;
+            routeIds.add(group.routeId);
+            realized++;
+        }
+
+        let exposedConnectorMeters = 0;
+        for (const bridge of bridgePlans ?? []) {
+            if (bridge.hangingLateralThroughput !== true) continue;
+            const span = bridgeSpan(bridge);
+            if (!(span > 0)) continue;
+            const aGallery = realizedByEndpoint.get(bridge.aEndpoint?.id);
+            const bGallery = realizedByEndpoint.get(bridge.bEndpoint?.id);
+            const consumed = (aGallery?.width ?? 0) + (bGallery?.width ?? 0);
+            exposedConnectorMeters += Math.max(0, span - consumed);
+        }
         return Object.freeze({
-            schema: 'jweb.facade-route-gallery-summary.v1', field, planned, realized, supportParts,
-            invariant: 'major hanging routes put their bulk along building facades; point-to-point spans remain crossing connectors',
+            schema: 'jweb.facade-route-gallery-summary.v2', field, planned, realized, supportParts,
+            routeCount: routeIds.size,
+            totalGalleryMeters,
+            huggedMeters,
+            unsupportedMeters,
+            exposedConnectorMeters,
+            railCarves,
+            decorationCarves,
+            cornerUnions,
+            longestGallery: registry.length ? Math.max(...registry.map(item => Number(item.length) || 0)) : 0,
+            invariant: 'major hanging routes are long compound-scale thoroughfares with short exposed crossings; intersections carve rails and yieldable decorative structure',
         });
     }
 
@@ -5656,16 +5777,17 @@ export function createKowloonFabricEngine({
         const bridgePlans = [];
         const bridgePortalsBySite = new Map();
         const intensity = kowloonIntensity(weird);
+        const maxBridgePlans = Math.min(12, Math.max(7, Math.ceil(buildingSiteIds.size * 0.85)));
         const addPortal = (siteId, portal) => {
             if (!bridgePortalsBySite.has(siteId)) bridgePortalsBySite.set(siteId, []);
             bridgePortalsBySite.get(siteId).push(portal);
         };
         const consider = (roadC, roadR, a, b, axis) => {
-            if (bridgePlans.length >= 6 || !a || !b || a.siteId < 0 || b.siteId < 0 || a.siteId === b.siteId) return;
+            if (bridgePlans.length >= maxBridgePlans || !a || !b || a.siteId < 0 || b.siteId < 0 || a.siteId === b.siteId) return;
             if (!buildingSiteIds.has(a.siteId) || !buildingSiteIds.has(b.siteId)) return;
             const identity = `ceiling:${phaseChunk.key}:${roadC},${roadR}:${Math.min(a.siteId,b.siteId)}:${Math.max(a.siteId,b.siteId)}:${axis}`;
             const rng = mulberry32(hashString32(`${worldSeed}:kowloon-bridge:${identity}`));
-            const ceilingBridgeChance = Math.min(0.90, Math.max(intensity.bridgeChance, 0.58 + weird * 0.22));
+            const ceilingBridgeChance = Math.min(0.92, Math.max(intensity.bridgeChance, 0.66 + weird * 0.20));
             if (rng() >= ceilingBridgeChance) return;
             const id = worldEntityId(worldSeed, phaseChunk.x, phaseChunk.z, 'ceiling-skybridge', identity);
             const aEndpoint = { id: `${id}:endpoint:a`, bridgeId: id, endpointRole: 'a', axis, moduleKey: a.moduleKey, dirKey: a.dirKey, floor: null, ceilingDepthBand: null, resolved: false };
@@ -5901,6 +6023,45 @@ export function createKowloonFabricEngine({
         cx0, cz0, half, cellSize, weird,
     }) {
         const ceilingField = prepareCeilingCityField({ chunk, weirdness: weird });
+        const geometryMapFor = (plans, originX, originZ, localHalf, localCellSize) => new Map(
+            plans.filter(plan => !plan.isPlaza).map(plan => {
+                const bounds = ceilingSiteBounds(plan.site, originX, originZ, localHalf, localCellSize);
+                return [String(plan.site.id), Object.freeze({
+                    siteId: plan.site.id, bounds,
+                    x: (bounds.minX + bounds.maxX) * 0.5,
+                    z: (bounds.minZ + bounds.maxZ) * 0.5,
+                    halfX: (bounds.maxX - bounds.minX) * 0.5,
+                    halfZ: (bounds.maxZ - bounds.minZ) * 0.5,
+                })];
+            }),
+        );
+        const groundSiteGeometry = geometryMapFor(groundSitePlans, cx0, cz0, half, cellSize);
+        const ceilingSiteGeometry = geometryMapFor(
+            ceilingField.sitePlans, ceilingField.cx0, ceilingField.cz0, ceilingField.half, ceilingField.cellSize,
+        );
+        const groundRouteComposition = composeCityRoutes({
+            bridgePlans: groundBridgePlans, field: 'ground', siteGeometry: groundSiteGeometry,
+            stableKey: `${worldSeed}:${chunk.key}:ground-sectional-bridges:composer`,
+        });
+        const ceilingRouteComposition = composeCityRoutes({
+            bridgePlans: ceilingField.bridgePlans, field: 'ceiling', siteGeometry: ceilingSiteGeometry,
+            stableKey: `${worldSeed}:${chunk.key}:ceiling-sectional-bridges:composer`,
+        });
+        const groundRouteDemandBySite = new Map(groundRouteComposition.siteRouteDemands.map(demand => [String(demand.siteId), demand]));
+        const ceilingRouteDemandBySite = new Map(ceilingRouteComposition.siteRouteDemands.map(demand => [String(demand.siteId), demand]));
+        const routeDrivenHeightTarget = ({ fieldName, demand, floorHeight, baseDesired }) => {
+            const cap = maximumCavernFloors(floorHeight);
+            if (!demand) return Math.min(cap, baseDesired);
+            const strength = Math.max(0, Math.min(1, Number(demand.strength) || 0));
+            const bandNorm = Math.max(0.12, Math.min(0.88, Number(demand.preferredBandNorm) || 0.5));
+            const bandNeed = fieldName === 'ceiling'
+                ? Math.ceil((HANGING_CITY_CEILING_Y * (1 - bandNorm)) / floorHeight) + 1
+                : Math.ceil((HANGING_CITY_CEILING_Y * bandNorm) / floorHeight) + 1;
+            const roleLift = demand.role === 'transfer' ? 0.63 : 0.43;
+            const absorptionLift = demand.absorbedInterveningTower ? 0.10 : 0;
+            const collectorNeed = Math.ceil(cap * Math.min(0.96, roleLift + strength * 0.22 + absorptionLift));
+            return Math.min(cap, Math.max(baseDesired, bandNeed, collectorNeed));
+        };
         const groundIntents = [];
         const groundMassBySite = new Map();
         for (const plan of groundSitePlans) {
@@ -5909,16 +6070,37 @@ export function createKowloonFabricEngine({
             const id = worldEntityId(worldSeed, chunk.x, chunk.z, 'building', plan.signature);
             groundMassBySite.set(plan.site.id, mass);
             const exchangePortals = groundBridgePortalsBySite?.get(plan.site.id) ?? [];
-            const minimumFloors = Math.max(1, ...exchangePortals.map(portal => Number(portal.floor) + 1 || 1));
+            const routeDemand = groundRouteDemandBySite.get(String(plan.site.id)) ?? null;
+            // A composed route is not allowed to disappear merely because the
+            // opposite polarity wins a local section score. Keep enough real
+            // storeys for an elevated endpoint, and a little more for a transfer
+            // tower, then let the joint solver distribute all remaining height.
+            const routeMinimumFloors = routeDemand ? (routeDemand.role === 'transfer' ? 3 : 2) : 1;
+            const minimumFloors = Math.max(routeMinimumFloors, 1, ...exchangePortals.map(portal => Number(portal.floor) + 1 || 1));
             // A bridge-linked tower joins the district's exchange datum. Story
             // height is therefore a circulation constraint, not private facade
             // variation: connected towers share one 3.15m band module so a flat
             // sky street lands on real floors at both ends.
             const circulationFloorHeight = exchangePortals.length ? HANGING_CITY_FLOOR_HEIGHT : mass.floorHeight;
+            const baseDesiredFloors = Math.max(mass.desiredFloors, minimumFloors);
+            const desiredFloors = routeDrivenHeightTarget({
+                fieldName: 'ground', demand: routeDemand, floorHeight: circulationFloorHeight, baseDesired: baseDesiredFloors,
+            });
+            const routeDemandScore = routeDemand
+                ? Math.min(1, (Number(routeDemand.strength) || 0) * (routeDemand.role === 'transfer' ? 1 : 0.76)
+                    + (routeDemand.absorbedInterveningTower ? 0.14 : 0))
+                : 0;
             groundIntents.push({
                 id, siteId: plan.site.id,
                 bounds: ceilingSiteBounds(plan.site, cx0, cz0, half, cellSize),
-                desiredFloors: Math.max(mass.desiredFloors, minimumFloors), minimumFloors, floorHeight: circulationFloorHeight,
+                desiredFloors, minimumFloors, floorHeight: circulationFloorHeight,
+                routeDemandScore,
+                routeRole: routeDemand?.role ?? null,
+                routePreferredBandNorm: routeDemand?.preferredBandNorm ?? null,
+                routeId: routeDemand?.routeId ?? null,
+                absorbedInterveningTower: routeDemand?.absorbedInterveningTower === true,
+                routeDrivenHeightTarget: desiredFloors,
+                baseDesiredFloors,
             });
         }
         const ceilingIntents = [];
@@ -5927,11 +6109,28 @@ export function createKowloonFabricEngine({
             if (plan.isPlaza) continue;
             const desiredFloors = desiredCeilingTowerFloors({ phaseChunk: ceilingField.phaseChunk, signature: plan.signature, weirdness: weird });
             const id = worldEntityId(worldSeed, ceilingField.phaseChunk.x, ceilingField.phaseChunk.z, 'ceiling-building', plan.signature);
-            const minimumFloors = Math.max(1, ...(ceilingField.bridgePortalsBySite?.get(plan.site.id) ?? []).map(portal => Number(portal.floor) + 1 || 1));
+            const routeDemand = ceilingRouteDemandBySite.get(String(plan.site.id)) ?? null;
+            const routeMinimumFloors = routeDemand ? (routeDemand.role === 'transfer' ? 3 : 2) : 1;
+            const minimumFloors = Math.max(routeMinimumFloors, 1, ...(ceilingField.bridgePortalsBySite?.get(plan.site.id) ?? []).map(portal => Number(portal.floor) + 1 || 1));
+            const baseDesiredFloors = Math.max(desiredFloors, minimumFloors);
+            const routeHeightTarget = routeDrivenHeightTarget({
+                fieldName: 'ceiling', demand: routeDemand, floorHeight: HANGING_CITY_FLOOR_HEIGHT, baseDesired: baseDesiredFloors,
+            });
+            const routeDemandScore = routeDemand
+                ? Math.min(1, (Number(routeDemand.strength) || 0) * (routeDemand.role === 'transfer' ? 1 : 0.76)
+                    + (routeDemand.absorbedInterveningTower ? 0.14 : 0))
+                : 0;
             const intent = {
                 id, siteId: plan.site.id,
                 bounds: ceilingSiteBounds(plan.site, ceilingField.cx0, ceilingField.cz0, ceilingField.half, ceilingField.cellSize),
-                desiredFloors: Math.max(desiredFloors, minimumFloors), minimumFloors, floorHeight: HANGING_CITY_FLOOR_HEIGHT,
+                desiredFloors: routeHeightTarget, minimumFloors, floorHeight: HANGING_CITY_FLOOR_HEIGHT,
+                routeDemandScore,
+                routeRole: routeDemand?.role ?? null,
+                routePreferredBandNorm: routeDemand?.preferredBandNorm ?? null,
+                routeId: routeDemand?.routeId ?? null,
+                absorbedInterveningTower: routeDemand?.absorbedInterveningTower === true,
+                routeDrivenHeightTarget: routeHeightTarget,
+                baseDesiredFloors,
             };
             ceilingIntents.push(intent);
             ceilingIntentBySite.set(plan.site.id, intent);
@@ -5960,6 +6159,7 @@ export function createKowloonFabricEngine({
             floorHeight: HANGING_CITY_FLOOR_HEIGHT, ceilingY: HANGING_CITY_CEILING_Y,
             weirdness: weird, fallbackFloors: 5,
             stableKey: `${worldSeed}:${chunk.key}:ground-sectional-bridges`,
+            siteGeometry: groundSiteGeometry,
         });
         const ceilingSectionalCirculation = assignBridgeSectionBands({
             bridgePlans: ceilingField.bridgePlans,
@@ -5968,6 +6168,7 @@ export function createKowloonFabricEngine({
             floorHeight: HANGING_CITY_FLOOR_HEIGHT, ceilingY: HANGING_CITY_CEILING_Y,
             weirdness: weird, fallbackFloors: 6,
             stableKey: `${worldSeed}:${chunk.key}:ceiling-sectional-bridges`,
+            siteGeometry: ceilingSiteGeometry,
         });
         ceilingField.sectionalCirculation = ceilingSectionalCirculation;
 
@@ -5981,6 +6182,15 @@ export function createKowloonFabricEngine({
                 floorHeight: decision?.floorHeight ?? mass.floorHeight,
                 cavernJointSynthesis: true,
                 circulationFloorGrid: (groundBridgePortalsBySite?.get(intent.siteId) ?? []).length ? 'shared-3.15m-exchange-grid' : null,
+                routeDrivenMassing: intent.routeDemandScore > 0 ? Object.freeze({
+                    routeId: intent.routeId,
+                    score: intent.routeDemandScore,
+                    role: intent.routeRole,
+                    preferredBandNorm: intent.routePreferredBandNorm,
+                    absorbedInterveningTower: intent.absorbedInterveningTower,
+                    baseDesiredFloors: intent.baseDesiredFloors,
+                    routeDrivenHeightTarget: intent.routeDrivenHeightTarget,
+                }) : null,
             }));
         }
         const ceilingBudgets = new Map();
@@ -5994,6 +6204,10 @@ export function createKowloonFabricEngine({
         }
         return Object.freeze({
             ceilingField, resolution, groundProfiles, ceilingBudgets,
+            routeDrivenMassing: Object.freeze({
+                ground: groundRouteComposition,
+                ceiling: ceilingRouteComposition,
+            }),
             sectionalCirculation: Object.freeze({
                 schema: SECTIONAL_CIRCULATION_SCHEMA,
                 ground: groundSectionalCirculation,
@@ -6010,18 +6224,40 @@ export function createKowloonFabricEngine({
         const field = preparedPlan ?? prepareCeilingCityField({ chunk, weirdness });
         const { source, weird, phaseChunk, cx0, cz0, half, cellSize, roadPlan, siteIdOf,
             sitePlans, openSiteIds, bridgePlans, bridgePortalsBySite } = field;
-        if (bridgePlans.some(plan => !Number.isFinite(Number(plan.ceilingDepthBand)))) {
-            const standaloneCapacity = new Map(sitePlans.filter(plan => !plan.isPlaza).map(plan => [
-                plan.site.id,
-                Math.max(1, Number(ceilingBudgets?.get(plan.site.id)?.floors) || 6),
-            ]));
-            field.sectionalCirculation = assignBridgeSectionBands({
-                bridgePlans, bridgePortalsBySite, field: 'ceiling', siteFloorCapacity: standaloneCapacity,
-                floorHeight: HANGING_CITY_FLOOR_HEIGHT, ceilingY: HANGING_CITY_CEILING_Y,
-                weirdness: weird, fallbackFloors: 6,
-                stableKey: `${worldSeed}:${chunk.key}:standalone-ceiling-sectional-bridges`,
+        // The joint solver knows ground/hanging overlap, but landmark clearance is
+        // resolved only once the actual ground entities exist. Recompute the final
+        // hanging exchange capacity here *before* facade portals are realized.
+        // Otherwise a late landmark clamp can shorten one tower underneath an
+        // already-selected shared sky-street band and leave an orphan gallery.
+        const finalCeilingCapacity = new Map();
+        const finalCeilingGeometry = new Map();
+        for (const plan of sitePlans) {
+            if (plan.isPlaza) continue;
+            const bounds = ceilingSiteBounds(plan.site, cx0, cz0, half, cellSize);
+            finalCeilingGeometry.set(String(plan.site.id), { id: plan.site.id, bounds });
+            const jointBudget = ceilingBudgets?.get(plan.site.id) ?? null;
+            const desiredFloors = jointBudget?.desiredFloors
+                ?? desiredCeilingTowerFloors({ phaseChunk, signature: plan.signature, weirdness: weird });
+            const landmarkBudget = planCeilingBuildingHeight({
+                siteBounds: bounds,
+                groundEntities: groundEntities.filter(entity => entity?.kind === 'district-landmark'),
+                desiredFloors: jointBudget?.floors ?? desiredFloors,
+                floorHeight: HANGING_CITY_FLOOR_HEIGHT,
             });
+            const floors = jointBudget
+                ? Math.min(jointBudget.floors, landmarkBudget.floors || jointBudget.floors)
+                : landmarkBudget.floors;
+            if (floors >= 1) finalCeilingCapacity.set(plan.site.id, floors);
         }
+        field.sectionalCirculation = assignBridgeSectionBands({
+            bridgePlans, bridgePortalsBySite, field: 'ceiling', siteFloorCapacity: finalCeilingCapacity,
+            floorHeight: HANGING_CITY_FLOOR_HEIGHT, ceilingY: HANGING_CITY_CEILING_Y,
+            weirdness: weird, fallbackFloors: 6,
+            // Keep the same route-composer identity as joint synthesis. Only the
+            // physical band is being reconciled against final capacity.
+            stableKey: `${worldSeed}:${chunk.key}:ceiling-sectional-bridges`,
+            siteGeometry: finalCeilingGeometry,
+        });
 
         const root = new THREE.Group();
         root.name = `ceiling-city:${chunk.key}`;
@@ -6096,6 +6332,14 @@ export function createKowloonFabricEngine({
                     singularRecipe: plan.superstructure ? 'ceiling-circulation-superstructure' : 'ceiling-stalactite-building',
                     floorAlignment: 'ceiling',
                     superstructureFallback: plan.superstructure === true,
+                    routeDrivenMassing: jointBudget?.routeDemandScore > 0 ? {
+                        routeId: jointBudget.routeId ?? null,
+                        score: jointBudget.routeDemandScore,
+                        role: jointBudget.routeRole ?? null,
+                        preferredBandNorm: jointBudget.routePreferredBandNorm ?? null,
+                        absorbedInterveningTower: jointBudget.absorbedInterveningTower === true,
+                        routeDrivenHeightTarget: jointBudget.routeDrivenHeightTarget ?? jointBudget.desiredFloors,
+                    } : null,
                 },
             });
             if (!structural) continue;
@@ -6163,8 +6407,10 @@ export function createKowloonFabricEngine({
             skybridges++;
         }
 
+        const emittedBridgeIds = new Set(entities.filter(entity => entity.kind === 'skybridge').map(entity => entity.id));
+        const emittedBridgePlans = bridgePlans.filter(bridge => emittedBridgeIds.has(bridge.id));
         const facadeRouteGalleries = realizeFacadeRouteGalleries({
-            field: 'ceiling', bridgePlans, entityBySite,
+            field: 'ceiling', bridgePlans: emittedBridgePlans, entityBySite,
             physics: aggregate.physics, transforms: aggregate.transforms,
         });
 

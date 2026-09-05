@@ -435,3 +435,85 @@ Permanent invariant:
 - bulkier stair variants widen actual flights and landings without changing canonical riser/tread geometry;
 - major bridge structures expose visible above/below support members;
 - 21Q sectional/bridge invariants and 21R transfer-serving tower authority remain intact.
+
+## Cut 21T — Route-driven sectional city
+
+21T closes the loop between route intent and sectional massing. The city no longer chooses a tower section first and merely asks the circulation system to cope with it afterward. Route composition now contributes demand before ground/hanging height budgets are reconciled, then the final physical capacities choose the actual exchange band.
+
+### Route demand participates in massing
+
+The 21S composer is run before cavern joint synthesis. Each site can publish route strength, route role, preferred vertical band, route span, and whether it lies directly in a desired route line.
+
+The joint solver uses that information when overlapping upright and hanging masses compete for the cavern section:
+
+- a strong upright route can produce an `upright-collector`;
+- a strong hanging route can produce a `hanging-collector`;
+- strong competing routes prefer a `midsection-braid`;
+- route-neutral areas retain the broader deterministic archetype distribution, including deliberate central voids.
+
+Route-linked towers also keep a small physical floor minimum: an endpoint keeps enough storeys to remain an elevated exchange, while a transfer tower keeps enough depth for a real interior handoff. This is a floor, not a guarantee of dominance; remaining height is still negotiated against the opposite polarity and physical clearance.
+
+### Intervening towers become route infrastructure
+
+`world/city-route-composer.js` now uses site geometry as well as graph topology. When the direct desire line between route endpoints runs through intermediate tower mass already represented by the candidate graph, that tower is positively scored as an absorbed transfer segment rather than treated only as an obstruction.
+
+This does **not** weaken exterior collision authority:
+
+```text
+EXTERIOR SPAN -> BUILDING SOLID
+                 |
+                 +-> illegal tunnel: NO
+                 |
+                 +-> real facade exchange
+                     -> 21R public interior transfer
+                     -> another real facade exchange: YES
+```
+
+The emitted exterior bridge remains outside. The building becomes part of the logical route only through its existing portal / Building Plan / stair-core authority.
+
+### Hanging sky streets are long thoroughfares
+
+The wide hanging route is now planned at route/site scale rather than as one fat landing per bridge endpoint.
+
+A strong hanging route may run most or all of a compound facade, overlap the next facade at a corner, and form a much longer exterior gallery threading several buildings. Building adjacency is strongly preferred because it supplies structure and exchange opportunities, but the gallery is allowed bounded unsupported continuation where the street needs to peel away from a facade.
+
+The exposed gap between opposing buildings remains visibly a connector. When two wide galleries face one another across a short span, width/depth budgets prevent both galleries from consuming the entire crossing. On constrained gaps one side may carry the fat thoroughfare while the other remains a normal bridge landing.
+
+Permanent distinction:
+
+```text
+GALLERY / SKY STREET
+= long lateral public thoroughfare, usually building-supported or building-adjacent
+
+CATWALK / BRIDGE
+= exposed gap-closing exterior connector
+```
+
+### Intersection clearance owns the decoration
+
+A public surface union now owns a junction-clearance volume. Canonical guard rails are split at that opening, and upper posts, decorative rails, braces, truss bars, and other yieldable visual structure are removed when they intrude into the traffic throat.
+
+Under-deck girders and other non-obstructing structural mass remain. The rule is not "erase structure near intersections"; it is "visual structure may not cage a legitimate circulation junction."
+
+### Bulk means real width and real support
+
+The 21S width coupling remains authoritative. Route importance may increase actual deck/stair/landing width, and the surrounding structural family scales with it. Thick elevated circulation gets visible load-bearing support from the host building, from below, or from above according to the section. The canonical stair tread/riser/ramp/headroom kernel remains unchanged.
+
+### Final-capacity band reconciliation
+
+Landmark clearance can impose a late physical ceiling on a hanging tower. 21T therefore recomputes hanging site capacities after that clearance is known and only then commits the final sectional bridge band. A gallery is realized only for a bridge that actually emitted successfully.
+
+This prevents an architectural false promise where a long gallery survives while its crossing has failed closed at a now-impossible height.
+
+### 21T regression expectations
+
+- towers in a direct route desire line are detected and exposed as transfer demands;
+- strong route demand changes collector/braid section choice without erasing route-neutral section diversity;
+- composed routes preserve at least an elevated endpoint/transfer floor minimum through joint massing;
+- long hanging galleries can span compound faces and wrap corners while keeping bounded unsupported length;
+- opposing galleries preserve a visible exposed bridge interval rather than merging into one oversized platform;
+- railings and yieldable structural decoration are carved out of public junction throats;
+- gallery support members remain outside the walkable connection opening;
+- final hanging exchange bands respect post-landmark physical tower capacity;
+- galleries fail closed against actual emitted bridge IDs;
+- existing cavern wall-stair fallback, 21Q section authority, 21R transfer authority, and 21S route composition remain green.

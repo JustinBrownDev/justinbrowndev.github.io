@@ -19,6 +19,13 @@ import {
 } from './world/hanging-city-topology.js';
 import { reconcileCavernFloorBudgets } from './world/cavern-joint-synthesis.js';
 import {
+    SECTIONAL_CIRCULATION_SCHEMA,
+    assignBridgeSectionBands,
+    towerTransferDemandsForPortals,
+    resolveCeilingDepthBand,
+} from './world/sectional-circulation.js';
+import { planSkybridgeArchitecture } from './world/skybridge-architecture.js';
+import {
     CAVERN_LADDER_APERTURE_DEPTH,
     CAVERN_LADDER_APERTURE_WIDTH,
     CAVERN_LADDER_SCHEMA,
@@ -155,26 +162,72 @@ function kowloonCellSetConnected(cells) {
 }
 
 function normalizeCeilingModuleFloorConnectivity(modulePlans, primaryModule, bridgePortals = []) {
-    const raised = new Map();
-    if (!primaryModule) return { raisedForBridgeModules: [], raisedFloorLevels: 0, raisedForTopPlateModules: [], raisedTopPlateFloorLevels: 0, trimmedModules: [], trimmedFloorLevels: 0, ceilingAligned: true };
+    const deepened = new Map();
+    if (!primaryModule) return { deepenedForBridgeModules: [], deepenedFloorLevels: 0, ceilingAligned: true };
+    const byCell = new Map(modulePlans.map(module => [key(module.cell.col, module.cell.row), module]));
+    const neighborsOfModule = module => KOWLOON_DIRS
+        .map(dir => byCell.get(key(module.cell.col + dir.dc, module.cell.row + dir.dr)))
+        .filter(Boolean)
+        .sort((a, b) => a.key.localeCompare(b.key));
+    const pathToPrimary = start => {
+        if (start === primaryModule) return [start];
+        const queue = [start];
+        const parent = new Map([[start.key, null]]);
+        while (queue.length) {
+            const current = queue.shift();
+            for (const next of neighborsOfModule(current)) {
+                if (parent.has(next.key)) continue;
+                parent.set(next.key, current.key);
+                if (next === primaryModule) {
+                    const path = [primaryModule];
+                    let cursor = current.key;
+                    while (cursor) {
+                        path.push(byCell.get(cursor));
+                        cursor = parent.get(cursor);
+                    }
+                    return path.reverse();
+                }
+                queue.push(next);
+            }
+        }
+        return null;
+    };
+
+    // Hanging compounds share the ceiling plane, so a city exchange is expressed
+    // as depth from that plane rather than a local floor number.  Every module on
+    // the shortest path back to the primary stair spine is deepened to that band.
+    // This makes a bridge endpoint a real through-building circulation demand
+    // instead of a doorway cut into an isolated stalactite wing.
     for (const portal of bridgePortals) {
         const target = modulePlans.find(module => module.key === portal.moduleKey);
         if (!target) continue;
-        // Ceiling buildings share one top plane, not one bottom datum. Resolve every
-        // inter-building portal on the target module's top occupied floor band.
-        // After floorBase is assigned this makes worldY = ceilingY - floorH for both
-        // endpoints regardless of each stalactite/module depth, so a flat bridge is
-        // physically valid instead of being discarded as a mismatched local floor.
-        portal.floor = Math.max(0, Number(target.floors) - 1);
+        const requestedDepth = Math.max(1, Math.floor(Number(portal.ceilingDepthBand) || 1));
+        const depthBand = Math.min(Math.max(1, Number(primaryModule.floors) || 1), requestedDepth);
+        const path = pathToPrimary(target);
+        if (!path) throw new Error(`Kowloon hanging bridge module ${target.key} is disconnected from primary ${primaryModule.key}`);
+        for (const module of path) {
+            if (module.floors >= depthBand) continue;
+            const before = module.floors;
+            module.floors = depthBand;
+            deepened.set(module.key, (deepened.get(module.key) ?? 0) + (depthBand - before));
+        }
+        const band = resolveCeilingDepthBand({ moduleFloors: target.floors, primaryFloors: primaryModule.floors, depthBand });
+        portal.ceilingDepthBand = band.depthBand;
+        // Local floor differs from module to module, but floorBase + localFloor
+        // resolves to the same world floor band under ceiling alignment.
+        portal.floor = band.localFloor;
     }
     return {
-        raisedForBridgeModules: [...raised.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([moduleKey, floorsAdded]) => ({ moduleKey, floorsAdded })),
-        raisedFloorLevels: [...raised.values()].reduce((sum, count) => sum + count, 0),
+        deepenedForBridgeModules: [...deepened.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([moduleKey, floorsAdded]) => ({ moduleKey, floorsAdded })),
+        deepenedFloorLevels: [...deepened.values()].reduce((sum, count) => sum + count, 0),
+        raisedForBridgeModules: [],
+        raisedFloorLevels: 0,
         raisedForTopPlateModules: [],
         raisedTopPlateFloorLevels: 0,
         trimmedModules: [],
         trimmedFloorLevels: 0,
         ceilingAligned: true,
+        bandAuthority: SECTIONAL_CIRCULATION_SCHEMA,
     };
 }
 
@@ -218,7 +271,7 @@ function normalizeModuleFloorConnectivity(modulePlans, primaryModule, bridgePort
 
     // A bridge is already a real circulation connector, so preserve the floor it
     // lands on and raise only the shortest same-site support path back to the
-    // persistent stair spine. Current bridges use floor 1, but keep this generic.
+    // persistent stair spine. Bridge elevation is intentionally multi-band.
     for (const portal of bridgePortals) {
         const target = modulePlans.find(module => module.key === portal.moduleKey);
         if (!target) continue;
@@ -2069,7 +2122,7 @@ export function createKowloonFabricEngine({
         floorH, archetype, physicalUse, physicalTruth, servicePhysicalTruth, stairPhysicalTruth,
         districtBuildingPolicy, districtBuildingContext,
         floorConnectivityRepair, courtyard, courtyardSuppressedForConnectivity,
-        bridgeOpeningKeys, bridgeOpeningByKey, bridgePortals,
+        bridgeOpeningKeys, bridgeOpeningByKey, bridgePortals, cityTransferDemands = [],
         cx0, cz0, half, cellSize,
     }) {
         const wallList = transforms.wallGroups[materialIndex];
@@ -3188,6 +3241,7 @@ export function createKowloonFabricEngine({
             exteriorCompositionOwned: structureProfile?.exteriorCompositionOwned === true,
             suppressInteriorEnrichment: true,
             bridgePortalCount: bridgeOpeningKeys.size,
+            cityTransferDemands: [...cityTransferDemands],
             facades,
             compoundBounds: bounds,
             kowloonIntensity: chunk.weirdness.sampled,
@@ -3313,6 +3367,12 @@ export function createKowloonFabricEngine({
         // even considered.
         const cavernFloorCap = maximumCavernFloors(floorH);
         primaryFloors = Math.min(primaryFloors, cavernFloorCap);
+        if (!Number.isFinite(structureProfile?.primaryFloors) && archetype !== 'workshop-warehouse') {
+            const spanRng = mulberry32(hashString32(`${worldSeed}:kowloon-near-span:${chunk.key}:${siteSignature}`));
+            if (spanRng() < 0.14 + weird * 0.10) {
+                primaryFloors = Math.max(primaryFloors, cavernFloorCap - (spanRng() < 0.32 ? 1 : 0));
+            }
+        }
         const modulePlans = [];
 
         for (const cell of activeCells) {
@@ -3427,12 +3487,30 @@ export function createKowloonFabricEngine({
         const bridgePortals = bridgePortalsBySite?.get(site.id) ?? [];
         const bridgeOpeningKeys = new Set();
         const bridgeOpeningByKey = new Map();
+
+        // Resolve the requested city-exchange band before facade geometry exists.
+        // Ground buildings express it as a local floor. Hanging buildings express
+        // it as depth from the ceiling, then convert that world band into each
+        // module's local floor after the connected path to the stair spine exists.
+        primaryModule = modulePlans.find(module => module.key === primaryKey) || modulePlans[0];
+        for (const module of modulePlans) module.floors = Math.min(module.floors, primaryModule.floors);
+        const ceilingAlignedModules = structureProfile?.floorAlignment === 'ceiling';
+        const floorConnectivityRepair = ceilingAlignedModules
+            ? normalizeCeilingModuleFloorConnectivity(modulePlans, primaryModule, bridgePortals)
+            : normalizeModuleFloorConnectivity(modulePlans, primaryModule, bridgePortals);
+        const commonTopFloors = primaryModule.floors;
+        for (const module of modulePlans) module.floorBase = ceilingAlignedModules ? Math.max(0, commonTopFloors - module.floors) : 0;
+        const moduleByKey = new Map(modulePlans.map(module => [module.key, module]));
+
         for (const portal of bridgePortals) {
-            const module = modulePlans.find(candidate => candidate.key === portal.moduleKey);
+            const module = moduleByKey.get(portal.moduleKey);
             if (!module) continue;
             const dir = KOWLOON_DIRS.find(candidate => candidate.key === portal.dirKey);
             if (!dir) throw new Error(`bridge endpoint ${portal.id ?? portal.bridgeId ?? 'unknown'} has invalid facade direction ${portal.dirKey}`);
-            module.floors = Math.max(module.floors, portal.floor + 1);
+            const portalFloor = Math.max(0, Math.floor(Number(portal.floor) || 0));
+            if (module.floors <= portalFloor) {
+                throw new Error(`${portal.id ?? portal.bridgeId ?? 'bridge-endpoint'}: sectional exchange floor ${portalFloor} exceeds module height ${module.floors}`);
+            }
             const metric = geometryAdapter?.metricForCell?.(module.cell) ?? {
                 x: cx0 - half + (module.cell.col + 0.5) * cellSize,
                 z: cz0 - half + (module.cell.row + 0.5) * cellSize,
@@ -3460,42 +3538,33 @@ export function createKowloonFabricEngine({
                 ? Number(module.rect.cz) + (dir.side === 'north' ? -Number(module.rect.halfZ) : Number(module.rect.halfZ))
                 : tangent;
             Object.assign(portal, {
-                side: dir.side, tangent, x, z, y: Number(portal.floor) * floorH,
+                floor: portalFloor,
+                side: dir.side, tangent, x, z,
+                y: ceilingAlignedModules ? moduleFloorLocalY(module, portalFloor, floorH) : portalFloor * floorH,
                 width, height, depth,
                 resolved: true,
                 endpointAuthority: 'bridge-facade-endpoint-v1',
                 placementAuthority: 'external-anchor',
             });
-            const openingKey = `${portal.moduleKey}:${portal.dirKey}:${portal.floor}`;
+            const openingKey = `${portal.moduleKey}:${portal.dirKey}:${portalFloor}`;
             bridgeOpeningKeys.add(openingKey);
             bridgeOpeningByKey.set(openingKey, {
                 center: tangent, width, height,
                 bridgeId: portal.bridgeId ?? null,
                 endpointId: portal.id ?? null,
                 endpointAuthority: portal.endpointAuthority,
+                sectionBandAuthority: portal.sectionBandAuthority ?? null,
             });
         }
 
-        // The vertical spine must be the tallest module so every other occupied
-        // floor can be reached laterally through same-site openings.
-        primaryModule = modulePlans.find(module => module.key === primaryKey) || modulePlans[0];
-        for (const module of modulePlans) module.floors = Math.min(module.floors, primaryModule.floors);
-        const ceilingAlignedModules = structureProfile?.floorAlignment === 'ceiling';
-        // Ground compounds grow from floor zero upward, so their connectivity repair
-        // may raise a top plate. Ceiling compounds are the dual geometry: every module
-        // shares the same roof/base plane and variable depth is the silhouette. Do not
-        // erase that taper by raising short modules; only preserve explicit bridge floors.
-        const floorConnectivityRepair = ceilingAlignedModules
-            ? normalizeCeilingModuleFloorConnectivity(modulePlans, primaryModule, bridgePortals)
-            : normalizeModuleFloorConnectivity(modulePlans, primaryModule, bridgePortals);
-        const commonTopFloors = primaryModule.floors;
-        for (const module of modulePlans) module.floorBase = ceilingAlignedModules ? Math.max(0, commonTopFloors - module.floors) : 0;
-        const moduleByKey = new Map(modulePlans.map(module => [module.key, module]));
-        if (ceilingAlignedModules) {
-            for (const portal of bridgePortals) {
-                const module = moduleByKey.get(portal.moduleKey);
-                if (module && Number.isFinite(Number(portal.floor))) portal.y = moduleFloorLocalY(module, Number(portal.floor), floorH);
-            }
+        const cityTransferDemands = towerTransferDemandsForPortals(bridgePortals, {
+            siteId: site.id,
+            field: ceilingAlignedModules ? 'ceiling' : 'ground',
+            stableKey: `${worldSeed}:${chunk.key}:${siteSignature}:tower-transfer`,
+        });
+        if (cityTransferDemands.length) {
+            const registry = physics.circulationDemands ?? (physics.circulationDemands = []);
+            registry.push(...cityTransferDemands);
         }
 
         if (GENERATION_LANES.broadStrokesOnly || ceilingAlignedModules) {
@@ -3505,7 +3574,7 @@ export function createKowloonFabricEngine({
                 floorH, archetype, physicalUse, physicalTruth, servicePhysicalTruth, stairPhysicalTruth,
                 districtBuildingPolicy, districtBuildingContext,
                 floorConnectivityRepair, courtyard, courtyardSuppressedForConnectivity,
-                bridgeOpeningKeys, bridgeOpeningByKey, bridgePortals,
+                bridgeOpeningKeys, bridgeOpeningByKey, bridgePortals, cityTransferDemands,
                 cx0, cz0, half, cellSize,
             });
         }
@@ -4467,6 +4536,7 @@ export function createKowloonFabricEngine({
             exteriorCompositionOwned: structureProfile?.exteriorCompositionOwned === true,
             suppressInteriorEnrichment: !!structureProfile?.suppressInteriorClutter,
             bridgePortalCount: bridgeOpeningKeys.size,
+            cityTransferDemands: [...cityTransferDemands],
             facades,
             compoundBounds: bounds,
             kowloonIntensity: weird,
@@ -4542,16 +4612,20 @@ export function createKowloonFabricEngine({
     function emitSkybridge({ bridge, aEntity, bEntity, physics, transforms }) {
         const aModule = aEntity?.footprintModules?.find(module => module.key === bridge.aModuleKey);
         const bModule = bEntity?.footprintModules?.find(module => module.key === bridge.bModuleKey);
-        if (!aModule || !bModule || aModule.floors <= bridge.floor || bModule.floors <= bridge.floor) return false;
-        const floorH = Math.min(aEntity.floorH || 3.15, bEntity.floorH || 3.15);
-        let y = bridge.floor * floorH;
-        const hanging = bridge.variant === 'hanging-bridge';
-        const bridgeTruth = aEntity.servicePhysicalTruth ?? aEntity.physicalTruth ?? bEntity.servicePhysicalTruth ?? bEntity.physicalTruth ?? null;
-        const truthWidth = bridgeTruth?.stair?.widthSI ?? 0.86;
-        const width = hanging ? Math.max(0.72, Math.min(0.96, truthWidth * 0.90)) : Math.max(0.90, Math.min(1.22, truthWidth));
         const aEndpoint = bridge.aEndpoint?.resolved === true ? bridge.aEndpoint : null;
         const bEndpoint = bridge.bEndpoint?.resolved === true ? bridge.bEndpoint : null;
         const endpointAuthority = !!aEndpoint && !!bEndpoint;
+        const fallbackFloor = Number.isFinite(Number(bridge.floor)) ? Number(bridge.floor) : 1;
+        const aFloor = Number.isFinite(Number(aEndpoint?.floor)) ? Number(aEndpoint.floor) : fallbackFloor;
+        const bFloor = Number.isFinite(Number(bEndpoint?.floor)) ? Number(bEndpoint.floor) : fallbackFloor;
+        if (!aModule || !bModule || aModule.floors <= aFloor || bModule.floors <= bFloor) return false;
+        const floorH = Math.min(aEntity.floorH || 3.15, bEntity.floorH || 3.15);
+        let y = Number.isFinite(Number(bridge.worldBandY)) ? Number(bridge.worldBandY) : ((aFloor + bFloor) * 0.5 * floorH);
+        const hanging = bridge.variant === 'hanging-bridge';
+        const bridgeTruth = aEntity.servicePhysicalTruth ?? aEntity.physicalTruth ?? bEntity.servicePhysicalTruth ?? bEntity.physicalTruth ?? null;
+        const truthWidth = bridgeTruth?.stair?.widthSI ?? 0.86;
+        const legacyWidth = hanging ? Math.max(0.72, Math.min(0.96, truthWidth * 0.90)) : Math.max(0.90, Math.min(1.22, truthWidth));
+        const width = Number.isFinite(Number(bridge.width)) ? Math.max(0.82, Math.min(4.40, Number(bridge.width))) : legacyWidth;
         if (endpointAuthority && (aEndpoint.bridgeId !== bridge.id || bEndpoint.bridgeId !== bridge.id
             || aEndpoint.axis !== bridge.axis || bEndpoint.axis !== bridge.axis)) {
             throw new Error(`${bridge.id}: resolved endpoint ownership drift`);
@@ -4580,6 +4654,8 @@ export function createKowloonFabricEngine({
                 x: (from + to) * 0.5, z: fixedCoord, hx: (to - from) * 0.5, hz: width * 0.5, y,
                 bridgeId: bridge.id, networkKey: bridge.id, reachable: true, priority: 'walkway-authority', physicalTruth: bridgeTruth,
                 endpointAuthority: endpointAuthority ? 'bridge-facade-endpoint-v1' : 'legacy-derived-endpoint',
+                architectureFamily: bridge.architectureFamily ?? 'simple-guarded', widthClass: bridge.widthClass ?? 'local',
+                routeCharacter: bridge.routeCharacter ?? 'DIRECT', sectionBandAuthority: bridge.sectionBandAuthority ?? null,
             };
         } else {
             from = endpointAuthority ? Number(aEndpoint.z) : aModule.cz + aModule.halfZ + 0.02;
@@ -4594,21 +4670,28 @@ export function createKowloonFabricEngine({
                 x: fixedCoord, z: (from + to) * 0.5, hx: width * 0.5, hz: (to - from) * 0.5, y,
                 bridgeId: bridge.id, networkKey: bridge.id, reachable: true, priority: 'walkway-authority', physicalTruth: bridgeTruth,
                 endpointAuthority: endpointAuthority ? 'bridge-facade-endpoint-v1' : 'legacy-derived-endpoint',
+                architectureFamily: bridge.architectureFamily ?? 'simple-guarded', widthClass: bridge.widthClass ?? 'local',
+                routeCharacter: bridge.routeCharacter ?? 'DIRECT', sectionBandAuthority: bridge.sectionBandAuthority ?? null,
             };
         }
         registerSemanticConnector(physics, createBridgeConnector({
             id: `${bridge.id}:connector`, axis: bridge.axis, from, to, fixedCoord, halfWidth: width * 0.5, y,
             source: 'skybridge', visualRole: bridge.variant || 'skybridge',
             fromSpaceId: bridge.axis === 'x'
-                ? semanticSpaceIdForEntity(aEntity, bridge.aModuleKey, bridge.floor, { x: from, z: fixedCoord })
-                : semanticSpaceIdForEntity(aEntity, bridge.aModuleKey, bridge.floor, { x: fixedCoord, z: from }),
+                ? semanticSpaceIdForEntity(aEntity, bridge.aModuleKey, aFloor, { x: from, z: fixedCoord })
+                : semanticSpaceIdForEntity(aEntity, bridge.aModuleKey, aFloor, { x: fixedCoord, z: from }),
             toSpaceId: bridge.axis === 'x'
-                ? semanticSpaceIdForEntity(bEntity, bridge.bModuleKey, bridge.floor, { x: to, z: fixedCoord })
-                : semanticSpaceIdForEntity(bEntity, bridge.bModuleKey, bridge.floor, { x: fixedCoord, z: to }),
+                ? semanticSpaceIdForEntity(bEntity, bridge.bModuleKey, bFloor, { x: to, z: fixedCoord })
+                : semanticSpaceIdForEntity(bEntity, bridge.bModuleKey, bFloor, { x: fixedCoord, z: to }),
             physicalTruth: bridgeTruth,
             metadata: {
                 bridgeId: bridge.id, surfaceId: rawSurface.id,
-                variant: bridge.variant || 'skybridge', floor: bridge.floor,
+                variant: bridge.variant || 'skybridge', floor: aFloor === bFloor ? aFloor : null,
+                aFloor, bFloor,
+                ceilingDepthBand: bridge.ceilingDepthBand ?? null,
+                worldBandY: bridge.worldBandY ?? y,
+                architectureFamily: bridge.architectureFamily ?? 'simple-guarded',
+                widthClass: bridge.widthClass ?? 'local', routeCharacter: bridge.routeCharacter ?? 'DIRECT',
                 physicalUse: bridgeTruth?.physicalUse ?? null,
                 endpointAuthority: endpointAuthority ? 'bridge-facade-endpoint-v1' : 'legacy-derived-endpoint',
                 aEndpointId: aEndpoint?.id ?? null,
@@ -4631,6 +4714,21 @@ export function createKowloonFabricEngine({
             });
         }
         for (const overlap of published.overlaps) smoothTransportUnion({ physics, transforms, a: surface, b: overlap });
+        const bridgeArchitecture = planSkybridgeArchitecture({
+            id: bridge.id, axis: bridge.axis, from, to, fixedCoord, y, width,
+            family: bridge.architectureFamily ?? 'simple-guarded', widthClass: bridge.widthClass ?? 'local',
+            stableKey: `${worldSeed}:${bridge.id}:bridge-architecture`,
+        });
+        transforms.guardMetal.push(...bridgeArchitecture.metal);
+        transforms.guardConcrete.push(...bridgeArchitecture.concrete);
+        const architectureRegistry = physics.bridgeArchitecture ?? (physics.bridgeArchitecture = []);
+        architectureRegistry.push(Object.freeze({
+            schema: bridgeArchitecture.schema, bridgeId: bridge.id,
+            family: bridgeArchitecture.family, widthClass: bridgeArchitecture.widthClass,
+            parts: bridgeArchitecture.parts, span: bridgeArchitecture.span, width: bridgeArchitecture.width,
+            worldBandY: y, midpointScore: bridge.midpointScore ?? null,
+            traversalAuthority: bridgeArchitecture.traversalAuthority,
+        }));
         if (hanging) {
             const span = Math.abs(to - from);
             const postCount = Math.max(2, Math.floor(span / 1.7));
@@ -5419,12 +5517,11 @@ export function createKowloonFabricEngine({
             const rng = mulberry32(hashString32(`${worldSeed}:kowloon-bridge:${identity}`));
             const ceilingBridgeChance = Math.min(0.90, Math.max(intensity.bridgeChance, 0.58 + weird * 0.22));
             if (rng() >= ceilingBridgeChance) return;
-            const floor = 1;
             const id = worldEntityId(worldSeed, phaseChunk.x, phaseChunk.z, 'ceiling-skybridge', identity);
-            const aEndpoint = { id: `${id}:endpoint:a`, bridgeId: id, endpointRole: 'a', axis, moduleKey: a.moduleKey, dirKey: a.dirKey, floor, resolved: false };
-            const bEndpoint = { id: `${id}:endpoint:b`, bridgeId: id, endpointRole: 'b', axis, moduleKey: b.moduleKey, dirKey: b.dirKey, floor, resolved: false };
+            const aEndpoint = { id: `${id}:endpoint:a`, bridgeId: id, endpointRole: 'a', axis, moduleKey: a.moduleKey, dirKey: a.dirKey, floor: null, ceilingDepthBand: null, resolved: false };
+            const bEndpoint = { id: `${id}:endpoint:b`, bridgeId: id, endpointRole: 'b', axis, moduleKey: b.moduleKey, dirKey: b.dirKey, floor: null, ceilingDepthBand: null, resolved: false };
             const plan = {
-                id, axis, floor, roadC, roadR,
+                id, axis, floor: null, ceilingDepthBand: null, roadC, roadR,
                 aSiteId: a.siteId, bSiteId: b.siteId,
                 aModuleKey: a.moduleKey, bModuleKey: b.moduleKey,
                 aDirKey: a.dirKey, bDirKey: b.dirKey,
@@ -5496,7 +5593,14 @@ export function createKowloonFabricEngine({
         const floorHeight = Number.isFinite(structureProfile?.floorHeight)
             ? Math.max(2.4, Math.min(5.8, structureProfile.floorHeight))
             : Math.max(2.4, Math.min(5.8, physicalTruth.floorHeight.realizedSI));
-        primaryFloors = Math.min(primaryFloors, maximumCavernFloors(floorHeight));
+        const cavernFloorCap = maximumCavernFloors(floorHeight);
+        primaryFloors = Math.min(primaryFloors, cavernFloorCap);
+        if (!Number.isFinite(structureProfile?.primaryFloors) && archetype !== 'workshop-warehouse') {
+            const spanRng = mulberry32(hashString32(`${worldSeed}:kowloon-near-span:${chunk.key}:${siteSignature}`));
+            if (spanRng() < 0.14 + weird * 0.10) {
+                primaryFloors = Math.max(primaryFloors, cavernFloorCap - (spanRng() < 0.32 ? 1 : 0));
+            }
+        }
         return Object.freeze({ archetype, desiredFloors: primaryFloors, floorHeight, siteSignature });
     }
 
@@ -5631,7 +5735,21 @@ export function createKowloonFabricEngine({
         return { source, weird, phaseChunk, cx0, cz0, half, cellSize, roadPlan, siteIdOf, sitePlans, openSiteIds, buildingSiteIds, bridgePlans, bridgePortalsBySite, structuralFallback };
     }
 
-    function prepareJointCavernSynthesis({ chunk, groundSitePlans, groundBridgePortalsBySite = null, cx0, cz0, half, cellSize, weird }) {
+    function desiredCeilingTowerFloors({ phaseChunk, signature, weirdness = 0 }) {
+        const heightRng = mulberry32(hashString32(`${worldSeed}:ceiling-height:${phaseChunk.key}:${signature}`));
+        const base = 4 + Math.floor(heightRng() * 5);
+        const spanRng = mulberry32(hashString32(`${worldSeed}:ceiling-near-span:${phaseChunk.key}:${signature}`));
+        const cavernFloorCap = maximumCavernFloors(HANGING_CITY_FLOOR_HEIGHT);
+        if (spanRng() < 0.14 + Math.max(0, Math.min(1, weirdness)) * 0.10) {
+            return Math.max(base, cavernFloorCap - (spanRng() < 0.32 ? 1 : 0));
+        }
+        return base;
+    }
+
+    function prepareJointCavernSynthesis({
+        chunk, groundSitePlans, groundBridgePlans = [], groundBridgePortalsBySite = null,
+        cx0, cz0, half, cellSize, weird,
+    }) {
         const ceilingField = prepareCeilingCityField({ chunk, weirdness: weird });
         const groundIntents = [];
         const groundMassBySite = new Map();
@@ -5640,19 +5758,24 @@ export function createKowloonFabricEngine({
             const mass = planCompoundMassIntent({ chunk, site: plan.site });
             const id = worldEntityId(worldSeed, chunk.x, chunk.z, 'building', plan.signature);
             groundMassBySite.set(plan.site.id, mass);
-            const minimumFloors = Math.max(1, ...(groundBridgePortalsBySite?.get(plan.site.id) ?? []).map(portal => Number(portal.floor) + 1 || 1));
+            const exchangePortals = groundBridgePortalsBySite?.get(plan.site.id) ?? [];
+            const minimumFloors = Math.max(1, ...exchangePortals.map(portal => Number(portal.floor) + 1 || 1));
+            // A bridge-linked tower joins the district's exchange datum. Story
+            // height is therefore a circulation constraint, not private facade
+            // variation: connected towers share one 3.15m band module so a flat
+            // sky street lands on real floors at both ends.
+            const circulationFloorHeight = exchangePortals.length ? HANGING_CITY_FLOOR_HEIGHT : mass.floorHeight;
             groundIntents.push({
                 id, siteId: plan.site.id,
                 bounds: ceilingSiteBounds(plan.site, cx0, cz0, half, cellSize),
-                desiredFloors: Math.max(mass.desiredFloors, minimumFloors), minimumFloors, floorHeight: mass.floorHeight,
+                desiredFloors: Math.max(mass.desiredFloors, minimumFloors), minimumFloors, floorHeight: circulationFloorHeight,
             });
         }
         const ceilingIntents = [];
         const ceilingIntentBySite = new Map();
         for (const plan of ceilingField.sitePlans) {
             if (plan.isPlaza) continue;
-            const heightRng = mulberry32(hashString32(`${worldSeed}:ceiling-height:${ceilingField.phaseChunk.key}:${plan.signature}`));
-            const desiredFloors = 4 + Math.floor(heightRng() * 5);
+            const desiredFloors = desiredCeilingTowerFloors({ phaseChunk: ceilingField.phaseChunk, signature: plan.signature, weirdness: weird });
             const id = worldEntityId(worldSeed, ceilingField.phaseChunk.x, ceilingField.phaseChunk.z, 'ceiling-building', plan.signature);
             const minimumFloors = Math.max(1, ...(ceilingField.bridgePortalsBySite?.get(plan.site.id) ?? []).map(portal => Number(portal.floor) + 1 || 1));
             const intent = {
@@ -5670,7 +5793,34 @@ export function createKowloonFabricEngine({
             verticalClearance: HANGING_CITY_VERTICAL_CLEARANCE,
             sharedReserve: HANGING_CITY_UNDERSIDE_RESERVE,
             claimMargin: HANGING_CITY_CLAIM_MARGIN,
+            stableKey: `${worldSeed}:${chunk.key}:section-archetypes`,
         });
+        const groundCapacity = new Map(groundIntents.map(intent => [
+            intent.siteId,
+            resolution.ground.get(intent.id)?.floors ?? intent.desiredFloors,
+        ]));
+        const ceilingCapacity = new Map(ceilingIntents.map(intent => [
+            intent.siteId,
+            resolution.ceiling.get(intent.id)?.floors ?? intent.desiredFloors,
+        ]));
+        const groundSectionalCirculation = assignBridgeSectionBands({
+            bridgePlans: groundBridgePlans,
+            bridgePortalsBySite: groundBridgePortalsBySite,
+            field: 'ground', siteFloorCapacity: groundCapacity,
+            floorHeight: HANGING_CITY_FLOOR_HEIGHT, ceilingY: HANGING_CITY_CEILING_Y,
+            weirdness: weird, fallbackFloors: 5,
+            stableKey: `${worldSeed}:${chunk.key}:ground-sectional-bridges`,
+        });
+        const ceilingSectionalCirculation = assignBridgeSectionBands({
+            bridgePlans: ceilingField.bridgePlans,
+            bridgePortalsBySite: ceilingField.bridgePortalsBySite,
+            field: 'ceiling', siteFloorCapacity: ceilingCapacity,
+            floorHeight: HANGING_CITY_FLOOR_HEIGHT, ceilingY: HANGING_CITY_CEILING_Y,
+            weirdness: weird, fallbackFloors: 6,
+            stableKey: `${worldSeed}:${chunk.key}:ceiling-sectional-bridges`,
+        });
+        ceilingField.sectionalCirculation = ceilingSectionalCirculation;
+
         const groundProfiles = new Map();
         for (const intent of groundIntents) {
             const mass = groundMassBySite.get(intent.siteId);
@@ -5678,8 +5828,9 @@ export function createKowloonFabricEngine({
             groundProfiles.set(intent.siteId, Object.freeze({
                 archetype: mass.archetype,
                 primaryFloors: decision?.floors ?? mass.desiredFloors,
-                floorHeight: mass.floorHeight,
+                floorHeight: decision?.floorHeight ?? mass.floorHeight,
                 cavernJointSynthesis: true,
+                circulationFloorGrid: (groundBridgePortalsBySite?.get(intent.siteId) ?? []).length ? 'shared-3.15m-exchange-grid' : null,
             }));
         }
         const ceilingBudgets = new Map();
@@ -5691,7 +5842,14 @@ export function createKowloonFabricEngine({
                 blockers: Object.freeze([]), horizontal: intent.bounds,
             }));
         }
-        return Object.freeze({ ceilingField, resolution, groundProfiles, ceilingBudgets });
+        return Object.freeze({
+            ceilingField, resolution, groundProfiles, ceilingBudgets,
+            sectionalCirculation: Object.freeze({
+                schema: SECTIONAL_CIRCULATION_SCHEMA,
+                ground: groundSectionalCirculation,
+                ceiling: ceilingSectionalCirculation,
+            }),
+        });
     }
 
     function* buildCeilingCityLayerSteps({
@@ -5702,6 +5860,18 @@ export function createKowloonFabricEngine({
         const field = preparedPlan ?? prepareCeilingCityField({ chunk, weirdness });
         const { source, weird, phaseChunk, cx0, cz0, half, cellSize, roadPlan, siteIdOf,
             sitePlans, openSiteIds, bridgePlans, bridgePortalsBySite } = field;
+        if (bridgePlans.some(plan => !Number.isFinite(Number(plan.ceilingDepthBand)))) {
+            const standaloneCapacity = new Map(sitePlans.filter(plan => !plan.isPlaza).map(plan => [
+                plan.site.id,
+                Math.max(1, Number(ceilingBudgets?.get(plan.site.id)?.floors) || 6),
+            ]));
+            field.sectionalCirculation = assignBridgeSectionBands({
+                bridgePlans, bridgePortalsBySite, field: 'ceiling', siteFloorCapacity: standaloneCapacity,
+                floorHeight: HANGING_CITY_FLOOR_HEIGHT, ceilingY: HANGING_CITY_CEILING_Y,
+                weirdness: weird, fallbackFloors: 6,
+                stableKey: `${worldSeed}:${chunk.key}:standalone-ceiling-sectional-bridges`,
+            });
+        }
 
         const root = new THREE.Group();
         root.name = `ceiling-city:${chunk.key}`;
@@ -5734,8 +5904,7 @@ export function createKowloonFabricEngine({
             if (plan.isPlaza) { plazas++; continue; }
             const bounds = ceilingSiteBounds(site, cx0, cz0, half, cellSize);
             const jointBudget = ceilingBudgets?.get(site.id) ?? null;
-            const heightRng = mulberry32(hashString32(`${worldSeed}:ceiling-height:${phaseChunk.key}:${signature}`));
-            const desiredFloors = jointBudget?.desiredFloors ?? (4 + Math.floor(heightRng() * 5));
+            const desiredFloors = jointBudget?.desiredFloors ?? desiredCeilingTowerFloors({ phaseChunk, signature, weirdness: weird });
             const landmarkBudget = planCeilingBuildingHeight({
                 siteBounds: bounds,
                 groundEntities: groundEntities.filter(entity => entity?.kind === 'district-landmark'),
@@ -6027,6 +6196,10 @@ export function createKowloonFabricEngine({
                 return { x: center.x, z: center.z, cellSize: Math.max(0.5, Math.min(colHalf(cell.col) * 2, rowHalf(cell.row) * 2)) };
             },
         };
+        const siteBridgePortals = bridgePortalsBySite?.get(site.id) ?? [];
+        const effectiveStructureProfile = siteBridgePortals.length
+            ? { ...(structureProfile ?? {}), floorHeight: HANGING_CITY_FLOOR_HEIGHT, circulationFloorGrid: 'shared-3.15m-exchange-grid' }
+            : structureProfile;
         const structural = yield* buildKowloonCompoundSteps({
             chunk, site, siteIdOf, roadPlan: { roads: new Set() }, openSiteIds: new Set(), bridgePortalsBySite,
             physics, transforms, cx0: 0, cz0: 0, half: 0, cellSize: 1,
@@ -6035,8 +6208,8 @@ export function createKowloonFabricEngine({
             streetCellOverride: (col, row) => grid[row]?.[col] !== true,
             // Preserve intentionally reserved singular courtyards only in their own recipes;
             // ordinary spawn fabric uses the same service-void policy as infinity.
-            courtyardCellOverride: structureProfile?.courtyardCell,
-            structureProfile,
+            courtyardCellOverride: effectiveStructureProfile?.courtyardCell,
+            structureProfile: effectiveStructureProfile,
         });
         if (!structural) return null;
 
@@ -6117,19 +6290,18 @@ export function createKowloonFabricEngine({
             const identity = `spawn:${c},${r}:${Math.min(a.siteId,b.siteId)}:${Math.max(a.siteId,b.siteId)}:${axis}`;
             const brng = mulberry32(hashString32(`${worldSeed}:kowloon-bridge:${identity}`));
             if (brng() >= Math.min(0.74, intensity.bridgeChance + 0.12)) return;
-            const floor = 1;
             const bridgeId = worldEntityId(worldSeed, 0, 0, 'spawn-skybridge', identity);
             const aEndpoint = {
                 id: `${bridgeId}:endpoint:a`, bridgeId, endpointRole: 'a', axis,
-                moduleKey: a.moduleKey, dirKey: a.dirKey, floor, resolved: false,
+                moduleKey: a.moduleKey, dirKey: a.dirKey, floor: null, resolved: false,
             };
             const bEndpoint = {
                 id: `${bridgeId}:endpoint:b`, bridgeId, endpointRole: 'b', axis,
-                moduleKey: b.moduleKey, dirKey: b.dirKey, floor, resolved: false,
+                moduleKey: b.moduleKey, dirKey: b.dirKey, floor: null, resolved: false,
             };
             const plan = {
                 id: bridgeId,
-                axis, floor, roadC: c, roadR: r, aSiteId: a.siteId, bSiteId: b.siteId,
+                axis, floor: null, roadC: c, roadR: r, aSiteId: a.siteId, bSiteId: b.siteId,
                 aModuleKey: a.moduleKey, bModuleKey: b.moduleKey, aDirKey: a.dirKey, bDirKey: b.dirKey,
                 aEndpoint, bEndpoint,
                 endpointAuthority: 'bridge-facade-endpoint-v1',
@@ -6149,7 +6321,13 @@ export function createKowloonFabricEngine({
                 consider(c, r, { siteId: north, moduleKey: key(c,r-1), dirKey: 'S' }, { siteId: south, moduleKey: key(c,r+1), dirKey: 'N' }, 'z');
             }
         }
-        return { bridgePlans, bridgePortalsBySite };
+        const authoredCapacity = new Map((sites ?? []).map(site => [site.id, 3]));
+        const sectionalCirculation = assignBridgeSectionBands({
+            bridgePlans, bridgePortalsBySite, field: 'ground', siteFloorCapacity: authoredCapacity,
+            floorHeight: 3.15, ceilingY: HANGING_CITY_CEILING_Y, weirdness,
+            fallbackFloors: 3, stableKey: `${worldSeed}:authored-bridge-bands`,
+        });
+        return { bridgePlans, bridgePortalsBySite, sectionalCirculation };
     }
 
     function buildAuthoredSurfacePatch({ patchKey, buckets, ownerId = `spawn-surface:${patchKey ?? 'unknown'}` } = {}) {
@@ -6411,19 +6589,18 @@ export function createKowloonFabricEngine({
             const identity = `${chunk.key}:${roadC},${roadR}:${Math.min(a.siteId, b.siteId)}:${Math.max(a.siteId, b.siteId)}:${axis}`;
             const brng = mulberry32(hashString32(`${worldSeed}:kowloon-bridge:${identity}`));
             if (brng() >= bridgeIntensity.bridgeChance) return;
-            const floor = 1;
             const bridgeId = worldEntityId(worldSeed, chunk.x, chunk.z, 'skybridge', identity);
             const aEndpoint = {
                 id: `${bridgeId}:endpoint:a`, bridgeId, endpointRole: 'a', axis,
-                moduleKey: a.moduleKey, dirKey: a.dirKey, floor, resolved: false,
+                moduleKey: a.moduleKey, dirKey: a.dirKey, floor: null, resolved: false,
             };
             const bEndpoint = {
                 id: `${bridgeId}:endpoint:b`, bridgeId, endpointRole: 'b', axis,
-                moduleKey: b.moduleKey, dirKey: b.dirKey, floor, resolved: false,
+                moduleKey: b.moduleKey, dirKey: b.dirKey, floor: null, resolved: false,
             };
             const plan = {
                 id: bridgeId,
-                axis, floor, roadC, roadR,
+                axis, floor: null, roadC, roadR,
                 aSiteId: a.siteId, bSiteId: b.siteId,
                 aModuleKey: a.moduleKey, bModuleKey: b.moduleKey,
                 aDirKey: a.dirKey, bDirKey: b.dirKey,
@@ -6456,12 +6633,14 @@ export function createKowloonFabricEngine({
         }
 
         const cavernSynthesis = prepareJointCavernSynthesis({
-            chunk, groundSitePlans: sitePlans, cx0, cz0, half, cellSize, weird,
+            chunk, groundSitePlans: sitePlans, groundBridgePlans: bridgePlans, groundBridgePortalsBySite: bridgePortalsBySite,
+            cx0, cz0, half, cellSize, weird,
         });
         physics.cavernJointSynthesis = {
             schema: cavernSynthesis.resolution.schema,
             metrics: cavernSynthesis.resolution.metrics,
             usableHeight: cavernSynthesis.resolution.usableHeight,
+            sectionalCirculation: cavernSynthesis.sectionalCirculation,
         };
 
         for (const plan of sitePlans) {

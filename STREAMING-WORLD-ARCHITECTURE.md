@@ -240,3 +240,60 @@ Cut 19 turns cross-level circulation into an explicit hierarchy instead of treat
 - Frozen ceiling transport/scaffold authority records must be rebased into final world Y when ceiling geometry is translated. Routing metadata is invalid if it describes local-Y surfaces while collision/render geometry lives in world Y.
 
 The resulting traversal hierarchy is: **interior stairs -> wall-hugging structural trunks -> elevated street/bridge/catwalk nodes -> carved ladder stitches -> opposite field**. Circulation geometry must continue to originate from reachable-node demand and publish reservations before later enrichment can occupy the same volume.
+
+## Cut 21Q — Sectional circulation architecture
+
+21Q moves sky circulation from a mostly fixed-floor local bridge feature into a sectional city system while preserving the hard physical contracts established by 21P1.
+
+### Invariants
+
+- **Catwalks and skybridges remain exterior geometry.** A blocked span is rejected by the existing solid-volume transport authority; 21Q does not reintroduce tunneling through unrelated buildings.
+- **The canonical stair walkability kernel is unchanged.** Existing tread/riser/ramp/headroom/collision authority remains responsible for player movement. New stair/bridge architectural expression must wrap that kernel rather than replace it.
+- **Bridge endpoints remain the shared facade authority.** The same endpoint records still own aperture, landing, slab endpoint and semantic-connector coordinates.
+- **The world circulation graph remains proof, not intent.** 21Q introduces circulation-demand records above realization; physical semantic connectors and transport surfaces are still the reachability authority.
+
+### Multi-band exterior circulation
+
+`world/sectional-circulation.js` assigns bridge candidates to real elevation bands only after joint cavern height negotiation has established actual building capacities.
+
+The vertical midpoint is a weighted attractor, not a clamp. Important/high-degree routes preferentially become wider collector or `sky-street` spans near the overlap-heavy middle of the cavern, while local/scenic routes retain upper and lower variation. This prevents both the old universal `floor = 1` behavior and a new equally-bad ceiling promenade.
+
+Hanging towers use **depth from the ceiling** as the shared exchange authority. Modules with different occupied depths therefore use different local floor indices while resolving to the same physical world-height band. The shortest module path back to the primary circulation spine is deepened when required so an exchange door does not terminate in an isolated stalactite wing.
+
+### Towers as transfer volumes
+
+A compound that owns multiple exchange portals can now publish `jweb.circulation-demand.v1` records describing requested exchange → interior → exchange transfers, including vertical and facade-change requirements. These records do not fabricate reachability; they expose city-level intent that must be satisfied by the existing building circulation machinery and verified by the compiled world graph.
+
+### Section archetypes
+
+`world/cavern-joint-synthesis.js` v2 no longer treats every overlapping ground/hanging pair as a symmetric height-budget problem. Deterministic pair relationships now include:
+
+- `upright-collector`
+- `hanging-collector`
+- `midsection-braid`
+- `central-void`
+
+Collector archetypes preferentially spend available section on one polarity; central-void relationships deliberately preserve more air. Independent near-span tower rolls also allow some upright and hanging masses to request almost the full available cavern depth, subject to the same joint safety negotiation.
+
+### Bridge architecture is not bridge physics
+
+`world/skybridge-architecture.js` adds large-form visual families around the canonical flat transport slab:
+
+- simple guarded
+- heavy beam
+- utility frame
+- covered gallery
+- pony truss
+- through-truss
+- underslung arch
+
+The visual family may add beams, frames, trusses, hangers, canopies and large portal frames. None of those parts become the player walking surface or replace canonical bridge collision. Wide sky streets are therefore free to become visually aggressive without destabilizing traversal.
+
+### 21Q regression expectations
+
+- several vertical bridge bands occur in a population;
+- hanging exchanges do not collapse to the ceiling/top occupied band;
+- the fattest bridge population is statistically biased toward the vertical midpoint;
+- all large-form bridge families remain visual-only wrappers around canonical traversal;
+- all four mixed-city section archetypes occur deterministically in a population;
+- legacy endpoint, semantic-connector, cavern, hanging-floor and exterior-solid-volume safety tests continue to pass.

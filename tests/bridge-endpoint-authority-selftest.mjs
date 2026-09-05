@@ -117,11 +117,15 @@ for (const site of endpointSites) {
     bridgePortalsBySite: relationship.bridgePortalsBySite,
     structureProfile: {
       primaryFloors: 3,
-      floorHeight: 3.15,
+      // Deliberately disagree. A bridge-linked authored tower must join the
+      // shared exchange datum rather than carrying private story-height drift
+      // into a supposedly flat sky street.
+      floorHeight: site.id === bridge.aSiteId ? 3.0 : 4.1,
       floorCountByCell: { [moduleKey]: 3 },
     },
   });
   assert.ok(payload?.entity, `endpoint site ${site.id} must build`);
+  assert.ok(near(payload.entity.floorH, 3.15), 'bridge-linked authored tower must adopt the shared 3.15m exchange grid');
   payloadBySite.set(site.id, payload);
 }
 

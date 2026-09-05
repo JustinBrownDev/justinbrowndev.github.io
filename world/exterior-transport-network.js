@@ -1,6 +1,6 @@
 import { deriveStairFlight, gameplayTraversalEnvelope } from './physical-truth.js';
 
-export const EXTERIOR_TRANSPORT_NETWORK_SCHEMA = 'jweb.exterior-transport-network.v4';
+export const EXTERIOR_TRANSPORT_NETWORK_SCHEMA = 'jweb.exterior-transport-network.v5';
 const EPS = 1e-6;
 const LEVEL_TOLERANCE = 0.12;
 const MIN_UNION_DEPTH = 0.22;
@@ -173,6 +173,87 @@ function normalizedBlockedRects(blockedRects) {
       && block.hx > BLOCKED_CLEARANCE && block.hz > BLOCKED_CLEARANCE);
 }
 
+function normalizedBlockedVolumes(blockedVolumes) {
+  return [...(blockedVolumes ?? [])]
+    .map((block, index) => ({
+      id: block?.id ?? `blocked-volume:${index}`,
+      x: Number(block?.x), z: Number(block?.z),
+      hx: Number(block?.hx), hz: Number(block?.hz),
+      yMin: Math.min(Number(block?.yMin), Number(block?.yMax)),
+      yMax: Math.max(Number(block?.yMin), Number(block?.yMax)),
+      surfaceId: block?.surfaceId ?? null,
+      moduleKey: block?.moduleKey ?? null,
+      siteId: block?.siteId ?? null,
+      clearanceKind: block?.clearanceKind ?? 'solid-volume',
+    }))
+    .filter(block => [block.x, block.z, block.hx, block.hz, block.yMin, block.yMax].every(Number.isFinite)
+      && block.hx > 0 && block.hz > 0 && block.yMax > block.yMin + EPS);
+}
+
+function volumeBelongsToEndpoint(volume, candidate) {
+  return !!volume?.surfaceId && (volume.surfaceId === candidate?.aId || volume.surfaceId === candidate?.bId);
+}
+
+function linearCandidateVolumeBlocked(candidate, volume, requiredHeadroom) {
+  const from = Number(candidate.kind === 'stair-link' ? candidate.from : candidate.aEdge);
+  const to = Number(candidate.kind === 'stair-link' ? candidate.to : candidate.bEdge);
+  const lo = Math.min(from, to), hi = Math.max(from, to);
+  const denom = to - from;
+  if (!(hi > lo + EPS) || Math.abs(denom) <= EPS) return false;
+  const b = bounds(volume);
+  const volumeLo = candidate.axis === 'x' ? b.minX : b.minZ;
+  const volumeHi = candidate.axis === 'x' ? b.maxX : b.maxZ;
+  const overlapLo = Math.max(lo, volumeLo);
+  const overlapHi = Math.min(hi, volumeHi);
+  if (!(overlapHi > overlapLo + EPS)) return false;
+  const yAt = along => Number(candidate.y0)
+    + (Number(candidate.y1) - Number(candidate.y0)) * ((along - from) / denom);
+  const routeA = yAt(overlapLo), routeB = yAt(overlapHi);
+  const routeLow = Math.min(routeA, routeB);
+  const routeHigh = Math.max(routeA, routeB) + requiredHeadroom;
+  return volume.yMax > routeLow + 0.02 && volume.yMin < routeHigh - 0.02;
+}
+
+// Transport links are authored after the building shell.  A link between two
+// roofs therefore cannot treat the 2D gap as empty if a third building occupies
+// that column at the route elevation.  This is deliberately a volumetric test:
+// the old level-only roof blockers allowed a lower catwalk to pass through the
+// body of a taller module and then emitted its rail straight across an interior
+// stair mouth.
+function candidateBlockedByTransportVolume(candidate, blockedVolumes, traversalEnvelope) {
+  if (!blockedVolumes.length || !candidate) return false;
+  const playerRadius = Math.max(0.12, Number(traversalEnvelope?.playerRadius) || 0.22);
+  const requiredHeadroom = Math.max(1.6, Number(candidate.stairFlight?.headroom)
+    || Number(traversalEnvelope?.standingHeight) || 2.03);
+  let footprint;
+  if (candidate.kind === 'surface-union') footprint = candidate.intersection;
+  else if (candidate.kind === 'stair-link') {
+    footprint = pathRect(candidate.axis, candidate.from, candidate.to, candidate.fixedCoord,
+      Math.max(0.36, Number(candidate.halfWidth) || 0.36) + playerRadius);
+  } else if (candidate.kind === 'walkway-link' || candidate.kind === 'jump-link' || candidate.kind === 'roof-crossover-link') {
+    footprint = pathRect(candidate.axis, candidate.aEdge, candidate.bEdge, candidate.fixedCoord,
+      Math.max(0.36, Number(candidate.halfWidth) || 0.36) + playerRadius);
+  } else return false;
+
+  for (const volume of blockedVolumes) {
+    if (volumeBelongsToEndpoint(volume, candidate) || !rectOverlap(footprint, volume, 0)) continue;
+    if (candidate.kind === 'surface-union') {
+      const floorY = Number(candidate.y0);
+      if (volume.yMax > floorY + 0.02 && volume.yMin < floorY + requiredHeadroom - 0.02) return true;
+      continue;
+    }
+    if (candidate.kind === 'jump-link') {
+      const routeLow = Math.min(Number(candidate.y0), Number(candidate.y1));
+      const routeHigh = Math.max(Number(candidate.y0), Number(candidate.y1))
+        + Math.max(0, Number(candidate.apexHeight) || 0) + requiredHeadroom;
+      if (volume.yMax > routeLow + 0.02 && volume.yMin < routeHigh - 0.02) return true;
+      continue;
+    }
+    if (linearCandidateVolumeBlocked(candidate, volume, requiredHeadroom)) return true;
+  }
+  return false;
+}
+
 function candidateBlocked(candidate, blocked) {
   if (!blocked.length) return false;
   if (candidate.kind === 'surface-union') {
@@ -192,6 +273,50 @@ function candidateBlocked(candidate, blocked) {
     return blocked.some(block =>
       (Math.abs(block.y - candidate.y0) <= LEVEL_TOLERANCE && rectOverlap(block, lower))
       || (Math.abs(block.y - candidate.y1) <= LEVEL_TOLERANCE && rectOverlap(block, upper)));
+  }
+  return false;
+}
+
+// A stair link is not traversable merely because its two endpoint surfaces are
+// separated. A third roof/deck can bridge that 2D gap at a higher elevation and
+// become an invisible floor/ceiling over the ramp. Reject any lane whose actual
+// stair corridor passes under or through an unrelated transport surface with
+// less than the flight's required standing headroom. Endpoint surfaces are
+// excluded: they deliberately meet the ramp at its low/high mouths.
+function stairLaneBlockedByTransportSurface(candidate, surfaces) {
+  if (candidate?.kind !== 'stair-link') return false;
+  const corridor = pathRect(
+    candidate.axis, candidate.from, candidate.to, candidate.fixedCoord,
+    Math.max(0.36, Number(candidate.halfWidth) || 0.36) + BLOCKED_CLEARANCE,
+  );
+  const lo = Math.min(Number(candidate.from), Number(candidate.to));
+  const hi = Math.max(Number(candidate.from), Number(candidate.to));
+  const denom = Number(candidate.to) - Number(candidate.from);
+  if (!(hi > lo + EPS) || Math.abs(denom) <= EPS) return true;
+  const yAt = along => Number(candidate.y0)
+    + (Number(candidate.y1) - Number(candidate.y0)) * ((along - Number(candidate.from)) / denom);
+  const requiredHeadroom = Math.max(1.6, Number(candidate.stairFlight?.headroom) || 2.03);
+
+  for (const surface of surfaces) {
+    if (!surface || surface.id === candidate.aId || surface.id === candidate.bId) continue;
+    if (!rectOverlap(corridor, surface, 0)) continue;
+    const b = bounds(surface);
+    const surfaceLo = candidate.axis === 'x' ? b.minX : b.minZ;
+    const surfaceHi = candidate.axis === 'x' ? b.maxX : b.maxZ;
+    const overlapLo = Math.max(lo, surfaceLo);
+    const overlapHi = Math.min(hi, surfaceHi);
+    if (!(overlapHi > overlapLo + EPS)) continue;
+
+    const yA = yAt(overlapLo);
+    const yB = yAt(overlapHi);
+    const rampLow = Math.min(yA, yB);
+    const rampHigh = Math.max(yA, yB);
+    const surfaceY = Number(surface.y);
+    if (!Number.isFinite(surfaceY)) continue;
+    // A surface at/below the whole local ramp interval is supporting geometry,
+    // not overhead obstruction. Everything else must clear the player's body.
+    if (surfaceY <= rampLow + 0.02) continue;
+    if (surfaceY - rampHigh < requiredHeadroom - 0.02) return true;
   }
   return false;
 }
@@ -341,6 +466,7 @@ export function classifyTransportConnection(aRaw, bRaw, { maxHorizontalSpan = 8.
 export function planExteriorTransportNetwork({
   surfaces = [],
   blockedRects = [],
+  blockedVolumes = [],
   maxLinks = 8,
   maxStairLinks = 5,
   maxJumpLinks = 6,
@@ -355,6 +481,7 @@ export function planExteriorTransportNetwork({
 } = {}) {
   const normalized = surfaces.map(normalizeTransportSurface);
   const blocked = normalizedBlockedRects(blockedRects);
+  const solidVolumes = normalizedBlockedVolumes(blockedVolumes);
   const byId = new Map(normalized.map(surface => [surface.id, surface]));
   const parent = new Map(normalized.map(surface => [surface.id, surface.id]));
   const componentReachable = new Map(normalized.map(surface => [surface.id, surface.reachable !== false]));
@@ -391,6 +518,8 @@ export function planExteriorTransportNetwork({
 
   const candidates = [];
   let blockedCandidateCount = 0;
+  let surfaceBlockedCandidateCount = 0;
+  let volumeBlockedCandidateCount = 0;
   for (let i = 0; i < normalized.length; i++) {
     for (let j = i + 1; j < normalized.length; j++) {
       const local = classifyTransportConnection(normalized[i], normalized[j], { traversalEnvelope });
@@ -404,6 +533,23 @@ export function planExteriorTransportNetwork({
       if (!relation) continue;
       if (candidateBlocked(relation, blocked)) {
         blockedCandidateCount++;
+        continue;
+      }
+      const relationLaneVariants = candidateLaneVariants(relation);
+      if (relationLaneVariants.length > 0
+          && !relationLaneVariants.some(lane => !candidateBlockedByTransportVolume(lane, solidVolumes, traversalEnvelope))) {
+        blockedCandidateCount++;
+        volumeBlockedCandidateCount++;
+        continue;
+      }
+      // Keep impossible under-slab stairs out of the candidate graph itself.
+      // requiredSurfaceMode=local-seed-components uses this graph to decide what
+      // is genuinely reachable enough to be required; leaving a physically dead
+      // edge here made isolated roofs look like mandatory-but-unreachable debt.
+      if (relation.kind === 'stair-link'
+          && !candidateLaneVariants(relation).some(lane => !stairLaneBlockedByTransportSurface(lane, normalized))) {
+        blockedCandidateCount++;
+        surfaceBlockedCandidateCount++;
         continue;
       }
       const planningTier = local ? 0 : 1;
@@ -480,7 +626,10 @@ export function planExteriorTransportNetwork({
         const targetId = aReachable ? candidate.bId : candidate.aId;
         if (!componentHasUnreachableRequired(targetId)) continue;
       }
-      const variants = candidateLaneVariants(candidate).filter(variant => !candidateBlocked(variant, blocked));
+      const variants = candidateLaneVariants(candidate).filter(variant =>
+        !candidateBlocked(variant, blocked)
+        && !candidateBlockedByTransportVolume(variant, solidVolumes, traversalEnvelope)
+        && !stairLaneBlockedByTransportSurface(variant, normalized));
       const lane = variants.find(variant => !links.some(link => linksConflict(variant, link)));
       if (!lane) {
         overlapRejected.add(`${candidate.kind}:${candidate.aId}:${candidate.bId}`);
@@ -524,7 +673,12 @@ export function planExteriorTransportNetwork({
       restrictArterialsToRequiredClosure: restrictArterialsToRequiredClosure === true,
       requiredSurfaceMode,
     }),
-    rejectionCounts: Object.freeze({ blocked: blockedCandidateCount, overlapping: overlapRejected.size }),
+    rejectionCounts: Object.freeze({
+      blocked: blockedCandidateCount,
+      surfaceBlocked: surfaceBlockedCandidateCount,
+      volumeBlocked: volumeBlockedCandidateCount,
+      overlapping: overlapRejected.size,
+    }),
     linkCounts: Object.freeze({
       union: links.filter(link => link.kind === 'surface-union').length,
       walkway: links.filter(link => link.kind === 'walkway-link').length,

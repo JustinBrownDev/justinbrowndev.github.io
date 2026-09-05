@@ -53,6 +53,29 @@ assert.equal(sliverBlockedPlan.links.length, 0,
   'transport must keep a safety margin around stair throats, not accept a threshold sliver');
 assert.ok(sliverBlockedPlan.rejectionCounts.blocked >= 1);
 
+// A same-level link may have empty roof-to-roof 2D space while still crossing
+// through the body of a taller third building.  This is the generated chunk 1,0
+// failure that laid a transport rail across a compound stair mouth.
+const volumeLeft = s('volume:left', 0, 4, 1.5, 1.0, 6.4, {
+  siteId: 91, kind: 'clear-roof-street-layer', reachable: true, priority: 'circulation-candidate',
+});
+const volumeRight = s('volume:right', 8, 4, 1.5, 1.0, 6.4, {
+  siteId: 92, kind: 'clear-roof-street-layer', reachable: false, priority: 'circulation-candidate',
+});
+assert.equal(classifyTransportConnection(volumeLeft, volumeRight)?.kind, 'walkway-link');
+const throughBuildingPlan = planExteriorTransportNetwork({
+  surfaces: [volumeLeft, volumeRight],
+  blockedVolumes: [{
+    id: 'volume:middle-building', x: 4, z: 4, hx: 1.4, hz: 1.4,
+    yMin: 0, yMax: 12.8, surfaceId: 'volume:middle-roof', moduleKey: 'middle', siteId: 93,
+  }],
+  maxLinks: 4, maxStairLinks: 4, stableKey: 'third-building-volume-canary',
+});
+assert.equal(throughBuildingPlan.links.length, 0,
+  'roof transport must not pass through an unrelated taller building volume');
+assert.ok(throughBuildingPlan.rejectionCounts.volumeBlocked >= 1,
+  'building-volume rejection must remain visible in planner diagnostics');
+
 const upperC = s('balcony:C', 13.6, 0, 1.6, 0.9, 6.4, { siteId: 4, reachable: false });
 const stair = classifyTransportConnection(balconyB, upperC);
 assert.equal(stair.kind, 'stair-link', 'different-height street layers may connect by a stair when the run fits truth');
@@ -75,6 +98,43 @@ const blockedPlan = planExteriorTransportNetwork({
 });
 assert.equal(blockedPlan.links.length, 0, 'a new transport stair may not claim an existing stair headroom/throat mouth');
 assert.ok(blockedPlan.rejectionCounts.blocked >= 1);
+
+// A third upper roof spanning the nominal 2D gap must invalidate a straight
+// stair instead of allowing the graph to route a player underneath solid floor.
+const underRoofLower = s('under-roof:lower', 5.4, 4.0, 1.6, 0.9, 3.2, { siteId: 81, reachable: true });
+const underRoofUpper = s('under-roof:upper', 13.6, 4.0, 1.6, 0.9, 6.4, { siteId: 82, reachable: false });
+const underRoofBlocker = s('under-roof:blocker', 9.5, 4.0, 1.55, 0.20, 6.4, {
+  siteId: 83, kind: 'guarded-catwalk', reachable: false,
+});
+assert.equal(classifyTransportConnection(underRoofLower, underRoofUpper)?.kind, 'stair-link',
+  'endpoint-only classification still sees a geometrically plausible stair');
+const underRoofPlan = planExteriorTransportNetwork({
+  surfaces: [underRoofLower, underRoofUpper, underRoofBlocker],
+  maxLinks: 4, maxStairLinks: 4, stableKey: 'third-surface-headroom-canary',
+});
+assert.equal(underRoofPlan.links.some(link => link.aId === underRoofLower.id && link.bId === underRoofUpper.id
+  || link.aId === underRoofUpper.id && link.bId === underRoofLower.id), false,
+  'planner must reject a stair corridor occluded by an unrelated upper transport slab');
+assert.ok(underRoofPlan.rejectionCounts.surfaceBlocked >= 1,
+  'surface-blocked stair rejection should remain observable in diagnostics');
+
+// Lane shifting remains a planner capability, but it should be tested directly
+// rather than requiring one whole generated chunk to happen to need it after
+// solid-volume rejection removes bad branches earlier.
+const laneShiftPlan = planExteriorTransportNetwork({
+  surfaces: [
+    s('lane:A', 0, 0, 2.2, 2.2, 4, { reachable: true }),
+    s('lane:B', 1.7851193131230851, -3.070662363766893, 1.8748865616507828, 1.4081337285460904, 4, { reachable: false }),
+    s('lane:C', 4.051004419211848, 2.894272467690238, 1.7598039988661185, 1.1053145851474255, 4.047907078638673, { reachable: false }),
+    s('lane:D', 3.336906621088425, 0.023136613447517565, 1.0820552714867517, 1.904873444698751, 4, { reachable: false }),
+    s('lane:E', 5.03126840776295, -4.288856964326886, 2.028535591904074, 1.0602160879643634, 3.72317528212443, { reachable: false }),
+  ],
+  maxLinks: 4, maxStairLinks: 4, maxJumpLinks: 0, maxArterialSpan: 12,
+  stableKey: 'lane-shift-direct-canary',
+});
+assert.ok(laneShiftPlan.planning.laneShiftedLinks >= 1,
+  'planner must retain collision-safe lane shifting when a valid alternate stair lane exists');
+assert.ok(laneShiftPlan.links.some(link => link.laneShifted === true));
 
 const roof = s('roof:D', 14.0, 0.2, 2.0, 1.6, 6.4, {
   siteId: 5, kind: 'clear-roof-street-layer', reachable: false, routeId: null,

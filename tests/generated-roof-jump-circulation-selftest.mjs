@@ -78,8 +78,8 @@ assert.deepEqual(network?.unreachableRequiredSurfaceIds ?? [], []);
 assert.equal(network?.planning?.requiredSurfaceMode, 'local-seed-components');
 assert.ok((network?.closure?.optionalIsolatedCandidates ?? 0) > 0,
   'ground fixture must classify nonlocal roof islands as optional instead of forcing long catwalk closure');
-assert.ok((network?.planning?.laneShiftedLinks ?? 0) > 0,
-  'deterministic generated fixture must exercise collision-safe junction lane shifting instead of dropping a valid branch');
+assert.ok((network?.rejectionCounts?.volumeBlocked ?? 0) > 0,
+  'generated roof planner must reject at least one route corridor that intersects an unrelated solid building volume');
 assert.ok((network?.links?.length ?? 0) <= (network?.closure?.linkBudget ?? Infinity));
 assert.equal(network?.planning?.stopWhenRequiredReachable, true,
   'ground transport must stop once every required roof is live instead of spending the remaining forest budget');

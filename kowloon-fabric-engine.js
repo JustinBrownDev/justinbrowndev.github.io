@@ -735,11 +735,40 @@ export function createKowloonFabricEngine({
         const depth = 0.92;
         const family = 'residential-civic-bar';
         const baseId = `balcony:${side}:${fp.cx}:${fp.cz}:${y}`;
+        const publishBalconySlab = rect => {
+            // A facade stair may already own a headroom sweep through this exact
+            // elevation.  The old balcony helper ignored that reservation and
+            // could lay one continuous support slab over the complete inner stair
+            // lane.  Visually the steps still existed, but player support stayed
+            // pinned to the balcony elevation for metres into the flight.
+            const cuts = stairHeadroomCutsForRect(physics, rect, y);
+            const pieces = piecesMinusCuts(rect, cuts);
+            const preciseCutEdge = cuts.length > 0;
+            for (let pieceIndex = 0; pieceIndex < pieces.length; pieceIndex++) {
+                const piece = pieces[pieceIndex];
+                transforms.slabs.push({
+                    x: piece.x, y: y - slabT * 0.5, z: piece.z,
+                    sx: piece.hx * 2, sy: slabT, sz: piece.hz * 2,
+                    balconySide: side, stairClearanceCut: preciseCutEdge || undefined,
+                    pieceIndex,
+                });
+                physics.platforms.push({
+                    x: piece.x, z: piece.z, hx: piece.hx, hz: piece.hz, y,
+                    supportKind: 'balcony',
+                    // Any stair-cut edge must stop supporting exactly where the
+                    // rendered slab stops; player-radius inflation would partly
+                    // refill the hole with invisible floor.
+                    ...(preciseCutEdge ? { supportMargin: 0 } : {}),
+                    stairClearanceCut: preciseCutEdge || undefined,
+                    pieceIndex,
+                });
+            }
+            return { pieces, cuts };
+        };
         if (side === 'north' || side === 'south') {
             const width = Math.max(1.8, fp.halfX * 1.45);
             const z = fp.cz + (side === 'north' ? -fp.halfZ - depth * 0.5 : fp.halfZ + depth * 0.5);
-            transforms.slabs.push({ x: fp.cx, y: y - slabT * 0.5, z, sx: width, sy: slabT, sz: depth });
-            addRectPlatform(physics.platforms, fp.cx, z, width, depth, y, 'balcony');
+            publishBalconySlab({ x: fp.cx, z, hx: width * 0.5, hz: depth * 0.5 });
             const innerZ = z + (side === 'north' ? depth * 0.5 : -depth * 0.5);
             const outerZ = z + (side === 'north' ? -depth * 0.5 : depth * 0.5);
             emitGuardSpanFromAuthority({ physics, transforms, id: `${baseId}:outer`, x1: fp.cx - width * 0.5, z1: outerZ, x2: fp.cx + width * 0.5, z2: outerZ, y, family, supportKind: 'balcony-rail' });
@@ -749,8 +778,7 @@ export function createKowloonFabricEngine({
         } else {
             const width = Math.max(1.8, fp.halfZ * 1.45);
             const x = fp.cx + (side === 'west' ? -fp.halfX - depth * 0.5 : fp.halfX + depth * 0.5);
-            transforms.slabs.push({ x, y: y - slabT * 0.5, z: fp.cz, sx: depth, sy: slabT, sz: width });
-            addRectPlatform(physics.platforms, x, fp.cz, depth, width, y, 'balcony');
+            publishBalconySlab({ x, z: fp.cz, hx: depth * 0.5, hz: width * 0.5 });
             const innerX = x + (side === 'west' ? depth * 0.5 : -depth * 0.5);
             const outerX = x + (side === 'west' ? -depth * 0.5 : depth * 0.5);
             emitGuardSpanFromAuthority({ physics, transforms, id: `${baseId}:outer`, x1: outerX, z1: fp.cz - width * 0.5, x2: outerX, z2: fp.cz + width * 0.5, y, family, supportKind: 'balcony-rail' });
@@ -791,7 +819,10 @@ export function createKowloonFabricEngine({
                 sx: landing.sx, sy: slabT, sz: landing.sz,
                 routeId: plan.id, landingId: landing.id,
             });
-            addRectPlatform(physics.platforms, landing.x, landing.z, landing.sx, landing.sz, landing.y, 'scaffold');
+            // Stair landings meet flights on a literal edge.  Player-radius
+            // support inflation here creates a 22cm invisible shelf over the
+            // first/last tread and is especially noticeable on steep flights.
+            addRectPlatform(physics.platforms, landing.x, landing.z, landing.sx, landing.sz, landing.y, 'scaffold', 0);
             const platform = physics.platforms[physics.platforms.length - 1];
             platform.routeId = plan.id;
             platform.landingId = landing.id;
@@ -906,6 +937,9 @@ export function createKowloonFabricEngine({
                 y0: flight.y0,
                 y1: flight.y1,
                 supportKind: 'scaffold',
+                supportMargin: STAIR_ENDPOINT_SUPPORT_OVERLAP,
+                collisionAuthority: 'physics-ramp',
+                designIntent: STAIR_WALKABILITY_DESIGN_INTENT,
                 routeId: plan.id,
                 flightId: flight.id,
             };
@@ -995,6 +1029,28 @@ export function createKowloonFabricEngine({
         return physics.exteriorTransportSurfaces ?? (physics.exteriorTransportSurfaces = []);
     }
 
+    function exteriorTransportVolumeBlockers(physics) {
+        return physics.exteriorTransportVolumeBlockers ?? (physics.exteriorTransportVolumeBlockers = []);
+    }
+
+    function registerExteriorTransportVolumeBlocker(physics, raw) {
+        const registry = exteriorTransportVolumeBlockers(physics);
+        const existing = registry.find(blocker => blocker.id === raw.id);
+        if (existing) return existing;
+        const yMin = Math.min(Number(raw.yMin), Number(raw.yMax));
+        const yMax = Math.max(Number(raw.yMin), Number(raw.yMax));
+        if (![raw.x, raw.z, raw.hx, raw.hz, yMin, yMax].every(value => Number.isFinite(Number(value)))) return null;
+        if (!(Number(raw.hx) > 0) || !(Number(raw.hz) > 0) || !(yMax > yMin + 0.02)) return null;
+        const blocker = {
+            schema: 'jweb.exterior-transport-volume-blocker.v1',
+            clearanceKind: 'building-solid-volume',
+            ...raw,
+            x: Number(raw.x), z: Number(raw.z), hx: Number(raw.hx), hz: Number(raw.hz), yMin, yMax,
+        };
+        registry.push(blocker);
+        return blocker;
+    }
+
     function registerExteriorTransportSurface(physics, raw) {
         const registry = exteriorTransportSurfaces(physics);
         const existing = registry.find(surface => surface.id === raw.id);
@@ -1017,6 +1073,18 @@ export function createKowloonFabricEngine({
         let pieces = [rect];
         for (const cut of cuts) pieces = pieces.flatMap(piece => rectPiecesMinusGap(piece, cut));
         return pieces;
+    }
+
+    function stairHeadroomCutsForRect(physics, rect, y, extra = 0.08) {
+        return (physics.fastStairThroats ?? [])
+            .filter(clearance => clearance?.clearanceKind === 'flight-headroom'
+                && Math.abs(Number(clearance.y) - Number(y)) <= 0.06)
+            .map(clearance => transportRectIntersection({
+                ...clearance,
+                hx: Number(clearance.hx) + extra,
+                hz: Number(clearance.hz) + extra,
+            }, rect))
+            .filter(Boolean);
     }
 
     function guardSpanRegistry(physics) {
@@ -1090,7 +1158,14 @@ export function createKowloonFabricEngine({
             if (pieces.length > 1 || (cuts.length && pieces.length !== 1)) splitPieces += pieces.length;
             for (let pieceIndex = 0; pieceIndex < pieces.length; pieceIndex++) {
                 const piece = pieces[pieceIndex];
-                const next = { ...platform, ...piece, pieceIndex };
+                const next = {
+                    ...platform, ...piece, pieceIndex,
+                    // Transport slabs are exact walkable geometry.  Inflating
+                    // their support by the player radius can bridge a stair mouth
+                    // or a deliberately split union even when rendered geometry
+                    // is correctly open.
+                    supportMargin: 0,
+                };
                 rebuilt.push(next);
                 accepted.push(next);
             }
@@ -1290,14 +1365,7 @@ export function createKowloonFabricEngine({
         const overlaps = registry.filter(surface => Math.abs(surface.y - rawSurface.y) <= 0.12)
             .map(surface => ({ surface, cut: transportRectIntersection(surface, rawSurface) }))
             .filter(item => item.cut);
-        const throatCuts = (physics.fastStairThroats ?? [])
-            .filter(throat => Math.abs(Number(throat.y) - Number(rawSurface.y)) <= 0.06)
-            .map(throat => transportRectIntersection({
-                ...throat,
-                hx: Number(throat.hx) + 0.08,
-                hz: Number(throat.hz) + 0.08,
-            }, rawSurface))
-            .filter(Boolean);
+        const throatCuts = stairHeadroomCutsForRect(physics, rawSurface, rawSurface.y);
         const pieces = piecesMinusCuts(
             { x: rawSurface.x, z: rawSurface.z, hx: rawSurface.hx, hz: rawSurface.hz },
             [...overlaps.map(item => item.cut), ...throatCuts],
@@ -1305,7 +1373,11 @@ export function createKowloonFabricEngine({
         const surface = registerExteriorTransportSurface(physics, rawSurface);
         for (let i = 0; i < pieces.length; i++) {
             const piece = pieces[i];
-            physics.platforms.push({ x: piece.x, z: piece.z, hx: piece.hx, hz: piece.hz, y: surface.y, supportKind, surfaceId: surface.id, pieceIndex: i });
+            physics.platforms.push({
+                x: piece.x, z: piece.z, hx: piece.hx, hz: piece.hz, y: surface.y,
+                supportKind, surfaceId: surface.id, pieceIndex: i,
+                supportMargin: 0,
+            });
             transforms.slabs.push({ x: piece.x, y: surface.y - slabT * 0.5, z: piece.z, sx: piece.hx * 2, sy: slabT, sz: piece.hz * 2, surfaceId: surface.id, pieceIndex: i });
         }
         return { surface, overlaps: overlaps.map(item => item.surface), pieces };
@@ -1338,7 +1410,9 @@ export function createKowloonFabricEngine({
         const surfaceOwnership = reconcileTransportPlatformOwnership({ physics, transforms });
         const surfaces = exteriorTransportSurfaces(physics);
         const plan = planExteriorTransportNetwork({
-            surfaces, blockedRects: [...(physics.fastStairThroats ?? []), ...(physics.roofTransportBlockers ?? [])],
+            surfaces,
+            blockedRects: [...(physics.fastStairThroats ?? []), ...(physics.roofTransportBlockers ?? [])],
+            blockedVolumes: physics.exteriorTransportVolumeBlockers ?? [],
             // A connected forest needs at most N-1 new links. Derive the budget from
             // the published transport topology instead of arbitrarily stopping at 10.
             maxLinks: Math.max(10, surfaces.length - 1),
@@ -1465,6 +1539,9 @@ export function createKowloonFabricEngine({
                     axis: link.axis, from: link.from, to: link.to, fixedCoord: link.fixedCoord,
                     halfWidth: link.halfWidth, y0: link.y0, y1: link.y1,
                     supportKind: 'exterior-transport-stair', transportLinkId: link.id,
+                    supportMargin: STAIR_ENDPOINT_SUPPORT_OVERLAP,
+                    collisionAuthority: 'physics-ramp',
+                    designIntent: STAIR_WALKABILITY_DESIGN_INTENT,
                 });
                 registerSemanticConnector(physics, createRampConnector({
                     id: `${link.id}:connector`, kind: 'stair', reservationKind: 'exterior-transport-stair-sweep',
@@ -1676,6 +1753,9 @@ export function createKowloonFabricEngine({
                 axis: flight.axis, from: flight.from, to: flight.to, fixedCoord: flight.fixedCoord,
                 halfWidth: flight.halfWidth, y0: flight.y0, y1: flight.y1,
                 supportKind: 'broad-vertical-stair', routeId: plan.id, flightId: flight.id,
+                supportMargin: STAIR_ENDPOINT_SUPPORT_OVERLAP,
+                collisionAuthority: 'physics-ramp',
+                designIntent: STAIR_WALKABILITY_DESIGN_INTENT,
             });
             const connector = createRampConnector({
                 id: `${flight.id}:connector`,
@@ -1763,6 +1843,7 @@ export function createKowloonFabricEngine({
                     supportKind: 'broad-vertical-landing', deckKind: 'exterior-street-layer',
                     routeId: plan.id, landingId: landing.id, pieceIndex,
                     surfaceId: `${landing.id}:deck`,
+                    supportMargin: 0,
                 });
                 transforms.slabs.push({
                     x: piece.x, y: landing.y - 0.07, z: piece.z,
@@ -2881,9 +2962,18 @@ export function createKowloonFabricEngine({
                 .filter(([key]) => key.startsWith(`${module.key}:`))
                 .map(([key, value]) => ({ dirKey: key.slice(module.key.length + 1), ...value }));
             let roofSurface = null;
+            const roofTransportSurfaceId = `${chunk.key}:${siteSignature}:${module.key}:roof-street-layer`;
+            registerExteriorTransportVolumeBlocker(physics, {
+                id: `${chunk.key}:${siteSignature}:${module.key}:building-solid-volume`,
+                x: module.rect.cx, z: module.rect.cz, hx: module.rect.halfX, hz: module.rect.halfZ,
+                yMin: moduleBaseY, yMax: moduleRoofY,
+                surfaceId: roofClearForTransport(module) ? roofTransportSurfaceId : null,
+                siteId: site.id, moduleKey: module.key,
+                clearanceKind: 'building-solid-volume',
+            });
             if (roofClearForTransport(module)) {
                 const rawRoofSurface = {
-                    id: `${chunk.key}:${siteSignature}:${module.key}:roof-street-layer`,
+                    id: roofTransportSurfaceId,
                     kind: 'clear-roof-street-layer',
                     x: roofRect.cx, z: roofRect.cz, hx: roofRect.width * 0.5, hz: roofRect.depth * 0.5, y: roofY,
                     siteId: site.id, moduleKey: module.key, routeId: null,
@@ -2930,6 +3020,21 @@ export function createKowloonFabricEngine({
                     roofCoreJunction.spaceIds = [roofCoreSpaceId];
                     registerSemanticConnector(physics, roofCoreJunction);
                 }
+            } else if (roofHasInteriorCoreOpening) {
+                // Structural roof openings are owned by the persistent stair core,
+                // not by whether this roof happens to qualify as an exterior
+                // transport surface.  The old branch rebuilt a full solid roof on
+                // non-transport roofs and literally covered the final stair flight.
+                addNotchedFloor(physics.platforms, roofRect.cx, roofRect.cz,
+                    roofRect.width, roofRect.depth, roofY,
+                    primaryStairSlabOpeningReservation.x, primaryStairSlabOpeningReservation.z,
+                    primaryStairSlabOpeningReservation.halfX * 2, primaryStairSlabOpeningReservation.halfZ * 2, 'roof');
+                addRenderedNotchedSlab(transforms, roofRect.cx, roofRect.cz,
+                    roofRect.width, roofRect.depth, roofY,
+                    primaryStairSlabOpeningReservation.x, primaryStairSlabOpeningReservation.z,
+                    primaryStairSlabOpeningReservation.halfX * 2, primaryStairSlabOpeningReservation.halfZ * 2,
+                    { moduleKey: module.key, ceilingRoofSlab: ceilingAligned || undefined,
+                        structuralSurfaceKind: 'roof-surface', surfaceAuthority: 'roof' });
             } else {
                 addRectPlatform(physics.platforms, roofRect.cx, roofRect.cz, roofRect.width, roofRect.depth, roofY, 'roof');
                 transforms.slabs.push({
@@ -4797,7 +4902,7 @@ export function createKowloonFabricEngine({
         // Transport surfaces and scaffold route plans are frozen authority records.
         // Rebase them by replacement so their metadata remains in the same world-Y
         // frame as the geometry/platforms they describe.
-        for (const key of ['exteriorTransportSurfaces', 'scaffoldCirculationRoutes']) {
+        for (const key of ['exteriorTransportSurfaces', 'exteriorTransportVolumeBlockers', 'scaffoldCirculationRoutes']) {
             if (Array.isArray(physics[key])) physics[key] = shiftedSemanticClone(physics[key], dy);
         }
         return buffers;

@@ -39,7 +39,10 @@ const seamRamp = {
 };
 const topFloor = {
   x: 3.55, z: 0, hx: 0.55, hz: 1.0, y: 2.4,
-  supportMargin: 0, blocksFromBelow: false,
+  // Exact-edge stair landing: top support and underside collision must agree on
+  // the same footprint. blocksFromBelow remains true to catch the old phantom
+  // player-radius ceiling lip at the first descending tread.
+  supportMargin: 0,
 };
 
 // The stair's endpoint overlap is authoritative.  The player's full radius must
@@ -66,8 +69,8 @@ for (const direction of ['up', 'down']) {
     assert.ok(position.x > 3.28, `top exit must cross onto floor; x=${position.x}`);
     assert.ok(Math.abs(state.feetY - 2.4) < 0.04, `top exit feetY=${state.feetY}`);
   } else {
-    assert.ok(position.x < 2.82, `top descent must enter flight; x=${position.x}`);
-    assert.ok(state.feetY < 2.32, `top descent must move down the ramp; feetY=${state.feetY}`);
+    assert.ok(position.x < 2.60, `top descent must clear the old player-radius ceiling lip; x=${position.x}`);
+    assert.ok(state.feetY < 2.12, `top descent must continue down the ramp, not stop on first tread; feetY=${state.feetY}`);
   }
   assert.equal(state.grounded, true, `${direction}: seam traversal must remain grounded`);
 }

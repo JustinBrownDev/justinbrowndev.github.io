@@ -224,8 +224,19 @@ export function createPlayerPhysics(options) {
     const platformSupportMargin = p => p?.supportMargin === null || p?.supportMargin === undefined
         ? supportMargin
         : Math.max(0, Number(p.supportMargin) || 0);
+    // A platform that explicitly owns an exact top-support edge must own that
+    // same edge from below. Expanding its underside by playerRadius after a
+    // supportMargin: 0 stair-mouth cut recreates an invisible floor lip over the
+    // first tread and wedges the controller as soon as feet drop below the slab.
+    // Callers may override ceilingMargin independently, but an explicit support
+    // margin is otherwise the collision-footprint authority on both faces.
+    const platformCeilingMargin = p => p?.ceilingMargin === null || p?.ceilingMargin === undefined
+        ? (p?.supportMargin === null || p?.supportMargin === undefined
+            ? playerRadius
+            : platformSupportMargin(p))
+        : Math.max(0, Number(p.ceilingMargin) || 0);
     const platformBounds = p => {
-        const margin = platformSupportMargin(p);
+        const margin = Math.max(platformSupportMargin(p), platformCeilingMargin(p));
         return {
             minX: p.x - p.hx - margin, maxX: p.x + p.hx + margin,
             minZ: p.z - p.hz - margin, maxZ: p.z + p.hz + margin,
@@ -388,7 +399,7 @@ export function createPlayerPhysics(options) {
 
         for (const p of querySpatial(platformIndex, x, z)) {
             if (!physicsItemActive(p) || !isCeilingSolid(p) || p.y <= fromFeetY + CONTACT_EPS) continue;
-            if (rectContains(p, x, z, playerRadius) && p.y < nearest) nearest = p.y;
+            if (rectContains(p, x, z, platformCeilingMargin(p)) && p.y < nearest) nearest = p.y;
         }
 
         for (const c of querySpatial(ceilingIndex, x, z)) {
@@ -926,7 +937,7 @@ export function createPlayerPhysics(options) {
 
         let hit = null;
         const consider = (c, solid = true) => {
-            if (!solid || !rectContains(c, x, z, playerRadius)) return;
+            if (!solid || !rectContains(c, x, z, platformCeilingMargin(c))) return;
             if (c.y < startTop - CONTACT_EPS || c.y > predictedTop + CONTACT_EPS) return;
             if (hit === null || c.y < hit) hit = c.y;
         };

@@ -31,7 +31,10 @@ function duplicateTransportOverlaps(physics) {
   return pairs;
 }
 function throatConflicts(physics) {
-  const platforms = (physics?.platforms ?? []).filter(item => item?.surfaceId || item?.supportKind === 'broad-vertical-landing' || item?.supportKind === 'scaffold');
+  // Headroom is a physical invariant, not a transport-family invariant. A plain
+  // balcony/floor slab can be just as capable of sealing a stair mouth as a
+  // transport-owned landing, so inspect every active horizontal support plane.
+  const platforms = (physics?.platforms ?? []).filter(item => item && item.__physicsDisabled !== true);
   const conflicts = [];
   for (const throat of physics?.fastStairThroats ?? []) {
     for (const platform of platforms) {
@@ -112,6 +115,8 @@ export function buildExteriorDebugSnapshot({ chunk, physics = {}, entities = [],
       arterialLinks: Number(network.planning?.arterialLinks) || 0,
       laneShiftedLinks: Number(network.planning?.laneShiftedLinks) || 0,
       rejectedBlockedLinks: Number(network.rejectionCounts?.blocked) || 0,
+      rejectedSurfaceBlockedLinks: Number(network.rejectionCounts?.surfaceBlocked) || 0,
+      rejectedVolumeBlockedLinks: Number(network.rejectionCounts?.volumeBlocked) || 0,
       rejectedOverlappingLinks: Number(network.rejectionCounts?.overlapping) || 0,
       reconciledTransportPlatformsBefore: Number(network.surfaceOwnership?.before) || 0,
       reconciledTransportPlatformsAfter: Number(network.surfaceOwnership?.after) || 0,

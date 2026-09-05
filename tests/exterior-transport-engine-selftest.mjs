@@ -13,8 +13,12 @@ assert.match(engineSource, /publishTransportSurfaceSlab/);
 assert.match(engineSource, /reconcileTransportPlatformOwnership/);
 assert.match(engineSource, /clear-roof-street-layer/);
 assert.match(engineSource, /canonical-facade-zigzag/);
-assert.match(engineSource, /blockedRects:\s*physics\.fastStairThroats/,
+assert.match(engineSource, /blockedRects:\s*\[\.\.\.\(physics\.fastStairThroats/,
   'late transport planner must receive existing stair throat reservations before selecting links');
+assert.match(engineSource, /physics\.roofTransportBlockers/,
+  'late transport planner must also receive roof blockers before selecting links');
+assert.match(engineSource, /blockedVolumes:\s*physics\.exteriorTransportVolumeBlockers/,
+  'transport planning must reject routes through unrelated solid building volumes');
 assert.doesNotMatch(engineSource, /switchback composition debt remains parked/);
 
 globalThis.window = {};

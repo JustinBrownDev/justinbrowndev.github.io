@@ -1,3 +1,5 @@
+import { applyArchitectureMaterialHandwriting } from './architecture/material-handwriting.js';
+
 export const ARCHITECTURAL_FAMILY_SYSTEM_SCHEMA = 'jweb.architectural-family-system.v1';
 export const STAIR_ARCHITECTURE_SCHEMA = 'jweb.stair-architecture-expression.v1';
 export const PROGRAM_MACRO_ARCHITECTURE_SCHEMA = 'jweb.program-macro-architecture.v1';
@@ -166,10 +168,13 @@ export function planStairArchitectureExpression({
     }
   }
 
+  const materialHandwriting = applyArchitectureMaterialHandwriting({
+    family: resolvedFamily, metal, concrete, field, weightScale: routeWidthScale,
+  });
   return Object.freeze({
     schema: STAIR_ARCHITECTURE_SCHEMA,
     id, family: resolvedFamily, supportMode, programArchitectureId: programArchitectureId ?? null,
-    metal: Object.freeze(metal), concrete: Object.freeze(concrete), parts: metal.length + concrete.length,
+    metal: materialHandwriting.metal, concrete: materialHandwriting.concrete, parts: metal.length + concrete.length,
     clearWidth: width, traversalAuthority: 'canonical-stair-kernel-unchanged',
   });
 }
@@ -295,9 +300,10 @@ export function planProgramMacroArchitecture({
     features.push('route-frontage-canopy');
   }
 
+  const materialHandwriting = applyArchitectureMaterialHandwriting({ family, metal, concrete, field });
   return Object.freeze({
     schema: PROGRAM_MACRO_ARCHITECTURE_SCHEMA, id, family, programArchitectureId,
-    metal:Object.freeze(metal), concrete:Object.freeze(concrete), parts:metal.length+concrete.length,
+    metal:materialHandwriting.metal, concrete:materialHandwriting.concrete, parts:metal.length+concrete.length,
     features:Object.freeze([...new Set(features)]), routeFrontageFeatureCount:routeFrontages.length,
     traversalAuthority:'building-plan-and-circulation-authority-unchanged',
   });

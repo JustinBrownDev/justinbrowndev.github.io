@@ -34,6 +34,7 @@ export function planSkybridgeArchitecture({
   id = 'bridge', axis = 'x', from = 0, to = 1, fixedCoord = 0, y = 0, width = 1,
   family = 'simple-guarded', widthClass = 'local', stableKey = null, supportModeHint = null,
   field = 'ground', materialFamilyHint = null, materialWeightScale = null,
+  surfaceId = null, endpointClearance = null,
 } = {}) {
   const start = finite(from), end = finite(to);
   const lo = Math.min(start, end), hi = Math.max(start, end);
@@ -42,12 +43,27 @@ export function planSkybridgeArchitecture({
   if (!(span > 0.25)) return Object.freeze({ schema: SKYBRIDGE_ARCHITECTURE_SCHEMA, family, metal: Object.freeze([]), concrete: Object.freeze([]), parts: 0 });
   const hash = stableHash(`${stableKey ?? id}:${family}:${axis}`);
   const metal = [], concrete = [];
-  const metadata = { bridgeId: id, bridgeArchitecture: true, architectureFamily: family, widthClass };
+  const metadata = { bridgeId: id, surfaceId, bridgeArchitecture: true, architectureFamily: family, widthClass };
   const edgeA = fixedCoord - w * 0.5;
   const edgeB = fixedCoord + w * 0.5;
   const center = (lo + hi) * 0.5;
   const beamT = widthClass === 'sky-street' ? 0.18 : widthClass === 'collector' ? 0.14 : 0.10;
   const girderH = widthClass === 'sky-street' ? 0.46 : widthClass === 'collector' ? 0.34 : 0.24;
+  // Cross-members, posts and diagonals have thickness along the bridge axis. If
+  // authored exactly on a facade plane they extend half their own thickness into
+  // the receiving wall even when the mathematical endpoint is correct. Keep all
+  // endpoint-sensitive structure bridge-side of an explicit attachment seat.
+  const requestedEndpointClearance = endpointClearance == null
+    ? Math.max(0.10, beamT * 0.95)
+    : Math.max(0.04, finite(endpointClearance, 0.10));
+  const endpointInset = Math.min(requestedEndpointClearance, Math.max(0.04, span * 0.18));
+  const structureLo = lo + endpointInset;
+  const structureHi = hi - endpointInset;
+  const structureSpan = Math.max(0, structureHi - structureLo);
+  const hasStructureSpan = structureSpan > Math.max(0.18, beamT * 2.2);
+  const stationLo = hasStructureSpan ? structureLo : lo;
+  const stationHi = hasStructureSpan ? structureHi : hi;
+  const stationSpan = Math.max(0, stationHi - stationLo);
 
   const sideBeam = (fixed, yy, thickness = beamT, height = girderH, extra = null) => {
     const meta = extra ? { ...metadata, ...extra } : metadata;
@@ -59,6 +75,22 @@ export function planSkybridgeArchitecture({
     if (axis === 'x') pushBox(metal, { x: along, y: yy, z: fixedCoord, sx: thickness, sy: thickness, sz: depth }, meta);
     else pushBox(metal, { x: fixedCoord, y: yy, z: along, sx: depth, sy: thickness, sz: thickness }, meta);
   };
+  const attachmentSeat = (facadeAlong, supportAlong, yy, thickness = beamT * 1.18, depth = w + 0.28, extra = null) => {
+    const length = Math.abs(supportAlong - facadeAlong);
+    if (!(length > 0.02)) return;
+    const along = (facadeAlong + supportAlong) * 0.5;
+    const meta = {
+      ...metadata,
+      bridgeSupport: true,
+      structuralRole: 'facade-attachment-seat',
+      attachmentAuthority: 'exterior-seat-v1',
+      facadePlaneAlong: facadeAlong,
+      supportAlong,
+      ...(extra || {}),
+    };
+    if (axis === 'x') pushBox(metal, { x: along, y: yy, z: fixedCoord, sx: length, sy: thickness, sz: depth }, meta);
+    else pushBox(metal, { x: fixedCoord, y: yy, z: along, sx: depth, sy: thickness, sz: length }, meta);
+  };
 
   if (family === 'simple-guarded') {
     sideBeam(edgeA, y - 0.18);
@@ -66,13 +98,13 @@ export function planSkybridgeArchitecture({
   } else if (family === 'heavy-beam') {
     sideBeam(edgeA + beamT * 0.5, y - 0.34, beamT * 1.35, girderH * 1.55);
     sideBeam(edgeB - beamT * 0.5, y - 0.34, beamT * 1.35, girderH * 1.55);
-    const bays = Math.max(2, Math.ceil(span / 3.8));
-    for (let i = 0; i <= bays; i++) crossBeam(lo + span * (i / bays), y - 0.28, beamT * 1.05);
+    const bays = Math.max(2, Math.ceil(Math.max(stationSpan, span) / 3.8));
+    for (let i = 0; i <= bays; i++) crossBeam(stationLo + stationSpan * (i / bays), y - 0.28, beamT * 1.05);
   } else if (family === 'utility-frame' || family === 'covered-gallery') {
-    const bays = Math.max(2, Math.ceil(span / (family === 'covered-gallery' ? 3.2 : 4.0)));
+    const bays = Math.max(2, Math.ceil(Math.max(stationSpan, span) / (family === 'covered-gallery' ? 3.2 : 4.0)));
     const topY = y + (widthClass === 'sky-street' ? 2.75 : 2.35);
     for (let i = 0; i <= bays; i++) {
-      const along = lo + span * (i / bays);
+      const along = stationLo + stationSpan * (i / bays);
       for (const fixed of [edgeA, edgeB]) {
         if (axis === 'x') pushBox(metal, { x: along, y: (y + topY) * 0.5, z: fixed, sx: beamT, sy: topY - y, sz: beamT }, { ...metadata, architectureRole: 'upper-frame-post', junctionYield: true });
         else pushBox(metal, { x: fixed, y: (y + topY) * 0.5, z: along, sx: beamT, sy: topY - y, sz: beamT }, { ...metadata, architectureRole: 'upper-frame-post', junctionYield: true });
@@ -88,13 +120,13 @@ export function planSkybridgeArchitecture({
     }
   } else if (family === 'pony-truss' || family === 'through-truss') {
     const trussTop = y + (family === 'through-truss' ? 2.65 : 1.48);
-    const bays = Math.max(3, Math.ceil(span / 3.1));
-    const bay = span / bays;
+    const bays = Math.max(3, Math.ceil(Math.max(stationSpan, span) / 3.1));
+    const bay = stationSpan / bays;
     for (const fixed of [edgeA, edgeB]) {
       sideBeam(fixed, y - 0.18);
       sideBeam(fixed, trussTop, beamT, beamT, { architectureRole: 'upper-truss-chord', junctionYield: true });
       for (let i = 0; i <= bays; i++) {
-        const along = lo + bay * i;
+        const along = stationLo + bay * i;
         if (axis === 'x') pushBox(metal, { x: along, y: (y + trussTop) * 0.5, z: fixed, sx: beamT, sy: trussTop - y, sz: beamT }, { ...metadata, architectureRole: 'truss-post', junctionYield: true });
         else pushBox(metal, { x: fixed, y: (y + trussTop) * 0.5, z: along, sx: beamT, sy: trussTop - y, sz: beamT }, { ...metadata, architectureRole: 'truss-post', junctionYield: true });
         if (i < bays) {
@@ -105,29 +137,29 @@ export function planSkybridgeArchitecture({
       }
     }
     if (family === 'through-truss') {
-      for (let i = 0; i <= bays; i += 2) crossBeam(lo + bay * i, trussTop, beamT, w + 0.16, { architectureRole: 'upper-truss-crossbeam', junctionYield: true });
+      for (let i = 0; i <= bays; i += 2) crossBeam(stationLo + bay * i, trussTop, beamT, w + 0.16, { architectureRole: 'upper-truss-crossbeam', junctionYield: true });
     }
   } else if (family === 'box-girder') {
     const boxH = widthClass === 'sky-street' ? 0.78 : 0.58;
     const boxW = Math.max(0.24, beamT * 2.0);
     sideBeam(edgeA + boxW * 0.5, y - boxH * 0.62, boxW, boxH, { architectureRole: 'box-girder-side' });
     sideBeam(edgeB - boxW * 0.5, y - boxH * 0.62, boxW, boxH, { architectureRole: 'box-girder-side' });
-    const bays = Math.max(2, Math.ceil(span / 4.4));
-    for (let i = 0; i <= bays; i++) crossBeam(lo + span * (i / bays), y - boxH * 0.55, beamT * 1.3, w + 0.12, { architectureRole: 'box-diaphragm' });
+    const bays = Math.max(2, Math.ceil(Math.max(stationSpan, span) / 4.4));
+    for (let i = 0; i <= bays; i++) crossBeam(stationLo + stationSpan * (i / bays), y - boxH * 0.55, beamT * 1.3, w + 0.12, { architectureRole: 'box-diaphragm' });
   } else if (family === 'suspension-hanger') {
     sideBeam(edgeA, y - 0.16);
     sideBeam(edgeB, y - 0.16);
-    const towerInset = Math.min(1.35, span * 0.12);
+    const towerInset = Math.min(1.35, Math.max(stationSpan, span) * 0.12);
     const towerY = y + (widthClass === 'sky-street' ? 3.4 : 2.8);
-    for (const along of [lo + towerInset, hi - towerInset]) {
+    for (const along of [stationLo + towerInset, stationHi - towerInset]) {
       for (const fixed of [edgeA, edgeB]) {
         if (axis === 'x') pushBox(metal, { x: along, y: (y + towerY) * 0.5, z: fixed, sx: beamT * 1.5, sy: towerY - y, sz: beamT * 1.5 }, { ...metadata, architectureRole: 'hanger-tower', junctionYield: true });
         else pushBox(metal, { x: fixed, y: (y + towerY) * 0.5, z: along, sx: beamT * 1.5, sy: towerY - y, sz: beamT * 1.5 }, { ...metadata, architectureRole: 'hanger-tower', junctionYield: true });
       }
     }
-    const bays = Math.max(4, Math.ceil(span / 3.2));
+    const bays = Math.max(4, Math.ceil(Math.max(stationSpan, span) / 3.2));
     for (let i = 1; i < bays; i++) {
-      const along = lo + span * (i / bays);
+      const along = stationLo + stationSpan * (i / bays);
       const t = i / bays;
       const cableY = towerY - Math.sin(Math.PI * t) * (towerY - y) * 0.58;
       const h = Math.max(0.18, cableY - y);
@@ -139,9 +171,9 @@ export function planSkybridgeArchitecture({
   } else if (family === 'ramshackle-brace') {
     sideBeam(edgeA, y - 0.18, beamT * 0.92, girderH * 0.88, { architectureRole: 'patched-side-beam' });
     sideBeam(edgeB, y - 0.18, beamT * 1.18, girderH * 1.08, { architectureRole: 'patched-side-beam' });
-    const bays = Math.max(3, Math.ceil(span / 3.6));
+    const bays = Math.max(3, Math.ceil(Math.max(stationSpan, span) / 3.6));
     for (let i = 0; i < bays; i++) {
-      const a = lo + span * (i / bays), b = lo + span * ((i + 1) / bays);
+      const a = stationLo + stationSpan * (i / bays), b = stationLo + stationSpan * ((i + 1) / bays);
       const fixed = i % 2 ? edgeA : edgeB;
       pushBox(metal, diagonalBetween(axis, { along:a, y:y-0.18 }, { along:b, y:y-1.15-(i%3)*0.22 }, fixed, beamT * 0.82, { ...metadata, architectureRole: 'patched-underslung-brace' }), {});
       if (i % 2 === 0) crossBeam((a+b)*0.5, y - 0.34, beamT * 0.88, w + 0.18, { architectureRole: 'patched-crossbeam' });
@@ -149,13 +181,13 @@ export function planSkybridgeArchitecture({
   } else if (family === 'underslung-arch') {
     sideBeam(edgeA, y - 0.14);
     sideBeam(edgeB, y - 0.14);
-    const segments = Math.max(8, Math.ceil(span / 2.5));
+    const segments = Math.max(8, Math.ceil(Math.max(stationSpan, span) / 2.5));
     const archDepth = clamp(span * 0.14, 1.2, widthClass === 'sky-street' ? 3.4 : 2.6);
     for (const fixed of [edgeA, edgeB]) {
       let prev = null;
       for (let i = 0; i <= segments; i++) {
         const t = i / segments;
-        const along = lo + span * t;
+        const along = stationLo + stationSpan * t;
         const yy = y - 0.32 - Math.sin(Math.PI * t) * archDepth;
         const point = { along, y: yy };
         if (prev) pushBox(metal, diagonalBetween(axis, prev, point, fixed, beamT * 1.05, metadata), {});
@@ -181,8 +213,8 @@ export function planSkybridgeArchitecture({
       : (unit(hash ^ 0xa24baed4, 5) < 0.48 ? 'hung-from-above' : 'braced-from-below');
     const direction = supportMode === 'hung-from-above' ? 1 : -1;
     const anchorRise = direction * (widthClass === 'sky-street' ? 2.9 : 2.15);
-    const reach = Math.min(span * 0.24, Math.max(1.35, w * 0.82));
-    for (const [wallAlong, deckAlong] of [[lo, lo + reach], [hi, hi - reach]]) {
+    const reach = Math.min(Math.max(stationSpan, span) * 0.24, Math.max(1.35, w * 0.82));
+    for (const [facadeAlong, wallAlong, deckAlong] of [[lo, stationLo, Math.min(stationHi, stationLo + reach)], [hi, stationHi, Math.max(stationLo, stationHi - reach)]]) {
       for (const fixed of [edgeA, edgeB]) {
         const brace = diagonalBetween(
           axis,
@@ -190,12 +222,23 @@ export function planSkybridgeArchitecture({
           { along: wallAlong, y: y + anchorRise },
           fixed,
           beamT * (widthClass === 'sky-street' ? 1.18 : 1.02),
-          { ...metadata, bridgeSupport: true, supportMode, structuralRole: supportMode === 'hung-from-above' ? 'upper-facade-brace' : 'lower-facade-brace' },
+          {
+            ...metadata,
+            bridgeSupport: true,
+            supportMode,
+            structuralRole: supportMode === 'hung-from-above' ? 'upper-facade-brace' : 'lower-facade-brace',
+            attachmentAuthority: 'exterior-seat-v1',
+            fromAttachment: 'deck-side-seat',
+            toAttachment: 'facade-seat',
+            facadePlaneAlong: facadeAlong,
+            supportAlong: wallAlong,
+          },
         );
         metal.push(brace); supportParts++;
       }
       crossBeam(wallAlong, y + anchorRise, beamT * 1.18, w + 0.28);
-      supportParts++;
+      attachmentSeat(facadeAlong, wallAlong, y + anchorRise, beamT * 1.18, w + 0.28, { supportMode });
+      supportParts += 2;
     }
   }
 
@@ -238,6 +281,8 @@ export function planSkybridgeArchitecture({
     parts: metal.length + concrete.length,
     supportMode,
     supportParts,
+    endpointClearance: endpointInset,
+    attachmentAuthority: 'exterior-seat-v1',
     traversalAuthority: 'canonical-transport-slab-unchanged',
   });
 }

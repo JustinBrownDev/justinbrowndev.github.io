@@ -235,6 +235,29 @@ function payloadEntriesFromContext(context) {
 
 function rootsFromEntries(entries){return entries.map(entry=>entry.payload?.root).filter(Boolean);}
 
+function macroCeilingOccluders(THREE,roots,bounds){
+  const out=[];
+  if(!bounds)return out;
+  for(const root of roots??[]){
+    root?.traverse?.(object=>{
+      if(!object?.isMesh||!/^ceiling-plane:/.test(String(object.name??'')))return;
+      object.updateWorldMatrix?.(true,false);
+      const box=new THREE.Box3().setFromObject(object,true);
+      if(box.isEmpty())return;
+      const b={minX:box.min.x,minY:box.min.y,minZ:box.min.z,maxX:box.max.x,maxY:box.max.y,maxZ:box.max.z};
+      const xzOverlap=!(b.maxX<bounds.minX||b.minX>bounds.maxX||b.maxZ<bounds.minZ||b.minZ>bounds.maxZ);
+      if(xzOverlap&&b.maxY>=bounds.minY)out.push(object);
+    });
+  }
+  return [...new Set(out)];
+}
+
+async function withHidden(objects,fn){
+  const states=(objects??[]).map(object=>[object,object.visible]);
+  try{for(const [object] of states)object.visible=false;return await fn();}
+  finally{for(const [object,visible] of states)object.visible=visible;}
+}
+
 function meshDescendants(object){const out=[];if(object?.isMesh)out.push(object);else object?.traverse?.(o=>{if(o?.isMesh)out.push(o);});return [...new Set(out)];}
 
 function objectOwner(object){let cursor=object;while(cursor){const id=cursor.userData?.worldChunkOwnerId??cursor.userData?.ownerId;if(id!=null)return String(id);cursor=cursor.parent;}return '';}
@@ -295,6 +318,9 @@ export function installJwebVisualProbe(context) {
 
   function relationScore(root,target){
     let score=0;
+    const rootStructuralOwner=String(root?.raw?.stairOwnerId ?? (root?.targetKind==='stair-assembly'?root?.id:'') ?? '');
+    const targetStructuralOwner=String(target?.raw?.stairOwnerId ?? (target?.targetKind==='stair-assembly'?target?.id:'') ?? '');
+    if(rootStructuralOwner&&targetStructuralOwner===rootStructuralOwner)score+=5000;
     if(root?.raw?.elementId && target?.raw?.elementId===root.raw.elementId)score+=1000;
     else if(root?.targetKind==='fixture-element' && target?.raw?.elementId===root.id)score+=1200;
     const a=targetTokens(root),b=targetTokens(target);for(const token of a)if(b.has(token))score+=30;
@@ -378,14 +404,21 @@ export function installJwebVisualProbe(context) {
     const exactVisualFragments=targets.flatMap(t=>t.raw?.visualFragments??[]);
     const exactVisualObjects=[...new Set(targets.flatMap(t=>t.raw?.visualObjects??[]))];
     const exactColliderObjects=[...new Set(targets.flatMap(t=>t.raw?.colliderObjects??[]))];
+    const structuralOwners=[...new Set(targets.map(t=>t.raw?.stairOwnerId??(t.targetKind==='stair-assembly'?t.id:null)).filter(Boolean).map(String))];
+    const structuralOwnerId=structuralOwners.length===1?structuralOwners[0]:null;
     const exactDisplayObjects=exactVisualObjects.length?exactVisualObjects:(exactColliderObjects.length?exactColliderObjects:null);
     const isolatedSource=exactVisualFragments.length?'exact-render-fragments':(exactVisualObjects.length?'exact-visual-components':(exactColliderObjects.length?'exact-collider-components':'semantic-bounds'));
-    const fragments=exactVisualFragments.length?exactVisualFragments:(exactDisplayObjects?visualFragmentsForObjects(THREE,exactDisplayObjects):visualFragmentsForBounds(THREE,rootsFromEntries(payloadEntries),selectionBounds,{includeInvisible:true})); if(!fragments.length) console.warn('[visual-probe] target matched semantic authority but no visual mesh instances intersected its bounds',targets.map(t=>t.id));
+    const targetRoots=rootsFromEntries(payloadEntries);
+    const ceilingTarget=targets.some(target=>[target?.id,...(target?.labels??[])].some(value=>/^ceiling-plane:/.test(String(value??''))));
+    const rawFragments=exactVisualFragments.length?exactVisualFragments:(exactDisplayObjects?visualFragmentsForObjects(THREE,exactDisplayObjects):visualFragmentsForBounds(THREE,targetRoots,selectionBounds,{includeInvisible:true}));
+    const suppressedIsolatedCeilings=ceilingTarget?[]:rawFragments.filter(fragment=>/^ceiling-plane:/.test(String(fragment?.object?.name??'')));
+    const fragments=ceilingTarget?rawFragments:rawFragments.filter(fragment=>!/^ceiling-plane:/.test(String(fragment?.object?.name??''))); if(!fragments.length) console.warn('[visual-probe] target matched semantic authority but no visual mesh instances intersected its bounds',targets.map(t=>t.id));
+    const topWorldCeilings=ceilingTarget?[]:macroCeilingOccluders(THREE,targetRoots,selectionBounds);
     const isolated=buildIsolatedVisualScene(THREE,fragments,{sourceScene:context.scene,background:0x080808}); isolated.scene.fog=null;
     const exactColliders=exactColliderObjects.length?exactColliderObjects:null;
-    const physical=buildColliderProxyScene(THREE,payloadEntries,selectionBounds,{includePhysical:true,includeSemantic:false,background:0x000000,exactObjects:exactColliders,style:'mask'});
-    const semantic=buildColliderProxyScene(THREE,payloadEntries,selectionBounds,{includePhysical:false,includeSemantic:true,background:0x000000,style:'mask'});
-    const overlay=buildColliderProxyScene(THREE,payloadEntries,selectionBounds,{includePhysical:true,includeSemantic:true,background:0x000000,exactObjects:exactColliders,style:'overlay'});
+    const physical=buildColliderProxyScene(THREE,payloadEntries,selectionBounds,{includePhysical:true,includeSemantic:false,background:0x000000,exactObjects:exactColliders,style:'mask',structuralOwnerId});
+    const semantic=buildColliderProxyScene(THREE,payloadEntries,selectionBounds,{includePhysical:false,includeSemantic:true,background:0x000000,style:'mask',structuralOwnerId});
+    const overlay=buildColliderProxyScene(THREE,payloadEntries,selectionBounds,{includePhysical:true,includeSemantic:true,background:0x000000,exactObjects:exactColliders,style:'overlay',structuralOwnerId});
     const fragmentBounds=unionBounds(fragments.map(f=>f.bounds));
     const frameBounds=exactDisplayObjects?unionBounds(authorityBounds,fragmentBounds):authorityBounds;
     const renderer=createCaptureRenderer(THREE,context.renderer,width,height,{antialias:true});
@@ -395,7 +428,7 @@ export function installJwebVisualProbe(context) {
     try{
       for(const view of views){
         const camera=frameCameraForBounds(THREE,frameBounds,{view,projection,aspect:width/height});cameraRecords[view]=cameraRecord(camera);
-        if(worldContext){const blob=await renderPass({THREE,renderer,scene:context.scene,camera,pass:'world-context'});entries.push({name:`targets/${baseName}/${view}.world-context.beauty.png`,data:blob});}
+        if(worldContext){const render=()=>renderPass({THREE,renderer,scene:context.scene,camera,pass:'world-context'});const blob=view==='top'&&topWorldCeilings.length?await withHidden(topWorldCeilings,render):await render();entries.push({name:`targets/${baseName}/${view}.world-context.beauty.png`,data:blob});}
         let beautyBlob=null;
         for(const pass of passes){
           const passRenderer=diagnosticPass(pass)?diagnosticRenderer:renderer;
@@ -403,8 +436,8 @@ export function installJwebVisualProbe(context) {
         }
         if(beautyBlob) for(const filter of filters) entries.push({name:`targets/${baseName}/${view}.isolated.beauty.${safeFile(filter)}.png`,data:await filteredBlob(beautyBlob,filter,width,height)});
       }
-      const warnings=[];if(!fragments.length)warnings.push('semantic target matched, but no visual fragments intersected the selection bounds');
-      const meta={schema:JWEB_VISUAL_PROBE_SCHEMA,mode:'target',createdAt:new Date().toISOString(),query,index,all,width,height,padding,views,projection,passes:[...passes],filters:[...filters],worldContext,waitResult,targetBounds:authorityBounds,authorityBounds,selectionBounds,frameBounds,selectionMode:exactVisualFragments.length?'exact-render-fragments':(exactVisualObjects.length||exactColliderObjects.length?'exact-fixture-components':'semantic-bounds'),isolatedSource,exactVisualFragmentCount:exactVisualFragments.length,exactVisualObjectCount:exactVisualObjects.length,exactColliderObjectCount:exactColliderObjects.length,targets:targets.map(serializableTarget),fragments:fragmentManifest(fragments),colliderProxyCount:physical.records.length,physicalColliderProxyCount:physical.records.length,semanticProxyCount:semantic.records.length,overlayProxyCount:overlay.records.length,segmentation:segmentationPalette.manifest,diagnosticPalette:{collider:DIAGNOSTIC_COLORS.collider,connector:DIAGNOSTIC_COLORS.connector,reservation:DIAGNOSTIC_COLORS.reservation,surface:DIAGNOSTIC_COLORS.surface,edge:DIAGNOSTIC_COLORS.edge,guard:DIAGNOSTIC_COLORS.guard},warnings,cameras:cameraRecords,status:context.getStatus?.()??null};
+      const warnings=[];if(!fragments.length)warnings.push('semantic target matched, but no visual fragments intersected the selection bounds');if(suppressedIsolatedCeilings.length||topWorldCeilings.length)warnings.push('macro ceiling plane was suppressed only for diagnostic visibility; suppression is recorded in this manifest');
+      const meta={schema:JWEB_VISUAL_PROBE_SCHEMA,mode:'target',createdAt:new Date().toISOString(),query,index,all,width,height,padding,views,projection,passes:[...passes],filters:[...filters],worldContext,waitResult,targetBounds:authorityBounds,authorityBounds,selectionBounds,frameBounds,selectionMode:exactVisualFragments.length?'exact-render-fragments':(exactVisualObjects.length||exactColliderObjects.length?'exact-fixture-components':'semantic-bounds'),isolatedSource,structuralOwnerId,colliderSelectionMode:structuralOwnerId?'structural-owner':'bounds',diagnosticVisibility:{macroCeilingSuppressed:!!(suppressedIsolatedCeilings.length||topWorldCeilings.length),isolatedSuppressedNames:[...new Set(suppressedIsolatedCeilings.map(fragment=>fragment?.object?.name).filter(Boolean))],topWorldContextSuppressedNames:[...new Set(topWorldCeilings.map(object=>object?.name).filter(Boolean))]},exactVisualFragmentCount:exactVisualFragments.length,exactVisualObjectCount:exactVisualObjects.length,exactColliderObjectCount:exactColliderObjects.length,targets:targets.map(serializableTarget),fragments:fragmentManifest(fragments),colliderProxyCount:physical.records.length,physicalColliderProxyCount:physical.records.length,semanticProxyCount:semantic.records.length,overlayProxyCount:overlay.records.length,segmentation:segmentationPalette.manifest,diagnosticPalette:{collider:DIAGNOSTIC_COLORS.collider,connector:DIAGNOSTIC_COLORS.connector,reservation:DIAGNOSTIC_COLORS.reservation,surface:DIAGNOSTIC_COLORS.surface,edge:DIAGNOSTIC_COLORS.edge,guard:DIAGNOSTIC_COLORS.guard},warnings,cameras:cameraRecords,status:context.getStatus?.()??null};
       entries.push({name:`targets/${baseName}/manifest.json`,data:new Blob([JSON.stringify(meta,null,2)],{type:'application/json'})});
       const bundle={schema:JWEB_VISUAL_PROBE_SCHEMA,mode:'target',entries,manifest:meta,async zip(){return createStoreZip(entries);},async download(filename=`jweb-probe-${baseName}.zip`){const blob=await createStoreZip(entries);triggerDownload(blob,filename);return filename;}};
       if(download) await bundle.download(); return bundle;

@@ -153,8 +153,8 @@ function payloadPhysicsTargets(entry, payloadIndex) {
   const out=[];
   const push=(targetKind,item,index,arrayName,bounds=boundsFromPhysicsItem(item,targetKind))=>{
     if (!boundsValid(bounds)) return;
-    const id=String(item?.id ?? item?.stairId ?? item?.guardSpanId ?? item?.surfaceId ?? item?.routeId ?? `${arrayName}:${index}`);
-    const labels=[targetKind,arrayName,id,item?.kind,item?.source,item?.supportKind,item?.visualRole,item?.stairId,item?.flightId,item?.moduleKey,item?.routeId,item?.networkKey].filter(v=>v!=null).map(String);
+    const id=String(item?.id ?? item?.stairPartId ?? item?.stairId ?? item?.guardSpanId ?? item?.surfaceId ?? item?.routeId ?? `${arrayName}:${index}`);
+    const labels=[targetKind,arrayName,id,item?.kind,item?.source,item?.supportKind,item?.visualRole,item?.stairOwnerId,item?.stairPartId,item?.stairPartParentId,item?.stairPartKind,item?.stairId,item?.flightId,item?.moduleKey,item?.surfaceId,item?.bridgeId,item?.endpointId,item?.routeId,item?.networkKey].filter(v=>v!=null).map(String);
     out.push({ schema:JWEB_VISUAL_PROBE_SCHEMA, targetKind, arrayName, index, id, ownerId, chunkKey, bounds, labels, raw:item });
   };
   for (const [i,item] of (ph.semanticConnectors ?? []).entries()) push('semantic-connector',item,i,'semanticConnectors',boundsFromSemanticConnector(item));
@@ -174,6 +174,21 @@ function payloadPhysicsTargets(entry, payloadIndex) {
     const id=String(item?.id ?? `visualProbeTargets:${i}`);
     const labels=[targetKind,'visualProbeTargets',id,item?.elementId,...(item?.labels??[]),...(item?.roles??[])].filter(v=>v!=null).map(String);
     out.push({schema:JWEB_VISUAL_PROBE_SCHEMA,targetKind,arrayName:'visualProbeTargets',index:i,id,ownerId,chunkKey,bounds,labels,raw:item});
+  }
+  for (const [i,ownership] of (ph.stairOwnership ?? []).entries()) {
+    const stairOwnerId=String(ownership?.id ?? '');
+    if (!stairOwnerId) continue;
+    const owned=out.filter(target => {
+      const raw=target.raw ?? {};
+      return String(raw.stairOwnerId ?? '')===stairOwnerId
+        || String(raw.stairId ?? '')===stairOwnerId
+        || String(raw.id ?? '')===stairOwnerId;
+    });
+    const bounds=unionBounds(owned.map(target=>target.bounds));
+    if (!boundsValid(bounds)) continue;
+    const raw={...ownership,stairOwnerId,stairPartKind:'assembly-root'};
+    const labels=['stair-assembly','stairOwnership',stairOwnerId,ownership?.moduleKey,ownership?.stairTopology,ownership?.ownershipAuthority].filter(Boolean).map(String);
+    out.push({schema:JWEB_VISUAL_PROBE_SCHEMA,targetKind:'stair-assembly',arrayName:'stairOwnership',index:i,id:stairOwnerId,ownerId,chunkKey,bounds,labels,raw});
   }
   return out;
 }
@@ -389,7 +404,16 @@ function proxyForItem(THREE,item,kind,material) {
   return meshBox(THREE,b,material);
 }
 
-export function buildColliderProxyScene(THREE, payloadEntries, selectionBounds, { includePhysical = true, includeSemantic = true, background = null, exactObjects = null, style = 'mask' } = {}) {
+function belongsToStructuralOwner(item, structuralOwnerId) {
+  if (!structuralOwnerId) return true;
+  const owner=String(structuralOwnerId);
+  const direct=[item?.stairOwnerId,item?.stairId,item?.id,item?.fullReservationId].filter(v=>v!=null).map(String);
+  if (direct.includes(owner)) return true;
+  const id=String(item?.id ?? '');
+  return id.startsWith(`${owner}:`);
+}
+
+export function buildColliderProxyScene(THREE, payloadEntries, selectionBounds, { includePhysical = true, includeSemantic = true, background = null, exactObjects = null, style = 'mask', structuralOwnerId = null } = {}) {
   const scene=new THREE.Scene(); if(background!=null) scene.background=background?.isColor?background.clone():new THREE.Color(background);
   const overlay=String(style).toLowerCase()==='overlay';
   const makeMaterial=(color,opacity=1)=>{const material=new THREE.MeshBasicMaterial({color,transparent:overlay,opacity:overlay?opacity:1,depthWrite:!overlay,side:THREE.DoubleSide});material.toneMapped=false;return material;};
@@ -413,6 +437,7 @@ export function buildColliderProxyScene(THREE, payloadEntries, selectionBounds, 
   };
   const addExactObjects=(objects,ownerId='exact-selection')=>addExactFragments(visualFragmentsForObjects(THREE,objects),ownerId);
   const add=(item,kind,ownerId,material=colliderMaterial)=>{
+    if(structuralOwnerId&&!belongsToStructuralOwner(item,structuralOwnerId)) return;
     const b=boundsFromPhysicsItem(item,kind); if(!b || (sel&&!boundsIntersects(b,sel))) return;
     const mesh=proxyForItem(THREE,item,kind,material); if(!mesh) return;
     mesh.name=`visual-probe:${kind}:${item?.id??item?.stairId??item?.supportKind??records.length}`; mesh.userData.visualProbeProxy={kind,ownerId,id:item?.id??null}; scene.add(mesh); records.push({mesh,kind,bounds:b,raw:item,ownerId});
@@ -441,7 +466,7 @@ export function buildColliderProxyScene(THREE, payloadEntries, selectionBounds, 
       for(const item of ph.guardSpans??[]) add(item,'guard-span',ownerId,semanticMaterials.guard);
     }
   }
-  return {scene,records,materials};
+  return {scene,records,materials,structuralOwnerId:structuralOwnerId??null,selectionMode:structuralOwnerId?'structural-owner':'bounds'};
 }
 
 export function frameCameraForBounds(THREE,bounds,{view='iso',projection='perspective',fov=55,aspect=1.5,padding=1.18,near=null,far=null}={}){

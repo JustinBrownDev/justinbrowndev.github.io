@@ -1366,18 +1366,24 @@ export function createKowloonFabricEngine({
         physics, transforms, core, floor, y0, y1, guardFamily, metadata = null, treadVisualBudget = Infinity,
     }) {
         const slabT = BUILDING_SLAB_THICKNESS;
+        const stairOwnerId = metadata?.stairId ?? core.id ?? 'interior-stair';
         const addLanding = (landing, y, supportKind, landingRole) => {
+            const stairPartId = `${stairOwnerId}:floor:${floor}:landing:${landingRole}`;
             physics.platforms.push({
                 x: landing.x, z: landing.z, hx: landing.hx, hz: landing.hz, y,
                 supportKind, supportMargin: 0, blocksFromBelow: false,
                 designIntent: STAIR_WALKABILITY_DESIGN_INTENT, walkElevationAuthority: STAIR_WALKABILITY_DESIGN_INTENT,
-                stairTopology: core.topology, floor, landingRole, ...(metadata || {}),
+                stairTopology: core.topology, floor, landingRole,
+                stairOwnerId, stairPartId, stairPartKind: 'landing',
+                ...(metadata || {}),
             });
             transforms.slabs.push({
                 x: landing.x, y: y - slabT * 0.5, z: landing.z,
                 sx: landing.sx, sy: slabT, sz: landing.sz,
                 designIntent: STAIR_WALKABILITY_DESIGN_INTENT, structuralLanding: true,
-                stairTopology: core.topology, floor, landingRole, ...(metadata || {}),
+                stairTopology: core.topology, floor, landingRole,
+                stairOwnerId, stairPartId, stairPartKind: 'landing',
+                ...(metadata || {}),
             });
         };
 
@@ -1392,6 +1398,7 @@ export function createKowloonFabricEngine({
         for (const flight of core.flights) {
             const flightY0 = y0 + (y1 - y0) * flight.y0Fraction;
             const flightY1 = y0 + (y1 - y0) * flight.y1Fraction;
+            const flightPartId = `${stairOwnerId}:floor:${floor}:flight:${flight.id}`;
             physics.ramps.push({
                 axis: flight.axis, from: flight.from, to: flight.to, fixedCoord: flight.fixedCoord,
                 halfWidth: core.halfWidth, y0: flightY0, y1: flightY1,
@@ -1399,7 +1406,9 @@ export function createKowloonFabricEngine({
                 supportMargin: Math.max(core.endpointSupportOverlap ?? 0, STAIR_ENDPOINT_SUPPORT_OVERLAP),
                 collisionAuthority: 'physics-ramp',
                 designIntent: STAIR_WALKABILITY_DESIGN_INTENT,
-                stairTopology: core.topology, floor, flightId: flight.id, ...(metadata || {}),
+                stairTopology: core.topology, floor, flightId: flight.id,
+                stairOwnerId, stairPartId: flightPartId, stairPartKind: 'flight',
+                ...(metadata || {}),
             });
             const steps = core.segmentFlight.stepCount;
             const visualStepCount = Number.isFinite(treadVisualBudget)
@@ -1413,8 +1422,8 @@ export function createKowloonFabricEngine({
                 const stepY = flightY0 + core.segmentFlight.riserHeight * (i + 1) - stepThickness * 0.5;
                 const runStep = Math.abs(flight.to - flight.from) / steps * 1.06;
                 transforms.steps.push(flight.axis === 'z'
-                    ? { x: flight.fixedCoord, y: stepY, z: along, sx: core.clearWidth, sy: stepThickness, sz: runStep, stairTopology: core.topology, floor, flightId: flight.id, visualOnly: true, collisionAuthority: 'physics-ramp', designIntent: STAIR_WALKABILITY_DESIGN_INTENT }
-                    : { x: along, y: stepY, z: flight.fixedCoord, sx: runStep, sy: stepThickness, sz: core.clearWidth, stairTopology: core.topology, floor, flightId: flight.id, visualOnly: true, collisionAuthority: 'physics-ramp', designIntent: STAIR_WALKABILITY_DESIGN_INTENT });
+                    ? { x: flight.fixedCoord, y: stepY, z: along, sx: core.clearWidth, sy: stepThickness, sz: runStep, stairTopology: core.topology, floor, flightId: flight.id, stairOwnerId, stairPartId: `${flightPartId}:step:${i}`, stairPartParentId: flightPartId, stairPartKind: 'step', visualOnly: true, collisionAuthority: 'physics-ramp', designIntent: STAIR_WALKABILITY_DESIGN_INTENT }
+                    : { x: along, y: stepY, z: flight.fixedCoord, sx: runStep, sy: stepThickness, sz: core.clearWidth, stairTopology: core.topology, floor, flightId: flight.id, stairOwnerId, stairPartId: `${flightPartId}:step:${i}`, stairPartParentId: flightPartId, stairPartKind: 'step', visualOnly: true, collisionAuthority: 'physics-ramp', designIntent: STAIR_WALKABILITY_DESIGN_INTENT });
             }
             const direction = Math.sign(flight.to - flight.from) || 1;
             const guardFrom = flight.from + direction * core.guardMouthClearance;
@@ -1424,17 +1433,24 @@ export function createKowloonFabricEngine({
                 axis: flight.axis, from: guardFrom, to: guardTo, fixedCoord: flight.fixedCoord,
                 halfWidth: core.halfWidth, y0: flightY0, y1: flightY1,
                 family: guardFamily, supportKind: "compound-stair-guard",
-                metadata: { ...(metadata || {}), floor, flightId: flight.id, visualRole: "interior-stair" },
+                metadata: {
+                    ...(metadata || {}), floor, flightId: flight.id, visualRole: "interior-stair",
+                    stairOwnerId, stairPartParentId: flightPartId, stairPartKind: 'flight-guard',
+                },
             });
         }
         for (const landing of core.intermediateLandings) {
             const landingY = y0 + (y1 - y0) * landing.yFraction;
             const back = landing.backGuard;
+            const landingPartId = `${stairOwnerId}:floor:${floor}:landing:${landing.sideRole}`;
             emitGuardSpanFromAuthority({
                 physics, transforms, id: `${metadata?.stairId ?? "interior-stair"}:${floor}:${landing.id}:back-guard`,
                 x1: back.x1, z1: back.z1, x2: back.x2, z2: back.z2, y: landingY,
                 family: guardFamily, supportKind: "compound-stair-mid-landing-guard",
-                metadata: { ...(metadata || {}), floor, landingId: landing.id, visualRole: "interior-stair-mid-landing" },
+                metadata: {
+                    ...(metadata || {}), floor, landingId: landing.id, visualRole: "interior-stair-mid-landing",
+                    stairOwnerId, stairPartParentId: landingPartId, stairPartKind: 'landing-guard',
+                },
             });
         }
     }
@@ -1445,9 +1461,44 @@ export function createKowloonFabricEngine({
         physics.guardSpans = (physics.guardSpans ?? []).filter(item => item.id !== guardSpanId);
     }
 
+    function carveTransportSurfaceVisualGap({ physics, transforms, surfaceId, point, width }) {
+        if (!surfaceId || !point || !(width > 0)) return 0;
+        const surface = exteriorTransportSurfaces(physics).find(candidate => candidate.id === surfaceId);
+        if (!surface) return 0;
+        const half = Math.max(0.38, Number(width) * 0.56);
+        const intersection = { x: Number(point.x), z: Number(point.z), hx: half, hz: half };
+        if (![intersection.x, intersection.z].every(Number.isFinite)) return 0;
+        let removed = 0;
+        for (const key of ['guardMetal', 'guardConcrete', 'props']) {
+            const current = transforms[key] ?? [];
+            const owned = current.filter(item => item?.surfaceId === surfaceId);
+            if (!owned.length) continue;
+            const carved = carveJunctionYieldingParts(owned, {
+                intersection,
+                y: Number(surface.y) || 0,
+                padding: Math.max(0.08, traversalEnvelope.playerRadius * 0.45),
+            });
+            if (!carved.removed) continue;
+            const keptOwned = new Set(carved.parts);
+            // Preserve global instance order: geometry generation and visual IDs
+            // remain deterministic even when one surface yields at a junction.
+            transforms[key] = current.filter(item => item?.surfaceId !== surfaceId || keptOwned.has(item));
+            removed += carved.removed;
+        }
+        if (removed) {
+            physics.transportJunctionVisualCarves = (physics.transportJunctionVisualCarves ?? 0) + removed;
+        }
+        return removed;
+    }
+
     function carveTransportRailGap({ physics, transforms, surfaceId, point, width }) {
         if (!surfaceId || !point || !(width > 0)) return 0;
         const openingWidth = guardOpeningWidth(width, { playerRadius: traversalEnvelope.playerRadius });
+        // The same circulation reservation that cuts semantic/collision guard
+        // spans also owns yieldable bridge decoration and superstructure. This is
+        // what prevents a visually harmless-looking rail/post/brace family from
+        // surviving inside a stair/bridge/catwalk throat after collision was cut.
+        carveTransportSurfaceVisualGap({ physics, transforms, surfaceId, point, width: openingWidth });
         const matches = [...(physics.mazeWalls ?? [])].filter(wall => wall.surfaceId === surfaceId && wall.transportRailId);
         let carved = 0;
         for (const wall of matches) {
@@ -2357,6 +2408,10 @@ export function createKowloonFabricEngine({
         });
         registerSemanticConnector(physics, primaryStairConnector);
         const primaryStairReservation = primaryStairConnector.primaryReservation;
+        const primaryStairOwnerId = primaryStairConnector.id;
+        primaryStairReservation.stairOwnerId = primaryStairOwnerId;
+        primaryStairReservation.stairPartId = `${primaryStairOwnerId}:core-reservation`;
+        primaryStairReservation.stairPartKind = 'core-reservation';
         primaryStairReservation.stairTopology = primaryStairCore.topology;
         primaryStairReservation.integratedFloorLanding = true;
         primaryStairReservation.floorLandingDepth = primaryStairCore.floorLandingDepth;
@@ -2386,9 +2441,27 @@ export function createKowloonFabricEngine({
                 stairTopology: primaryStairCore.topology,
                 integratedFloorLanding: true,
                 fullReservationId: primaryStairReservation.id,
+                stairOwnerId: primaryStairOwnerId,
+                stairPartId: `${primaryStairOwnerId}:slab-opening`,
+                stairPartParentId: `${primaryStairOwnerId}:core-reservation`,
+                stairPartKind: 'slab-opening',
             },
         });
         physics.circulationReservations.push(primaryStairSlabOpeningReservation);
+        const stairOwnership = physics.stairOwnership ?? (physics.stairOwnership = []);
+        stairOwnership.push(Object.freeze({
+            schema: 'jweb.stair-ownership.v1',
+            id: primaryStairOwnerId,
+            corePlanId: primaryStairCore.id,
+            coreReservationId: primaryStairReservation.id,
+            slabOpeningReservationId: primaryStairSlabOpeningReservation.id,
+            moduleKey: primaryModule.key,
+            floors: primaryModule.floors,
+            topology: primaryStairCore.topology,
+            flightIds: Object.freeze(primaryStairCore.flights.map(flight => flight.id)),
+            landingIds: Object.freeze(primaryStairCore.intermediateLandings.map(landing => landing.id)),
+            ownershipAuthority: 'stair-core-owns-opening-and-children-v1',
+        }));
         primaryStairReservation.slabOpeningX = primaryStairSlabOpening.x;
         primaryStairReservation.slabOpeningZ = primaryStairSlabOpening.z;
         primaryStairReservation.slabOpeningWidth = primaryStairSlabOpening.sx;
@@ -3974,6 +4047,10 @@ export function createKowloonFabricEngine({
         });
         registerSemanticConnector(physics, primaryStairConnector);
         const primaryStairReservation = primaryStairConnector.primaryReservation;
+        const primaryStairOwnerId = primaryStairConnector.id;
+        primaryStairReservation.stairOwnerId = primaryStairOwnerId;
+        primaryStairReservation.stairPartId = `${primaryStairOwnerId}:core-reservation`;
+        primaryStairReservation.stairPartKind = 'core-reservation';
         primaryStairReservation.stairTopology = primaryStairCore.topology;
         primaryStairReservation.integratedFloorLanding = true;
         primaryStairReservation.floorLandingDepth = primaryStairCore.floorLandingDepth;
@@ -4003,6 +4080,10 @@ export function createKowloonFabricEngine({
                 stairTopology: primaryStairCore.topology,
                 integratedFloorLanding: true,
                 fullReservationId: primaryStairReservation.id,
+                stairOwnerId: primaryStairOwnerId,
+                stairPartId: `${primaryStairOwnerId}:slab-opening`,
+                stairPartParentId: `${primaryStairOwnerId}:core-reservation`,
+                stairPartKind: 'slab-opening',
             },
         });
         physics.circulationReservations.push(primaryStairSlabOpeningReservation);
@@ -4010,6 +4091,20 @@ export function createKowloonFabricEngine({
         primaryStairReservation.slabOpeningZ = primaryStairSlabOpening.z;
         primaryStairReservation.slabOpeningWidth = primaryStairSlabOpening.sx;
         primaryStairReservation.slabOpeningDepth = primaryStairSlabOpening.sz;
+        const stairOwnership = physics.stairOwnership ?? (physics.stairOwnership = []);
+        stairOwnership.push(Object.freeze({
+            schema: 'jweb.stair-ownership.v1',
+            id: primaryStairOwnerId,
+            buildingPlanId: buildingPlanEntityId,
+            moduleKey: primaryModule.key,
+            reservationId: primaryStairReservation.id,
+            slabOpeningReservationId: primaryStairSlabOpeningReservation.id,
+            stairTopology: primaryStairCore.topology,
+            floors: primaryModule.floors,
+            flightIds: (primaryStairCore.flights ?? []).map(flight => flight.id),
+            landingIds: (primaryStairCore.landings ?? []).map(landing => landing.id ?? landing.sideRole).filter(Boolean),
+            ownershipAuthority: 'stair-core-owns-opening-and-children-v1',
+        }));
         assertInteriorStairReservation({
             id: `${chunk.key}:${siteSignature}:${primaryModule.key}:stair`,
             reservation: primaryStairReservation,
@@ -4871,17 +4966,50 @@ export function createKowloonFabricEngine({
         }));
         const published = publishTransportSurfaceSlab({ physics, transforms, rawSurface, supportKind: bridge.variant || 'skybridge' });
         const surface = published.surface;
+        const publishThreshold = (endpoint, endpointRole, along, bridgewardSign) => {
+            if (!endpointAuthority || !endpoint?.resolved) return null;
+            const doorwayWidth = Math.max(0.72, Number(endpoint.width) || width);
+            const clearWidth = Math.min(width, doorwayWidth);
+            const insideOverlap = 0.06;
+            const exteriorDepth = Math.max(0.22, Math.min(0.42, (Number(endpoint.depth) || 1.0) * 0.24));
+            const minAlong = bridgewardSign > 0 ? along - insideOverlap : along - exteriorDepth;
+            const maxAlong = bridgewardSign > 0 ? along + exteriorDepth : along + insideOverlap;
+            const centerAlong = (minAlong + maxAlong) * 0.5;
+            const alongSize = maxAlong - minAlong;
+            const id = `${bridge.id}:threshold:${endpointRole}`;
+            const shared = {
+                id,
+                bridgeId: bridge.id,
+                surfaceId: surface.id,
+                endpointId: endpoint.id ?? null,
+                endpointRole,
+                supportKind: 'bridge-portal-threshold',
+                thresholdAuthority: 'bridge-portal-transition-v1',
+                walkElevationAuthority: 'bridge-portal-transition-v1',
+                supportMargin: 0,
+            };
+            if (bridge.axis === 'x') {
+                physics.platforms.push({ ...shared, x: centerAlong, z: fixedCoord, hx: alongSize * 0.5, hz: clearWidth * 0.5, y });
+                transforms.slabs.push({ ...shared, x: centerAlong, y: y - 0.04, z: fixedCoord, sx: alongSize, sy: 0.08, sz: clearWidth });
+            } else {
+                physics.platforms.push({ ...shared, x: fixedCoord, z: centerAlong, hx: clearWidth * 0.5, hz: alongSize * 0.5, y });
+                transforms.slabs.push({ ...shared, x: fixedCoord, y: y - 0.04, z: centerAlong, sx: clearWidth, sy: 0.08, sz: alongSize });
+            }
+            return id;
+        };
+        const aThresholdId = publishThreshold(aEndpoint, 'a', from, 1);
+        const bThresholdId = publishThreshold(bEndpoint, 'b', to, -1);
         if (bridge.axis === 'x') {
             for (const z of [surface.z - surface.hz, surface.z + surface.hz]) emitTransportRail({
                 physics, transforms, wallList: transforms.wallGroups[0], surfaceId: surface.id,
                 x1: surface.x - surface.hx, z1: z, x2: surface.x + surface.hx, z2: z,
-                y,
+                y, metadata: { bridgeId: bridge.id, visualRole: bridge.variant || 'skybridge' },
             });
         } else {
             for (const x of [surface.x - surface.hx, surface.x + surface.hx]) emitTransportRail({
                 physics, transforms, wallList: transforms.wallGroups[0], surfaceId: surface.id,
                 x1: x, z1: surface.z - surface.hz, x2: x, z2: surface.z + surface.hz,
-                y,
+                y, metadata: { bridgeId: bridge.id, visualRole: bridge.variant || 'skybridge' },
             });
         }
         for (const overlap of published.overlaps) smoothTransportUnion({ physics, transforms, a: surface, b: overlap });
@@ -4895,6 +5023,7 @@ export function createKowloonFabricEngine({
             supportModeHint: hanging && (bridge.widthClass === 'collector' || bridge.widthClass === 'sky-street') ? 'hung-from-above' : null,
             field: hanging ? 'ceiling' : 'ground',
             materialFamilyHint: bridgeMaterialFamily,
+            surfaceId: surface.id,
         });
         transforms.guardMetal.push(...bridgeArchitecture.metal);
         transforms.guardConcrete.push(...bridgeArchitecture.concrete);
@@ -4906,6 +5035,9 @@ export function createKowloonFabricEngine({
             parts: bridgeArchitecture.parts, supportParts: bridgeArchitecture.supportParts ?? 0,
             supportMode: bridgeArchitecture.supportMode ?? null,
             span: bridgeArchitecture.span, width: bridgeArchitecture.width,
+            endpointClearance: bridgeArchitecture.endpointClearance ?? null,
+            attachmentAuthority: bridgeArchitecture.attachmentAuthority ?? null,
+            aThresholdId, bThresholdId,
             worldBandY: y, midpointScore: bridge.midpointScore ?? null,
             traversalAuthority: bridgeArchitecture.traversalAuthority,
         }));
@@ -4916,11 +5048,11 @@ export function createKowloonFabricEngine({
                 const along = from + (to - from) * (i / postCount);
                 const sag = Math.sin(Math.PI * (i / postCount)) * 0.38;
                 if (bridge.axis === 'x') {
-                    transforms.props.push({ x: along, y: y + 1.02 - sag, z: fixedCoord - width * 0.5, sx: 0.055, sy: 1.08 - sag, sz: 0.055, bridgeId: bridge.id, bridgeDecorativeRail: true, junctionYield: true });
-                    transforms.props.push({ x: along, y: y + 1.02 - sag, z: fixedCoord + width * 0.5, sx: 0.055, sy: 1.08 - sag, sz: 0.055, bridgeId: bridge.id, bridgeDecorativeRail: true, junctionYield: true });
+                    transforms.props.push({ x: along, y: y + 1.02 - sag, z: fixedCoord - width * 0.5, sx: 0.055, sy: 1.08 - sag, sz: 0.055, bridgeId: bridge.id, surfaceId: surface.id, bridgeDecorativeRail: true, junctionYield: true });
+                    transforms.props.push({ x: along, y: y + 1.02 - sag, z: fixedCoord + width * 0.5, sx: 0.055, sy: 1.08 - sag, sz: 0.055, bridgeId: bridge.id, surfaceId: surface.id, bridgeDecorativeRail: true, junctionYield: true });
                 } else {
-                    transforms.props.push({ x: fixedCoord - width * 0.5, y: y + 1.02 - sag, z: along, sx: 0.055, sy: 1.08 - sag, sz: 0.055, bridgeId: bridge.id, bridgeDecorativeRail: true, junctionYield: true });
-                    transforms.props.push({ x: fixedCoord + width * 0.5, y: y + 1.02 - sag, z: along, sx: 0.055, sy: 1.08 - sag, sz: 0.055, bridgeId: bridge.id, bridgeDecorativeRail: true, junctionYield: true });
+                    transforms.props.push({ x: fixedCoord - width * 0.5, y: y + 1.02 - sag, z: along, sx: 0.055, sy: 1.08 - sag, sz: 0.055, bridgeId: bridge.id, surfaceId: surface.id, bridgeDecorativeRail: true, junctionYield: true });
+                    transforms.props.push({ x: fixedCoord + width * 0.5, y: y + 1.02 - sag, z: along, sx: 0.055, sy: 1.08 - sag, sz: 0.055, bridgeId: bridge.id, surfaceId: surface.id, bridgeDecorativeRail: true, junctionYield: true });
                 }
             }
         }

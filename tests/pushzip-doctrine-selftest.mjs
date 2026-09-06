@@ -3,50 +3,65 @@ import fs from 'node:fs';
 
 const read = rel => fs.readFileSync(new URL(`../${rel}`, import.meta.url), 'utf8');
 const runner = read('tools/jweb-pushzip/runner.mjs');
+const builder = read('tools/jweb-pushzip/package-builder.mjs');
 const readme = read('tools/jweb-pushzip/README.md');
 const doctrine = read('tools/jweb-pushzip/DOCTRINE.md');
-const launcherUrl = new URL('../tools/jweb-pushzip/PUSH-TEMPLATE.cmd', import.meta.url);
-const launcher = fs.existsSync(launcherUrl) ? fs.readFileSync(launcherUrl, 'utf8') : null;
+const entrypoint = read('tools/jweb-pushzip/GPT-ENTRYPOINT.md');
+const agents = read('AGENTS.md');
+const launcher = read('tools/jweb-pushzip/PUSH-TEMPLATE.cmd');
 
-assert.match(runner, /jweb\.pushzip-runner\.v3/);
+assert.match(runner, /jweb\.pushzip-runner\.v5/);
+assert.match(runner, /jweb\.pushzip-package\.v2/);
+assert.match(runner, /applyMode.*overlay.*exact-release/s);
+assert.match(runner, /applyBuiltInPackage/);
+assert.match(runner, /baseAbsent/);
+assert.match(runner, /git add -A -f failed/);
+assert.match(runner, /\['add', '-A', '-f', '--'/);
+assert.match(runner, /verifyCnameExact/);
+assert.match(runner, /exact bytes "jweb\.dev" with no newline/);
+assert.match(runner, /protectedPrefixes/);
 assert.match(runner, /baselineTests/);
 assert.match(runner, /compareBaseline/);
 assert.match(runner, /PRE baseline debt recorded/);
 assert.match(runner, /NEW failure after cut/);
-assert.match(runner, /baseline failure worsened\/changed/);
-assert.match(runner, /required Cut-specific tests failed/);
-assert.match(runner, /assertTransactionalApplyFailure/);
+assert.match(runner, /required cut-specific tests failed/);
 assert.match(runner, /verifyBootstrapRunnerParity/);
-assert.match(runner, /Every configured check runs before this phase gets a test-derived verdict/);
-assert.match(runner, /POST is intentionally not run against a nonexistent candidate/);
-assert.ok(runner.includes("['diff', '--cached', '--name-only', '-z']"));
-assert.ok(runner.includes("['diff', '--cached', '--check']"));
-assert.doesNotMatch(runner, /Downloads/i, 'canonical runner must never depend on an operator Downloads path');
-assert.match(doctrine, /Living document/i);
-assert.match(doctrine, /Dirty baseline is evidence, not automatically a blocker/i);
-assert.match(doctrine, /Baseline-differential gate/i);
-assert.match(doctrine, /Test cost is structural/i);
-assert.match(doctrine, /Required cut tests are strict/i);
-assert.match(doctrine, /Cut 12 R3 dirty baseline and test cost/i);
-assert.match(doctrine, /author-local executed/i);
-assert.match(doctrine, /clean-clone-only/i);
-assert.match(doctrine, /Cut 12 R4 author-local versus clean-clone coverage/i);
-assert.match(doctrine, /Cut 12 R5 unscoped transform deleted `planFloor`/i);
-assert.match(doctrine, /bounded by explicit owning start\/end markers/i);
-assert.match(doctrine, /critical transformed-source symbols\/boundaries/i);
-assert.match(doctrine, /Cut 12 R6 immutable collision record entered a mutable legacy registry/i);
-assert.match(doctrine, /semanticConnectorEligible: false/i);
-assert.match(doctrine, /Cut 12 R7 reservation substrate stranded raster pockets/i);
-assert.match(doctrine, /claimed before leftover flood\/closure/i);
-assert.match(doctrine, /bootstrap.*payload.*runner parity/i);
-assert.match(readme, /living document/i);
-assert.match(readme, /Runner v3/);
-assert.match(readme, /baseline-differential gate/i);
-if (launcher !== null) {
-  assert.match(launcher, /%~dp0\./);
-  assert.match(launcher, /bootstrap\\jweb-pushzip-runner\.mjs/);
-}
+assert.match(runner, /origin\/main changed while checks were running/);
+assert.match(runner, /for \(const n of \[5, 4, 3, 2, 1\]\)/);
+assert.doesNotMatch(runner, /Downloads/i, 'canonical runner must not depend on operator Downloads path');
+
+assert.match(builder, /jweb\.pushzip-authoring\.v1/);
+assert.match(builder, /mode must be overlay or exact-release/);
+assert.match(builder, /jweb-pushzip-runner\.mjs/);
+assert.match(builder, /baseRoot/);
+assert.match(builder, /candidateRoot/);
+assert.match(builder, /releaseTreeSha256/);
+assert.match(builder, /PUSH-.*\\\.cmd/);
+
+assert.match(doctrine, /CRLF checkout broke exact source-string patching/i);
+assert.match(doctrine, /inline JavaScript \+ delayed expansion corrupted the launcher/i);
+assert.match(doctrine, /undeclared TypeScript dependency blocked a clean push gate/i);
+assert.match(doctrine, /broad replacement versus moving-main overlay/i);
+assert.match(doctrine, /canonical tooling had drifted behind successful practice/i);
+assert.match(readme, /runner v5/i);
+assert.match(readme, /built-in applicator/i);
+assert.match(readme, /package-builder\.mjs/i);
+assert.match(entrypoint, /No inline `node -e` JavaScript/i);
+assert.match(entrypoint, /Do not enable delayed expansion/i);
+assert.match(entrypoint, /exact bytes/i);
+assert.match(entrypoint, /Always give the user the ZIP/i);
+assert.match(agents, /If the user asks for a \*\*pushzip\*\*/i);
+
+assert.match(launcher, /setlocal EnableExtensions/);
+assert.doesNotMatch(launcher, /EnableDelayedExpansion/i);
+assert.doesNotMatch(launcher, /node\s+-e/i);
+assert.match(launcher, /%~dp0\./);
+assert.match(launcher, /where git/);
+assert.match(launcher, /where node/);
+assert.match(launcher, /bootstrap\\jweb-pushzip-runner\.mjs/);
 
 console.log('[pushzip-doctrine-selftest] PASS', {
-  invariant: 'living doctrine + pinned clean base + cost-aware PRE + differential baseline + strict required POST + transactional apply + exact staging',
+  runner: 'v5',
+  default: 'built-in overlay/exact-release',
+  windows: 'no inline JS / no delayed expansion / quoted argv',
 });

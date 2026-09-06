@@ -113,3 +113,33 @@ Refinement: reservation substrate that is authoritative circulation must be clai
 Cut 15 repeatedly reached the operator machine with an applicator that had only been partially preflighted. R1 carried a wrong test path; R2 and R3 then discovered legitimate repeated mutation anchors one at a time after the full PRE suite had already run. The package failed safely, but the operator was being used as the first complete applicator execution environment.
 
 Refinement: **the entire applicator contract must execute in a non-writing audit against the exact pinned fresh source before PRE**. Do not substitute a hand-written subset of anchor checks for running the real applicator. A successful audit must prove that every source guard, repeated-path cardinality decision, transformed-source postcondition, payload hash and output allowlist can complete without changing HEAD or the worktree. Where the authoring environment contains the pinned source bytes, rehearse that audit there before delivery as well. When a large runtime file is already fully available, prefer an exact guarded full-file payload over a long chain of brittle textual mutations. Operator-side execution is the final remote/push authority, not the first place an applicator learns how many legitimate architecture paths exist.
+
+### 2026-09-06 — CRLF checkout broke exact source-string patching
+
+A color-liveness hotfix matched exact LF source blocks correctly against repository blobs but failed on the operator's Git-for-Windows checkout because `core.autocrlf` produced CRLF working files.
+
+Refinement: new pushzips prefer complete final-file payloads/deletions through the built-in applicator. If a legacy text mutation is unavoidable, normalize CRLF only for matching and restore the original EOL convention on write. Never treat checkout newline policy as source drift.
+
+### 2026-09-06 — inline JavaScript + delayed expansion corrupted the launcher
+
+A consolidated release embedded `node -e` JavaScript in a batch file while delayed expansion was enabled. `cmd.exe` consumed the `!` from JavaScript before Node saw it, corrupting the expression with the Windows path.
+
+Refinement: root launchers contain no inline JavaScript and do not enable delayed expansion. Put all logic in real `.mjs` files and pass paths as quoted argv values. Smoke package tooling from directories containing spaces.
+
+### 2026-09-06 — undeclared TypeScript dependency blocked a clean push gate
+
+A historical TDZ audit required `typescript` even though the clean repository/package did not declare or install it. The site payload installed correctly, but validation failed on the operator machine.
+
+Refinement: push gates are self-contained. They may use Node built-ins and dependencies that are actually present in the repository; they may not assume globally installed npm packages or run package installation as part of deployment. Historical audits that require retired dependencies are not release gates.
+
+### 2026-09-06 — broad replacement versus moving-main overlay
+
+A concurrent visual-harness commit landed while performance work was in progress. The safe solution was not an operator-side merge: the new commit was inspected, found disjoint, preserved, and the performance cut was rebuilt as an exact allowlisted overlay against the new head.
+
+Refinement: overlay is the default for narrow/moving-main work. Exact-release is reserved for broad coordinated tree replacement. Both remain pinned to the reviewed head; neither auto-rebases on the operator machine. Protected unrelated prefixes may be declared explicitly and must remain untouched.
+
+### 2026-09-06 — canonical tooling had drifted behind successful practice
+
+The repository runner had advanced to v4 while its README and primary selftest still asserted v3, and successful late-session packages repeatedly reimplemented the same overlay/release helpers outside the canonical tooling.
+
+Refinement: runner v5 owns built-in `overlay` and `exact-release` application, including additions and deletions. `package-builder.mjs` creates the package structure and launcher from an exact base/candidate pair. `AGENTS.md` and `GPT-ENTRYPOINT.md` make the canonical path discoverable to fresh models. Custom applicators are legacy/exceptional, not the normal authoring path.

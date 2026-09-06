@@ -1,5 +1,6 @@
 import { GENERATION_LANES, GENERATION_PROFILE_NAME } from './config/performance-isolation.js';
 import { deterministicChunkSeed, hashString32 } from './world-chunk-streamer.js';
+import { planVisualStairTreads } from './world/stair-visual-treads.js';
 import { WORLD_FORMAT_VERSION, worldChunkOwnerId, worldEntityId } from './world-contract.js';
 import { createKowloonFabricEnrichment } from './world/kowloon-fabric-enrichment.js';
 import { assertBuildingFootprintsDoNotOverlap } from './world/building-footprint-invariant.js';
@@ -567,7 +568,8 @@ export function createKowloonFabricEngine({
         'id', 'stairOwnerId', 'stairPartId', 'stairPartParentId', 'stairPartKind', 'stairId', 'flightId', 'landingId',
         'surfaceId', 'bridgeId', 'endpointId', 'guardSpanId', 'routeId', 'networkKey', 'visualRole', 'architectureRole',
         'structuralRole', 'supportKind', 'thresholdAuthority', 'bridgeArchitecture', 'architectureFamily', 'bridgeVariant',
-        'shellOwnerId', 'shellPieceId', 'shellPieceKind', 'closureForOffset', 'moduleKey', 'localFloor', 'globalFloor', 'side',
+        'shellOwnerId', 'shellPieceId', 'shellPieceKind', 'closureForOffset', 'moduleKey', 'floor', 'localFloor', 'globalFloor', 'side',
+        'visualTreadAuthority', 'visualTreadIndex', 'visualTreadCount', 'riserCount',
     ]);
     function visualProbeInstanceIdentity(transform) {
         // Keep exact visual ownership cheap: ordinary facade/road/window instances get
@@ -1138,16 +1140,12 @@ export function createKowloonFabricEngine({
             connector.toLandingId = flight.toLandingId;
             registerSemanticConnector(physics, connector);
 
-            const steps = flight.stairFlight.stepCount;
             const stepThickness = Math.min(0.14, Math.max(0.075, flight.stairFlight.riserHeight * 0.62));
-            for (let i = 0; i < steps; i++) {
-                const t = (i + 0.5) / steps;
-                const along = flight.from + (flight.to - flight.from) * t;
-                const stepY = flight.y0 + flight.stairFlight.riserHeight * (i + 1) - stepThickness * 0.5;
-                transforms.steps.push(flight.axis === 'x'
-                    ? { x: along, y: stepY, z: flight.fixedCoord, sx: flight.run / steps * 1.08, sy: stepThickness, sz: flight.clearWidth, routeId: plan.id, flightId: flight.id }
-                    : { x: flight.fixedCoord, y: stepY, z: along, sx: flight.clearWidth, sy: stepThickness, sz: flight.run / steps * 1.08, routeId: plan.id, flightId: flight.id });
-            }
+            transforms.steps.push(...planVisualStairTreads({
+                axis: flight.axis, from: flight.from, to: flight.to, fixedCoord: flight.fixedCoord,
+                width: flight.clearWidth, y0: flight.y0, y1: flight.y1, stairFlight: flight.stairFlight,
+                thickness: stepThickness, metadata: { routeId: plan.id, flightId: flight.id },
+            }));
         }
         const stairArchitecture = planStairArchitectureExpression({
             id: `${plan.id}:architecture`, route: plan, programArchitectureId, field,
@@ -1399,6 +1397,28 @@ export function createKowloonFabricEngine({
         return plans.length;
     }
 
+    function emitInteriorStairGuardEdges({
+        physics, transforms, edges, y, idPrefix, family, supportKind,
+        stairOwnerId, stairPartParentId, stairPartKind, metadata = null,
+    }) {
+        let emitted = 0;
+        for (const edge of edges ?? []) {
+            if (![edge?.x1, edge?.z1, edge?.x2, edge?.z2, y].every(value => Number.isFinite(Number(value)))) continue;
+            emitGuardSpanFromAuthority({
+                physics, transforms, id: `${idPrefix}:${edge.role ?? emitted}`,
+                x1: edge.x1, z1: edge.z1, x2: edge.x2, z2: edge.z2, y,
+                family, supportKind,
+                metadata: {
+                    ...(metadata || {}),
+                    guardRole: edge.role ?? 'perimeter-edge',
+                    stairOwnerId, stairPartParentId, stairPartKind,
+                },
+            });
+            emitted++;
+        }
+        return emitted;
+    }
+
     function realizeInteriorSwitchbackStory({
         physics, transforms, core, floor, y0, y1, guardFamily, metadata = null, treadVisualBudget = Infinity,
     }) {
@@ -1447,21 +1467,17 @@ export function createKowloonFabricEngine({
                 stairOwnerId, stairPartId: flightPartId, stairPartKind: 'flight',
                 ...(metadata || {}),
             });
-            const steps = core.segmentFlight.stepCount;
-            const visualStepCount = Number.isFinite(treadVisualBudget)
-                ? Math.max(0, Math.min(steps, Math.floor(treadVisualBudget)))
-                : steps;
             const stepThickness = Math.min(0.14, Math.max(0.075, core.segmentFlight.riserHeight * 0.62));
-            for (let visualIndex = 0; visualIndex < visualStepCount; visualIndex++) {
-                const i = Math.min(steps - 1, Math.floor(((visualIndex + 0.5) * steps) / visualStepCount));
-                const t = (i + 0.5) / steps;
-                const along = flight.from + (flight.to - flight.from) * t;
-                const stepY = flightY0 + core.segmentFlight.riserHeight * (i + 1) - stepThickness * 0.5;
-                const runStep = Math.abs(flight.to - flight.from) / steps * 1.06;
-                transforms.steps.push(flight.axis === 'z'
-                    ? { x: flight.fixedCoord, y: stepY, z: along, sx: core.clearWidth, sy: stepThickness, sz: runStep, stairTopology: core.topology, floor, flightId: flight.id, stairOwnerId, stairPartId: `${flightPartId}:step:${i}`, stairPartParentId: flightPartId, stairPartKind: 'step', visualOnly: true, collisionAuthority: 'physics-ramp', designIntent: STAIR_WALKABILITY_DESIGN_INTENT }
-                    : { x: along, y: stepY, z: flight.fixedCoord, sx: runStep, sy: stepThickness, sz: core.clearWidth, stairTopology: core.topology, floor, flightId: flight.id, stairOwnerId, stairPartId: `${flightPartId}:step:${i}`, stairPartParentId: flightPartId, stairPartKind: 'step', visualOnly: true, collisionAuthority: 'physics-ramp', designIntent: STAIR_WALKABILITY_DESIGN_INTENT });
-            }
+            transforms.steps.push(...planVisualStairTreads({
+                axis: flight.axis, from: flight.from, to: flight.to, fixedCoord: flight.fixedCoord,
+                width: core.clearWidth, y0: flightY0, y1: flightY1, stairFlight: core.segmentFlight,
+                thickness: stepThickness, maxTreads: treadVisualBudget,
+                metadata: {
+                    stairTopology: core.topology, floor, flightId: flight.id, stairOwnerId,
+                    stairPartParentId: flightPartId, stairPartKind: 'step',
+                    collisionAuthority: 'physics-ramp', designIntent: STAIR_WALKABILITY_DESIGN_INTENT,
+                },
+            }).map(tread => ({ ...tread, stairPartId: `${flightPartId}:step:${tread.visualTreadIndex}` })));
             const direction = Math.sign(flight.to - flight.from) || 1;
             const guardFrom = flight.from + direction * core.guardMouthClearance;
             const guardTo = flight.to - direction * core.guardMouthClearance;
@@ -1478,16 +1494,29 @@ export function createKowloonFabricEngine({
         }
         for (const landing of core.intermediateLandings) {
             const landingY = y0 + (y1 - y0) * landing.yFraction;
-            const back = landing.backGuard;
             const landingPartId = `${stairOwnerId}:floor:${floor}:landing:${landing.sideRole}`;
-            emitGuardSpanFromAuthority({
-                physics, transforms, id: `${metadata?.stairId ?? "interior-stair"}:${floor}:${landing.id}:back-guard`,
-                x1: back.x1, z1: back.z1, x2: back.x2, z2: back.z2, y: landingY,
+            emitInteriorStairGuardEdges({
+                physics, transforms, edges: landing.guardEdges ?? (landing.backGuard ? [{ role: 'outer-edge', ...landing.backGuard }] : []),
+                y: landingY,
+                idPrefix: `${metadata?.stairId ?? "interior-stair"}:${floor}:${landing.id}:perimeter-guard`,
                 family: guardFamily, supportKind: "compound-stair-mid-landing-guard",
-                metadata: {
-                    ...(metadata || {}), floor, landingId: landing.id, visualRole: "interior-stair-mid-landing",
-                    stairOwnerId, stairPartParentId: landingPartId, stairPartKind: 'landing-guard',
-                },
+                stairOwnerId, stairPartParentId: landingPartId, stairPartKind: 'landing-perimeter-guard',
+                metadata: { ...(metadata || {}), floor, landingId: landing.id, visualRole: "interior-stair-mid-landing" },
+            });
+        }
+
+        // Every occupied floor above the base has a real shaft opening below it.
+        // Guard the three exposed edges of that opening; the low/aligned edge is
+        // deliberately left open because it is the solved two-lane stair mouth.
+        if (floor > 0) {
+            emitInteriorStairGuardEdges({
+                physics, transforms, edges: core.slabOpeningGuardEdges, y: y0,
+                idPrefix: `${metadata?.stairId ?? "interior-stair"}:${floor}:shaft-opening-guard`,
+                family: guardFamily, supportKind: 'compound-stair-shaft-opening-guard',
+                stairOwnerId,
+                stairPartParentId: `${stairOwnerId}:slab-opening`,
+                stairPartKind: 'shaft-opening-guard',
+                metadata: { ...(metadata || {}), floor, visualRole: 'interior-stair-shaft-opening' },
             });
         }
     }
@@ -1765,16 +1794,12 @@ export function createKowloonFabricEngine({
                     physicalTruth: link.physicalTruth, stairFlight: link.stairFlight,
                     metadata: { transportLinkId: link.id, lowerSurfaceId: lower.id, upperSurfaceId: upper.id },
                 }));
-                const steps = link.stairFlight.stepCount;
                 const stepThickness = Math.min(0.14, Math.max(0.075, link.stairFlight.riserHeight * 0.62));
-                for (let i = 0; i < steps; i++) {
-                    const t = (i + 0.5) / steps;
-                    const along = link.from + (link.to - link.from) * t;
-                    const stepY = link.y0 + link.stairFlight.riserHeight * (i + 1) - stepThickness * 0.5;
-                    transforms.steps.push(link.axis === 'x'
-                        ? { x: along, y: stepY, z: link.fixedCoord, sx: link.gap / steps * 1.06, sy: stepThickness, sz: link.clearWidth, transportLinkId: link.id }
-                        : { x: link.fixedCoord, y: stepY, z: along, sx: link.clearWidth, sy: stepThickness, sz: link.gap / steps * 1.06, transportLinkId: link.id });
-                }
+                transforms.steps.push(...planVisualStairTreads({
+                    axis: link.axis, from: link.from, to: link.to, fixedCoord: link.fixedCoord,
+                    width: link.clearWidth, y0: link.y0, y1: link.y1, stairFlight: link.stairFlight,
+                    thickness: stepThickness, metadata: { transportLinkId: link.id },
+                }));
                 emitFlightGuardPairFromAuthority({
                     physics, transforms, idPrefix: `${link.id}:guard`,
                     axis: link.axis, from: link.from, to: link.to, fixedCoord: link.fixedCoord,
@@ -1995,16 +2020,12 @@ export function createKowloonFabricEngine({
             connector.toLandingId = flight.toLandingId;
             registerSemanticConnector(physics, connector);
 
-            const steps = flight.stairFlight.stepCount;
             const stepThickness = Math.min(0.14, Math.max(0.075, flight.stairFlight.riserHeight * 0.62));
-            for (let i = 0; i < steps; i++) {
-                const t = (i + 0.5) / steps;
-                const along = flight.from + (flight.to - flight.from) * t;
-                const stepY = flight.y0 + flight.stairFlight.riserHeight * (i + 1) - stepThickness * 0.5;
-                transforms.steps.push(flight.axis === 'x'
-                    ? { x: along, y: stepY, z: flight.fixedCoord, sx: flight.run / steps * 1.08, sy: stepThickness, sz: flight.clearWidth, routeId: plan.id, flightId: flight.id }
-                    : { x: flight.fixedCoord, y: stepY, z: along, sx: flight.clearWidth, sy: stepThickness, sz: flight.run / steps * 1.08, routeId: plan.id, flightId: flight.id });
-            }
+            transforms.steps.push(...planVisualStairTreads({
+                axis: flight.axis, from: flight.from, to: flight.to, fixedCoord: flight.fixedCoord,
+                width: flight.clearWidth, y0: flight.y0, y1: flight.y1, stairFlight: flight.stairFlight,
+                thickness: stepThickness, metadata: { routeId: plan.id, flightId: flight.id },
+            }));
             emitFlightGuardPairFromAuthority({
                 physics, transforms, idPrefix: `${flight.id}:guard`,
                 axis: flight.axis, from: flight.from, to: flight.to, fixedCoord: flight.fixedCoord,
@@ -3378,6 +3399,20 @@ export function createKowloonFabricEngine({
                     structuralSurfaceKind: 'roof-surface', surfaceAuthority: 'roof',
                 });
             }
+            if (module === primaryModule && roofHasInteriorCoreOpening) {
+                const roofStairGuardFamily = guardFamilyForContext({
+                    supportKind: 'compound-stair', visualRole: 'interior-stair-shaft-opening', physicalUse: stairPhysicalTruth?.physicalUse,
+                });
+                emitInteriorStairGuardEdges({
+                    physics, transforms, edges: primaryStairCore.slabOpeningGuardEdges, y: roofY,
+                    idPrefix: `${primaryStairOwnerId}:roof:shaft-opening-guard`,
+                    family: roofStairGuardFamily, supportKind: 'compound-stair-roof-opening-guard',
+                    stairOwnerId: primaryStairOwnerId,
+                    stairPartParentId: `${primaryStairOwnerId}:slab-opening`,
+                    stairPartKind: 'roof-opening-guard',
+                    metadata: { moduleKey: module.key, floor: moduleFloorBase(module) + module.floors, visualRole: 'interior-stair-roof-opening' },
+                });
+            }
             for (const dir of KOWLOON_DIRS) {
                 let exposed = module.edgeKinds[dir.key] !== 'internal';
                 if (!exposed) {
@@ -4511,6 +4546,20 @@ export function createKowloonFabricEngine({
                     sx: roofRect.width, sy: 0.12, sz: roofRect.depth, moduleKey: module.key,
                     structuralSurfaceKind: 'roof-surface', surfaceAuthority: 'roof' });
             }
+            if (module === primaryModule && primaryShaftCutsRoof) {
+                const roofStairGuardFamily = guardFamilyForContext({
+                    supportKind: 'compound-stair', visualRole: 'interior-stair-shaft-opening', physicalUse: stairPhysicalTruth?.physicalUse,
+                });
+                emitInteriorStairGuardEdges({
+                    physics, transforms, edges: primaryStairCore.slabOpeningGuardEdges, y: roofY,
+                    idPrefix: `${primaryStairOwnerId}:roof:shaft-opening-guard`,
+                    family: roofStairGuardFamily, supportKind: 'compound-stair-roof-opening-guard',
+                    stairOwnerId: primaryStairOwnerId,
+                    stairPartParentId: `${primaryStairOwnerId}:slab-opening`,
+                    stairPartKind: 'roof-opening-guard',
+                    metadata: { moduleKey: module.key, floor: module.floors, visualRole: 'interior-stair-roof-opening' },
+                });
+            }
             for (const dir of KOWLOON_DIRS) {
                 let exposed = module.edgeKinds[dir.key] !== 'internal';
                 if (!exposed) {
@@ -4790,16 +4839,11 @@ export function createKowloonFabricEngine({
                     physics.ramps.push(mezzanineRamp);
                     registerSemanticConnector(physics, mezzanineConnector);
                     moduleReservations.push(mezzanineReservation);
-                    const stepCount = mezzanineFlight.stepCount;
                     const stepThickness = Math.min(0.11, Math.max(0.065, mezzanineFlight.riserHeight * 0.58));
-                    for (let i = 0; i < stepCount; i++) {
-                        const t = (i + 0.5) / stepCount;
-                        const along = from + (to - from) * t;
-                        const stepY = mezzanineFlight.riserHeight * (i + 1) - stepThickness * 0.5;
-                        transforms.steps.push(axis === 'x'
-                            ? { x: along, y: stepY, z: fixedCoord, sx: Math.abs(to - from) / stepCount * 1.06, sy: stepThickness, sz: rampWidth }
-                            : { x: fixedCoord, y: stepY, z: along, sx: rampWidth, sy: stepThickness, sz: Math.abs(to - from) / stepCount * 1.06 });
-                    }
+                    transforms.steps.push(...planVisualStairTreads({
+                        axis, from, to, fixedCoord, width: rampWidth, y0: 0, y1: y, stairFlight: mezzanineFlight,
+                        thickness: stepThickness, metadata: { moduleKey: module.key, index: mezzanines, visualRole: 'mezzanine-access' },
+                    }));
                     emitFlightGuardPairFromAuthority({
                         physics, transforms, idPrefix: `${chunk.key}:${siteSignature}:${module.key}:mezzanine:${mezzanines}:guard`,
                         axis, from, to, fixedCoord, halfWidth: rampWidth * 0.5, y0: 0, y1: y,
@@ -6239,18 +6283,14 @@ export function createKowloonFabricEngine({
             registerSemanticConnector(physics, connector);
             pushConcreteWaist(flight);
 
-            const count = flight.stairFlight.stepCount;
             const thickness = Math.min(0.16, Math.max(0.08, flight.stairFlight.riserHeight * 0.64));
-            for (let i = 0; i < count; i++) {
-                const t = (i + 0.5) / count;
-                const along = flight.from + (flight.to - flight.from) * t;
-                const stepY = flight.y0 + flight.stairFlight.riserHeight * (i + 1) - thickness * 0.5;
-                const runStep = flight.run / count * 1.10;
-                transforms.steps.push(flight.axis === 'x'
-                    ? { x: along, y: stepY, z: flight.fixedCoord, sx: runStep, sy: thickness, sz: route.stairWidth, routeId: route.id, cavernWallStair: true, visualOnly: true, collisionAuthority: 'physics-ramp', designIntent: STAIR_WALKABILITY_DESIGN_INTENT }
-                    : { x: flight.fixedCoord, y: stepY, z: along, sx: route.stairWidth, sy: thickness, sz: runStep, routeId: route.id, cavernWallStair: true, visualOnly: true, collisionAuthority: 'physics-ramp', designIntent: STAIR_WALKABILITY_DESIGN_INTENT });
-                steps++;
-            }
+            const visualTreads = planVisualStairTreads({
+                axis: flight.axis, from: flight.from, to: flight.to, fixedCoord: flight.fixedCoord,
+                width: route.stairWidth, y0: flight.y0, y1: flight.y1, stairFlight: flight.stairFlight,
+                thickness, metadata: { routeId: route.id, cavernWallStair: true, collisionAuthority: 'physics-ramp', designIntent: STAIR_WALKABILITY_DESIGN_INTENT },
+            });
+            transforms.steps.push(...visualTreads);
+            steps += visualTreads.length;
             emitFlightGuardPairFromAuthority({
                 physics, transforms, idPrefix: `${flight.id}:guard`,
                 axis: flight.axis, from: flight.from, to: flight.to, fixedCoord: flight.fixedCoord,

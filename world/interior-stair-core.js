@@ -32,6 +32,28 @@ function backGuardForLanding({ axis, outerAlong, crossCenter, crossSize }) {
   return Object.freeze({ x1: a.x, z1: a.z, x2: b.x, z2: b.z });
 }
 
+function exposedPerimeterGuardEdges({ axis, rect, mouthSide = 'low' }) {
+  const alongCenter = axis === 'x' ? Number(rect.x) : Number(rect.z);
+  const crossCenter = axis === 'x' ? Number(rect.z) : Number(rect.x);
+  const alongHalf = axis === 'x' ? Number(rect.hx) : Number(rect.hz);
+  const crossHalf = axis === 'x' ? Number(rect.hz) : Number(rect.hx);
+  const low = alongCenter - alongHalf;
+  const high = alongCenter + alongHalf;
+  const crossLow = crossCenter - crossHalf;
+  const crossHigh = crossCenter + crossHalf;
+  const outerAlong = mouthSide === 'low' ? high : low;
+  const outer = backGuardForLanding({ axis, outerAlong, crossCenter, crossSize: crossHalf * 2 });
+  const sideA0 = point(axis, low, crossLow, 0);
+  const sideA1 = point(axis, high, crossLow, 0);
+  const sideB0 = point(axis, low, crossHigh, 0);
+  const sideB1 = point(axis, high, crossHigh, 0);
+  return Object.freeze([
+    Object.freeze({ role: 'outer-edge', ...outer }),
+    Object.freeze({ role: 'side-negative', x1: sideA0.x, z1: sideA0.z, x2: sideA1.x, z2: sideA1.z }),
+    Object.freeze({ role: 'side-positive', x1: sideB0.x, z1: sideB0.z, x2: sideB1.x, z2: sideB1.z }),
+  ]);
+}
+
 function candidateForAxis({ axis, rect, floorH, truth, playerRadius, stableKey, tier, flightCount }) {
   const alongHalf = axis === 'x' ? finite(rect.halfX) : finite(rect.halfZ);
   const crossHalf = axis === 'x' ? finite(rect.halfZ) : finite(rect.halfX);
@@ -96,6 +118,9 @@ function candidateForAxis({ axis, rect, floorH, truth, playerRadius, stableKey, 
   const guardMouthClearance = Math.min(0.34, Math.max(0.22, playerRadius + 0.05));
   const lowBackGuard = backGuardForLanding({ axis, outerAlong: openingLow, crossCenter, crossSize: landingCross });
   const highBackGuard = backGuardForLanding({ axis, outerAlong: openingHigh, crossCenter, crossSize: landingCross });
+  const lowLandingGuardEdges = exposedPerimeterGuardEdges({ axis, rect: floorLanding, mouthSide: 'high' });
+  const highLandingGuardEdges = exposedPerimeterGuardEdges({ axis, rect: turnLanding, mouthSide: 'low' });
+  const slabOpeningGuardEdges = exposedPerimeterGuardEdges({ axis, rect: slabOpening, mouthSide: 'low' });
 
   const flights = [];
   const intermediateLandings = [];
@@ -122,6 +147,8 @@ function candidateForAxis({ axis, rect, floorH, truth, playerRadius, stableKey, 
         yFraction: (i + 1) / flightCount,
         geometry: highSide ? turnLanding : floorLanding,
         backGuard: highSide ? highBackGuard : lowBackGuard,
+        guardEdges: highSide ? highLandingGuardEdges : lowLandingGuardEdges,
+        mouthEdge: highSide ? 'low' : 'high',
         walkElevationAuthority: STAIR_WALKABILITY_DESIGN_INTENT,
       }));
     }
@@ -150,6 +177,8 @@ function candidateForAxis({ axis, rect, floorH, truth, playerRadius, stableKey, 
     turnLandingDepth,
     opening,
     slabOpening,
+    slabOpeningGuardEdges,
+    slabOpeningMouthEdge: 'low',
     floorLanding,
     floorLandingIntegrated: true,
     midLanding: turnLanding,

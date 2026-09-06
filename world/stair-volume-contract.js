@@ -59,6 +59,25 @@ function flightYAtAlong(flight, along, storyHeight) {
   return y0 + (y1 - y0) * fraction;
 }
 
+function edgeLength(edge) {
+  return Math.hypot(Number(edge.x2) - Number(edge.x1), Number(edge.z2) - Number(edge.z1));
+}
+
+function assertThreeSidedPerimeter({ id, edges, label }) {
+  if (!Array.isArray(edges) || edges.length !== 3) fail(id, `${label} must guard exactly three exposed perimeter edges`);
+  const roles = new Set(edges.map(edge => edge?.role));
+  for (const role of ['outer-edge', 'side-negative', 'side-positive']) {
+    if (!roles.has(role)) fail(id, `${label} missing ${role}`);
+  }
+  for (const edge of edges) {
+    if (![edge?.x1, edge?.z1, edge?.x2, edge?.z2].every(value => Number.isFinite(Number(value)))) {
+      fail(id, `${label} has non-finite guard edge`);
+    }
+    if (!(edgeLength(edge) > EPS)) fail(id, `${label} has zero-length guard edge`);
+  }
+  return true;
+}
+
 function assertDesignIntent(plan, id = plan?.id || 'stair') {
   if (plan?.designIntent !== STAIR_WALKABILITY_DESIGN_INTENT) {
     fail(id, `missing ${STAIR_WALKABILITY_DESIGN_INTENT} design intent`);
@@ -117,6 +136,8 @@ export function assertInteriorStairCoreWalkability(plan) {
   if (!(Number(plan.metrics?.slabOpeningAlong) > 0) || !(Number(plan.metrics?.slabOpeningAlong) < Number(plan.metrics?.openingAlong) - EPS)) {
     fail(id, 'slab opening must begin beyond the usable floor landing');
   }
+  if (plan.slabOpeningMouthEdge !== 'low') fail(id, 'slab opening must leave the floor-level stair mouth unguarded');
+  assertThreeSidedPerimeter({ id, edges: plan.slabOpeningGuardEdges, label: 'slab-opening perimeter' });
 
   for (let i = 0; i < plan.flights.length; i++) {
     const flight = plan.flights[i];
@@ -132,6 +153,8 @@ export function assertInteriorStairCoreWalkability(plan) {
     if (i < plan.intermediateLandings.length) {
       const landing = plan.intermediateLandings[i];
       if (!near(landing.yFraction, flight.y1Fraction)) fail(id, `turn landing ${i} walk elevation mismatches arriving flight`);
+      if (!['low', 'high'].includes(landing.mouthEdge)) fail(id, `turn landing ${i} missing explicit mouth edge`);
+      assertThreeSidedPerimeter({ id, edges: landing.guardEdges, label: `turn landing ${i} perimeter` });
     }
   }
   assertNoAdjacentFlightOverlap({ id, flights: plan.flights });

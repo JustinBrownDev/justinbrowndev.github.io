@@ -32,7 +32,7 @@ function diagonalBetween(axis, a, b, fixed, thickness, metadata) {
  */
 export function planSkybridgeArchitecture({
   id = 'bridge', axis = 'x', from = 0, to = 1, fixedCoord = 0, y = 0, width = 1,
-  family = 'simple-guarded', widthClass = 'local', stableKey = null, supportModeHint = null,
+  family = 'simple-guarded', widthClass = 'local', variant = 'skybridge', stableKey = null, supportModeHint = null,
   field = 'ground', materialFamilyHint = null, materialWeightScale = null,
   surfaceId = null, endpointClearance = null,
 } = {}) {
@@ -41,9 +41,10 @@ export function planSkybridgeArchitecture({
   const span = hi - lo;
   const w = Math.max(0.75, finite(width, 1));
   if (!(span > 0.25)) return Object.freeze({ schema: SKYBRIDGE_ARCHITECTURE_SCHEMA, family, metal: Object.freeze([]), concrete: Object.freeze([]), parts: 0 });
-  const hash = stableHash(`${stableKey ?? id}:${family}:${axis}`);
+  const bridgeVariant = String(variant || 'skybridge');
+  const hash = stableHash(`${stableKey ?? id}:${family}:${axis}${bridgeVariant === 'hanging-bridge' ? ':hanging-bridge' : ''}`);
   const metal = [], concrete = [];
-  const metadata = { bridgeId: id, surfaceId, bridgeArchitecture: true, architectureFamily: family, widthClass };
+  const metadata = { bridgeId: id, surfaceId, bridgeArchitecture: true, architectureFamily: family, bridgeVariant, widthClass };
   const edgeA = fixedCoord - w * 0.5;
   const edgeB = fixedCoord + w * 0.5;
   const center = (lo + hi) * 0.5;
@@ -205,6 +206,51 @@ export function planSkybridgeArchitecture({
     sideBeam(edgeB, y - 0.18);
   }
 
+  let variantParts = 0;
+  let structuralGrammar = 'family-native-v1';
+  if (bridgeVariant === 'hanging-bridge' && stationSpan > Math.max(0.8, w * 0.45)) {
+    // Hanging bridges are not a generic guarded deck with decorative posts. The
+    // semantic variant owns a real visual tension system: high exterior seats,
+    // sagging side cables, and hangers that terminate at the deck-side edge beam.
+    structuralGrammar = 'suspended-catenary-v1';
+    const cableT = Math.max(0.055, beamT * 0.58);
+    const highY = y + (widthClass === 'sky-street' ? 3.45 : widthClass === 'collector' ? 3.05 : 2.62);
+    const lowY = y + (widthClass === 'sky-street' ? 1.78 : widthClass === 'collector' ? 1.58 : 1.42);
+    const segments = Math.max(6, Math.ceil(stationSpan / 1.85));
+    for (const fixed of [edgeA, edgeB]) {
+      let previous = null;
+      for (let i = 0; i <= segments; i++) {
+        const t = i / segments;
+        const along = stationLo + stationSpan * t;
+        // A catenary-like U profile: highest at anchored ends, lowest at midspan.
+        const shape = Math.pow(Math.abs(2 * t - 1), 1.55);
+        const cableY = lowY + (highY - lowY) * shape;
+        const point = { along, y: cableY };
+        if (previous) {
+          metal.push(diagonalBetween(axis, previous, point, fixed, cableT, {
+            ...metadata, architectureRole: 'hanging-suspension-cable', structuralRole: 'tension-cable', junctionYield: true,
+          }));
+          variantParts++;
+        }
+        if (i > 0 && i < segments && i % 2 === 0) {
+          const deckY = y + 0.10;
+          const h = Math.max(0.18, cableY - deckY);
+          const hangerMeta = { ...metadata, architectureRole: 'hanging-vertical-hanger', structuralRole: 'tension-hanger', junctionYield: true };
+          if (axis === 'x') pushBox(metal, { x: along, y: deckY + h * 0.5, z: fixed, sx: cableT * 0.78, sy: h, sz: cableT * 0.78 }, hangerMeta);
+          else pushBox(metal, { x: fixed, y: deckY + h * 0.5, z: along, sx: cableT * 0.78, sy: h, sz: cableT * 0.78 }, hangerMeta);
+          variantParts++;
+        }
+        previous = point;
+      }
+    }
+    for (const [facadeAlong, seatAlong] of [[lo, stationLo], [hi, stationHi]]) {
+      attachmentSeat(facadeAlong, seatAlong, highY, cableT * 1.6, w + 0.22, {
+        architectureRole: 'hanging-anchor-seat', structuralRole: 'tension-anchor', junctionYield: true,
+      });
+      variantParts++;
+    }
+  }
+
   let supportMode = null;
   let supportParts = 0;
   if ((widthClass === 'collector' || widthClass === 'sky-street') && span > 2.6) {
@@ -273,6 +319,9 @@ export function planSkybridgeArchitecture({
     schema: SKYBRIDGE_ARCHITECTURE_SCHEMA,
     family,
     materialFamily,
+    bridgeVariant,
+    structuralGrammar,
+    variantParts,
     widthClass,
     span,
     width: w,

@@ -25,6 +25,43 @@ export const DIAGNOSTIC_COLORS = Object.freeze({
 
 const finite = Number.isFinite;
 const n = value => Number(value);
+const OWNERSHIP_SELECTORS = Symbol('jweb.visualProbeOwnershipSelectors');
+
+function ownershipSelectorsFromItem(item) {
+  if (!item) return [];
+  const meta=item.metadata??{};
+  const value=key=>item?.[key]??meta?.[key];
+  const selectors=[];
+  const stairPartId=value('stairPartId'), stairOwnerId=value('stairOwnerId')??value('stairId');
+  const endpointId=value('endpointId'), surfaceId=value('surfaceId'), bridgeId=value('bridgeId');
+  const guardSpanId=value('guardSpanId'), routeId=value('routeId');
+  if (stairPartId!=null) selectors.push({stairPartId});
+  if (stairOwnerId!=null) selectors.push({stairOwnerId});
+  if (endpointId!=null) selectors.push({endpointId});
+  if (surfaceId!=null && bridgeId!=null) selectors.push({surfaceId,bridgeId});
+  if (surfaceId!=null) selectors.push({surfaceId});
+  if (bridgeId!=null) selectors.push({bridgeId});
+  if (guardSpanId!=null) selectors.push({guardSpanId});
+  if (routeId!=null) selectors.push({routeId});
+  const seen=new Set();
+  return selectors.filter(selector=>{const key=JSON.stringify(selector);if(seen.has(key))return false;seen.add(key);return true;});
+}
+
+function boundsOwnershipSelectors(bounds) {
+  return bounds?.[OWNERSHIP_SELECTORS] ?? [];
+}
+
+function attachBoundsOwnership(bounds, selectors, { replace=false }={}) {
+  if (!boundsValid(bounds)) return bounds;
+  const combined=replace?[]:[...boundsOwnershipSelectors(bounds)];
+  for (const selector of selectors??[]) {
+    if (!selector || !Object.values(selector).some(value=>value!=null)) continue;
+    const key=JSON.stringify(selector);
+    if (!combined.some(existing=>JSON.stringify(existing)===key)) combined.push(Object.freeze({...selector}));
+  }
+  if (combined.length) Object.defineProperty(bounds,OWNERSHIP_SELECTORS,{value:Object.freeze(combined),enumerable:false,configurable:true});
+  return bounds;
+}
 
 export function emptyBounds() {
   return { minX: Infinity, minY: Infinity, minZ: Infinity, maxX: -Infinity, maxY: -Infinity, maxZ: -Infinity };
@@ -45,18 +82,20 @@ export function includePoint(b, x, y, z) {
 
 export function unionBounds(...items) {
   const out = emptyBounds();
+  const selectors=[];
   for (const b of items.flat()) {
     if (!boundsValid(b)) continue;
     includePoint(out, b.minX, b.minY, b.minZ);
     includePoint(out, b.maxX, b.maxY, b.maxZ);
+    selectors.push(...boundsOwnershipSelectors(b));
   }
-  return boundsValid(out) ? out : null;
+  return boundsValid(out) ? attachBoundsOwnership(out,selectors) : null;
 }
 
 export function expandBounds(b, padding = 0) {
   if (!boundsValid(b)) return null;
   const p = Math.max(0, Number(padding) || 0);
-  return { minX:b.minX-p, minY:b.minY-p, minZ:b.minZ-p, maxX:b.maxX+p, maxY:b.maxY+p, maxZ:b.maxZ+p };
+  return attachBoundsOwnership({ minX:b.minX-p, minY:b.minY-p, minZ:b.minZ-p, maxX:b.maxX+p, maxY:b.maxY+p, maxZ:b.maxZ+p },boundsOwnershipSelectors(b));
 }
 
 export function boundsCenter(b) {
@@ -154,7 +193,9 @@ function payloadPhysicsTargets(entry, payloadIndex) {
   const push=(targetKind,item,index,arrayName,bounds=boundsFromPhysicsItem(item,targetKind))=>{
     if (!boundsValid(bounds)) return;
     const id=String(item?.id ?? item?.stairPartId ?? item?.stairId ?? item?.guardSpanId ?? item?.surfaceId ?? item?.routeId ?? `${arrayName}:${index}`);
-    const labels=[targetKind,arrayName,id,item?.kind,item?.source,item?.supportKind,item?.visualRole,item?.stairOwnerId,item?.stairPartId,item?.stairPartParentId,item?.stairPartKind,item?.stairId,item?.flightId,item?.moduleKey,item?.surfaceId,item?.bridgeId,item?.endpointId,item?.routeId,item?.networkKey].filter(v=>v!=null).map(String);
+    const metadata=item?.metadata??{};
+    const labels=[targetKind,arrayName,id,item?.kind,item?.source,item?.supportKind,item?.visualRole,item?.stairOwnerId,item?.stairPartId,item?.stairPartParentId,item?.stairPartKind,item?.stairId,item?.flightId,item?.moduleKey,item?.surfaceId,item?.bridgeId,item?.endpointId,item?.routeId,item?.networkKey,metadata?.stairOwnerId,metadata?.stairPartId,metadata?.stairPartKind,metadata?.stairId,metadata?.flightId,metadata?.moduleKey,metadata?.surfaceId,metadata?.bridgeId,metadata?.endpointId,metadata?.routeId,metadata?.networkKey].filter(v=>v!=null).map(String);
+    attachBoundsOwnership(bounds,ownershipSelectorsFromItem(item));
     out.push({ schema:JWEB_VISUAL_PROBE_SCHEMA, targetKind, arrayName, index, id, ownerId, chunkKey, bounds, labels, raw:item });
   };
   for (const [i,item] of (ph.semanticConnectors ?? []).entries()) push('semantic-connector',item,i,'semanticConnectors',boundsFromSemanticConnector(item));
@@ -188,6 +229,7 @@ function payloadPhysicsTargets(entry, payloadIndex) {
     if (!boundsValid(bounds)) continue;
     const raw={...ownership,stairOwnerId,stairPartKind:'assembly-root'};
     const labels=['stair-assembly','stairOwnership',stairOwnerId,ownership?.moduleKey,ownership?.stairTopology,ownership?.ownershipAuthority].filter(Boolean).map(String);
+    attachBoundsOwnership(bounds,[{stairOwnerId}],{replace:true});
     out.push({schema:JWEB_VISUAL_PROBE_SCHEMA,targetKind:'stair-assembly',arrayName:'stairOwnership',index:i,id:stairOwnerId,ownerId,chunkKey,bounds,labels,raw});
   }
   return out;
@@ -295,9 +337,44 @@ export function visualFragmentForInstance(THREE, object, instanceIndex) {
   return {object,instanceIndices:[index],bounds,rootName:object.parent?.name??'',objectName:object.name||'',triangleCount:Math.floor((object.geometry.index?.count??object.geometry.attributes?.position?.count??0)/3)};
 }
 
+function sourceOwnershipMatches(source, selector) {
+  if (!source || !selector) return false;
+  const entries=Object.entries(selector).filter(([,value])=>value!=null);
+  return !!entries.length && entries.every(([key,value])=>String(source?.[key]??'')===String(value));
+}
+
+export function visualFragmentsForSourceOwnership(THREE, roots, selectors, { includeInvisible = false } = {}) {
+  const rootsArray=Array.isArray(roots)?roots:[roots];
+  const wanted=(Array.isArray(selectors)?selectors:[selectors]).filter(selector=>selector&&Object.values(selector).some(value=>value!=null));
+  if(!wanted.length)return [];
+  const fragments=[];
+  const instanceMatrix=new THREE.Matrix4(),worldMatrix=new THREE.Matrix4();
+  for(const root of rootsArray){
+    if(!root?.traverse)continue;
+    root.updateMatrixWorld?.(true);
+    root.traverse(object=>{
+      if(!object?.isInstancedMesh)return;
+      if(!includeInvisible){let cursor=object,visible=true;while(cursor){if(cursor.visible===false){visible=false;break;}if(cursor===root)break;cursor=cursor.parent;}if(!visible)return;}
+      const sources=object.userData?.visualProbeInstanceSources;
+      if(!(sources instanceof Map)||!sources.size)return;
+      const localBox=localGeometryBox(THREE,object.geometry);if(!localBox||localBox.isEmpty())return;
+      const indices=[];let merged=null;
+      for(const [index,source] of sources){
+        if(!Number.isInteger(index)||index<0||index>=object.count||!wanted.some(selector=>sourceOwnershipMatches(source,selector)))continue;
+        object.getMatrixAt(index,instanceMatrix);worldMatrix.multiplyMatrices(object.matrixWorld,instanceMatrix);
+        const bounds=threeBoxToBounds(localBox.clone().applyMatrix4(worldMatrix));indices.push(index);merged=unionBounds(merged,bounds);
+      }
+      if(indices.length)fragments.push({object,instanceIndices:indices,bounds:merged,rootName:root.name||'',objectName:object.name||'',triangleCount:Math.floor((object.geometry.index?.count??object.geometry.attributes?.position?.count??0)/3)*indices.length,selectionAuthority:'circulation-instance-ownership-v1'});
+    });
+  }
+  return fragments;
+}
+
 export function visualFragmentsForBounds(THREE, roots, selectionBounds, { includeInvisible = false } = {}) {
   const rootsArray=Array.isArray(roots)?roots:[roots];
   const selection=expandBounds(selectionBounds,0);
+  const owned=visualFragmentsForSourceOwnership(THREE,rootsArray,boundsOwnershipSelectors(selection),{includeInvisible});
+  if(owned.length)return owned;
   const fragments=[];
   const tmpMatrix=new THREE.Matrix4();
   const instanceMatrix=new THREE.Matrix4();

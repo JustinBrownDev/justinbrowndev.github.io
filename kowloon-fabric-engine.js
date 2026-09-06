@@ -563,6 +563,28 @@ export function createKowloonFabricEngine({
     const planeQuat = new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2, 0, 0));
     const boxEuler = new THREE.Euler();
 
+    const visualProbeIdentityKeys = Object.freeze([
+        'id', 'stairOwnerId', 'stairPartId', 'stairPartParentId', 'stairPartKind', 'stairId', 'flightId', 'landingId',
+        'surfaceId', 'bridgeId', 'endpointId', 'guardSpanId', 'routeId', 'networkKey', 'visualRole', 'architectureRole',
+        'structuralRole', 'supportKind', 'thresholdAuthority', 'bridgeArchitecture', 'architectureFamily', 'bridgeVariant',
+    ]);
+    function visualProbeInstanceIdentity(transform) {
+        // Keep exact visual ownership cheap: ordinary facade/road/window instances get
+        // no metadata. Only circulation-owned instances retain a tiny primitive-only
+        // identity record, never the full transform object.
+        const strongIdentity = transform?.stairOwnerId != null || transform?.surfaceId != null || transform?.bridgeId != null
+            || transform?.routeId != null || transform?.guardSpanId != null || transform?.endpointId != null
+            || transform?.thresholdAuthority != null || transform?.bridgeArchitecture === true;
+        if (!strongIdentity) return null;
+        const identity = {};
+        for (const key of visualProbeIdentityKeys) {
+            const value = transform?.[key];
+            if (value == null || !['string', 'number', 'boolean'].includes(typeof value)) continue;
+            identity[key] = value;
+        }
+        return Object.keys(identity).length ? Object.freeze(identity) : null;
+    }
+
     function makeInstanced(name, geometry, material, transforms) {
         if (!transforms.length) return null;
         const mesh = new THREE.InstancedMesh(geometry, material, transforms.length);
@@ -570,6 +592,7 @@ export function createKowloonFabricEngine({
         mesh.castShadow = false;
         mesh.receiveShadow = true;
         mesh.instanceMatrix.setUsage?.(THREE.StaticDrawUsage);
+        let visualProbeInstanceSources = null;
         for (let i = 0; i < transforms.length; i++) {
             const t = transforms[i];
             pos.set(t.x, t.y, t.z);
@@ -581,6 +604,18 @@ export function createKowloonFabricEngine({
             matrix.compose(pos, quat, scale);
             mesh.setMatrixAt(i, matrix);
             mesh.setColorAt(i, t.color != null ? instanceTintScratch.set(t.color) : cavernTintAtY(t.y, material));
+            const sourceIdentity = visualProbeInstanceIdentity(t);
+            if (sourceIdentity) {
+                visualProbeInstanceSources ??= new Map();
+                visualProbeInstanceSources.set(i, sourceIdentity);
+            }
+        }
+        if (visualProbeInstanceSources?.size) {
+            mesh.userData.visualProbeInstanceAuthority = 'circulation-instance-ownership-v1';
+            // Non-enumerable keeps ordinary userData cloning/serialization small.
+            Object.defineProperty(mesh.userData, 'visualProbeInstanceSources', {
+                value: visualProbeInstanceSources, enumerable: false, configurable: false, writable: false,
+            });
         }
         mesh.instanceMatrix.needsUpdate = true;
         if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
@@ -2372,6 +2407,7 @@ export function createKowloonFabricEngine({
         const primaryModuleRoofY = moduleRoofLocalY(primaryModule, floorH);
         const primaryModuleBaseY = moduleBaseLocalY(primaryModule, floorH);
         const buildingPlanEntityId = structureProfile?.entityIdOverride ?? worldEntityId(worldSeed, chunk.x, chunk.z, 'building', siteSignature);
+        const primaryStairOwnerId = `${chunk.key}:${siteSignature}:${primaryModule.key}:compound-stair`;
         const primaryStairConnector = createStairConnector({
             id: `${chunk.key}:${siteSignature}:${primaryModule.key}:stair`,
             x: primaryStairCx, z: primaryStairCz,
@@ -2393,6 +2429,7 @@ export function createKowloonFabricEngine({
             metadata: {
                 moduleKey: primaryModule.key,
                 floors: primaryModule.floors,
+                stairOwnerId: primaryStairOwnerId,
                 floorH,
                 physicalUse: physicalUse.family,
                 clearWidthRealizedSI: primaryActualStairClearWidth,
@@ -2408,7 +2445,6 @@ export function createKowloonFabricEngine({
         });
         registerSemanticConnector(physics, primaryStairConnector);
         const primaryStairReservation = primaryStairConnector.primaryReservation;
-        const primaryStairOwnerId = primaryStairConnector.id;
         primaryStairReservation.stairOwnerId = primaryStairOwnerId;
         primaryStairReservation.stairPartId = `${primaryStairOwnerId}:core-reservation`;
         primaryStairReservation.stairPartKind = 'core-reservation';
@@ -4011,6 +4047,7 @@ export function createKowloonFabricEngine({
             ? (primaryModule.floors - 1) * floorH + floorH
             : 0;
         const buildingPlanEntityId = structureProfile?.entityIdOverride ?? worldEntityId(worldSeed, chunk.x, chunk.z, 'building', siteSignature);
+        const primaryStairOwnerId = `${chunk.key}:${siteSignature}:${primaryModule.key}:compound-stair`;
         const primaryStairConnector = createStairConnector({
             id: `${chunk.key}:${siteSignature}:${primaryModule.key}:stair`,
             x: primaryStairCx, z: primaryStairCz,
@@ -4032,6 +4069,7 @@ export function createKowloonFabricEngine({
             metadata: {
                 moduleKey: primaryModule.key,
                 floors: primaryModule.floors,
+                stairOwnerId: primaryStairOwnerId,
                 floorH,
                 physicalUse: physicalUse.family,
                 clearWidthRealizedSI: primaryActualStairClearWidth,
@@ -4047,7 +4085,6 @@ export function createKowloonFabricEngine({
         });
         registerSemanticConnector(physics, primaryStairConnector);
         const primaryStairReservation = primaryStairConnector.primaryReservation;
-        const primaryStairOwnerId = primaryStairConnector.id;
         primaryStairReservation.stairOwnerId = primaryStairOwnerId;
         primaryStairReservation.stairPartId = `${primaryStairOwnerId}:core-reservation`;
         primaryStairReservation.stairPartKind = 'core-reservation';
@@ -5019,6 +5056,7 @@ export function createKowloonFabricEngine({
         const bridgeArchitecture = planSkybridgeArchitecture({
             id: bridge.id, axis: bridge.axis, from, to, fixedCoord, y, width,
             family: bridge.architectureFamily ?? 'simple-guarded', widthClass: bridge.widthClass ?? 'local',
+            variant: bridge.variant || 'skybridge',
             stableKey: `${worldSeed}:${bridge.id}:bridge-architecture`,
             supportModeHint: hanging && (bridge.widthClass === 'collector' || bridge.widthClass === 'sky-street') ? 'hung-from-above' : null,
             field: hanging ? 'ceiling' : 'ground',
@@ -5033,6 +5071,9 @@ export function createKowloonFabricEngine({
             family: bridgeArchitecture.family, materialFamily: bridgeArchitecture.materialFamily ?? bridgeArchitecture.family,
             widthClass: bridgeArchitecture.widthClass,
             parts: bridgeArchitecture.parts, supportParts: bridgeArchitecture.supportParts ?? 0,
+            variantParts: bridgeArchitecture.variantParts ?? 0,
+            bridgeVariant: bridgeArchitecture.bridgeVariant ?? bridge.variant ?? 'skybridge',
+            structuralGrammar: bridgeArchitecture.structuralGrammar ?? 'family-native-v1',
             supportMode: bridgeArchitecture.supportMode ?? null,
             span: bridgeArchitecture.span, width: bridgeArchitecture.width,
             endpointClearance: bridgeArchitecture.endpointClearance ?? null,
@@ -5041,21 +5082,8 @@ export function createKowloonFabricEngine({
             worldBandY: y, midpointScore: bridge.midpointScore ?? null,
             traversalAuthority: bridgeArchitecture.traversalAuthority,
         }));
-        if (hanging) {
-            const span = Math.abs(to - from);
-            const postCount = Math.max(2, Math.floor(span / 1.7));
-            for (let i = 0; i <= postCount; i++) {
-                const along = from + (to - from) * (i / postCount);
-                const sag = Math.sin(Math.PI * (i / postCount)) * 0.38;
-                if (bridge.axis === 'x') {
-                    transforms.props.push({ x: along, y: y + 1.02 - sag, z: fixedCoord - width * 0.5, sx: 0.055, sy: 1.08 - sag, sz: 0.055, bridgeId: bridge.id, surfaceId: surface.id, bridgeDecorativeRail: true, junctionYield: true });
-                    transforms.props.push({ x: along, y: y + 1.02 - sag, z: fixedCoord + width * 0.5, sx: 0.055, sy: 1.08 - sag, sz: 0.055, bridgeId: bridge.id, surfaceId: surface.id, bridgeDecorativeRail: true, junctionYield: true });
-                } else {
-                    transforms.props.push({ x: fixedCoord - width * 0.5, y: y + 1.02 - sag, z: along, sx: 0.055, sy: 1.08 - sag, sz: 0.055, bridgeId: bridge.id, surfaceId: surface.id, bridgeDecorativeRail: true, junctionYield: true });
-                    transforms.props.push({ x: fixedCoord + width * 0.5, y: y + 1.02 - sag, z: along, sx: 0.055, sy: 1.08 - sag, sz: 0.055, bridgeId: bridge.id, surfaceId: surface.id, bridgeDecorativeRail: true, junctionYield: true });
-                }
-            }
-        }
+        // Hanging-bridge identity is structural now. The planner owns its tension
+        // system and hangers; do not layer a second decorative pseudo-rail here.
         aEntity.skybridges = (aEntity.skybridges || 0) + 1;
         bEntity.skybridges = (bEntity.skybridges || 0) + 1;
         return true;
@@ -7841,6 +7869,7 @@ export function createKowloonFabricEngine({
             width: Number(plan.halfWidth) * 2,
             family: plan.districtRouteId ? 'heavy-beam' : 'simple-guarded',
             widthClass: plan.districtRouteId ? 'collector' : 'local',
+            variant: 'sky-street-seam',
             stableKey: `${worldSeed}:${plan.id}:cross-chunk-architecture`,
             supportModeHint: 'hung-from-above',
             field: 'ceiling',

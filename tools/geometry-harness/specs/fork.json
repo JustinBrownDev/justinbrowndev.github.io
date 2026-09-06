@@ -1,0 +1,59 @@
+{
+  "schema": "jweb.silhouette-tester.structure.v2",
+  "name": "Eating Fork v2",
+  "elements": [
+    {
+      "type": "obj",
+      "id": "model",
+      "path": "../models/fork.obj",
+      "roles": [
+        "visual",
+        "collider"
+      ]
+    }
+  ],
+  "checks": [
+    {
+      "type": "extent",
+      "selector": "fork-body",
+      "axis": "y",
+      "min": 0.004,
+      "id": "fork-handle-not-knife-thin"
+    },
+    {
+      "type": "extent",
+      "selector": "tine-*",
+      "axis": "y",
+      "min": 0.0019,
+      "id": "fork-tines-have-safe-material-thickness"
+    },
+    {
+      "type": "contact",
+      "a": "fork-body",
+      "b": "tine-1",
+      "max_gap": 0.0005,
+      "id": "fork-body-joins-tine-1"
+    },
+    {
+      "type": "contact",
+      "a": "fork-body",
+      "b": "tine-2",
+      "max_gap": 0.0005,
+      "id": "fork-body-joins-tine-2"
+    },
+    {
+      "type": "contact",
+      "a": "fork-body",
+      "b": "tine-3",
+      "max_gap": 0.0005,
+      "id": "fork-body-joins-tine-3"
+    },
+    {
+      "type": "contact",
+      "a": "fork-body",
+      "b": "tine-4",
+      "max_gap": 0.0005,
+      "id": "fork-body-joins-tine-4"
+    }
+  ]
+}

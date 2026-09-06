@@ -1,0 +1,120 @@
+{
+  "schema": "jweb.geometry-scene.v1",
+  "name": "Projecting Small-Business Wall Sign",
+  "source_kind": "authored-structure",
+  "source_metadata": {
+    "family": "projecting blade sign",
+    "mount": "two wall plates + arm + diagonal brace + two hangers"
+  },
+  "elements": [
+    {
+      "type": "obj",
+      "id": "model",
+      "path": "../models/wall-business-sign.obj",
+      "roles": [
+        "visual",
+        "collider"
+      ]
+    },
+    {
+      "type": "box",
+      "id": "diagnostic:building-wall",
+      "center": [
+        0,
+        1.75,
+        -0.05
+      ],
+      "size": [
+        3.0,
+        3.5,
+        0.1
+      ],
+      "roles": []
+    }
+  ],
+  "checks": [
+    {
+      "type": "contact",
+      "a": "wall-plate-upper",
+      "b": "diagnostic:building-wall",
+      "max_gap": 0.001,
+      "id": "upper-plate-seated-on-wall"
+    },
+    {
+      "type": "contact",
+      "a": "wall-plate-lower",
+      "b": "diagnostic:building-wall",
+      "max_gap": 0.001,
+      "id": "lower-plate-seated-on-wall"
+    },
+    {
+      "type": "contact",
+      "a": "top-arm",
+      "b": "wall-plate-upper",
+      "max_gap": 0.001,
+      "id": "arm-welded-to-upper-plate"
+    },
+    {
+      "type": "contact",
+      "a": "diagonal-brace",
+      "b": "wall-plate-lower",
+      "max_gap": 0.001,
+      "id": "brace-starts-at-lower-plate"
+    },
+    {
+      "type": "contact",
+      "a": "diagonal-brace",
+      "b": "top-arm",
+      "max_gap": 0.001,
+      "id": "brace-terminates-at-arm"
+    },
+    {
+      "type": "contact",
+      "a": "hanger-inner",
+      "b": "top-arm",
+      "max_gap": 0.001,
+      "id": "inner-hanger-attaches-arm"
+    },
+    {
+      "type": "contact",
+      "a": "hanger-outer",
+      "b": "top-arm",
+      "max_gap": 0.001,
+      "id": "outer-hanger-attaches-arm"
+    },
+    {
+      "type": "contact",
+      "a": "hanger-inner",
+      "b": [
+        "sign-cabinet",
+        "sign-top-trim"
+      ],
+      "max_gap": 0.001,
+      "id": "inner-hanger-attaches-sign"
+    },
+    {
+      "type": "contact",
+      "a": "hanger-outer",
+      "b": [
+        "sign-cabinet",
+        "sign-top-trim"
+      ],
+      "max_gap": 0.001,
+      "id": "outer-hanger-attaches-sign"
+    },
+    {
+      "type": "contact",
+      "a": "sign-top-trim",
+      "b": "sign-cabinet",
+      "max_gap": 0.001,
+      "id": "top-trim-fixed-to-cabinet"
+    },
+    {
+      "type": "contact",
+      "a": "sign-bottom-trim",
+      "b": "sign-cabinet",
+      "max_gap": 0.001,
+      "id": "bottom-trim-fixed-to-cabinet"
+    }
+  ]
+}

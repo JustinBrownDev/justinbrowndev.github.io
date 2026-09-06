@@ -1,0 +1,732 @@
+{
+  "seed": 671278205,
+  "before": [
+    {
+      "chunk": "0,0",
+      "weirdness": 0,
+      "connectors": 99,
+      "stairConnectors": 18,
+      "fitBadCount": 4,
+      "widthBadCount": 0,
+      "riseBadCount": 6,
+      "reservationBadCount": 0,
+      "fitBad": [
+        {
+          "id": "0,0:5,0|6,0|7,0|7,1|6,1|8,1|8,2|8,3|7,2|8,0|7,3|5,1:5,0:mezzanine:0",
+          "source": "mezzanine-stair",
+          "kind": "mezzanine-ramp",
+          "fit": "geometry-fit-outside-truth",
+          "realizedTreadDepth": 0.23999999999999985,
+          "threshold": 0.2794,
+          "rise": 1.7473368919640777,
+          "run": 2.3999999999999986,
+          "width": 1.15,
+          "clearWidth": 1.1296252431240763,
+          "physicalUse": "mercantile-public"
+        },
+        {
+          "id": "0,0:5,0|6,0|7,0|7,1|6,1|8,1|8,2|8,3|7,2|8,0|7,3|5,1:8,1:mezzanine:1",
+          "source": "mezzanine-stair",
+          "kind": "mezzanine-ramp",
+          "fit": "geometry-fit-outside-truth",
+          "realizedTreadDepth": 0.2666666666666665,
+          "threshold": 0.2794,
+          "rise": 1.516885482959915,
+          "run": 2.3999999999999986,
+          "width": 1.15,
+          "clearWidth": 1.1296252431240763,
+          "physicalUse": "mercantile-public"
+        },
+        {
+          "id": "0,0:5,0|6,0|7,0|7,1|6,1|8,1|8,2|8,3|7,2|8,0|7,3|5,1:7,3:mezzanine:2",
+          "source": "mezzanine-stair",
+          "kind": "mezzanine-ramp",
+          "fit": "geometry-fit-outside-truth",
+          "realizedTreadDepth": 0.2666666666666665,
+          "threshold": 0.2794,
+          "rise": 1.5281691875606775,
+          "run": 2.3999999999999986,
+          "width": 1.15,
+          "clearWidth": 1.1296252431240763,
+          "physicalUse": "mercantile-public"
+        },
+        {
+          "id": "0,0:0,5|0,6|1,5|1,6|1,7|2,7|3,7|3,8|2,8|1,8|0,7|0,8:3,7:mezzanine:0",
+          "source": "mezzanine-stair",
+          "kind": "mezzanine-ramp",
+          "fit": "geometry-fit-outside-truth",
+          "realizedTreadDepth": 0.24000000000000005,
+          "threshold": 0.2794,
+          "rise": 1.7277421232722698,
+          "run": 2.4000000000000004,
+          "width": 1.15,
+          "clearWidth": 1.1297543329740822,
+          "physicalUse": "assembly-institutional"
+        }
+      ],
+      "widthBad": []
+    },
+    {
+      "chunk": "1,0",
+      "weirdness": 0,
+      "connectors": 67,
+      "stairConnectors": 20,
+      "fitBadCount": 4,
+      "widthBadCount": 4,
+      "riseBadCount": 6,
+      "reservationBadCount": 0,
+      "fitBad": [
+        {
+          "id": "1,0:5,0|6,0|7,0|5,1|6,1|7,1|7,2|8,2|8,3|8,1|8,4|7,3|7,4|8,5|8,0|7,5|8,6|7,6:7,0:mezzanine:0",
+          "source": "mezzanine-stair",
+          "kind": "mezzanine-ramp",
+          "fit": "geometry-fit-outside-truth",
+          "realizedTreadDepth": 0.17142857142857132,
+          "threshold": 0.2794,
+          "rise": 2.3623840321338183,
+          "run": 2.3999999999999986,
+          "width": 1.15,
+          "clearWidth": 1.183720787518451,
+          "physicalUse": "mercantile-public"
+        },
+        {
+          "id": "1,0:5,0|6,0|7,0|5,1|6,1|7,1|7,2|8,2|8,3|8,1|8,4|7,3|7,4|8,5|8,0|7,5|8,6|7,6:6,1:mezzanine:1",
+          "source": "mezzanine-stair",
+          "kind": "mezzanine-ramp",
+          "fit": "geometry-fit-outside-truth",
+          "realizedTreadDepth": 0.18461538461538451,
+          "threshold": 0.2794,
+          "rise": 2.1834318497982936,
+          "run": 2.3999999999999986,
+          "width": 1.15,
+          "clearWidth": 1.183720787518451,
+          "physicalUse": "mercantile-public"
+        },
+        {
+          "id": "1,0:5,0|6,0|7,0|5,1|6,1|7,1|7,2|8,2|8,3|8,1|8,4|7,3|7,4|8,5|8,0|7,5|8,6|7,6:7,4:mezzanine:2",
+          "source": "mezzanine-stair",
+          "kind": "mezzanine-ramp",
+          "fit": "geometry-fit-outside-truth",
+          "realizedTreadDepth": 0.18461538461538465,
+          "threshold": 0.2794,
+          "rise": 2.277217536406758,
+          "run": 2.4000000000000004,
+          "width": 1.15,
+          "clearWidth": 1.183720787518451,
+          "physicalUse": "mercantile-public"
+        },
+        {
+          "id": "1,0:5,0|6,0|7,0|5,1|6,1|7,1|7,2|8,2|8,3|8,1|8,4|7,3|7,4|8,5|8,0|7,5|8,6|7,6:8,6:mezzanine:3",
+          "source": "mezzanine-stair",
+          "kind": "mezzanine-ramp",
+          "fit": "geometry-fit-outside-truth",
+          "realizedTreadDepth": 0.17142857142857146,
+          "threshold": 0.2794,
+          "rise": 2.3776423227505985,
+          "run": 2.4000000000000004,
+          "width": 1.15,
+          "clearWidth": 1.183720787518451,
+          "physicalUse": "mercantile-public"
+        }
+      ],
+      "widthBad": [
+        {
+          "id": "1,0:5,0|6,0|7,0|5,1|6,1|7,1|7,2|8,2|8,3|8,1|8,4|7,3|7,4|8,5|8,0|7,5|8,6|7,6:7,0:mezzanine:0",
+          "source": "mezzanine-stair",
+          "kind": "mezzanine-ramp",
+          "width": 1.15,
+          "clearWidth": 1.183720787518451,
+          "fit": "geometry-fit-outside-truth",
+          "physicalUse": "mercantile-public"
+        },
+        {
+          "id": "1,0:5,0|6,0|7,0|5,1|6,1|7,1|7,2|8,2|8,3|8,1|8,4|7,3|7,4|8,5|8,0|7,5|8,6|7,6:6,1:mezzanine:1",
+          "source": "mezzanine-stair",
+          "kind": "mezzanine-ramp",
+          "width": 1.15,
+          "clearWidth": 1.183720787518451,
+          "fit": "geometry-fit-outside-truth",
+          "physicalUse": "mercantile-public"
+        },
+        {
+          "id": "1,0:5,0|6,0|7,0|5,1|6,1|7,1|7,2|8,2|8,3|8,1|8,4|7,3|7,4|8,5|8,0|7,5|8,6|7,6:7,4:mezzanine:2",
+          "source": "mezzanine-stair",
+          "kind": "mezzanine-ramp",
+          "width": 1.15,
+          "clearWidth": 1.183720787518451,
+          "fit": "geometry-fit-outside-truth",
+          "physicalUse": "mercantile-public"
+        },
+        {
+          "id": "1,0:5,0|6,0|7,0|5,1|6,1|7,1|7,2|8,2|8,3|8,1|8,4|7,3|7,4|8,5|8,0|7,5|8,6|7,6:8,6:mezzanine:3",
+          "source": "mezzanine-stair",
+          "kind": "mezzanine-ramp",
+          "width": 1.15,
+          "clearWidth": 1.183720787518451,
+          "fit": "geometry-fit-outside-truth",
+          "physicalUse": "mercantile-public"
+        }
+      ]
+    },
+    {
+      "chunk": "2,0",
+      "weirdness": 6.372998899292533e-05,
+      "connectors": 148,
+      "stairConnectors": 31,
+      "fitBadCount": 1,
+      "widthBadCount": 1,
+      "riseBadCount": 7,
+      "reservationBadCount": 0,
+      "fitBad": [
+        {
+          "id": "2,0:1,5|1,6|1,7|1,8|0,8|2,7|3,7|3,8|2,8:3,8:mezzanine:0",
+          "source": "mezzanine-stair",
+          "kind": "mezzanine-ramp",
+          "fit": "geometry-fit-outside-truth",
+          "realizedTreadDepth": 0.2666666666666665,
+          "threshold": 0.2794,
+          "rise": 1.5160350023079041,
+          "run": 2.3999999999999986,
+          "width": 1.15,
+          "clearWidth": 1.1593441820610433,
+          "physicalUse": "business"
+        }
+      ],
+      "widthBad": [
+        {
+          "id": "2,0:1,5|1,6|1,7|1,8|0,8|2,7|3,7|3,8|2,8:3,8:mezzanine:0",
+          "source": "mezzanine-stair",
+          "kind": "mezzanine-ramp",
+          "width": 1.15,
+          "clearWidth": 1.1593441820610433,
+          "fit": "geometry-fit-outside-truth",
+          "physicalUse": "business"
+        }
+      ]
+    },
+    {
+      "chunk": "4,0",
+      "weirdness": 0.0037480251923544972,
+      "connectors": 72,
+      "stairConnectors": 16,
+      "fitBadCount": 7,
+      "widthBadCount": 6,
+      "riseBadCount": 6,
+      "reservationBadCount": 0,
+      "fitBad": [
+        {
+          "id": "4,0:8,0|8,1|7,1|6,1|8,2|8,3|7,2|8,4|7,3|7,4|5,1|7,5|7,6|8,5|8,6:8,2:mezzanine:1",
+          "source": "mezzanine-stair",
+          "kind": "mezzanine-ramp",
+          "fit": "geometry-fit-outside-truth",
+          "realizedTreadDepth": 0.24000000000000005,
+          "threshold": 0.2794,
+          "rise": 1.785710788554512,
+          "run": 2.4000000000000004,
+          "width": 1.15,
+          "clearWidth": 1.1681762620787728,
+          "physicalUse": "mercantile-public"
+        },
+        {
+          "id": "4,0:8,0|8,1|7,1|6,1|8,2|8,3|7,2|8,4|7,3|7,4|5,1|7,5|7,6|8,5|8,6:8,3:mezzanine:2",
+          "source": "mezzanine-stair",
+          "kind": "mezzanine-ramp",
+          "fit": "geometry-fit-outside-truth",
+          "realizedTreadDepth": 0.26666666666666416,
+          "threshold": 0.2794,
+          "rise": 1.6686697423914447,
+          "run": 2.3999999999999773,
+          "width": 1.15,
+          "clearWidth": 1.1681762620787728,
+          "physicalUse": "mercantile-public"
+        },
+        {
+          "id": "4,0:3,3|2,3|1,3|1,2|1,1|0,1|1,0|2,1|0,0|2,0|3,0|3,1:1,3:mezzanine:0",
+          "source": "mezzanine-stair",
+          "kind": "mezzanine-ramp",
+          "fit": "geometry-fit-outside-truth",
+          "realizedTreadDepth": 0.21818181818181823,
+          "threshold": 0.2794,
+          "rise": 2.046701411886823,
+          "run": 2.4000000000000004,
+          "width": 1.15,
+          "clearWidth": 1.1699335669172153,
+          "physicalUse": "mercantile-public"
+        },
+        {
+          "id": "4,0:3,3|2,3|1,3|1,2|1,1|0,1|1,0|2,1|0,0|2,0|3,0|3,1:2,0:mezzanine:1",
+          "source": "mezzanine-stair",
+          "kind": "mezzanine-ramp",
+          "fit": "geometry-fit-outside-truth",
+          "realizedTreadDepth": 0.2181818181818187,
+          "threshold": 0.2794,
+          "rise": 1.9980535947604507,
+          "run": 2.4000000000000057,
+          "width": 1.15,
+          "clearWidth": 1.1699335669172153,
+          "physicalUse": "mercantile-public"
+        },
+        {
+          "id": "4,0:0,5|0,6|1,5|1,6|0,7|0,8|1,7|2,7|1,8|2,8|3,8|3,7:1,6:mezzanine:0",
+          "source": "mezzanine-stair",
+          "kind": "mezzanine-ramp",
+          "fit": "geometry-fit-outside-truth",
+          "realizedTreadDepth": 0.2666666666666673,
+          "threshold": 0.2794,
+          "rise": 1.5750959051535465,
+          "run": 2.4000000000000057,
+          "width": 1.15,
+          "clearWidth": 1.1456325145732433,
+          "physicalUse": "mercantile-public"
+        },
+        {
+          "id": "4,0:0,5|0,6|1,5|1,6|0,7|0,8|1,7|2,7|1,8|2,8|3,8|3,7:0,7:mezzanine:1",
+          "source": "mezzanine-stair",
+          "kind": "mezzanine-ramp",
+          "fit": "geometry-fit-outside-truth",
+          "realizedTreadDepth": 0.24000000000000057,
+          "threshold": 0.2794,
+          "rise": 1.7851761918892153,
+          "run": 2.4000000000000057,
+          "width": 1.15,
+          "clearWidth": 1.1456325145732433,
+          "physicalUse": "mercantile-public"
+        },
+        {
+          "id": "4,0:0,5|0,6|1,5|1,6|0,7|0,8|1,7|2,7|1,8|2,8|3,8|3,7:1,8:mezzanine:2",
+          "source": "mezzanine-stair",
+          "kind": "mezzanine-ramp",
+          "fit": "geometry-fit-outside-truth",
+          "realizedTreadDepth": 0.2666666666666665,
+          "threshold": 0.2794,
+          "rise": 1.6955373525568282,
+          "run": 2.3999999999999986,
+          "width": 1.15,
+          "clearWidth": 1.1456325145732433,
+          "physicalUse": "mercantile-public"
+        }
+      ],
+      "widthBad": [
+        {
+          "id": "4,0:8,0|8,1|7,1|6,1|8,2|8,3|7,2|8,4|7,3|7,4|5,1|7,5|7,6|8,5|8,6:6,1:mezzanine:0",
+          "source": "mezzanine-stair",
+          "kind": "mezzanine-ramp",
+          "width": 1.15,
+          "clearWidth": 1.1681762620787728,
+          "fit": "fits-resolved-truth",
+          "physicalUse": "mercantile-public"
+        },
+        {
+          "id": "4,0:8,0|8,1|7,1|6,1|8,2|8,3|7,2|8,4|7,3|7,4|5,1|7,5|7,6|8,5|8,6:8,2:mezzanine:1",
+          "source": "mezzanine-stair",
+          "kind": "mezzanine-ramp",
+          "width": 1.15,
+          "clearWidth": 1.1681762620787728,
+          "fit": "geometry-fit-outside-truth",
+          "physicalUse": "mercantile-public"
+        },
+        {
+          "id": "4,0:8,0|8,1|7,1|6,1|8,2|8,3|7,2|8,4|7,3|7,4|5,1|7,5|7,6|8,5|8,6:8,3:mezzanine:2",
+          "source": "mezzanine-stair",
+          "kind": "mezzanine-ramp",
+          "width": 1.15,
+          "clearWidth": 1.1681762620787728,
+          "fit": "geometry-fit-outside-truth",
+          "physicalUse": "mercantile-public"
+        },
+        {
+          "id": "4,0:8,0|8,1|7,1|6,1|8,2|8,3|7,2|8,4|7,3|7,4|5,1|7,5|7,6|8,5|8,6:7,4:mezzanine:3",
+          "source": "mezzanine-stair",
+          "kind": "mezzanine-ramp",
+          "width": 1.15,
+          "clearWidth": 1.1681762620787728,
+          "fit": "fits-resolved-truth",
+          "physicalUse": "mercantile-public"
+        },
+        {
+          "id": "4,0:3,3|2,3|1,3|1,2|1,1|0,1|1,0|2,1|0,0|2,0|3,0|3,1:1,3:mezzanine:0",
+          "source": "mezzanine-stair",
+          "kind": "mezzanine-ramp",
+          "width": 1.15,
+          "clearWidth": 1.1699335669172153,
+          "fit": "geometry-fit-outside-truth",
+          "physicalUse": "mercantile-public"
+        },
+        {
+          "id": "4,0:3,3|2,3|1,3|1,2|1,1|0,1|1,0|2,1|0,0|2,0|3,0|3,1:2,0:mezzanine:1",
+          "source": "mezzanine-stair",
+          "kind": "mezzanine-ramp",
+          "width": 1.15,
+          "clearWidth": 1.1699335669172153,
+          "fit": "geometry-fit-outside-truth",
+          "physicalUse": "mercantile-public"
+        }
+      ]
+    },
+    {
+      "chunk": "8,0",
+      "weirdness": 0.040460498109920695,
+      "connectors": 90,
+      "stairConnectors": 16,
+      "fitBadCount": 10,
+      "widthBadCount": 1,
+      "riseBadCount": 5,
+      "reservationBadCount": 0,
+      "fitBad": [
+        {
+          "id": "8,0:5,5|5,4|5,3|5,2|5,1|4,1|4,0|3,0|5,0|2,0|6,0|3,1|2,1|6,1|7,0|7,1|8,1|8,2|8,3|7,2|7,3|8,0|7,4|8,4|8,5|7,5:5,5:mezzanine:0",
+          "source": "mezzanine-stair",
+          "kind": "mezzanine-ramp",
+          "fit": "geometry-fit-outside-truth",
+          "realizedTreadDepth": 0.26666666666667677,
+          "threshold": 0.2794,
+          "rise": 1.575741793259047,
+          "run": 2.400000000000091,
+          "width": 1.15,
+          "clearWidth": 1.108373798155345,
+          "physicalUse": "business"
+        },
+        {
+          "id": "8,0:5,5|5,4|5,3|5,2|5,1|4,1|4,0|3,0|5,0|2,0|6,0|3,1|2,1|6,1|7,0|7,1|8,1|8,2|8,3|7,2|7,3|8,0|7,4|8,4|8,5|7,5:5,2:mezzanine:1",
+          "source": "mezzanine-stair",
+          "kind": "mezzanine-ramp",
+          "fit": "geometry-fit-outside-truth",
+          "realizedTreadDepth": 0.2666666666666667,
+          "threshold": 0.2794,
+          "rise": 1.5799363847072234,
+          "run": 2.4000000000000004,
+          "width": 1.15,
+          "clearWidth": 1.108373798155345,
+          "physicalUse": "business"
+        },
+        {
+          "id": "8,0:5,5|5,4|5,3|5,2|5,1|4,1|4,0|3,0|5,0|2,0|6,0|3,1|2,1|6,1|7,0|7,1|8,1|8,2|8,3|7,2|7,3|8,0|7,4|8,4|8,5|7,5:5,0:mezzanine:2",
+          "source": "mezzanine-stair",
+          "kind": "mezzanine-ramp",
+          "fit": "geometry-fit-outside-truth",
+          "realizedTreadDepth": 0.23999999999999985,
+          "threshold": 0.2794,
+          "rise": 1.7874593131681904,
+          "run": 2.3999999999999986,
+          "width": 1.15,
+          "clearWidth": 1.108373798155345,
+          "physicalUse": "business"
+        },
+        {
+          "id": "8,0:5,5|5,4|5,3|5,2|5,1|4,1|4,0|3,0|5,0|2,0|6,0|3,1|2,1|6,1|7,0|7,1|8,1|8,2|8,3|7,2|7,3|8,0|7,4|8,4|8,5|7,5:6,1:mezzanine:4",
+          "source": "mezzanine-stair",
+          "kind": "mezzanine-ramp",
+          "fit": "geometry-fit-outside-truth",
+          "realizedTreadDepth": 0.2666666666666665,
+          "threshold": 0.2794,
+          "rise": 1.5441957606347279,
+          "run": 2.3999999999999986,
+          "width": 1.15,
+          "clearWidth": 1.108373798155345,
+          "physicalUse": "business"
+        },
+        {
+          "id": "8,0:5,5|5,4|5,3|5,2|5,1|4,1|4,0|3,0|5,0|2,0|6,0|3,1|2,1|6,1|7,0|7,1|8,1|8,2|8,3|7,2|7,3|8,0|7,4|8,4|8,5|7,5:7,0:mezzanine:5",
+          "source": "mezzanine-stair",
+          "kind": "mezzanine-ramp",
+          "fit": "geometry-fit-outside-truth",
+          "realizedTreadDepth": 0.2666666666666665,
+          "threshold": 0.2794,
+          "rise": 1.6542462501288393,
+          "run": 2.3999999999999986,
+          "width": 1.15,
+          "clearWidth": 1.108373798155345,
+          "physicalUse": "business"
+        },
+        {
+          "id": "8,0:5,5|5,4|5,3|5,2|5,1|4,1|4,0|3,0|5,0|2,0|6,0|3,1|2,1|6,1|7,0|7,1|8,1|8,2|8,3|7,2|7,3|8,0|7,4|8,4|8,5|7,5:7,2:mezzanine:6",
+          "source": "mezzanine-stair",
+          "kind": "mezzanine-ramp",
+          "fit": "geometry-fit-outside-truth",
+          "realizedTreadDepth": 0.24000000000000005,
+          "threshold": 0.2794,
+          "rise": 1.7260550722237678,
+          "run": 2.4000000000000004,
+          "width": 1.15,
+          "clearWidth": 1.108373798155345,
+          "physicalUse": "business"
+        },
+        {
+          "id": "8,0:5,5|5,4|5,3|5,2|5,1|4,1|4,0|3,0|5,0|2,0|6,0|3,1|2,1|6,1|7,0|7,1|8,1|8,2|8,3|7,2|7,3|8,0|7,4|8,4|8,5|7,5:7,4:mezzanine:7",
+          "source": "mezzanine-stair",
+          "kind": "mezzanine-ramp",
+          "fit": "geometry-fit-outside-truth",
+          "realizedTreadDepth": 0.2666666666666667,
+          "threshold": 0.2794,
+          "rise": 1.5550272512831724,
+          "run": 2.4000000000000004,
+          "width": 1.15,
+          "clearWidth": 1.108373798155345,
+          "physicalUse": "business"
+        },
+        {
+          "id": "8,0:0,5|1,5|1,6|0,6|0,7|1,7|1,8|0,8|2,8|3,8|3,7|2,7:3,8:mezzanine:0",
+          "source": "mezzanine-stair",
+          "kind": "mezzanine-ramp",
+          "fit": "geometry-fit-outside-truth",
+          "realizedTreadDepth": 0.2666666666666665,
+          "threshold": 0.2794,
+          "rise": 1.6382807121542284,
+          "run": 2.3999999999999986,
+          "width": 1.15,
+          "clearWidth": 1.1339004958530141,
+          "physicalUse": "assembly-institutional"
+        },
+        {
+          "id": "8,0:0,5|1,5|1,6|0,6|0,7|1,7|1,8|0,8|2,8|3,8|3,7|2,7:2,7:mezzanine:1",
+          "source": "mezzanine-stair",
+          "kind": "mezzanine-ramp",
+          "fit": "geometry-fit-outside-truth",
+          "realizedTreadDepth": 0.23999999999999985,
+          "threshold": 0.2794,
+          "rise": 1.7527172935791315,
+          "run": 2.3999999999999986,
+          "width": 1.15,
+          "clearWidth": 1.1339004958530141,
+          "physicalUse": "assembly-institutional"
+        },
+        {
+          "id": "8,0:5,7|5,8|6,8|6,7|7,7|8,7|8,8|7,8:5,8:mezzanine:0",
+          "source": "mezzanine-stair",
+          "kind": "mezzanine-ramp",
+          "fit": "geometry-fit-outside-truth",
+          "realizedTreadDepth": 0.2400000000000091,
+          "threshold": 0.2794,
+          "rise": 1.8264230761653741,
+          "run": 2.400000000000091,
+          "width": 1.15,
+          "clearWidth": 1.1682579707737344,
+          "physicalUse": "business"
+        }
+      ],
+      "widthBad": [
+        {
+          "id": "8,0:5,7|5,8|6,8|6,7|7,7|8,7|8,8|7,8:5,8:mezzanine:0",
+          "source": "mezzanine-stair",
+          "kind": "mezzanine-ramp",
+          "width": 1.15,
+          "clearWidth": 1.1682579707737344,
+          "fit": "geometry-fit-outside-truth",
+          "physicalUse": "business"
+        }
+      ]
+    },
+    {
+      "chunk": "16,0",
+      "weirdness": 0.28697686444421816,
+      "connectors": 133,
+      "stairConnectors": 31,
+      "fitBadCount": 0,
+      "widthBadCount": 0,
+      "riseBadCount": 6,
+      "reservationBadCount": 0,
+      "fitBad": [],
+      "widthBad": []
+    },
+    {
+      "chunk": "32,0",
+      "weirdness": 0.9941474049943664,
+      "connectors": 105,
+      "stairConnectors": 19,
+      "fitBadCount": 4,
+      "widthBadCount": 4,
+      "riseBadCount": 6,
+      "reservationBadCount": 0,
+      "fitBad": [
+        {
+          "id": "32,0:5,2|5,1|5,0|6,1|7,1|8,1|8,0|7,0|7,2|8,2|6,0|8,3|7,3:5,0:mezzanine:0",
+          "source": "mezzanine-stair",
+          "kind": "mezzanine-ramp",
+          "fit": "geometry-fit-outside-truth",
+          "realizedTreadDepth": 0.26666666666667677,
+          "threshold": 0.27653652330206313,
+          "rise": 1.6668124532802029,
+          "run": 2.400000000000091,
+          "width": 1.15,
+          "clearWidth": 1.1737033727697792,
+          "physicalUse": "mercantile-public"
+        },
+        {
+          "id": "32,0:7,5|7,6|7,7|6,7|5,7|5,8|6,8|7,8|8,8:7,5:mezzanine:0",
+          "source": "mezzanine-stair",
+          "kind": "mezzanine-ramp",
+          "fit": "geometry-fit-outside-truth",
+          "realizedTreadDepth": 0.24000000000000005,
+          "threshold": 0.2613622310225048,
+          "rise": 1.8093939549685456,
+          "run": 2.4000000000000004,
+          "width": 1.15,
+          "clearWidth": 1.1429686651582796,
+          "physicalUse": "mercantile-public"
+        },
+        {
+          "id": "32,0:7,5|7,6|7,7|6,7|5,7|5,8|6,8|7,8|8,8:5,8:mezzanine:1",
+          "source": "mezzanine-stair",
+          "kind": "mezzanine-ramp",
+          "fit": "geometry-fit-outside-truth",
+          "realizedTreadDepth": 0.23999999999999985,
+          "threshold": 0.2613622310225048,
+          "rise": 1.7872626141118817,
+          "run": 2.3999999999999986,
+          "width": 1.15,
+          "clearWidth": 1.1429686651582796,
+          "physicalUse": "mercantile-public"
+        },
+        {
+          "id": "32,0:7,5|7,6|7,7|6,7|5,7|5,8|6,8|7,8|8,8:8,8:mezzanine:3",
+          "source": "mezzanine-stair",
+          "kind": "mezzanine-ramp",
+          "fit": "geometry-fit-outside-truth",
+          "realizedTreadDepth": 0.23999999999999985,
+          "threshold": 0.2613622310225048,
+          "rise": 1.8016798799321987,
+          "run": 2.3999999999999986,
+          "width": 1.15,
+          "clearWidth": 1.1429686651582796,
+          "physicalUse": "mercantile-public"
+        }
+      ],
+      "widthBad": [
+        {
+          "id": "32,0:0,0|0,1|0,2|1,2|1,3|0,3|1,1|2,1|3,1:1,3:mezzanine:0",
+          "source": "mezzanine-stair",
+          "kind": "mezzanine-ramp",
+          "width": 1.15,
+          "clearWidth": 1.2401497441764917,
+          "fit": "fits-resolved-truth",
+          "physicalUse": "business"
+        },
+        {
+          "id": "32,0:5,2|5,1|5,0|6,1|7,1|8,1|8,0|7,0|7,2|8,2|6,0|8,3|7,3:5,0:mezzanine:0",
+          "source": "mezzanine-stair",
+          "kind": "mezzanine-ramp",
+          "width": 1.15,
+          "clearWidth": 1.1737033727697792,
+          "fit": "geometry-fit-outside-truth",
+          "physicalUse": "mercantile-public"
+        },
+        {
+          "id": "32,0:5,2|5,1|5,0|6,1|7,1|8,1|8,0|7,0|7,2|8,2|6,0|8,3|7,3:8,1:mezzanine:1",
+          "source": "mezzanine-stair",
+          "kind": "mezzanine-ramp",
+          "width": 1.15,
+          "clearWidth": 1.1737033727697792,
+          "fit": "fits-resolved-truth",
+          "physicalUse": "mercantile-public"
+        },
+        {
+          "id": "32,0:5,2|5,1|5,0|6,1|7,1|8,1|8,0|7,0|7,2|8,2|6,0|8,3|7,3:7,2:mezzanine:2",
+          "source": "mezzanine-stair",
+          "kind": "mezzanine-ramp",
+          "width": 1.15,
+          "clearWidth": 1.1737033727697792,
+          "fit": "fits-resolved-truth",
+          "physicalUse": "mercantile-public"
+        }
+      ]
+    }
+  ],
+  "after": [
+    {
+      "chunk": "0,0",
+      "weirdness": 0,
+      "connectors": 95,
+      "stairConnectors": 14,
+      "fitBadCount": 0,
+      "widthBadCount": 0,
+      "riseBadCount": 6,
+      "reservationBadCount": 0,
+      "fitBad": [],
+      "widthBad": []
+    },
+    {
+      "chunk": "1,0",
+      "weirdness": 0,
+      "connectors": 63,
+      "stairConnectors": 16,
+      "fitBadCount": 0,
+      "widthBadCount": 0,
+      "riseBadCount": 6,
+      "reservationBadCount": 0,
+      "fitBad": [],
+      "widthBad": []
+    },
+    {
+      "chunk": "2,0",
+      "weirdness": 6.372998899292533e-05,
+      "connectors": 147,
+      "stairConnectors": 30,
+      "fitBadCount": 0,
+      "widthBadCount": 0,
+      "riseBadCount": 7,
+      "reservationBadCount": 0,
+      "fitBad": [],
+      "widthBad": []
+    },
+    {
+      "chunk": "4,0",
+      "weirdness": 0.0037480251923544972,
+      "connectors": 63,
+      "stairConnectors": 7,
+      "fitBadCount": 0,
+      "widthBadCount": 0,
+      "riseBadCount": 6,
+      "reservationBadCount": 0,
+      "fitBad": [],
+      "widthBad": []
+    },
+    {
+      "chunk": "8,0",
+      "weirdness": 0.040460498109920695,
+      "connectors": 80,
+      "stairConnectors": 6,
+      "fitBadCount": 0,
+      "widthBadCount": 0,
+      "riseBadCount": 5,
+      "reservationBadCount": 0,
+      "fitBad": [],
+      "widthBad": []
+    },
+    {
+      "chunk": "16,0",
+      "weirdness": 0.28697686444421816,
+      "connectors": 133,
+      "stairConnectors": 31,
+      "fitBadCount": 0,
+      "widthBadCount": 0,
+      "riseBadCount": 6,
+      "reservationBadCount": 0,
+      "fitBad": [],
+      "widthBad": []
+    },
+    {
+      "chunk": "24,0",
+      "weirdness": 0.6339431119986495,
+      "connectors": 171,
+      "stairConnectors": 24,
+      "fitBadCount": 0,
+      "widthBadCount": 0,
+      "riseBadCount": 6,
+      "reservationBadCount": 0,
+      "fitBad": [],
+      "widthBad": []
+    },
+    {
+      "chunk": "32,0",
+      "weirdness": 0.9941474049943664,
+      "connectors": 98,
+      "stairConnectors": 12,
+      "fitBadCount": 0,
+      "widthBadCount": 0,
+      "riseBadCount": 6,
+      "reservationBadCount": 0,
+      "fitBad": [],
+      "widthBad": []
+    }
+  ]
+}

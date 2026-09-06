@@ -1,0 +1,307 @@
+{
+  "schema": "jweb.geometry-scene.v1",
+  "name": "Apartment Dogleg Stair Walkway",
+  "source_kind": "authored-structure",
+  "source_metadata": {
+    "family": "interior apartment egress stair",
+    "floor_to_floor_m": 3.0,
+    "stair_width_m": 1.08,
+    "landing_depth_m": 1.2,
+    "principle": "visual steps and collider ramps share the same semantic flight authority"
+  },
+  "elements": [
+    {
+      "type": "box",
+      "id": "base-floor-slab",
+      "center": [
+        0,
+        -0.09,
+        -0.85
+      ],
+      "size": [
+        2.8,
+        0.18,
+        5.1
+      ],
+      "roles": [
+        "visual",
+        "collider"
+      ]
+    },
+    {
+      "type": "landing",
+      "id": "mid-landing",
+      "center": [
+        0,
+        1.42,
+        1.02
+      ],
+      "size": [
+        2.5,
+        0.16,
+        1.2
+      ],
+      "roles": [
+        "visual",
+        "collider"
+      ]
+    },
+    {
+      "type": "landing",
+      "id": "upper-landing",
+      "center": [
+        0.65,
+        2.92,
+        -2.7
+      ],
+      "size": [
+        1.2,
+        0.16,
+        1.2
+      ],
+      "roles": [
+        "visual",
+        "collider"
+      ]
+    },
+    {
+      "type": "box",
+      "id": "support:mid-beam",
+      "center": [
+        0,
+        1.24,
+        1.02
+      ],
+      "size": [
+        2.7,
+        0.2,
+        0.22
+      ],
+      "roles": [
+        "visual",
+        "collider"
+      ]
+    },
+    {
+      "type": "box",
+      "id": "support:column-left",
+      "center": [
+        -1.05,
+        0.57,
+        1.02
+      ],
+      "size": [
+        0.18,
+        1.14,
+        0.18
+      ],
+      "roles": [
+        "visual",
+        "collider"
+      ]
+    },
+    {
+      "type": "box",
+      "id": "support:column-right",
+      "center": [
+        1.05,
+        0.57,
+        1.02
+      ],
+      "size": [
+        0.18,
+        1.14,
+        0.18
+      ],
+      "roles": [
+        "visual",
+        "collider"
+      ]
+    },
+    {
+      "type": "stair",
+      "id": "flight-low",
+      "start": [
+        -0.65,
+        0.0,
+        -2.1
+      ],
+      "end": [
+        -0.65,
+        1.5,
+        0.42
+      ],
+      "width": 1.08,
+      "steps": 9,
+      "construction": "closed",
+      "tread_thickness": 0.08,
+      "collider_thickness": 0.14,
+      "rails": {
+        "enabled": true,
+        "height": 0.96,
+        "post_every_steps": 2,
+        "post_thickness": 0.045,
+        "rail_thickness": 0.055,
+        "sides": [
+          "left",
+          "right"
+        ],
+        "roles": [
+          "visual",
+          "collider"
+        ]
+      }
+    },
+    {
+      "type": "stair",
+      "id": "flight-high",
+      "start": [
+        0.65,
+        1.5,
+        0.42
+      ],
+      "end": [
+        0.65,
+        3.0,
+        -2.1
+      ],
+      "width": 1.08,
+      "steps": 9,
+      "construction": "closed",
+      "tread_thickness": 0.08,
+      "collider_thickness": 0.14,
+      "rails": {
+        "enabled": true,
+        "height": 0.96,
+        "post_every_steps": 2,
+        "post_thickness": 0.045,
+        "rail_thickness": 0.055,
+        "sides": [
+          "left",
+          "right"
+        ],
+        "roles": [
+          "visual",
+          "collider"
+        ]
+      }
+    },
+    {
+      "type": "box",
+      "id": "diagnostic:turn-clearance",
+      "center": [
+        0,
+        2.02,
+        1.02
+      ],
+      "size": [
+        2.1,
+        0.9,
+        0.92
+      ],
+      "roles": []
+    }
+  ],
+  "checks": [
+    {
+      "type": "contact",
+      "a": "flight-low:collider-ramp",
+      "b": "base-floor-slab",
+      "max_gap": 0.001,
+      "id": "lower-ramp-meets-floor"
+    },
+    {
+      "type": "contact",
+      "a": "flight-low:collider-ramp",
+      "b": "mid-landing",
+      "max_gap": 0.001,
+      "id": "lower-ramp-meets-turn-landing"
+    },
+    {
+      "type": "contact",
+      "a": "flight-high:collider-ramp",
+      "b": "mid-landing",
+      "max_gap": 0.001,
+      "id": "upper-ramp-leaves-turn-landing"
+    },
+    {
+      "type": "contact",
+      "a": "flight-high:collider-ramp",
+      "b": "upper-landing",
+      "max_gap": 0.001,
+      "id": "upper-ramp-meets-upper-floor"
+    },
+    {
+      "type": "support",
+      "supported": "mid-landing",
+      "supporter": "support:mid-beam",
+      "max_gap": 0.001,
+      "max_penetration": 0.001,
+      "id": "turn-landing-bears-on-beam"
+    },
+    {
+      "type": "support",
+      "supported": "support:mid-beam",
+      "supporter": "support:column-left",
+      "max_gap": 0.001,
+      "max_penetration": 0.001,
+      "id": "beam-bears-left-column"
+    },
+    {
+      "type": "support",
+      "supported": "support:mid-beam",
+      "supporter": "support:column-right",
+      "max_gap": 0.001,
+      "max_penetration": 0.001,
+      "id": "beam-bears-right-column"
+    },
+    {
+      "type": "support",
+      "supported": "support:column-left",
+      "supporter": "base-floor-slab",
+      "max_gap": 0.001,
+      "max_penetration": 0.001,
+      "id": "left-column-grounded"
+    },
+    {
+      "type": "support",
+      "supported": "support:column-right",
+      "supporter": "base-floor-slab",
+      "max_gap": 0.001,
+      "max_penetration": 0.001,
+      "id": "right-column-grounded"
+    },
+    {
+      "type": "extent",
+      "selector": [
+        "flight-low:step:*",
+        "flight-high:step:*"
+      ],
+      "axis": "x",
+      "min": 2.25,
+      "max": 2.4,
+      "id": "two-lane-stair-overall-width"
+    },
+    {
+      "type": "count",
+      "selector": "flight-low:step:*",
+      "exact": 9,
+      "id": "lower-flight-step-count"
+    },
+    {
+      "type": "count",
+      "selector": "flight-high:step:*",
+      "exact": 9,
+      "id": "upper-flight-step-count"
+    },
+    {
+      "type": "clearance",
+      "clearance": "diagnostic:turn-clearance",
+      "obstacles": [
+        "support:column-*"
+      ],
+      "max_penetration": 0.0,
+      "id": "turning-space-free-of-support-columns"
+    }
+  ]
+}

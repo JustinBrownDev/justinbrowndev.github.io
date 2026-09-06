@@ -1,0 +1,17 @@
+{
+  "seed": 671278205,
+  "chunk": "16,0",
+  "v5": {
+    "front": 101,
+    "side": 140,
+    "top": 30,
+    "isometric": 77
+  },
+  "v6": {
+    "front": 0,
+    "side": 1,
+    "top": 0,
+    "isometric": 1
+  },
+  "note": "Same saved JWEB checkpoint; V6 corrected prop height and radius-based collision shape and captures exact THREE triangles."
+}

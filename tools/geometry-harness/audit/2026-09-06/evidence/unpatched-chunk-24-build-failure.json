@@ -1,0 +1,33 @@
+{
+  "schema": "jweb.geometry-authority-audit.v1",
+  "repo": "/mnt/data/jweb_repo_saved/audit_before_real",
+  "worldSeed": 671278205,
+  "summary": {
+    "pass": false,
+    "chunks": 1,
+    "passed": 0,
+    "failed": 1
+  },
+  "chunks": [
+    {
+      "chunk": "24,0",
+      "pass": false,
+      "build": {
+        "pass": false,
+        "code": "JWEB_TOWER_TRANSFER_BINDING_MISSING",
+        "name": "Error",
+        "message": "671278205:24,0:0,0|1,0|0,1|1,1|0,2|0,3|1,2|1,3:tower-transfer:3:0: city transfer endpoint lacks an authoritative Building Plan exchange binding"
+      },
+      "authority": null,
+      "failures": [
+        {
+          "type": "chunk-build-error",
+          "pass": false,
+          "code": "JWEB_TOWER_TRANSFER_BINDING_MISSING",
+          "name": "Error",
+          "message": "671278205:24,0:0,0|1,0|0,1|1,1|0,2|0,3|1,2|1,3:tower-transfer:3:0: city transfer endpoint lacks an authoritative Building Plan exchange binding"
+        }
+      ]
+    }
+  ]
+}

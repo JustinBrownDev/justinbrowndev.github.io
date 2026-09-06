@@ -296,7 +296,7 @@ export function assignBridgeSectionBands({
 
 export function towerTransferDemandsForPortals(portals = [], { siteId = null, field = 'ground', stableKey = 'tower-transfer' } = {}) {
   const usable = [...(portals ?? [])]
-    .filter(portal => portal && portal.enabled !== false && (Number.isFinite(Number(portal.floor)) || Number.isFinite(Number(portal.ceilingDepthBand))))
+    .filter(portal => portal && portal.resolved !== false && portal.enabled !== false && (Number.isFinite(Number(portal.floor)) || Number.isFinite(Number(portal.ceilingDepthBand))))
     .sort((a, b) => String(a.id).localeCompare(String(b.id)));
   if (usable.length < 2) return Object.freeze([]);
   const pairs = [];

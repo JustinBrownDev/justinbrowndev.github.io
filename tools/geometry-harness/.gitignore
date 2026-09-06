@@ -1,0 +1,6 @@
+output/
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+authority-audit.json

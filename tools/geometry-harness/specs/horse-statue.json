@@ -1,0 +1,163 @@
+{
+  "schema": "jweb.silhouette-tester.structure.v2",
+  "name": "Horse Statue",
+  "elements": [
+    {
+      "type": "obj",
+      "id": "model",
+      "path": "../models/horse-statue.obj",
+      "roles": [
+        "visual",
+        "collider"
+      ]
+    }
+  ],
+  "checks": [
+    {
+      "type": "support",
+      "supported": "hoof-front-left",
+      "supporter": "plinth",
+      "max_gap": 0.001,
+      "max_penetration": 0.04,
+      "id": "hoof-front-left-planted"
+    },
+    {
+      "type": "contact",
+      "a": "leg-front-left-lower",
+      "b": "leg-front-left-upper",
+      "max_gap": 0.001,
+      "id": "front-left-knee-connected"
+    },
+    {
+      "type": "contact",
+      "a": "leg-front-left-upper",
+      "b": [
+        "body",
+        "chest"
+      ],
+      "max_gap": 0.001,
+      "id": "front-left-leg-enters-body"
+    },
+    {
+      "type": "support",
+      "supported": "hoof-front-right",
+      "supporter": "plinth",
+      "max_gap": 0.001,
+      "max_penetration": 0.04,
+      "id": "hoof-front-right-planted"
+    },
+    {
+      "type": "contact",
+      "a": "leg-front-right-lower",
+      "b": "leg-front-right-upper",
+      "max_gap": 0.001,
+      "id": "front-right-knee-connected"
+    },
+    {
+      "type": "contact",
+      "a": "leg-front-right-upper",
+      "b": [
+        "body",
+        "chest"
+      ],
+      "max_gap": 0.001,
+      "id": "front-right-leg-enters-body"
+    },
+    {
+      "type": "support",
+      "supported": "hoof-hind-left",
+      "supporter": "plinth",
+      "max_gap": 0.001,
+      "max_penetration": 0.04,
+      "id": "hoof-hind-left-planted"
+    },
+    {
+      "type": "contact",
+      "a": "leg-hind-left-lower",
+      "b": "leg-hind-left-upper",
+      "max_gap": 0.001,
+      "id": "hind-left-knee-connected"
+    },
+    {
+      "type": "contact",
+      "a": "leg-hind-left-upper",
+      "b": [
+        "body",
+        "chest"
+      ],
+      "max_gap": 0.001,
+      "id": "hind-left-leg-enters-body"
+    },
+    {
+      "type": "support",
+      "supported": "hoof-hind-right",
+      "supporter": "plinth",
+      "max_gap": 0.001,
+      "max_penetration": 0.04,
+      "id": "hoof-hind-right-planted"
+    },
+    {
+      "type": "contact",
+      "a": "leg-hind-right-lower",
+      "b": "leg-hind-right-upper",
+      "max_gap": 0.001,
+      "id": "hind-right-knee-connected"
+    },
+    {
+      "type": "contact",
+      "a": "leg-hind-right-upper",
+      "b": [
+        "body",
+        "chest"
+      ],
+      "max_gap": 0.001,
+      "id": "hind-right-leg-enters-body"
+    },
+    {
+      "type": "contact",
+      "a": "neck",
+      "b": [
+        "body",
+        "chest"
+      ],
+      "max_gap": 0.001,
+      "id": "neck-joins-torso"
+    },
+    {
+      "type": "contact",
+      "a": "neck",
+      "b": "head",
+      "max_gap": 0.001,
+      "id": "neck-joins-head"
+    },
+    {
+      "type": "contact",
+      "a": "head",
+      "b": "muzzle",
+      "max_gap": 0.001,
+      "id": "muzzle-joins-head"
+    },
+    {
+      "type": "contact",
+      "a": "tail-root",
+      "b": "body",
+      "max_gap": 0.001,
+      "id": "tail-root-joins-body"
+    },
+    {
+      "type": "contact",
+      "a": "tail-root",
+      "b": "tail-tip",
+      "max_gap": 0.001,
+      "id": "tail-segments-join"
+    },
+    {
+      "type": "extent",
+      "selector": "model:*",
+      "axis": "y",
+      "min": 2.65,
+      "max": 2.72,
+      "id": "horse-statue-height"
+    }
+  ]
+}

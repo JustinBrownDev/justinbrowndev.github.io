@@ -72,6 +72,15 @@ assert.ok(demands.some(d => d.requiresVerticalTransfer && d.requiresFacadeChange
 assert.deepEqual(demands[0].requestedCirculation, ['boundary-exchange', 'interior', 'boundary-exchange']);
 assert.equal(demands[0].verificationAuthority, 'compileWorldCirculationGraph');
 
+// Explicitly unresolved exterior endpoints do not have Building Plan exchange bindings.
+// Omitted `resolved` remains compatible with planner fixtures; only resolved:false is rejected.
+const unresolvedPortals = [
+  { id: 'resolved-low', resolved: true, dirKey: 'W', floor: 2, routeCharacter: 'DIRECT' },
+  { id: 'pending-high', resolved: false, dirKey: 'E', floor: 6, routeCharacter: 'TOWER_TRANSFER' },
+];
+const unresolvedDemands = towerTransferDemandsForPortals(unresolvedPortals, { siteId: 88, field: 'ground', stableKey: 'cut21q:unresolved' });
+assert.equal(unresolvedDemands.length, 0, 'unresolved exterior portal must not create an impossible Building Plan transfer demand');
+
 console.log('[cut21q-sectional-circulation-selftest] PASS', {
   invariant: 'multi-band exterior routes; midpoint-attracted fat sky streets; explicit tower-transfer demand; no ceiling promenade clamp',
 });

@@ -4473,10 +4473,12 @@ export function createKowloonFabricEngine({
                 });
                 const mezzanineReservation = mezzanineConnector.primaryReservation;
                 const moduleReservations = circulationByModule.get(module.key);
+                const stairFitsPhysicalTruth = mezzanineFlight.fitClassification === 'fits-resolved-truth'
+                    && rampWidth + 1e-9 >= mezzanineFlight.clearWidth;
                 const blocksExistingCirculation = anyReservationIntersectsBox(moduleReservations, {
                     x: mx, z: mz, sx, sz, yMin: y - 0.12, yMax: y + 0.12,
                 }) || moduleReservations.some(existing => reservationIntersectsBox(existing, mezzanineReservation));
-                if (!blocksExistingCirculation) {
+                if (stairFitsPhysicalTruth && !blocksExistingCirculation) {
                     transforms.slabs.push({ x: mx, y: y - 0.06, z: mz, sx, sy: 0.12, sz });
                     addRectPlatform(physics.platforms, mx, mz, sx, sz, y, 'mezzanine');
                     physics.ramps.push(mezzanineRamp);

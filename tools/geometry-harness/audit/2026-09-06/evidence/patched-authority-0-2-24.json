@@ -1,0 +1,64 @@
+{
+  "schema": "jweb.geometry-authority-audit.v1",
+  "repo": "/mnt/data/jweb_repo_saved/audit_before_real",
+  "worldSeed": 671278205,
+  "summary": {
+    "pass": true,
+    "chunks": 3,
+    "passed": 3,
+    "failed": 0
+  },
+  "chunks": [
+    {
+      "chunk": "0,0",
+      "pass": true,
+      "build": {
+        "pass": true
+      },
+      "authority": {
+        "connectors": 95,
+        "stairConnectors": 14,
+        "circulationReservations": 95,
+        "stairFitOutsideTruth": 0,
+        "stairClearWidthBelowTruth": 0,
+        "stairRiseMismatch": 0,
+        "invalidReservations": 0
+      },
+      "failures": []
+    },
+    {
+      "chunk": "2,0",
+      "pass": true,
+      "build": {
+        "pass": true
+      },
+      "authority": {
+        "connectors": 147,
+        "stairConnectors": 30,
+        "circulationReservations": 147,
+        "stairFitOutsideTruth": 0,
+        "stairClearWidthBelowTruth": 0,
+        "stairRiseMismatch": 0,
+        "invalidReservations": 0
+      },
+      "failures": []
+    },
+    {
+      "chunk": "24,0",
+      "pass": true,
+      "build": {
+        "pass": true
+      },
+      "authority": {
+        "connectors": 171,
+        "stairConnectors": 24,
+        "circulationReservations": 171,
+        "stairFitOutsideTruth": 0,
+        "stairClearWidthBelowTruth": 0,
+        "stairRiseMismatch": 0,
+        "invalidReservations": 0
+      },
+      "failures": []
+    }
+  ]
+}

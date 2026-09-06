@@ -1,0 +1,59 @@
+{
+  "schema": "jweb.silhouette-tester.structure.v2",
+  "name": "Cheap Roll-Out Wire Fence Bay v2",
+  "elements": [
+    {
+      "type": "obj",
+      "id": "model",
+      "path": "../models/fence.obj",
+      "roles": [
+        "visual",
+        "collider"
+      ]
+    }
+  ],
+  "checks": [
+    {
+      "type": "contact",
+      "a": "top-rail",
+      "b": "post-1",
+      "max_gap": 0.001,
+      "id": "top-rail-attached-left-post"
+    },
+    {
+      "type": "contact",
+      "a": "top-rail",
+      "b": "post-2",
+      "max_gap": 0.001,
+      "id": "top-rail-attached-right-post"
+    },
+    {
+      "type": "contact",
+      "a": "mesh-v-00",
+      "b": "post-1",
+      "max_gap": 0.002,
+      "id": "wire-roll-tied-left"
+    },
+    {
+      "type": "contact",
+      "a": "mesh-v-10",
+      "b": "post-2",
+      "max_gap": 0.002,
+      "id": "wire-roll-tied-right"
+    },
+    {
+      "type": "contact",
+      "a": "mesh-h-06",
+      "b": "top-rail",
+      "max_gap": 0.003,
+      "id": "wire-roll-reaches-top-rail"
+    },
+    {
+      "type": "extent",
+      "selector": "post-*",
+      "axis": "y",
+      "min": 1.29,
+      "id": "fence-post-height"
+    }
+  ]
+}

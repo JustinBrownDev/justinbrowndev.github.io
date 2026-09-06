@@ -1,0 +1,49 @@
+{
+  "chunk": "0,0",
+  "seed": 671278205,
+  "geometry_pass": false,
+  "coverage": "mesh-integrity+capture-health+semantic-authority",
+  "authority_health": {
+    "pass": false,
+    "errors": [
+      {
+        "type": "stair-fit-outside-truth",
+        "id": "0,0:5,0|6,0|7,0|7,1|6,1|8,1|8,2|8,3|7,2|8,0|7,3|5,1:5,0:mezzanine:0",
+        "source": "mezzanine-stair",
+        "kind": "mezzanine-ramp",
+        "realizedTreadDepth": 0.23999999999999985,
+        "fitThresholdTreadDepth": 0.2794
+      },
+      {
+        "type": "stair-fit-outside-truth",
+        "id": "0,0:5,0|6,0|7,0|7,1|6,1|8,1|8,2|8,3|7,2|8,0|7,3|5,1:8,1:mezzanine:1",
+        "source": "mezzanine-stair",
+        "kind": "mezzanine-ramp",
+        "realizedTreadDepth": 0.2666666666666665,
+        "fitThresholdTreadDepth": 0.2794
+      },
+      {
+        "type": "stair-fit-outside-truth",
+        "id": "0,0:5,0|6,0|7,0|7,1|6,1|8,1|8,2|8,3|7,2|8,0|7,3|5,1:7,3:mezzanine:2",
+        "source": "mezzanine-stair",
+        "kind": "mezzanine-ramp",
+        "realizedTreadDepth": 0.2666666666666665,
+        "fitThresholdTreadDepth": 0.2794
+      },
+      {
+        "type": "stair-fit-outside-truth",
+        "id": "0,0:0,5|0,6|1,5|1,6|1,7|2,7|3,7|3,8|2,8|1,8|0,7|0,8:3,7:mezzanine:0",
+        "source": "mezzanine-stair",
+        "kind": "mezzanine-ramp",
+        "realizedTreadDepth": 0.24000000000000005,
+        "fitThresholdTreadDepth": 0.2794
+      }
+    ],
+    "summary": {
+      "connectors": 99,
+      "stairConnectors": 18,
+      "circulationReservations": 99,
+      "errors": 4
+    }
+  }
+}

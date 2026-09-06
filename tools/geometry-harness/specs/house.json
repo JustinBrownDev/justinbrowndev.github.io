@@ -1,0 +1,209 @@
+{
+  "schema": "jweb.silhouette-tester.structure.v2",
+  "name": "Traditional Gable Farmhouse v2",
+  "elements": [
+    {
+      "type": "obj",
+      "id": "model",
+      "path": "../models/house.obj",
+      "roles": [
+        "visual",
+        "collider"
+      ]
+    }
+  ],
+  "checks": [
+    {
+      "type": "contact",
+      "a": "roof-left",
+      "b": "roof-right",
+      "max_gap": 0.0,
+      "id": "gable-roof-halves-overlap-at-ridge"
+    },
+    {
+      "type": "contact",
+      "a": "roof-left",
+      "b": "ridge-board",
+      "max_gap": 0.001,
+      "id": "left-rafter-joint-ridge-board"
+    },
+    {
+      "type": "contact",
+      "a": "roof-right",
+      "b": "ridge-board",
+      "max_gap": 0.001,
+      "id": "right-rafter-joint-ridge-board"
+    },
+    {
+      "type": "contact",
+      "a": "roof-left",
+      "b": "top-plate-left",
+      "max_gap": 0.001,
+      "id": "left-roof-bears-on-left-top-plate"
+    },
+    {
+      "type": "contact",
+      "a": "roof-right",
+      "b": "top-plate-right",
+      "max_gap": 0.001,
+      "id": "right-roof-bears-on-right-top-plate"
+    },
+    {
+      "type": "support",
+      "supported": "main-walls",
+      "supporter": "foundation",
+      "max_gap": 0.001,
+      "max_penetration": 0.001,
+      "id": "walls-supported-by-foundation"
+    },
+    {
+      "type": "support",
+      "supported": "top-plate-left",
+      "supporter": "main-walls",
+      "max_gap": 0.001,
+      "max_penetration": 0.001,
+      "id": "left-top-plate-supported-by-wall"
+    },
+    {
+      "type": "support",
+      "supported": "top-plate-right",
+      "supporter": "main-walls",
+      "max_gap": 0.001,
+      "max_penetration": 0.001,
+      "id": "right-top-plate-supported-by-wall"
+    },
+    {
+      "type": "support",
+      "supported": "chimney",
+      "supporter": "foundation",
+      "max_gap": 0.001,
+      "max_penetration": 0.51,
+      "id": "chimney-grounded-through-foundation"
+    },
+    {
+      "type": "contact",
+      "a": "porch-deck",
+      "b": "main-walls",
+      "max_gap": 0.001,
+      "id": "porch-deck-ledger-contact-house"
+    },
+    {
+      "type": "support",
+      "supported": "porch-deck",
+      "supporter": "porch-deck-beam",
+      "max_gap": 0.001,
+      "max_penetration": 0.02,
+      "id": "porch-deck-supported-front-beam"
+    },
+    {
+      "type": "contact",
+      "a": "porch-roof",
+      "b": "porch-ledger",
+      "max_gap": 0.002,
+      "id": "porch-roof-bears-house-ledger"
+    },
+    {
+      "type": "contact",
+      "a": "porch-roof",
+      "b": "porch-header",
+      "max_gap": 0.002,
+      "id": "porch-roof-bears-front-header"
+    },
+    {
+      "type": "support",
+      "supported": "porch-deck-beam",
+      "supporter": "porch-pier-1",
+      "max_gap": 0.001,
+      "max_penetration": 0.02,
+      "id": "porch-beam-bearing-pier-1"
+    },
+    {
+      "type": "support",
+      "supported": "porch-column-1",
+      "supporter": "porch-deck",
+      "max_gap": 0.001,
+      "max_penetration": 0.001,
+      "id": "porch-column-1-starts-on-deck"
+    },
+    {
+      "type": "support",
+      "supported": "porch-header",
+      "supporter": "porch-column-1",
+      "max_gap": 0.001,
+      "max_penetration": 0.001,
+      "id": "porch-header-bearing-column-1"
+    },
+    {
+      "type": "support",
+      "supported": "porch-deck-beam",
+      "supporter": "porch-pier-2",
+      "max_gap": 0.001,
+      "max_penetration": 0.02,
+      "id": "porch-beam-bearing-pier-2"
+    },
+    {
+      "type": "support",
+      "supported": "porch-column-2",
+      "supporter": "porch-deck",
+      "max_gap": 0.001,
+      "max_penetration": 0.001,
+      "id": "porch-column-2-starts-on-deck"
+    },
+    {
+      "type": "support",
+      "supported": "porch-header",
+      "supporter": "porch-column-2",
+      "max_gap": 0.001,
+      "max_penetration": 0.001,
+      "id": "porch-header-bearing-column-2"
+    },
+    {
+      "type": "support",
+      "supported": "porch-deck-beam",
+      "supporter": "porch-pier-3",
+      "max_gap": 0.001,
+      "max_penetration": 0.02,
+      "id": "porch-beam-bearing-pier-3"
+    },
+    {
+      "type": "support",
+      "supported": "porch-column-3",
+      "supporter": "porch-deck",
+      "max_gap": 0.001,
+      "max_penetration": 0.001,
+      "id": "porch-column-3-starts-on-deck"
+    },
+    {
+      "type": "support",
+      "supported": "porch-header",
+      "supporter": "porch-column-3",
+      "max_gap": 0.001,
+      "max_penetration": 0.001,
+      "id": "porch-header-bearing-column-3"
+    },
+    {
+      "type": "support",
+      "supported": "porch-deck-beam",
+      "supporter": "porch-pier-4",
+      "max_gap": 0.001,
+      "max_penetration": 0.02,
+      "id": "porch-beam-bearing-pier-4"
+    },
+    {
+      "type": "support",
+      "supported": "porch-column-4",
+      "supporter": "porch-deck",
+      "max_gap": 0.001,
+      "max_penetration": 0.001,
+      "id": "porch-column-4-starts-on-deck"
+    },
+    {
+      "type": "support",
+      "supported": "porch-header",
+      "supporter": "porch-column-4",
+      "max_gap": 0.001,
+      "max_penetration": 0.001,
+      "id": "porch-header-bearing-column-4"
+    }
+  ]
+}

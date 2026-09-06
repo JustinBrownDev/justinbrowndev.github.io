@@ -1,0 +1,21 @@
+JWEB visual harness inert-tool cut provenance
+Generated: 2026-09-06
+
+INPUT SHA-256
+a20fe9730e5d6791bf124ec41b3f2f4eda93ce2fcf14d6a1878847a4f3347589  JWEB-VISUAL-HARNESS-PARKED-EVERYTHING-2026-09-06(1).zip
+4b8afba7fa83d50ee3990591b68352fb70e558c52d1cf5384bb3e357de978390  justinbrowndev.github.io-main(19).zip
+71effaf0a45b01eee7f4a2476fba0847a056fd2910d19b1bc818490d9837d226  JWEB Visual Harness - Practical Implementation Lessons from Real Bug Capture.md
+
+INTEGRATION POLICY
+- Extract only the visual-harness tool from the parked workspace.
+- Include the practical implementation lessons with the tool.
+- Do not modify main.js or any runtime/performance path.
+- Pushzip overlays only tools/visual-harness and fails closed if that directory already exists on the live clone.
+
+VALIDATION AGAINST SUPPLIED REPO ZIP
+- portable_contract_selftest.mjs: PASS (10 JS/MJS files syntax-checked; current main did not reference visual-harness)
+- fixture_specimen_selftest.mjs: PASS
+  stairTargets=78; stairCatalog=79; lowFlightVisualObjects=30; lowFlightColliderObjects=13; forkTargets=6; exactStepTriangles=12
+- visual_probe_selftest.mjs: PASS
+  catalogTargets=2881; stairMatches=12; stairFragments=6; stairTriangles=1382; stairColliderProxies=36; catwalkMatches=9
+- Browser/WebGL self-test is included but not claimed as executed in this packaging environment.

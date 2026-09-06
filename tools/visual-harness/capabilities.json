@@ -1,0 +1,97 @@
+{
+  "schema": "jweb.visual-probe.capabilities.v1",
+  "purpose": "AI/developer visual investigation of JWEB render geometry, collision geometry and circulation/transport intent using the same runtime authorities as the game",
+  "integration_state": "parked/inert repository cut; normal main.js runtime is intentionally not modified",
+  "activation": {
+    "direct_fixture_url": "tools/visual-harness/specimen.html?mode=fixture&fixture=apartment-stair&target=flight-low",
+    "generator_specimen_url": "tools/visual-harness/specimen.html?mode=generator&seed=671278205&chunk=0,0&target=stair&index=0",
+    "server": "node tools/visual-harness/serve.mjs --port 8123",
+    "browser_selftest_url": "tools/visual-harness/browser-selftest.html",
+    "world_mode_after_optional_host_seam": "?visualProbe=1 / await window.__debug.visualProbe.install()"
+  },
+  "modes": {
+    "world": "implemented inside the tool but not wired by this parked cut; after an explicit host seam it can inspect the normal main.js runtime",
+    "generator_specimen": "one deterministic KowloonFabricEngine payload in an empty scene; main.js and the streamed world are not booted",
+    "direct_fixture": "geometry-harness spec instantiated directly in an empty scene; no main.js, streamer, world, or Kowloon chunk generation"
+  },
+  "api": [
+    "catalog",
+    "search",
+    "searchObjects",
+    "related",
+    "pick",
+    "waitForSettled",
+    "captureWorld",
+    "captureTarget",
+    "captureObject",
+    "captureDecomposition",
+    "captureSet",
+    "captureInvestigation",
+    "help"
+  ],
+  "target_authorities": [
+    "render-object",
+    "render-instance",
+    "fixture-element",
+    "fixture-component",
+    "payload-root",
+    "semantic-connector",
+    "circulation-reservation",
+    "transport-surface",
+    "transport-edge",
+    "guard-span",
+    "collider-platform",
+    "collider-ramp",
+    "collider-wall",
+    "collider-prop",
+    "collider-ceiling"
+  ],
+  "render_passes": [
+    "beauty",
+    "silhouette",
+    "normals",
+    "depth",
+    "wireframe",
+    "object-id",
+    "instance-id",
+    "collider",
+    "semantic",
+    "visual-collider-overlay"
+  ],
+  "image_filters": [
+    "grayscale",
+    "lowpass-3",
+    "lowpass-9",
+    "highpass-3",
+    "highpass-9",
+    "sobel",
+    "threshold"
+  ],
+  "default_target_views": [
+    "iso",
+    "front",
+    "right",
+    "top"
+  ],
+  "semantic_mask_colors": {
+    "physical_collider": "#00c9ff",
+    "semantic_connector": "#a855f7",
+    "circulation_reservation": "#ff2f92",
+    "transport_surface": "#ffa600",
+    "transport_edge": "#fff200",
+    "guard_span": "#32ff8a"
+  },
+  "output": "ZIP containing PNG passes plus manifests with semantic IDs, owner/chunk, authority/selection/frame bounds, cameras, exact render fragments, source instance indices, collision/semantic proxy counts, and collision-free color-to-object/color-to-instance segmentation maps",
+  "tests": [
+    "node tools/visual-harness/tests/portable_contract_selftest.mjs",
+    "node tools/visual-harness/tests/fixture_specimen_selftest.mjs",
+    "node tools/visual-harness/tests/visual_probe_selftest.mjs",
+    "browser: tools/visual-harness/browser-selftest.html must report PASS on a WebGL-capable desktop browser"
+  ],
+  "portability": {
+    "core_host_contract": "THREE + scene + camera + renderer + optional composer + getPayloadEntries/getStatus callbacks",
+    "generator_adapter": "tools/visual-harness/jweb-generator-adapter.js",
+    "runtime_integration_guide": "tools/visual-harness/INTEGRATION.md",
+    "policy": "land the harness as an inert tool first; adapt the small JWEB seam fresh only when intentionally enabling full-world capture; no source-text patcher"
+  }
+}

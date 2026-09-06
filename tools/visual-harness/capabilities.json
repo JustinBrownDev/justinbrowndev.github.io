@@ -1,16 +1,17 @@
 {
-  "schema": "jweb.visual-probe.capabilities.v1",
-  "purpose": "AI/developer visual investigation of JWEB render geometry, collision geometry and circulation/transport intent using the same runtime authorities as the game",
-  "integration_state": "parked/inert repository cut; normal main.js runtime is intentionally not modified",
+  "schema": "jweb.visual-probe.capabilities.v2",
+  "purpose": "AI/developer visual investigation and artistic review of the real JWEB city, generator specimens, and exact geometry fixtures using the same render/physics/semantic authorities as the game",
+  "integration_state": "live lazy host seam installed in current main.js; normal boot does not statically import the harness",
   "activation": {
+    "real_city_url": "?visualProbe=1",
+    "real_city_console": "await window.__debug.visualProbe.install()",
     "direct_fixture_url": "tools/visual-harness/specimen.html?mode=fixture&fixture=apartment-stair&target=flight-low",
     "generator_specimen_url": "tools/visual-harness/specimen.html?mode=generator&seed=671278205&chunk=0,0&target=stair&index=0",
     "server": "node tools/visual-harness/serve.mjs --port 8123",
-    "browser_selftest_url": "tools/visual-harness/browser-selftest.html",
-    "world_mode_after_optional_host_seam": "?visualProbe=1 / await window.__debug.visualProbe.install()"
+    "browser_selftest_url": "tools/visual-harness/browser-selftest.html"
   },
   "modes": {
-    "world": "implemented inside the tool but not wired by this parked cut; after an explicit host seam it can inspect the normal main.js runtime",
+    "real_city": "normal main.js runtime with streamed and authored payloads, live materials/lighting/post-processing, camera travel, exact screen capture, targeted isolation, diagnostics, and artistic passes",
     "generator_specimen": "one deterministic KowloonFabricEngine payload in an empty scene; main.js and the streamed world are not booted",
     "direct_fixture": "geometry-harness spec instantiated directly in an empty scene; no main.js, streamer, world, or Kowloon chunk generation"
   },
@@ -20,14 +21,27 @@
     "searchObjects",
     "related",
     "pick",
+    "runtimeLocation",
+    "moveCamera",
+    "gotoChunk",
     "waitForSettled",
+    "artisticPreset",
     "captureWorld",
     "captureTarget",
     "captureObject",
     "captureDecomposition",
     "captureSet",
     "captureInvestigation",
+    "captureArtPass",
     "help"
+  ],
+  "artistic_lenses": [
+    "composition",
+    "massing",
+    "circulation",
+    "facade",
+    "material",
+    "readability"
   ],
   "target_authorities": [
     "render-object",
@@ -67,31 +81,18 @@
     "sobel",
     "threshold"
   ],
-  "default_target_views": [
-    "iso",
-    "front",
-    "right",
-    "top"
-  ],
-  "semantic_mask_colors": {
-    "physical_collider": "#00c9ff",
-    "semantic_connector": "#a855f7",
-    "circulation_reservation": "#ff2f92",
-    "transport_surface": "#ffa600",
-    "transport_edge": "#fff200",
-    "guard_span": "#32ff8a"
-  },
-  "output": "ZIP containing PNG passes plus manifests with semantic IDs, owner/chunk, authority/selection/frame bounds, cameras, exact render fragments, source instance indices, collision/semantic proxy counts, and collision-free color-to-object/color-to-instance segmentation maps",
+  "output": "ZIP containing normal and diagnostic PNGs plus manifests with purpose/lenses, semantic IDs, owner/chunk, authority/selection/frame bounds, cameras, exact render fragments, source instance indices, collision/semantic proxy counts, and collision-free segmentation maps",
   "tests": [
     "node tools/visual-harness/tests/portable_contract_selftest.mjs",
     "node tools/visual-harness/tests/fixture_specimen_selftest.mjs",
     "node tools/visual-harness/tests/visual_probe_selftest.mjs",
+    "node tools/visual-harness/tests/live_agent_api_selftest.mjs",
     "browser: tools/visual-harness/browser-selftest.html must report PASS on a WebGL-capable desktop browser"
   ],
   "portability": {
-    "core_host_contract": "THREE + scene + camera + renderer + optional composer + getPayloadEntries/getStatus callbacks",
+    "core_host_contract": "THREE + scene + camera + renderer + optional composer/chunk navigation callbacks + getPayloadEntries/getStatus",
     "generator_adapter": "tools/visual-harness/jweb-generator-adapter.js",
     "runtime_integration_guide": "tools/visual-harness/INTEGRATION.md",
-    "policy": "land the harness as an inert tool first; adapt the small JWEB seam fresh only when intentionally enabling full-world capture; no source-text patcher"
+    "policy": "keep the live seam tiny and lazy; when JWEB ownership moves, adapt that seam fresh instead of teaching the harness old source layouts"
   }
 }

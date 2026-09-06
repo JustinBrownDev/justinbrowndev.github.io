@@ -22,6 +22,39 @@ import {
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
+export const ARTISTIC_STUDY_LENSES = Object.freeze({
+  composition: Object.freeze({
+    question: 'Does the scene read as an intentional composition at a glance, with a useful focal hierarchy and negative space?',
+    world: {passes:['beauty','silhouette','depth'],filters:['grayscale','lowpass-9','sobel']},
+    target: {views:['iso','front','right','top-oblique'],passes:['beauty','silhouette','depth'],filters:['grayscale','lowpass-9']},
+  }),
+  massing: Object.freeze({
+    question: 'Do the large volumes, setbacks, overhangs and vertical relationships make a convincing silhouette before detail is considered?',
+    world: {passes:['beauty','silhouette','depth'],filters:['grayscale','threshold']},
+    target: {views:['iso','front','right','top'],passes:['beauty','silhouette','depth'],filters:['grayscale','threshold']},
+  }),
+  circulation: Object.freeze({
+    question: 'Can a viewer understand where people can move, enter, exit, climb and cross, and does that circulation feel architecturally supported?',
+    world: {passes:['beauty','silhouette'],filters:['grayscale','sobel']},
+    target: {views:['iso','front','right','top'],passes:['beauty','silhouette','semantic','visual-collider-overlay'],filters:['sobel']},
+  }),
+  facade: Object.freeze({
+    question: 'Do facade rhythms, openings, seams, projections and floor-to-floor relationships look deliberate rather than procedurally noisy?',
+    world: {passes:['beauty','normals','depth'],filters:['grayscale','highpass-9','sobel']},
+    target: {views:['front','iso','right'],passes:['beauty','normals','depth','wireframe'],filters:['grayscale','highpass-9','sobel']},
+  }),
+  material: Object.freeze({
+    question: 'Do color, value, material grouping and visual density support the architecture rather than obscuring its form?',
+    world: {passes:['beauty'],filters:['grayscale','lowpass-9']},
+    target: {views:['iso','front','right'],passes:['beauty'],filters:['grayscale','lowpass-9']},
+  }),
+  readability: Object.freeze({
+    question: 'Does the object or district remain legible at both normal viewing scale and simplified/edge-only representations?',
+    world: {passes:['beauty','silhouette'],filters:['grayscale','lowpass-9','sobel','threshold']},
+    target: {views:['iso','front','right','top'],passes:['beauty','silhouette','depth'],filters:['grayscale','lowpass-9','sobel','threshold']},
+  }),
+});
+
 function safeFile(value) {
   return String(value ?? 'capture').replace(/[^A-Za-z0-9_.+-]+/g,'_').replace(/^_+|_+$/g,'').slice(0,140) || 'capture';
 }
@@ -368,6 +401,66 @@ export function installJwebVisualProbe(context) {
     return {ok:false,elapsedMs:performance.now()-started,status:last};
   }
 
+  function runtimeLocation(){
+    const status=context.getStatus?.()??{};
+    const chunkSize=Number(context.chunkSize ?? status?.worldStream?.chunkSize ?? 64) || 64;
+    const position={x:Number(context.camera.position.x)||0,y:Number(context.camera.position.y)||0,z:Number(context.camera.position.z)||0};
+    const chunk=context.getCurrentChunk?.() ?? status?.currentChunk ?? null;
+    const chunkX=Number.isFinite(Number(chunk?.x))?Number(chunk.x):Math.floor((position.x+chunkSize*0.5)/chunkSize);
+    const chunkZ=Number.isFinite(Number(chunk?.z))?Number(chunk.z):Math.floor((position.z+chunkSize*0.5)/chunkSize);
+    return {position,chunk:{x:chunkX,z:chunkZ,key:String(chunk?.key??`${chunkX},${chunkZ}`)},chunkSize,status};
+  }
+
+  function moveCamera({x,y,z,lookAt=null,yaw=null,pitch=null,freecam=true}={}){
+    if(freecam!==false) context.setFreecam?.(true);
+    const camera=context.camera;
+    if([x,y,z].every(value=>Number.isFinite(Number(value)))) camera.position.set(Number(x),Number(y),Number(z));
+    camera.up.set(0,1,0);
+    if(Array.isArray(lookAt)&&lookAt.length>=3&&lookAt.every(value=>Number.isFinite(Number(value)))) camera.lookAt(Number(lookAt[0]),Number(lookAt[1]),Number(lookAt[2]));
+    else if(Number.isFinite(Number(yaw))||Number.isFinite(Number(pitch))){
+      camera.rotation.order='YXZ';
+      if(Number.isFinite(Number(yaw))) camera.rotation.y=Number(yaw);
+      if(Number.isFinite(Number(pitch))) camera.rotation.x=Number(pitch);
+      camera.rotation.z=0;
+    }
+    camera.updateMatrixWorld?.(true);
+    context.onCameraMoved?.(camera);
+    lastCatalog=[];
+    return runtimeLocation();
+  }
+
+  async function gotoChunk(chunkX,chunkZ,{height=34,offsetX=0,offsetZ=0,lookAtY=10,settle=true,wait={localRender:true},requireSettled=true,timeoutMs=45000,pollMs=100}={}){
+    const size=runtimeLocation().chunkSize;
+    const x=Number(chunkX)|0,z=Number(chunkZ)|0;
+    const worldX=x*size+Number(offsetX||0),worldZ=z*size+Number(offsetZ||0);
+    moveCamera({x:worldX,y:Number(height),z:worldZ,lookAt:[x*size,Number(lookAtY),z*size],freecam:true});
+    const started=performance.now();let location=runtimeLocation();
+    if(settle){
+      while(performance.now()-started<timeoutMs){
+        location=runtimeLocation();
+        if(location.chunk.x===x&&location.chunk.z===z) break;
+        await sleep(pollMs);
+      }
+      const settled=await waitForSettled({...wait,timeoutMs:Math.max(1,timeoutMs-(performance.now()-started)),pollMs});
+      if(requireSettled!==false&&!settled.ok) throw new Error(`gotoChunk ${x},${z} timed out waiting for requested world state`);
+      location={...runtimeLocation(),settled};
+    }
+    return location;
+  }
+
+  function artisticPreset(lenses=['composition','massing','circulation','material']){
+    const names=[...new Set((Array.isArray(lenses)?lenses:[lenses]).map(String))];
+    const configs=names.map(name=>({name,config:ARTISTIC_STUDY_LENSES[name]})).filter(item=>item.config);
+    if(!configs.length) throw new Error(`unknown artistic lens; choose from ${Object.keys(ARTISTIC_STUDY_LENSES).join(', ')}`);
+    const mergeUnique=(field,branch)=>[...new Set(configs.flatMap(item=>item.config?.[branch]?.[field]??[]))];
+    return {
+      lenses:configs.map(item=>item.name),
+      questions:configs.map(item=>({lens:item.name,question:item.config.question})),
+      world:{passes:mergeUnique('passes','world'),filters:mergeUnique('filters','world')},
+      target:{views:mergeUnique('views','target'),passes:mergeUnique('passes','target'),filters:mergeUnique('filters','target')},
+    };
+  }
+
   async function captureWorld({width=1280,height=800,passes=['beauty','silhouette','normals','depth'],filters=['highpass-9','sobel'],wait=null,requireSettled=true,download=false,name='jweb-world'}={}) {
     const waitResult=await settleOrThrow(waitForSettled,wait,requireSettled,'world capture');
     const renderer=createCaptureRenderer(THREE,context.renderer,width,height,{antialias:true});
@@ -506,13 +599,70 @@ export function installJwebVisualProbe(context) {
     if(download)await bundle.download();return bundle;
   }
 
+  async function captureArtPass(requests=[],{
+    lenses=['composition','massing','circulation','material'],
+    location=null,
+    wait={localRender:true},
+    includeWorld=true,
+    worldOptions={},
+    targetOptions={},
+    requireSettled=true,
+    notes=null,
+    download=false,
+    name='jweb-art-pass',
+  }={}){
+    let locationResult=runtimeLocation();
+    if(location?.chunk){
+      const chunk=Array.isArray(location.chunk)?location.chunk:[location.chunk.x,location.chunk.z];
+      locationResult=await gotoChunk(chunk[0],chunk[1],{
+        height:location.height??34,offsetX:location.offsetX??0,offsetZ:location.offsetZ??0,lookAtY:location.lookAtY??10,
+        settle:true,wait,requireSettled,timeoutMs:location.timeoutMs??45000,pollMs:location.pollMs??100,
+      });
+    }else if(location?.world){
+      const world=Array.isArray(location.world)?location.world:[location.world.x,location.world.y,location.world.z];
+      locationResult=moveCamera({x:world[0],y:world[1],z:world[2],lookAt:location.lookAt??null,yaw:location.yaw??null,pitch:location.pitch??null,freecam:true});
+      const settled=await settleOrThrow(waitForSettled,wait,requireSettled,'art pass location');
+      locationResult={...runtimeLocation(),settled};
+    }else{
+      const settled=await settleOrThrow(waitForSettled,wait,requireSettled,'art pass');
+      locationResult={...runtimeLocation(),settled};
+    }
+
+    const preset=artisticPreset(lenses),entries=[],captures=[];
+    if(includeWorld){
+      const bundle=await captureWorld({
+        width:1280,height:800,...preset.world,...worldOptions,wait:null,requireSettled:false,download:false,name:`${name}-world`,
+      });
+      entries.push(...bundle.entries);captures.push({kind:'world',manifest:bundle.manifest});
+    }
+    for(let requestIndex=0;requestIndex<requests.length;requestIndex++){
+      const request=requests[requestIndex];
+      const spec=typeof request==='object'&&request!==null?request:{query:request};
+      const query=spec.query??spec.target??spec;
+      const options={...preset.target,...targetOptions,...(spec.options??{}),name:spec.options?.name??`art-${String(requestIndex).padStart(3,'0')}`,wait:null,download:false};
+      const bundle=spec.decompose?await captureDecomposition(query,options):await captureTarget(query,options);
+      entries.push(...bundle.entries);captures.push({kind:spec.decompose?'decomposition':'target',query,role:spec.role??null,manifest:bundle.manifest});
+    }
+    const meta={
+      schema:JWEB_VISUAL_PROBE_SCHEMA,mode:'art-pass',purpose:'artistic-review',createdAt:new Date().toISOString(),
+      lenses:preset.lenses,questions:preset.questions,notes,location:locationResult,includeWorld,worldOptions:{...preset.world,...worldOptions},
+      targetOptions:{...preset.target,...targetOptions},requests,captures,status:context.getStatus?.()??null,
+    };
+    entries.push({name:'art-pass-manifest.json',data:new Blob([JSON.stringify(meta,null,2)],{type:'application/json'})});
+    const bundle={schema:JWEB_VISUAL_PROBE_SCHEMA,mode:'art-pass',entries,manifest:meta,async zip(){return createStoreZip(entries);},async download(filename=`${safeFile(name)}.zip`){const blob=await createStoreZip(entries);triggerDownload(blob,filename);return filename;}};
+    if(download)await bundle.download();return bundle;
+  }
+
   function pick(clientX=innerWidth/2,clientY=innerHeight/2){
     const rect=context.renderer.domElement.getBoundingClientRect();const ndc=new THREE.Vector2(((clientX-rect.left)/rect.width)*2-1,-(((clientY-rect.top)/rect.height)*2-1));const ray=new THREE.Raycaster();ray.setFromCamera(ndc,context.camera);const hits=ray.intersectObject(context.scene,true);if(!hits.length)return null;const hit=hits[0],point=hit.point;const nearby=(lastCatalog.length?lastCatalog:(lastCatalog=buildTargetCatalog(THREE,payloadEntriesFromContext(context)))).map(t=>{const c=boundsCenter(t.bounds);return {target:t,d:Math.hypot(c.x-point.x,c.y-point.y,c.z-point.z)};}).sort((a,b)=>a.d-b.d).slice(0,8).map(x=>serializableTarget(x.target));return {object:{name:hit.object.name,type:hit.object.type,uuid:hit.object.uuid,userData:hit.object.userData},captureQuery:{renderObject:{uuid:hit.object.uuid,...(hit.instanceId!=null?{instanceId:hit.instanceId}:{})}},point:point.toArray(),distance:hit.distance,instanceId:hit.instanceId??null,nearbyTargets:nearby};
   }
 
-  const api={schema:JWEB_VISUAL_PROBE_SCHEMA,catalog,search,searchObjects,related,pick,waitForSettled,captureWorld,captureTarget,captureObject,captureDecomposition,captureSet,captureInvestigation,defaults:{renderPasses:DEFAULT_RENDER_PASSES,imageFilters:DEFAULT_IMAGE_FILTERS},help(){return {
+  const api={schema:JWEB_VISUAL_PROBE_SCHEMA,catalog,search,searchObjects,related,pick,runtimeLocation,moveCamera,gotoChunk,waitForSettled,artisticPreset,captureWorld,captureTarget,captureObject,captureDecomposition,captureSet,captureInvestigation,captureArtPass,defaults:{renderPasses:DEFAULT_RENDER_PASSES,imageFilters:DEFAULT_IMAGE_FILTERS,artisticLenses:ARTISTIC_STUDY_LENSES},help(){return {
     world:`await __jwebVisualProbe.captureWorld({wait:{localRender:true,authoredStructures:true},download:true})`,
     investigation:`await __jwebVisualProbe.captureInvestigation([{query:'compound-stair',decompose:true},{query:'guarded-catwalk'}],{download:true})`,
+    art:`await __jwebVisualProbe.captureArtPass([{query:'guarded-catwalk',role:'circulation'},{query:'compound-stair',role:'vertical-rhythm'}],{lenses:['composition','massing','circulation','material'],download:true})`,
+    realCity:`await __jwebVisualProbe.captureArtPass(['hanging-bridge','guarded-catwalk'],{location:{chunk:[8,8],height:42,lookAtY:12},download:true,name:'chunk-8-8-art-pass'})`,
+    goto:`await __jwebVisualProbe.gotoChunk(8,8,{height:42,lookAtY:12})`,
     search:`__jwebVisualProbe.search('stair')`,
     object:`const hit=__jwebVisualProbe.pick(); await __jwebVisualProbe.captureObject({uuid:hit.object.uuid},{download:true})`,
     target:`await __jwebVisualProbe.captureTarget('compound-stair',{download:true})`,

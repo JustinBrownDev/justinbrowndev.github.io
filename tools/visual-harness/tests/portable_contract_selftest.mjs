@@ -29,15 +29,21 @@ assert.doesNotMatch(runtime, /(?:from\s+['"]|import\s*\(\s*['"])[^'"]*main\.js/,
 assert.doesNotMatch(specimen, /(?:from\s+['"]|import\s*\(\s*['"])[^'"]*main\.js/, 'specimen mode must not import main.js');
 assert.match(generator, /kowloon-fabric-engine\.js/, 'generator specimen bridge must remain explicit and narrow');
 assert.match(generator, /world-contract\.js/, 'generator specimen bridge must use deterministic world helpers');
-assert.match(integration, /intentionally does not modify `main\.js`/i, 'integration guide must state the parked cut is runtime-inert');
+assert.match(runtime, /captureArtPass/, 'runtime probe must expose the artistic-review path');
+assert.match(runtime, /gotoChunk/, 'runtime probe must expose real-city chunk navigation');
+assert.match(integration, /lazy/i, 'integration guide must preserve the lazy runtime contract');
 
 const mainPath = path.join(repo, 'main.js');
-const mainMentionsHarness = fs.existsSync(mainPath) && fs.readFileSync(mainPath, 'utf8').includes('tools/visual-harness');
+const main = fs.existsSync(mainPath) ? fs.readFileSync(mainPath, 'utf8') : '';
+const mainMentionsHarness = main.includes('tools/visual-harness');
+assert.match(main, /import\('\.\/tools\/visual-harness\/runtime-visual-probe\.js'\)/, 'main must lazy-import the live visual probe rather than statically booting it');
+assert.doesNotMatch(main, /^import .*tools\/visual-harness/m, 'normal main boot must not statically import visual-harness');
+for (const authority of ['worldChunkStreamer?.chunks', 'unifiedSpawnFabricPayloads', 'unifiedSpawnRelationshipPayloads', 'authoredCeilingOverlayPayload']) {
+  assert.ok(main.includes(authority), `live visual-probe seam must publish ${authority}`);
+}
 console.log(JSON.stringify({
   pass: true,
   syntaxChecked: scripts.length,
   mainMentionsHarness,
-  note: mainMentionsHarness
-    ? 'current repo already references visual-harness; this test does not mutate or judge that host state'
-    : 'current repo does not reference visual-harness; parked tool remains unhooked from normal boot',
+  note: 'visual harness is wired to the live city through a lazy dev-only host seam',
 }, null, 2));

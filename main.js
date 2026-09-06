@@ -3742,6 +3742,10 @@ window.__debug = {
         },
         staticWorld: staticWorldOptimizer?.getStats() ?? null,
         worldStream: worldChunkStreamer?.stats() ?? null,
+        currentChunk: (() => {
+            const c = worldChunkStreamer?.getChunkAtWorld(camera.position.x, camera.position.z);
+            return c ? { key: c.key, x: c.x, z: c.z, state: c.state, renderPublished: !!c.renderPublished, physicsAuthoritative: !!c.physicsAuthoritative } : null;
+        })(),
         currentWeirdness: (() => {
             const c = worldChunkStreamer?.getChunkAtWorld(camera.position.x, camera.position.z);
             return c?.weirdness ?? worldWeirdnessAt(0, 0, { worldSeed: SEED });
@@ -3787,3 +3791,59 @@ window.__debug = {
     }),
     buildingWallSegments, buildingSites, footprintOf, siteIdOf, grid, buildingFacades, exteriorDecorationVolumes,
 };
+
+// Dev-only live visual/geometry inspection seam. This stays inert during normal
+// JWEB boot: the harness module is imported only when an agent/developer asks for
+// it from __debug or opts in with ?visualProbe=1.  The harness consumes the same
+// committed payload authorities the player sees, including streamed chunks,
+// authored spawn fabric/relationships, and the hanging authored ceiling overlay.
+function visualProbePayloadEntries() {
+    const entries = [];
+    const seen = new Set();
+    const add = (payload, chunkKey, source) => {
+        if (!payload?.root) return;
+        const key = payload.ownerId ?? payload.root.uuid;
+        if (seen.has(key)) return;
+        seen.add(key);
+        entries.push({ payload, chunkKey: String(chunkKey ?? payload.chunk?.key ?? payload.root.userData?.worldChunkKey ?? ''), source });
+    };
+
+    for (const chunk of worldChunkStreamer?.chunks?.values?.() ?? []) {
+        if (chunk?.state === 'ready' && chunk.payload) add(chunk.payload, chunk.key, 'world-stream');
+    }
+    for (const [siteId, payload] of unifiedSpawnFabricPayloads.entries()) add(payload, payload?.chunk?.key ?? '0,0', `authored-fabric:${siteId}`);
+    for (const payload of unifiedSpawnRelationshipPayloads) add(payload, payload?.chunk?.key ?? '0,0', 'authored-relationship');
+    add(authoredCeilingOverlayPayload, authoredCeilingOverlayPayload?.chunk?.key ?? '0,0', 'authored-ceiling-overlay');
+    return entries;
+}
+
+async function installVisualProbe() {
+    if (window.__jwebVisualProbe) return window.__jwebVisualProbe;
+    const { installJwebVisualProbe } = await import('./tools/visual-harness/runtime-visual-probe.js');
+    return installJwebVisualProbe({
+        THREE,
+        scene,
+        camera,
+        renderer,
+        composer,
+        chunkSize: STREAM_CHUNK_SIZE,
+        setFreecam: value => { freecamEnabled = !!value; },
+        onCameraMoved: () => {
+            worldChunkStreamer?.ensureNeighborhood?.();
+            worldChunkStreamer?.updateVisibility?.(worldChunkStreamer?.playerChunkCoords?.(), true);
+        },
+        getCurrentChunk: () => worldChunkStreamer?.getChunkAtWorld(camera.position.x, camera.position.z) ?? null,
+        getPayloadEntries: visualProbePayloadEntries,
+        getStatus: () => window.__debug?.perf?.() ?? null,
+    });
+}
+
+window.__debug.visualProbe = Object.freeze({
+    install: installVisualProbe,
+    payloadEntries: visualProbePayloadEntries,
+    get installed() { return !!window.__jwebVisualProbe; },
+});
+
+if (new URLSearchParams(location.search).get('visualProbe') === '1') {
+    installVisualProbe().catch(error => console.error('[visual-probe] live install failed', error));
+}

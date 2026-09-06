@@ -15,7 +15,7 @@ These should not care how `main.js` is organized:
 
 - `jweb-generator-adapter.js` — the only generator-specimen bridge to `kowloon-fabric-engine.js` and `world-contract.js`.
 - `specimen.js` — uses the generator adapter or geometry-fixture adapter. JWEB lighting config is optional and has a neutral fallback.
-- the small host block described in `INTEGRATION.md` — lives in `main.js` only in a future cut that intentionally enables full-world capture; it is not part of this parked-tool landing.
+- the small host block described in `INTEGRATION.md` — lives in current `main.js`, is lazy/dev-only, and is the only full-world integration point that should move when JWEB ownership changes.
 
 If the project moves, prefer editing those narrow seams rather than teaching the harness to understand old and new architectures simultaneously.
 

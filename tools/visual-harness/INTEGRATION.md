@@ -1,10 +1,10 @@
 # JWEB runtime integration seam
 
-The visual harness is deliberately **not** patched into `main.js` by a generic rewriter. **The parked-tool pushzip that lands this directory intentionally does not modify `main.js`.** Keep the harness portable and, only when full-world capture is actually needed, adapt the host in one small hand-written block against the then-current `main`.
+The visual harness is wired to the current JWEB runtime through one deliberately small, hand-written seam in `main.js`. It is **live but lazy**: normal boot does not statically import `tools/visual-harness/runtime-visual-probe.js`. The module loads only when a developer/agent calls `window.__debug.visualProbe.install()` or opens JWEB with `?visualProbe=1`.
 
-## Permanent contract
+## Permanent host contract
 
-`runtime-visual-probe.js` only needs this host context:
+`runtime-visual-probe.js` consumes a host context rather than importing `main.js`:
 
 ```js
 {
@@ -12,80 +12,45 @@ The visual harness is deliberately **not** patched into `main.js` by a generic r
   scene,
   camera,
   renderer,
-  composer,          // optional; used for exact live-screen capture when present
+  composer,          // optional, for exact live-screen capture
+  chunkSize,         // optional but supplied by current JWEB
+  setFreecam,        // optional; current JWEB supplies it for REAL CITY travel
+  onCameraMoved,     // optional; current JWEB queues/refreshes streamer work
+  getCurrentChunk,   // optional; improves chunk-settlement verification
   getPayloadEntries, // () => [{ payload, chunkKey?, source? }, ...]
-  getStatus,         // optional; () => settlement/debug status
+  getStatus,         // optional; settlement/debug status
 }
 ```
 
-Everything else — target cataloging, exact instance extraction, void rendering, masks, filters, ZIPs and manifests — stays inside `tools/visual-harness/`.
+Everything else — target cataloging, exact instance extraction, void rendering, masks, image filters, artistic lenses, ZIPs and manifests — stays in `tools/visual-harness/`.
 
-## Example JWEB-shaped adapter for a later runtime-integration cut
+## Current JWEB authorities
 
-When a later cut intentionally integrates full-world capture into a particular `main.js`, inspect its current authorities and write the equivalent of this near the existing `window.__debug` setup:
+The current `main.js` seam publishes each live payload once from these authorities:
 
-```js
-function visualProbePayloadEntries() {
-    const entries = [];
+- READY `worldChunkStreamer.chunks` payloads;
+- `unifiedSpawnFabricPayloads`;
+- `unifiedSpawnRelationshipPayloads`;
+- `authoredCeilingOverlayPayload`.
 
-    for (const chunk of worldChunkStreamer?.chunks?.values?.() ?? []) {
-        if (chunk?.payload?.root) {
-            entries.push({ payload: chunk.payload, chunkKey: chunk.key, source: 'world-stream' });
-        }
-    }
+It also passes the current scene/camera/renderer/composer, `STREAM_CHUNK_SIZE`, freecam control, current-chunk lookup, and a camera-moved hook that immediately asks the streamer to queue/update the new neighborhood.
 
-    for (const [key, payload] of unifiedSpawnFabricPayloads.entries()) {
-        if (payload?.root) {
-            entries.push({ payload, chunkKey: '0,0', source: `authored-fabric:${key}` });
-        }
-    }
+This is intentional. REAL CITY captures should visualize the same committed payloads the player sees rather than reconstructing a parallel pseudo-city.
 
-    for (const payload of unifiedSpawnRelationshipPayloads) {
-        if (payload?.root) {
-            entries.push({ payload, chunkKey: '0,0', source: 'authored-relationship' });
-        }
-    }
+## Moving-main rule
 
-    return entries;
-}
+JWEB `main` is still a moving target. Do not add a source-text patcher or compatibility archaeology. If ownership moves, update only the narrow `visualProbePayloadEntries()`/host-context block in current `main.js`, then rerun the harness contract tests. Keep the runtime probe itself ignorant of JWEB source layout.
 
-async function installVisualProbe() {
-    if (window.__jwebVisualProbe) return window.__jwebVisualProbe;
-    const { installJwebVisualProbe } = await import('./tools/visual-harness/runtime-visual-probe.js');
-    return installJwebVisualProbe({
-        THREE,
-        scene,
-        camera,
-        renderer,
-        composer,
-        getPayloadEntries: visualProbePayloadEntries,
-        getStatus: () => window.__debug?.perf?.() ?? null,
-    });
-}
+## Integration checks
 
-window.__debug.visualProbe = {
-    install: installVisualProbe,
-    payloadEntries: visualProbePayloadEntries,
-};
+Before trusting a release or agent capture:
 
-if (new URLSearchParams(location.search).get('visualProbe') === '1') {
-    installVisualProbe().catch(error => console.error('[visual-probe] install failed', error));
-}
-```
-
-That block is an **example seam, not a patch artifact**. If the live project renames or consolidates payload ownership, change only `visualProbePayloadEntries()` and the obvious runtime references. Do not make the harness search source text, infer line numbers, or silently guess replacement authorities.
-
-## Integration checks for a future pushzip
-
-Before packaging against a moving `main`:
-
-1. Confirm the current scene/camera/renderer/composer variables.
-2. Confirm which collections own committed streamed and authored Kowloon payloads.
-3. Make `getPayloadEntries()` return each live payload once.
-4. Attach the lazy installer to the current debug surface.
-5. Run the Node harness tests.
-6. Open `tools/visual-harness/browser-selftest.html` and require PASS.
-7. Open one direct fixture specimen, one generator specimen, and the real world with `?visualProbe=1`.
-8. Only then build the normal JWEB pushzip from that current main.
-
-The goal is a tiny fresh integration each time, not a clever compatibility layer.
+1. `node tools/visual-harness/tests/portable_contract_selftest.mjs`
+2. `node tools/visual-harness/tests/fixture_specimen_selftest.mjs`
+3. `node tools/visual-harness/tests/visual_probe_selftest.mjs`
+4. Browser: `tools/visual-harness/browser-selftest.html` must report PASS on WebGL-capable desktop hardware.
+5. Open one fixture specimen.
+6. Open one generator specimen.
+7. Open `/?visualProbe=1`, confirm `window.__jwebVisualProbe`, then run `runtimeLocation()` and one `captureWorld()`.
+8. For REAL CITY travel, run `gotoChunk()` and verify the returned current chunk matches the requested chunk before reviewing images.
+9. For artistic work, run at least one `captureArtPass()` with a lens appropriate to the change.

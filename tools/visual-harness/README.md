@@ -2,13 +2,13 @@
 
 Companion to `tools/geometry-harness/`. The geometry harness answers **what geometry/collision authority exists?** This harness answers **what does that exact thing look like in the real renderer, in context, by itself, and under machine-friendly diagnostic masks?**
 
-It is dev-only and lazy. **This parked-tool cut intentionally does not modify `main.js` or normal JWEB boot at all.** Fixture mode, generator-specimen mode, browser self-test, and the Node-side capture/catalog code are present immediately. Full-world capture support remains in the tool but becomes available only after a later cut hand-writes the tiny host seam documented in `INTEGRATION.md` against the then-current `main`.
+It is dev-only and lazy. The current JWEB `main.js` has a deliberately tiny host seam: normal boot does not statically import the harness, but `window.__debug.visualProbe.install()` (or `?visualProbe=1`) lazy-loads it against the exact live scene, renderer, streamer payloads, authored spawn fabric, authored relationships, and authored ceiling overlay. Fixture and generator-specimen modes remain available without booting the real city.
 
 ## Three capture paths
 
-### 1. Full ordinary JWEB world — optional host integration, not installed by this cut
+### 1. Full ordinary JWEB world — live REAL CITY mode
 
-The code for this path is preserved, but the parked-tool landing deliberately does not wire it into `main.js`. After a future host seam is added, this path uses the real `main.js` runtime: streamed/authored geometry, materials, lighting, player camera and post-processing remain normal.
+This path uses the real `main.js` runtime. Streamed/authored geometry, materials, lighting, player camera and post-processing remain normal. The integration is lazy and dev-only; simply having the harness in the tree does not add its module to ordinary boot.
 
 ```js
 const p = await window.__debug.visualProbe.install();
@@ -57,6 +57,39 @@ The adapter preserves geometry-harness component IDs, including visual/collider 
 ```
 
 Use `&capture=1&download=1` for one target or `&decompose=1&parts=12&download=1` for an automatic discrete-parts packet.
+
+
+## Artistic review is a first-class use case
+
+The harness is not only for defect hunting. `captureArtPass()` creates a beauty-first review packet for implementation agents while they are making artistic changes. It records the artistic questions in the manifest so the packet has an explicit review purpose instead of implicitly treating every capture as a bug.
+
+Available lenses are `composition`, `massing`, `circulation`, `facade`, `material`, and `readability`. Each lens chooses complementary normal and simplified passes. For example, composition combines the real beauty image with grayscale/low-pass/silhouette/depth so an agent can judge hierarchy and shape before getting distracted by detail; circulation adds semantic and visual/collider overlays because movement legibility is part of the art.
+
+```js
+const p = await window.__debug.visualProbe.install();
+
+await p.captureArtPass([
+  { query: 'guarded-catwalk', role: 'exterior circulation' },
+  { query: 'compound-stair', role: 'vertical rhythm' },
+], {
+  lenses: ['composition', 'massing', 'circulation', 'material'],
+  download: true,
+  name: 'current-city-art-pass',
+});
+```
+
+REAL CITY mode can also move the actual player camera into a streamed chunk, wait for that local ring to publish, and then capture the same packet:
+
+```js
+await p.captureArtPass(['hanging-bridge', 'guarded-catwalk'], {
+  location: { chunk: [8, 8], height: 42, lookAtY: 12 },
+  lenses: ['composition', 'massing', 'circulation', 'readability'],
+  download: true,
+  name: 'chunk-8-8-art-pass',
+});
+```
+
+Use `await p.gotoChunk(x, z, options)` when an agent wants to roam first and decide what to study from `p.search()`, `p.pick()`, or `p.related()`.
 
 ## Target authority: IDs first, image guessing last
 
@@ -173,7 +206,7 @@ From repo root:
 node tools/visual-harness/serve.mjs --port 8123
 ```
 
-Then open the modes that are immediately available in this parked cut:
+Then open the fixture/generator modes directly:
 
 ```text
 http://127.0.0.1:8123/tools/visual-harness/specimen.html?mode=fixture&fixture=apartment-stair&target=flight-low
@@ -181,7 +214,7 @@ http://127.0.0.1:8123/tools/visual-harness/specimen.html?mode=generator&target=s
 http://127.0.0.1:8123/tools/visual-harness/browser-selftest.html
 ```
 
-After a later runtime host seam is installed, `http://127.0.0.1:8123/?visualProbe=1` can expose full-world capture.
+For the real city, open `http://127.0.0.1:8123/?visualProbe=1` and use `window.__jwebVisualProbe` or `window.__debug.visualProbe.install()` from the console.
 
 Windows can run `tools\visual-harness\OPEN_VISUAL_HARNESS.cmd`.
 
@@ -193,13 +226,14 @@ For moving-main integration boundaries, read `INTEGRATION.md` and `PORTABILITY.m
 node tools/visual-harness/tests/portable_contract_selftest.mjs
 node tools/visual-harness/tests/fixture_specimen_selftest.mjs
 node tools/visual-harness/tests/visual_probe_selftest.mjs
+node tools/visual-harness/tests/live_agent_api_selftest.mjs
 ```
 
-The portable-contract test syntax-checks every harness script and guards the narrow no-`main.js` specimen/runtime boundary. The real-chunk selftest proves semantic stairs/catwalks resolve to actual renderer fragments and physics proxies against the supplied current JWEB tree. The fixture test proves exact stairs, individual treads, collider ramps, rails and OBJ groups can be independently selected without city generation.
+The portable-contract test syntax-checks every harness script, keeps specimen/runtime modules independent of `main.js`, and verifies that the live host seam remains a lazy dynamic import over the current ownership authorities. The real-chunk selftest proves semantic stairs/catwalks resolve to actual renderer fragments and physics proxies against the supplied current JWEB tree. The fixture test proves exact stairs, individual treads, collider ramps, rails and OBJ groups can be independently selected without city generation. The live-agent API test exercises artistic presets and REAL CITY chunk navigation without needing a browser.
 
 Browser/WebGL validation lives in `browser-selftest.html`. It builds synthetic shared-instance geometry, runs all render passes, verifies real PNG signatures, verifies every object/instance segmentation RGB against the manifest, checks exact collider/semantic palette colors, exercises one-instance capture, ZIP generation, duplicate logical capture requests, and the `maxParts=1` decomposition contract. The page must report `PASS` in a normal WebGL-capable desktop browser.
 
-This coding environment cannot create a WebGL command buffer in its headless Chromium build, so the browser page is included as a deterministic acceptance test rather than being falsely marked as passed here. Node/generator/fixture validation remains runnable without WebGL.
+This coding environment has managed Chromium policy blocking all navigations (`URLBlocklist: ["*"]`), so the browser page cannot be opened here even though SwiftShader WebGL itself is available. The browser acceptance page remains deterministic for a normal desktop browser; Node/generator/fixture/live-agent validation is run here instead of falsely claiming a browser PASS.
 
 ## Relation to the geometry harness
 

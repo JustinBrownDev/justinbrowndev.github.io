@@ -1,3 +1,5 @@
+> **Historical provenance only.** This parked state is superseded by `LIVE-INTEGRATION-STATUS.md`; the current tree has a lazy live REAL CITY seam in `main.js` and first-class artistic review.
+
 # JWEB visual harness — inert repository cut
 
 This repository cut intentionally adds only `tools/visual-harness/`.

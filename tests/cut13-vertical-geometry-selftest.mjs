@@ -6,6 +6,7 @@ import {
   CYLINDRICAL_VERTICAL_SECTION_ALLOWANCE_METERS,
   cylindricalFarPlaneDistance,
 } from '../world/cylindrical-render-distance.js';
+import { HANGING_CITY_CEILING_Y } from '../world/hanging-city-topology.js';
 import {
   BUILDING_SLAB_THICKNESS,
   centeredStairCorePosition,
@@ -18,16 +19,18 @@ const mainSource = fs.readFileSync(path.join(repo, 'main.js'), 'utf8');
 const perfSource = fs.readFileSync(path.join(repo, 'city-performance.js'), 'utf8');
 const engineSource = fs.readFileSync(path.join(repo, 'kowloon-fabric-engine.js'), 'utf8');
 const sidecarSource = fs.readFileSync(path.join(repo, 'world/architecture/building-plan-sidecar.js'), 'utf8');
+const stairCoreSource = fs.readFileSync(path.join(repo, 'world/interior-stair-core.js'), 'utf8');
 
-assert.equal(CYLINDRICAL_VERTICAL_SECTION_ALLOWANCE_METERS, 96);
+assert.ok(CYLINDRICAL_VERTICAL_SECTION_ALLOWANCE_METERS >= HANGING_CITY_CEILING_Y + 32 - 1e-9,
+  'camera far-plane allowance must contain the fourfold ceiling plus roof/detail headroom');
 const far50 = cylindricalFarPlaneDistance(50);
 assert.ok(far50 > 50, 'camera far plane must leave vertical headroom beyond horizontal draw distance');
-assert.ok(Math.abs(far50 - Math.hypot(50, 96)) < 1e-9);
+assert.ok(Math.abs(far50 - Math.hypot(50, CYLINDRICAL_VERTICAL_SECTION_ALLOWANCE_METERS)) < 1e-9);
 assert.equal(cylindricalFarPlaneDistance(50, 0), 50);
 assert.match(mainSource, /cylindricalFarPlaneDistance\(QUALITY\.drawDistance\)/,
   'initial camera far plane must use cylindrical vertical-section authority');
-assert.match(mainSource, /const horizontalDrawDistance =[\s\S]*const nextFar = cylindricalFarPlaneDistance\(horizontalDrawDistance\);/,
-  'runtime vertical-band updates must preserve cylindrical far-plane headroom');
+assert.match(mainSource, /const nextFar = cylindricalFarPlaneDistance\(QUALITY\.drawDistance\);/,
+  'runtime atmosphere updates must preserve cylindrical far-plane headroom');
 assert.match(perfSource, /const dx = centerX - camera\.position\.x;[\s\S]*const dz = centerZ - camera\.position\.z;[\s\S]*dx \* dx \+ dz \* dz <= maxDist \* maxDist/,
   'static-world draw-distance visibility must remain XZ/cylindrical');
 assert.match(perfSource, /function roughDistanceSq\(obj\)[\s\S]*const dx = x - camera\.position\.x, dz = z - camera\.position\.z;[\s\S]*return dx \* dx \+ dz \* dz;/,
@@ -53,13 +56,15 @@ assert.deepEqual(centeredStairCorePosition({ axis: 'z', rect, offsetX: 0.5, offs
   'z-running stair must stay centered instead of pinching either wall');
 assert.deepEqual(centeredStairCorePosition({ axis: 'x', rect, offsetX: 0.5, offsetZ: 0.75 }), { x: 10, z: 20 },
   'x-running stair must stay centered instead of pinching either wall');
-assert.match(engineSource, /const primaryStairCenter = centeredStairCorePosition\(\{[\s\S]*axis: primaryStairAxis, rect: primaryModule\.rect/,
-  'internal stair placement must center the flight along its run axis');
-assert.match(sidecarSource, /const walkAround = stairWalkAroundClearance\(stairClearWidth\);/,
-  'Building Plan must reserve the stronger stair landing/approach apron');
+assert.match(stairCoreSource, /const opening = orientedRect\(axis, alongCenter, crossCenter, openingAlong, openingCross\);/,
+  'structural stair authority must center its opening on the accepted module/compound rectangle');
+assert.match(engineSource, /const primaryStairCx = primaryStairCore\.opening\.x;[\s\S]*const primaryStairCz = primaryStairCore\.opening\.z;/,
+  'engine realization must consume the centered structural stair-core opening instead of recomputing placement');
+assert.match(sidecarSource, /const walkAround = r\?\.integratedFloorLanding === true[\s\S]*Math\.max\(0\.85, flightClearWidth \* 0\.95\)[\s\S]*stairWalkAroundClearance\(stairClearWidth\)/,
+  'Building Plan must reserve an external approach apron without double-counting integrated switchback landings');
 
 console.log('[cut13-vertical-geometry-selftest] PASS', {
-  render: 'horizontal cylinder with 96m vertical far-plane allowance',
+  render: `horizontal cylinder with ${CYLINDRICAL_VERTICAL_SECTION_ALLOWANCE_METERS.toFixed(2)}m vertical far-plane allowance`,
   stair: 'fully centered core + >=1.75m planning apron',
   walls: 'terminate at ceiling / slab underside',
 });

@@ -2,7 +2,10 @@ export const CAVERN_LADDER_SCHEMA = 'jweb.cavern-ladder-route.v1';
 export const CAVERN_LADDER_APERTURE_WIDTH = 1.12;
 export const CAVERN_LADDER_APERTURE_DEPTH = 1.00;
 export const CAVERN_LADDER_MIN_SPAN = 1.15;
-export const CAVERN_LADDER_MAX_SPAN = 19.5;
+// The fourfold cavern is traversed by architecture first; ladders only bridge
+// residual near-meet gaps.  32m is long enough to keep multiple cross-field
+// stitches without turning a 136m void into implausible floor-to-ceiling ladders.
+export const CAVERN_LADDER_MAX_SPAN = 32;
 export const CAVERN_LADDER_EDGE_MARGIN = 0.22;
 
 function finite(value, fallback = 0) {

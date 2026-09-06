@@ -214,7 +214,8 @@ into the streamer ownership lifecycle instead.
 The macro geometry is intentionally simple and must stay legible underneath procedural accumulation:
 
 - The world is bounded by **two exact flat parallel planes**: a black lower plane and a white upper plane.
-- The nominal plane separation is **34.02 m**, exactly 60% of the Cut 15 56.7 m separation. Do not manufacture richness by deforming either macro plane.
+- The nominal plane separation is **136.08 m**: four times the prior 34.02 m section. Both macro planes remain exactly flat/parallel; vertical richness comes from architecture, not warped world surfaces.
+- Ordinary non-warehouse fabric gets a **2x baseline floor-count compensation**, while near-span and route-driven towers can use the full expanded cavern budget (up to a 48-storey architectural safety cap, still limited by physical clearance). This preserves low/medium buildings while allowing ground-to-ceiling reaches, ceiling-to-ground reaches, midsection braids, and large central voids.
 - Ground architecture grows upward. Ceiling architecture grows downward. **Growth direction is not gravity direction**: the player, camera, furniture, doors, rooms, stairs and props all remain in the one ordinary world-down gravity frame.
 - The ceiling city is not a registered mirror of the ground city. It samples the **same deterministic infinite generator and world seed at one fixed far-away chunk phase** and rebases that sampled topology over the visible chunk. Neighboring ceiling chunks sample neighboring remote chunks so roads and compounds stay continuous without visibly repeating the lower topology.
 - Ceiling compounds remain ordinary upright buildings internally. Their modules are top-aligned to the white macro-roof: every module roof shares the same ceiling datum, while each module keeps its own story depth and therefore terminates independently downward. No filler/root column is permitted merely to bridge a short module to the roof.

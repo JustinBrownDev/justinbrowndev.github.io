@@ -1,9 +1,18 @@
-export const HANGING_CITY_SCHEMA = 'jweb.ceiling-city.v3';
+export const HANGING_CITY_SCHEMA = 'jweb.ceiling-city.v4';
 export const HANGING_CITY_FLOOR_HEIGHT = 3.15;
-// Cut 16: the two macro surfaces remain exact parallel planes.  The ceiling is
-// deliberately 60% of Cut 15's 56.7m separation to compress the vertical search
-// space and force the two independently sampled city fields to interlock.
-export const HANGING_CITY_CEILING_Y = 56.7 * 0.60;
+// R3 vertical section: preserve the exact parallel-plane contract, but open the
+// cavern to four times the former 34.02m section.  Massing gets its own scale
+// below so this is not merely a white plane translated into empty air.
+export const HANGING_CITY_BASE_CEILING_Y = 56.7 * 0.60;
+export const HANGING_CITY_HEIGHT_SCALE = 4;
+export const HANGING_CITY_CEILING_Y = HANGING_CITY_BASE_CEILING_Y * HANGING_CITY_HEIGHT_SCALE;
+// Four times the old 12-storey safety ceiling.  The geometric cavern budget is
+// still the stricter authority when floor heights/reserves make 48 impossible.
+export const HANGING_CITY_MAX_FLOORS = 48;
+// Ordinary fabric grows, but not 4x wholesale: doubling the baseline leaves a
+// legible lower/upper city while near-span + route-driven towers can use the full
+// 4x vertical section and create long reaches, braids and central voids.
+export const HANGING_CITY_MASSING_FLOOR_SCALE = 2;
 export const HANGING_CITY_PHASE_X = 8192;
 export const HANGING_CITY_PHASE_Z = -12289;
 export const HANGING_CITY_CLAIM_MARGIN = 2.40;
@@ -117,7 +126,7 @@ export function planCeilingBuildingHeight({
 export function maximumCavernFloors(floorHeight, {
   ceilingY = HANGING_CITY_CEILING_Y,
   reserve = HANGING_CITY_GROUND_HEADROOM_RESERVE,
-  hardCap = 12,
+  hardCap = HANGING_CITY_MAX_FLOORS,
 } = {}) {
   const fh = Math.max(0.1, Number(floorHeight) || HANGING_CITY_FLOOR_HEIGHT);
   return clamp(Math.floor(Math.max(fh, ceilingY - reserve) / fh), 1, Math.max(1, Math.floor(hardCap)));

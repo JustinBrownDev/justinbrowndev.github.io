@@ -1,4 +1,5 @@
 import { composeCityRoutes } from './city-route-composer.js';
+import { HANGING_CITY_CEILING_Y } from './hanging-city-topology.js';
 
 export const SECTIONAL_CIRCULATION_SCHEMA = 'jweb.sectional-circulation.v1';
 
@@ -101,7 +102,7 @@ export function assignBridgeSectionBands({
   field = 'ground',
   siteFloorCapacity = null,
   floorHeight = 3.15,
-  ceilingY = 34.02,
+  ceilingY = HANGING_CITY_CEILING_Y,
   weirdness = 0,
   fallbackFloors = field === 'ceiling' ? 6 : 5,
   stableKey = 'sectional-bridge-bands',
@@ -113,7 +114,7 @@ export function assignBridgeSectionBands({
     bridgePlans: plans, field, stableKey: `${stableKey}:composer`, siteGeometry, districtRouteIntent,
   });
   const fh = Math.max(0.25, finite(floorHeight, 3.15));
-  const cy = Math.max(fh * 2, finite(ceilingY, 34.02));
+  const cy = Math.max(fh * 2, finite(ceilingY, HANGING_CITY_CEILING_Y));
   const midY = cy * 0.5;
   const degree = new Map();
   for (const plan of plans) {

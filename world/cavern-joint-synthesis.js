@@ -1,3 +1,5 @@
+import { HANGING_CITY_CEILING_Y } from './hanging-city-topology.js';
+
 export const CAVERN_JOINT_SYNTHESIS_SCHEMA = 'jweb.cavern-joint-synthesis.v3';
 
 function finite(value, fallback = 0) {
@@ -160,13 +162,13 @@ function pairFloorCaps(ground, ceiling, availableHeight, archetype) {
 export function reconcileCavernFloorBudgets({
   groundPlans = [],
   ceilingPlans = [],
-  ceilingY = 34.02,
+  ceilingY = HANGING_CITY_CEILING_Y,
   verticalClearance = 0.72,
   sharedReserve = 1.35,
   claimMargin = 2.40,
   stableKey = null,
 } = {}) {
-  const usableHeight = Math.max(0.2, finite(ceilingY, 34.02) - Math.max(0, finite(verticalClearance)) - Math.max(0, finite(sharedReserve)));
+  const usableHeight = Math.max(0.2, finite(ceilingY, HANGING_CITY_CEILING_Y) - Math.max(0, finite(verticalClearance)) - Math.max(0, finite(sharedReserve)));
   const ground = groundPlans.map(plan => ({ ...plan, horizontal: normalizedBounds(plan.bounds, claimMargin) }));
   const ceiling = ceilingPlans.map(plan => ({ ...plan, horizontal: normalizedBounds(plan.bounds, claimMargin) }));
   const gFloors = new Map(ground.map(plan => [String(plan.id), Math.max(1, Math.floor(finite(plan.desiredFloors, 1)))]));

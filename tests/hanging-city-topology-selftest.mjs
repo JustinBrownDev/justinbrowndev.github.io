@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import {
+  HANGING_CITY_BASE_CEILING_Y,
   HANGING_CITY_CEILING_Y,
+  HANGING_CITY_HEIGHT_SCALE,
+  HANGING_CITY_MAX_FLOORS,
+  HANGING_CITY_MASSING_FLOOR_SCALE,
   HANGING_CITY_FLOOR_HEIGHT,
   HANGING_CITY_PHASE_X,
   HANGING_CITY_PHASE_Z,
@@ -9,7 +13,11 @@ import {
   planCeilingBuildingHeight,
 } from '../world/hanging-city-topology.js';
 
-assert.ok(Math.abs(HANGING_CITY_CEILING_Y - 34.02) < 1e-9, 'parallel plane separation must be exactly 60% of Cut 15');
+assert.ok(Math.abs(HANGING_CITY_BASE_CEILING_Y - 34.02) < 1e-9, 'baseline ceiling datum must remain the known 34.02m section');
+assert.equal(HANGING_CITY_HEIGHT_SCALE, 4, 'R3 cavern section must be exactly four times baseline');
+assert.ok(Math.abs(HANGING_CITY_CEILING_Y - 136.08) < 1e-9, 'parallel plane separation must be exactly 136.08m');
+assert.equal(HANGING_CITY_MAX_FLOORS, 48, 'architectural ceiling must expand with the fourfold section');
+assert.equal(HANGING_CITY_MASSING_FLOOR_SCALE, 2, 'ordinary fabric should compensate without making every tower a 4x extrusion');
 const a = ceilingSourceCoordinates(0, 0);
 const east = ceilingSourceCoordinates(1, 0);
 const south = ceilingSourceCoordinates(0, 1);
@@ -47,5 +55,5 @@ console.log('[hanging-city-topology-selftest] PASS', {
   phase: [HANGING_CITY_PHASE_X, HANGING_CITY_PHASE_Z],
   openFloors: open.floors,
   constrainedFloors: constrained.floors,
-  invariant: 'same generator + remote phase; world-down growth; ordinary gravity; pre-generation opposing claim budget',
+  invariant: 'fourfold parallel section + compensated massing; same generator + remote phase; world-down growth; ordinary gravity; opposing claim budget',
 });

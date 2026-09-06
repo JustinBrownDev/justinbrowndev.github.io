@@ -12,6 +12,8 @@ import {
     HANGING_CITY_CLAIM_MARGIN,
     HANGING_CITY_VERTICAL_CLEARANCE,
     HANGING_CITY_UNDERSIDE_RESERVE,
+    HANGING_CITY_MAX_FLOORS,
+    HANGING_CITY_MASSING_FLOOR_SCALE,
     ceilingFrame,
     ceilingSourceCoordinates,
     maximumCavernFloors,
@@ -2951,6 +2953,11 @@ export function createKowloonFabricEngine({
                     floor: stop.floor,
                     graphAuthority: route.graphAuthority,
                     placementAuthority: placement.placementAuthority,
+                    // The room threshold opens directly onto this generated exterior
+                    // street-layer deck. Publish that physical junction explicitly so
+                    // the unified circulation graph does not leave the stair/deck
+                    // route as a transport-only shadow component.
+                    surfaceId: `${placement.landingId}:deck`,
                 },
             });
             registerSemanticConnector(physics, connector);
@@ -3700,8 +3707,8 @@ export function createKowloonFabricEngine({
             weirdness: weird,
             stableKey: `${chunk.key}:${siteSignature}:stair`,
         });
-        let primaryFloors = Math.min(12, baseFloors + verticalBurst + (site.cells.length >= 4 && archetype !== 'workshop-warehouse' ? 1 : 0));
-        if (Number.isFinite(structureProfile?.primaryFloors)) primaryFloors = Math.max(1, Math.min(12, Math.floor(structureProfile.primaryFloors)));
+        let primaryFloors = Math.min(HANGING_CITY_MAX_FLOORS, baseFloors + verticalBurst + (site.cells.length >= 4 && archetype !== 'workshop-warehouse' ? 1 : 0));
+        if (Number.isFinite(structureProfile?.primaryFloors)) primaryFloors = Math.max(1, Math.min(HANGING_CITY_MAX_FLOORS, Math.floor(structureProfile.primaryFloors)));
         const floorH = Number.isFinite(structureProfile?.floorHeight)
             ? Math.max(2.4, Math.min(5.8, structureProfile.floorHeight))
             : Math.max(2.4, Math.min(5.8, physicalTruth.floorHeight.realizedSI));
@@ -3710,6 +3717,9 @@ export function createKowloonFabricEngine({
         // allowed to grow through the white ceiling before the opposing field is
         // even considered.
         const cavernFloorCap = maximumCavernFloors(floorH);
+        if (!Number.isFinite(structureProfile?.primaryFloors) && archetype !== 'workshop-warehouse') {
+            primaryFloors = Math.min(HANGING_CITY_MAX_FLOORS, Math.max(primaryFloors, Math.round(primaryFloors * HANGING_CITY_MASSING_FLOOR_SCALE)));
+        }
         primaryFloors = Math.min(primaryFloors, cavernFloorCap);
         if (!Number.isFinite(structureProfile?.primaryFloors) && archetype !== 'workshop-warehouse') {
             const spanRng = mulberry32(hashString32(`${worldSeed}:kowloon-near-span:${chunk.key}:${siteSignature}`));
@@ -3754,7 +3764,7 @@ export function createKowloonFabricEngine({
             }
             const forcedFloors = structureProfile?.floorCountByCell?.[key]
                 ?? structureProfile?.floorCountForCell?.(cell, { key, topology, primaryFloors, archetype });
-            if (Number.isFinite(forcedFloors)) floors = Math.max(1, Math.min(12, cavernFloorCap, Math.floor(forcedFloors)));
+            if (Number.isFinite(forcedFloors)) floors = Math.max(1, Math.min(HANGING_CITY_MAX_FLOORS, cavernFloorCap, Math.floor(forcedFloors)));
             modulePlans.push({ key, cell, edgeKinds, floors, rect });
         }
 
@@ -5565,7 +5575,7 @@ export function createKowloonFabricEngine({
         // publication all go through the cooperative Kowloon compound stepper.
         const typeIndex = districtLandmarkTypes.indexOf(spec.type);
         const weird = chunk.weirdness.sampled;
-        const floors = Math.min(12, 5 + typeIndex + Math.floor(weird * 3));
+        const floors = Math.min(HANGING_CITY_MAX_FLOORS, Math.round((5 + typeIndex + Math.floor(weird * 3)) * HANGING_CITY_MASSING_FLOOR_SCALE));
         const halfX = cellSize * (spec.type === 'gatehouse' ? 0.46 : 0.42);
         const halfZ = cellSize * (spec.type === 'stack' ? 0.46 : 0.42);
         const doorSide = cell.sides[hashString32(`${spec.id}:door`) % cell.sides.length];
@@ -6475,12 +6485,15 @@ export function createKowloonFabricEngine({
             weirdness: weird,
             stableKey: `${chunk.key}:${siteSignature}:primary`,
         });
-        let primaryFloors = Math.min(12, baseFloors + verticalBurst + (site.cells.length >= 4 && archetype !== 'workshop-warehouse' ? 1 : 0));
-        if (Number.isFinite(structureProfile?.primaryFloors)) primaryFloors = Math.max(1, Math.min(12, Math.floor(structureProfile.primaryFloors)));
+        let primaryFloors = Math.min(HANGING_CITY_MAX_FLOORS, baseFloors + verticalBurst + (site.cells.length >= 4 && archetype !== 'workshop-warehouse' ? 1 : 0));
+        if (Number.isFinite(structureProfile?.primaryFloors)) primaryFloors = Math.max(1, Math.min(HANGING_CITY_MAX_FLOORS, Math.floor(structureProfile.primaryFloors)));
         const floorHeight = Number.isFinite(structureProfile?.floorHeight)
             ? Math.max(2.4, Math.min(5.8, structureProfile.floorHeight))
             : Math.max(2.4, Math.min(5.8, physicalTruth.floorHeight.realizedSI));
         const cavernFloorCap = maximumCavernFloors(floorHeight);
+        if (!Number.isFinite(structureProfile?.primaryFloors) && archetype !== 'workshop-warehouse') {
+            primaryFloors = Math.min(HANGING_CITY_MAX_FLOORS, Math.max(primaryFloors, Math.round(primaryFloors * HANGING_CITY_MASSING_FLOOR_SCALE)));
+        }
         primaryFloors = Math.min(primaryFloors, cavernFloorCap);
         if (!Number.isFinite(structureProfile?.primaryFloors) && archetype !== 'workshop-warehouse') {
             const spanRng = mulberry32(hashString32(`${worldSeed}:kowloon-near-span:${chunk.key}:${siteSignature}`));
@@ -6624,7 +6637,7 @@ export function createKowloonFabricEngine({
 
     function desiredCeilingTowerFloors({ phaseChunk, signature, weirdness = 0 }) {
         const heightRng = mulberry32(hashString32(`${worldSeed}:ceiling-height:${phaseChunk.key}:${signature}`));
-        const base = 4 + Math.floor(heightRng() * 5);
+        const base = Math.min(HANGING_CITY_MAX_FLOORS, Math.round((4 + Math.floor(heightRng() * 5)) * HANGING_CITY_MASSING_FLOOR_SCALE));
         const spanRng = mulberry32(hashString32(`${worldSeed}:ceiling-near-span:${phaseChunk.key}:${signature}`));
         const cavernFloorCap = maximumCavernFloors(HANGING_CITY_FLOOR_HEIGHT);
         if (spanRng() < 0.14 + Math.max(0, Math.min(1, weirdness)) * 0.10) {
@@ -7547,7 +7560,7 @@ export function createKowloonFabricEngine({
         let districtLandmarkFallback = null;
         if (districtLandmarkCell && districtLandmarkSpec) {
             const typeIndex = districtLandmarkTypes.indexOf(districtLandmarkSpec.type);
-            const landmarkFloors = Math.min(12, 5 + typeIndex + Math.floor(weird * 3));
+            const landmarkFloors = Math.min(HANGING_CITY_MAX_FLOORS, Math.round((5 + typeIndex + Math.floor(weird * 3)) * HANGING_CITY_MASSING_FLOOR_SCALE));
             const landmarkSite = { id: 0, cells: [{ col: districtLandmarkCell.c, row: districtLandmarkCell.r }] };
             const landmarkSiteIdOf = Array.from({ length: microCells }, () => new Array(microCells).fill(-1));
             landmarkSiteIdOf[districtLandmarkCell.r][districtLandmarkCell.c] = 0;

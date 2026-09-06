@@ -49,6 +49,7 @@ import { planBuildingSidecar } from './world/architecture/building-plan-sidecar.
 import { assertBuildingPlanAuthority, promoteBuildingPlanAuthority } from './world/architecture/building-plan-authority.js';
 import { applyTowerTransferAuthority, cityExchangeAnchorsForPortals } from './world/architecture/tower-transfer-authority.js';
 import { programFacadeFrontageDirectives } from './world/architecture/program-architecture.js';
+import { planProgramMacroArchitecture, planStairArchitectureExpression } from './world/architectural-family-system.js';
 import { createSemanticPlanCache, semanticPlanCacheKey } from './world/architecture/semantic-plan-runtime.js';
 import { accessAnchorsForBuildingPortals, compileAccessPortals } from './world/access-portals.js';
 import { compileDistrictBlockComposition, districtBuildingPolicyForEntity, districtContextForEntity } from './world/district-block-composition.js';
@@ -861,7 +862,7 @@ export function createKowloonFabricEngine({
         }
     }
 
-    function realizeExteriorScaffold({ physics, transforms, plan }) {
+    function realizeExteriorScaffold({ physics, transforms, plan, programArchitectureId = null, field = 'ground' }) {
         if (!plan || plan.fitStatus !== 'fits-resolved-truth') return 0;
         assertCanonicalScaffoldSwitchback(plan);
         if (plan.flights.some(flight => flight.fitClassification !== 'fits-resolved-truth')) {
@@ -1072,6 +1073,19 @@ export function createKowloonFabricEngine({
                     ? { x: along, y: stepY, z: flight.fixedCoord, sx: flight.run / steps * 1.08, sy: stepThickness, sz: flight.clearWidth, routeId: plan.id, flightId: flight.id }
                     : { x: flight.fixedCoord, y: stepY, z: along, sx: flight.clearWidth, sy: stepThickness, sz: flight.run / steps * 1.08, routeId: plan.id, flightId: flight.id });
             }
+        }
+        const stairArchitecture = planStairArchitectureExpression({
+            id: `${plan.id}:architecture`, route: plan, programArchitectureId, field,
+            routeWidthScale: Number(plan.clearWidth) / Math.max(0.72, Number(plan.physicalTruth?.stair?.widthSI) || 0.9),
+            stableKey: `${plan.id}:architecture`,
+        });
+        if (stairArchitecture) {
+            transforms.guardMetal.push(...stairArchitecture.metal);
+            transforms.guardConcrete.push(...stairArchitecture.concrete);
+            const registry = physics.stairArchitectureExpressions ?? (physics.stairArchitectureExpressions = []);
+            registry.push({ schema: stairArchitecture.schema, id: stairArchitecture.id, routeId: plan.id, family: stairArchitecture.family,
+                parts: stairArchitecture.parts, supportMode: stairArchitecture.supportMode, programArchitectureId: stairArchitecture.programArchitectureId,
+                traversalAuthority: stairArchitecture.traversalAuthority });
         }
         return plan.landings.length;
     }
@@ -1812,7 +1826,7 @@ export function createKowloonFabricEngine({
         return plan;
     }
 
-    function realizeFastVerticalRoute({ physics, transforms, wallList, plan }) {
+    function realizeFastVerticalRoute({ physics, transforms, wallList, plan, programArchitectureId = null, field = 'ground' }) {
         assertFastVerticalRoute(plan);
         const routeRegistry = physics.fastVerticalRoutes ?? (physics.fastVerticalRoutes = []);
         if (!routeRegistry.some(route => route.id === plan.id)) routeRegistry.push(plan);
@@ -2014,7 +2028,20 @@ export function createKowloonFabricEngine({
             realizedLandings++;
             realizedDecks++;
         }
-        return { flights: realizedFlights, landings: realizedLandings, decks: realizedDecks };
+        const stairArchitecture = planStairArchitectureExpression({
+            id: `${plan.id}:architecture`, route: plan, programArchitectureId, field,
+            routeWidthScale: Number(plan.clearWidth) / Math.max(0.72, Number(plan.physicalTruth?.stair?.widthSI) || 0.9),
+            stableKey: `${plan.id}:architecture`,
+        });
+        if (stairArchitecture) {
+            transforms.guardMetal.push(...stairArchitecture.metal);
+            transforms.guardConcrete.push(...stairArchitecture.concrete);
+            const registry = physics.stairArchitectureExpressions ?? (physics.stairArchitectureExpressions = []);
+            registry.push({ schema: stairArchitecture.schema, id: stairArchitecture.id, routeId: plan.id, family: stairArchitecture.family,
+                parts: stairArchitecture.parts, supportMode: stairArchitecture.supportMode, programArchitectureId: stairArchitecture.programArchitectureId,
+                traversalAuthority: stairArchitecture.traversalAuthority });
+        }
+        return { flights: realizedFlights, landings: realizedLandings, decks: realizedDecks, stairArchitecture };
     }
 
     function addCompoundSideWall({ physics, wallList, rect, floorH, floor, side, opening = 0, floorBase = 0, metadata = null }) {
@@ -3166,7 +3193,7 @@ export function createKowloonFabricEngine({
 
         let scaffoldLandings = 0;
         if (scaffoldPlan) {
-            scaffoldLandings = realizeExteriorScaffold({ physics, transforms, plan: scaffoldPlan });
+            scaffoldLandings = realizeExteriorScaffold({ physics, transforms, plan: scaffoldPlan, programArchitectureId: buildingPlan?.programArchitecture?.id ?? null, field: structureProfile?.floorAlignment === 'ceiling' ? 'ceiling' : 'ground' });
             yield {
                 phase: 'broad-scaffold',
                 current: 1,
@@ -3183,6 +3210,8 @@ export function createKowloonFabricEngine({
             const route = broadVerticalRoutes[routeIndex];
             const realized = realizeFastVerticalRoute({
                 physics, transforms, wallList: transforms.wallGroups[materialIndex], plan: route,
+                programArchitectureId: buildingPlan?.programArchitecture?.id ?? null,
+                field: structureProfile?.floorAlignment === 'ceiling' ? 'ceiling' : 'ground',
             });
             fastVerticalFlights += realized.flights;
             fastVerticalLandings += realized.landings;
@@ -3210,6 +3239,23 @@ export function createKowloonFabricEngine({
         const facadeRegistry = physics.fastFacadeArchitecture ?? (physics.fastFacadeArchitecture = []);
         for (const treatment of facadeArchitecture.treatments) {
             facadeRegistry.push({ ...treatment, chunkKey: chunk.key, siteId: site.id });
+        }
+
+        const programMacroArchitecture = planProgramMacroArchitecture({
+            id: `${chunk.key}:${siteSignature}:program-macro`, buildingPlan,
+            footprintModules: modulePlans.map(module => ({ ...module.rect, floors: module.floors, floorBase: moduleFloorBase(module), key: module.key })),
+            compoundBounds: bounds, floorH, floors: Math.max(...floorCounts),
+            field: structureProfile?.floorAlignment === 'ceiling' ? 'ceiling' : 'ground',
+            stableKey: `${worldSeed}:${chunk.key}:${siteSignature}:program-macro`,
+        });
+        if (programMacroArchitecture) {
+            transforms.guardMetal.push(...programMacroArchitecture.metal);
+            transforms.guardConcrete.push(...programMacroArchitecture.concrete);
+            const registry = physics.programMacroArchitecture ?? (physics.programMacroArchitecture = []);
+            registry.push({ schema: programMacroArchitecture.schema, id: programMacroArchitecture.id, family: programMacroArchitecture.family,
+                programArchitectureId: programMacroArchitecture.programArchitectureId, parts: programMacroArchitecture.parts,
+                features: [...programMacroArchitecture.features], routeFrontageFeatureCount: programMacroArchitecture.routeFrontageFeatureCount,
+                traversalAuthority: programMacroArchitecture.traversalAuthority });
         }
 
         const roofTopper = broadRoofTopper;
@@ -3264,6 +3310,11 @@ export function createKowloonFabricEngine({
             exteriorCirculationCollisionRejectCount: collisionRejectRegistry.length,
             fastFacadeArchitectureSchema: facadeArchitecture.schema,
             fastFacadeArchitectureMetrics: facadeArchitecture.metrics,
+            programMacroArchitecture: programMacroArchitecture ? {
+                schema: programMacroArchitecture.schema, family: programMacroArchitecture.family, parts: programMacroArchitecture.parts,
+                features: [...programMacroArchitecture.features], routeFrontageFeatureCount: programMacroArchitecture.routeFrontageFeatureCount,
+                traversalAuthority: programMacroArchitecture.traversalAuthority,
+            } : null,
             exteriorCirculationDebtTags: EXTERIOR_CIRCULATION_DEBT.map(item => item.tag),
             serviceCages: 0,
             cantileverRooms: 0,
@@ -4284,7 +4335,7 @@ export function createKowloonFabricEngine({
         if (scaffoldCandidates.length) rng();
         let scaffoldLandings = 0;
         if (scaffoldPlan) {
-            scaffoldLandings = realizeExteriorScaffold({ physics, transforms, plan: scaffoldPlan });
+            scaffoldLandings = realizeExteriorScaffold({ physics, transforms, plan: scaffoldPlan, programArchitectureId: buildingPlan?.programArchitecture?.id ?? null, field: structureProfile?.floorAlignment === 'ceiling' ? 'ceiling' : 'ground' });
         }
 
         let balconySide = null;
@@ -4539,6 +4590,22 @@ export function createKowloonFabricEngine({
         }), { minX: Infinity, maxX: -Infinity, minZ: Infinity, maxZ: -Infinity });
         const anchor = doorFace?.module || primaryModule;
         const floorCounts = modulePlans.map(module => module.floors);
+        const programMacroArchitecture = planProgramMacroArchitecture({
+            id: `${chunk.key}:${siteSignature}:program-macro`, buildingPlan,
+            footprintModules: modulePlans.map(module => ({ ...module.rect, floors: module.floors, floorBase: moduleFloorBase(module), key: module.key })),
+            compoundBounds: bounds, floorH, floors: Math.max(...floorCounts),
+            field: structureProfile?.floorAlignment === 'ceiling' ? 'ceiling' : 'ground',
+            stableKey: `${worldSeed}:${chunk.key}:${siteSignature}:program-macro`,
+        });
+        if (programMacroArchitecture) {
+            transforms.guardMetal.push(...programMacroArchitecture.metal);
+            transforms.guardConcrete.push(...programMacroArchitecture.concrete);
+            const registry = physics.programMacroArchitecture ?? (physics.programMacroArchitecture = []);
+            registry.push({ schema: programMacroArchitecture.schema, id: programMacroArchitecture.id, family: programMacroArchitecture.family,
+                programArchitectureId: programMacroArchitecture.programArchitectureId, parts: programMacroArchitecture.parts,
+                features: [...programMacroArchitecture.features], routeFrontageFeatureCount: programMacroArchitecture.routeFrontageFeatureCount,
+                traversalAuthority: programMacroArchitecture.traversalAuthority });
+        }
         return {
             x: anchor.rect.cx, z: anchor.rect.cz,
             halfX: anchor.rect.halfX, halfZ: anchor.rect.halfZ,
@@ -4571,6 +4638,11 @@ export function createKowloonFabricEngine({
             buildingPlanAuthority: buildingPlan.authoritySchema,
             buildingPlanFingerprint: buildingPlan.fingerprint,
             buildingPlanInspection: buildingPlan.inspection,
+            programMacroArchitecture: programMacroArchitecture ? {
+                schema: programMacroArchitecture.schema, family: programMacroArchitecture.family, parts: programMacroArchitecture.parts,
+                features: [...programMacroArchitecture.features], routeFrontageFeatureCount: programMacroArchitecture.routeFrontageFeatureCount,
+                traversalAuthority: programMacroArchitecture.traversalAuthority,
+            } : null,
             internalOpenFaces,
             exposedSetbackFaces,
             partyFaces,
@@ -4825,7 +4897,7 @@ export function createKowloonFabricEngine({
 
     function realizeFacadeRouteGalleries({ field = 'ceiling', bridgePlans = [], entityBySite, physics, transforms }) {
         if (field !== 'ceiling' || !(entityBySite instanceof Map)) return Object.freeze({
-            schema: 'jweb.facade-route-gallery-summary.v2', field, planned: 0, realized: 0,
+            schema: 'jweb.facade-route-gallery-summary.v3', field, planned: 0, realized: 0,
             supportParts: 0, routeCount: 0, railCarves: 0, decorationCarves: 0,
         });
         const registry = physics.facadeRouteGalleries ?? (physics.facadeRouteGalleries = []);
@@ -4941,7 +5013,7 @@ export function createKowloonFabricEngine({
                 routeId: group.routeId, galleryId: gallery.id, networkKey: group.routeId,
                 reachable: true, priority: 'walkway-authority',
                 endpointAuthority: group.endpoints[0].endpointAuthority ?? 'bridge-facade-endpoint-v1',
-                architectureFamily: 'facade-route-gallery', widthClass: gallery.widthClass,
+                architectureFamily: gallery.architectureFamily, widthClass: gallery.widthClass,
                 routeCharacter: group.bridges[0]?.bridge?.routeCharacter ?? 'EXTERIOR_HEAVY',
                 traversalPermission: group.endpoints[0].traversalPermission ?? 'PUBLIC_THROUGH',
             };
@@ -4986,6 +5058,7 @@ export function createKowloonFabricEngine({
                 endpointIds: Object.freeze(endpointIds), surfaceId: surface.id,
                 width: gallery.width, length: gallery.length,
                 widthClass: gallery.widthClass, supportMode: gallery.supportMode,
+                architectureFamily: gallery.architectureFamily, familyParts: gallery.familyParts,
                 compoundFace: gallery.compoundFace,
                 cornerOverlap: gallery.cornerOverlap,
                 huggedLength: gallery.huggedLength,
@@ -4993,7 +5066,7 @@ export function createKowloonFabricEngine({
                 hugCoverage: gallery.hugCoverage,
                 crossingBridgeIds: Object.freeze(group.bridges.map(item => item.bridge.id)),
             }));
-            supportParts += gallery.supports.length;
+            supportParts += gallery.supports.length + (gallery.familyParts ?? 0);
             totalGalleryMeters += gallery.length;
             huggedMeters += gallery.huggedLength;
             unsupportedMeters += gallery.unsupportedLength;
@@ -5012,7 +5085,7 @@ export function createKowloonFabricEngine({
             exposedConnectorMeters += Math.max(0, span - consumed);
         }
         return Object.freeze({
-            schema: 'jweb.facade-route-gallery-summary.v2', field, planned, realized, supportParts,
+            schema: 'jweb.facade-route-gallery-summary.v3', field, planned, realized, supportParts,
             routeCount: routeIds.size,
             totalGalleryMeters,
             huggedMeters,
@@ -5737,7 +5810,19 @@ export function createKowloonFabricEngine({
                 width: g.hx * 2, depth: g.hz * 2, physics, transforms,
             });
         }
-        return { route, flights: resolvedFlights.length, landings: route.landings.length, steps, structuralMassParts, reservation };
+        const stairArchitecture = planStairArchitectureExpression({
+            id: `${route.id}:architecture`, route, programArchitectureId: route.programArchitectureId ?? null, field: route.field ?? 'ground',
+            routeWidthScale: Number(route.routeWidthScale) || 1, stableKey: `${route.id}:architecture`,
+        });
+        if (stairArchitecture) {
+            transforms.guardMetal.push(...stairArchitecture.metal);
+            transforms.guardConcrete.push(...stairArchitecture.concrete);
+            const registry = physics.stairArchitectureExpressions ?? (physics.stairArchitectureExpressions = []);
+            registry.push({ schema: stairArchitecture.schema, id: stairArchitecture.id, routeId: route.id, family: stairArchitecture.family,
+                parts: stairArchitecture.parts, supportMode: stairArchitecture.supportMode, programArchitectureId: stairArchitecture.programArchitectureId,
+                traversalAuthority: stairArchitecture.traversalAuthority });
+        }
+        return { route, flights: resolvedFlights.length, landings: route.landings.length, steps, structuralMassParts, stairArchitecture, reservation };
     }
 
     function realizePopularCavernWallStairs({ field, entities, physics, transforms, maxRoutes = 2 }) {

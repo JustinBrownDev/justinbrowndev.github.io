@@ -188,6 +188,7 @@ function routeForModuleSide({ entity, module, side, field, popularity, truth }) 
     moduleKey: module.key,
     side,
     popularity,
+    programArchitectureId: entity?.buildingPlan?.programArchitecture?.id ?? null,
     y0,
     y1,
     servedFloors: availableFloors,

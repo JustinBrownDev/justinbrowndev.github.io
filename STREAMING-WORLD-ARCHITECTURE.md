@@ -649,3 +649,90 @@ This is groundwork for 21W's much richer architectural family expression; 21V es
 - near-city private rooms remain strict rectangles with zero neck cells;
 - 21R transfer authority, 21S route composition, 21T route-driven section, 21U believable plans, cavern fallbacks and unified hanging/upright circulation remain green;
 - canonical stair and catwalk traversal physics remain unchanged.
+
+## Cut 21W — Architectural Family Explosion
+
+21W makes the architecture visibly express the circulation, program and load-bearing decisions established by 21R–21V. It does **not** replace any proven walking kernel. Canonical stair flights/ramps/treads/headroom, canonical bridge/catwalk slabs, Building Plan circulation, and world-circulation verification remain the traversal authorities. The new families are structural/visual wrappers around those facts.
+
+### Named stair architecture around one proven walk
+
+`world/architectural-family-system.js` introduces six recognizable stair-expression families:
+
+- `industrial-fire-escape`
+- `residential-enclosed`
+- `civic-monumental`
+- `scaffold-service`
+- `utility-rack`
+- `brutalist-mass`
+
+The selected family responds to 21V program authority, field polarity and the route's already-resolved width. The wrapper can add external stringers, landing support slabs, braced or suspended load paths, weather canopies and cross-bracing. These parts remain outside the canonical clear stair path. A bulkier route therefore reads as both a **wider real path** (21S/21T authority) and a correspondingly heavier structural object rather than as ordinary-width stairs hidden inside oversized decoration.
+
+Ground-biased families generally prop/bracket from below. Hanging/utility families can suspend from above. Neither mode creates another ramp, landing or semantic connector.
+
+### Gallery and bridge families are structural languages, not traversal types
+
+Long hanging thoroughfares retain the 21T morphology: they spend most of their length alongside/against building mass, can wrap corners, may peel away for bounded unsupported runs, and leave actual exposed crossing intervals for bridge/catwalk authority.
+
+Facade galleries now carry named structural families including:
+
+- `suspended-utility-rack`
+- `hanging-truss-gallery`
+- `ramshackle-market-walk`
+- `braced-industrial-gallery`
+- `concrete-service-veranda`
+
+Skybridge visual structure expands with `box-girder`, `suspension-hanger` and `ramshackle-brace` in addition to the existing guarded, beam, gallery, truss and arch families.
+
+All family members consume the already-resolved route width/span. They may add deep girders, upper racks, hanger structure, underslung structure and deliberately irregular bracing, but the canonical transport slab remains the only walking surface.
+
+Intersection clearances remain authoritative. Rails, posts, braces and other `junctionYield` structure are carved where walkable surfaces join; useful non-obstructing under-deck structure is retained. A visual family is never allowed to turn a legitimate street intersection into a cage.
+
+### Program-scale architecture follows 21V operational truth
+
+21V program architecture now drives large-form exterior expression rather than only room semantics. Ten reusable macro languages cover domestic access stacks, market/public frontage frames, food-service exhaust frames, workshop/service frames, industrial bay megastructure, civic and secure core frames, laboratory/utility frames, warehouse loading frames and data/utility megastructure.
+
+Depending on program authority, buildings can gain architecture such as:
+
+- apparatus/loading bay piers and headers;
+- deep civic entry frames and buttresses;
+- route-level public canopies;
+- domestic service piers/weather bands;
+- exhaust/service risers;
+- utility pipe racks and major service stacks;
+- loading canopies and broad industrial bay frames.
+
+These systems derive from the existing Building Plan, footprint and circulation-frontage records. They never add a fake traversable floor. Generic physical-use buildings use broad compatible structural language without inventing a specific tenant.
+
+### Public route frontage remains the urban address
+
+The elevated frontage principle from 21U/21V survives architectural expression. When the actual public street is a sky gallery, program-scale frames/canopies reinforce that route-served facade and floor. The architecture therefore helps the city read as vertically inhabited: commercial/public frontage can become primary several floors above literal ground because that is where pedestrian throughput actually occurs.
+
+The authoritative city-exchange portal remains the walk-through opening. Storefront/public expression stays adjacent to it and must yield to protected openings and junction clearances.
+
+### 21W regression expectations
+
+- all six stair-expression families preserve `canonical-stair-kernel-unchanged` traversal authority;
+- bridge/gallery expression preserves `canonical-transport-slab-unchanged` traversal authority;
+- generated hanging circulation receives real named stair, macro, bridge and gallery families without adding semantic shortcuts;
+- gallery family decoration yields at real surface intersections;
+- bulk remains coupled to the actual clear path width rather than decoration alone;
+- 21U rectangle-first rooms and 21V operational/frontage behavior remain intact;
+- 21T route-driven massing and long-throughfare morphology remain intact;
+- unified generated egress and hanging-city parity remain single connected components with zero unreachable spaces/transport nodes;
+- the older large scaffold soak may remain expensive, but its canonical route-plan/facade authority contracts and representative runtime integration must remain green.
+
+The intended architectural hierarchy is now:
+
+```text
+proven walk / route authority
+        +
+route importance and real width
+        +
+program / operational truth
+        +
+named structural family
+        =
+recognizable large-form architecture
+```
+
+This is the point where skeleton-mode geometry should increasingly communicate the city before micro-enrichment is needed. 21X can therefore evaluate detail systems against stronger architectural silhouettes and remove decoration that is no longer carrying useful information.

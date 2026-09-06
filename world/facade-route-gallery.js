@@ -1,4 +1,4 @@
-export const FACADE_ROUTE_GALLERY_SCHEMA = 'jweb.facade-route-gallery.v2';
+export const FACADE_ROUTE_GALLERY_SCHEMA = 'jweb.facade-route-gallery.v3';
 
 function finite(value, fallback = 0) { const n = Number(value); return Number.isFinite(n) ? n : fallback; }
 function clamp(value, lo, hi) { return Math.max(lo, Math.min(hi, finite(value))); }
@@ -8,6 +8,16 @@ function stableHash(text) {
   return h >>> 0;
 }
 function unit(hash, shift = 0) { return ((hash >>> shift) & 0xffff) / 0xffff; }
+
+function galleryArchitectureFamily({ field, widthClass, hugCoverage, hash }) {
+  const u = unit(hash ^ 0x8f1bbcdc, 7);
+  if (field === 'ceiling') {
+    if (widthClass === 'sky-street' && hugCoverage > 0.72) return u < 0.52 ? 'suspended-utility-rack' : 'hanging-truss-gallery';
+    return u < 0.58 ? 'ramshackle-market-walk' : 'suspended-utility-rack';
+  }
+  if (widthClass === 'sky-street') return u < 0.48 ? 'braced-industrial-gallery' : 'concrete-service-veranda';
+  return u < 0.55 ? 'ramshackle-market-walk' : 'braced-industrial-gallery';
+}
 
 function mergeIntervals(intervals) {
   const sorted = intervals.filter(i => i && i.hi > i.lo).sort((a, b) => a.lo - b.lo || a.hi - b.hi);
@@ -137,16 +147,16 @@ export function planFacadeRouteGallery({
   const anchorY = y + supportRise;
   const beamT = widthClass === 'sky-street' ? 0.22 : 0.16;
   const girderH = widthClass === 'sky-street' ? 0.54 : 0.38;
-  const metadata = {
-    facadeRouteGallery: true, galleryId: id, cityRouteId: routeId, widthClass,
-    supportMode, architectureRole: 'facade-lateral-throughput', traversalAuthority: 'canonical-transport-slab',
-  };
-
   const actualFootprints = (footprintModules?.length ? footprintModules : [module]);
   const hugged = hugIntervalsForFace({ side, faceCoord: face.faceCoord, footprintModules: actualFootprints, tangentLo: lo, tangentHi: hi });
   const huggedLength = hugged.reduce((sum, interval) => sum + Math.max(0, interval.hi - interval.lo), 0);
   const unsupportedLength = Math.max(0, length - huggedLength);
   const hugCoverage = length > 0 ? huggedLength / length : 0;
+  const architectureFamily = galleryArchitectureFamily({ field, widthClass, hugCoverage, hash });
+  const metadata = {
+    facadeRouteGallery: true, galleryId: id, cityRouteId: routeId, widthClass,
+    supportMode, architectureFamily, architectureRole: 'facade-lateral-throughput', traversalAuthority: 'canonical-transport-slab',
+  };
   const crossingHalf = Math.max(0.78, finite(crossingWidth, finite(endpoint.width, 1.35)) * 0.62);
   const clearanceCenters = [portalTangent, ...(junctionTangents ?? []).map(Number).filter(Number.isFinite)];
   const clearances = clearanceCenters.map(center => ({ center, half: crossingHalf + 0.35 }));
@@ -178,12 +188,49 @@ export function planFacadeRouteGallery({
     }
   }
 
+
+  let familyParts = 0;
+  const familyBayCount = Math.max(2, Math.ceil(length / 4.6));
+  const familyTopY = y + (architectureFamily === 'hanging-truss-gallery' ? 2.65 : 2.18);
+  if (architectureFamily === 'suspended-utility-rack' || architectureFamily === 'hanging-truss-gallery') {
+    for (let i = 0; i <= familyBayCount; i++) {
+      const tangent = lo + length * (i / familyBayCount);
+      if (inClearance(tangent, clearances)) continue;
+      if (horizontalFace) metal.push({ x:tangent, y:familyTopY, z:normalCenter, sx:beamT, sy:beamT, sz:w+0.24, ...metadata, architectureRole:'upper-rack-crossbeam', junctionYield:true });
+      else metal.push({ x:normalCenter, y:familyTopY, z:tangent, sx:w+0.24, sy:beamT, sz:beamT, ...metadata, architectureRole:'upper-rack-crossbeam', junctionYield:true });
+      familyParts++;
+      if (architectureFamily === 'hanging-truss-gallery' && i < familyBayCount) {
+        const next = lo + length * ((i+1)/familyBayCount);
+        const mid = (tangent+next)*0.5;
+        if (!inClearance(mid, clearances)) {
+          if (horizontalFace) metal.push({ x:mid, y:(y+familyTopY)*0.5, z:outerCoord, sx:next-tangent, sy:beamT*0.85, sz:beamT*0.85, rz:(i%2?-.48:.48), ...metadata, architectureRole:'gallery-truss-diagonal', junctionYield:true });
+          else metal.push({ x:outerCoord, y:(y+familyTopY)*0.5, z:mid, sx:beamT*0.85, sy:beamT*0.85, sz:next-tangent, rx:(i%2?.48:-.48), ...metadata, architectureRole:'gallery-truss-diagonal', junctionYield:true });
+          familyParts++;
+        }
+      }
+    }
+  } else if (architectureFamily === 'braced-industrial-gallery' || architectureFamily === 'ramshackle-market-walk') {
+    for (let i = 0; i < familyBayCount; i++) {
+      const a = lo + length * (i/familyBayCount), b = lo + length*((i+1)/familyBayCount), mid=(a+b)*0.5;
+      if (inClearance(mid, clearances) || !inIntervals(mid, hugged, 0.18)) continue;
+      const lowerY = y - (architectureFamily === 'ramshackle-market-walk' ? 1.15 : 1.55);
+      if (horizontalFace) metal.push({ x:mid, y:(y+lowerY)*0.5, z:outerCoord, sx:b-a, sy:beamT*0.9, sz:beamT*0.9, rz:(i%2?-.42:.42), ...metadata, architectureRole:'underslung-bay-brace', junctionYield:true });
+      else metal.push({ x:outerCoord, y:(y+lowerY)*0.5, z:mid, sx:beamT*0.9, sy:beamT*0.9, sz:b-a, rx:(i%2?.42:-.42), ...metadata, architectureRole:'underslung-bay-brace', junctionYield:true });
+      familyParts++;
+    }
+  } else if (architectureFamily === 'concrete-service-veranda') {
+    const capY = y - 0.52;
+    if (horizontalFace) metal.push({ x:galleryTangent, y:capY, z:normalCenter, sx:length, sy:0.26, sz:w+0.18, ...metadata, architectureRole:'veranda-deep-girder', junctionYield:false });
+    else metal.push({ x:normalCenter, y:capY, z:galleryTangent, sx:w+0.18, sy:0.26, sz:length, ...metadata, architectureRole:'veranda-deep-girder', junctionYield:false });
+    familyParts++;
+  }
+
   const surface = horizontalFace
     ? { x: galleryTangent, z: normalCenter, hx: length * 0.5, hz: w * 0.5, y }
     : { x: normalCenter, z: galleryTangent, hx: w * 0.5, hz: length * 0.5, y };
   return Object.freeze({
     schema: FACADE_ROUTE_GALLERY_SCHEMA,
-    id, routeId, field, side, widthClass, width: w, length, supportMode,
+    id, routeId, field, side, widthClass, width: w, length, supportMode, architectureFamily, familyParts,
     routeStrength: strength, routeSpan: finite(routeSpan, 0),
     compoundFace: face.compound,
     cornerOverlap,

@@ -54,18 +54,23 @@ function actualWorldY({ field, floor, depthBand, ceilingY, floorHeight }) {
 function familyFor({ widthClass, hash }) {
   const u = unit(hash, 8);
   if (widthClass === 'sky-street') {
-    if (u < 0.28) return 'through-truss';
-    if (u < 0.52) return 'covered-gallery';
-    if (u < 0.76) return 'underslung-arch';
+    if (u < 0.18) return 'through-truss';
+    if (u < 0.34) return 'covered-gallery';
+    if (u < 0.50) return 'underslung-arch';
+    if (u < 0.66) return 'box-girder';
+    if (u < 0.82) return 'suspension-hanger';
     return 'heavy-beam';
   }
   if (widthClass === 'collector') {
-    if (u < 0.34) return 'pony-truss';
-    if (u < 0.66) return 'utility-frame';
+    if (u < 0.22) return 'pony-truss';
+    if (u < 0.44) return 'utility-frame';
+    if (u < 0.64) return 'box-girder';
+    if (u < 0.82) return 'ramshackle-brace';
     return 'heavy-beam';
   }
-  if (u < 0.38) return 'simple-guarded';
-  if (u < 0.70) return 'utility-frame';
+  if (u < 0.30) return 'simple-guarded';
+  if (u < 0.54) return 'utility-frame';
+  if (u < 0.76) return 'ramshackle-brace';
   return 'pony-truss';
 }
 

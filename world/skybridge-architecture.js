@@ -104,6 +104,45 @@ export function planSkybridgeArchitecture({
     if (family === 'through-truss') {
       for (let i = 0; i <= bays; i += 2) crossBeam(lo + bay * i, trussTop, beamT, w + 0.16, { architectureRole: 'upper-truss-crossbeam', junctionYield: true });
     }
+  } else if (family === 'box-girder') {
+    const boxH = widthClass === 'sky-street' ? 0.78 : 0.58;
+    const boxW = Math.max(0.24, beamT * 2.0);
+    sideBeam(edgeA + boxW * 0.5, y - boxH * 0.62, boxW, boxH, { architectureRole: 'box-girder-side' });
+    sideBeam(edgeB - boxW * 0.5, y - boxH * 0.62, boxW, boxH, { architectureRole: 'box-girder-side' });
+    const bays = Math.max(2, Math.ceil(span / 4.4));
+    for (let i = 0; i <= bays; i++) crossBeam(lo + span * (i / bays), y - boxH * 0.55, beamT * 1.3, w + 0.12, { architectureRole: 'box-diaphragm' });
+  } else if (family === 'suspension-hanger') {
+    sideBeam(edgeA, y - 0.16);
+    sideBeam(edgeB, y - 0.16);
+    const towerInset = Math.min(1.35, span * 0.12);
+    const towerY = y + (widthClass === 'sky-street' ? 3.4 : 2.8);
+    for (const along of [lo + towerInset, hi - towerInset]) {
+      for (const fixed of [edgeA, edgeB]) {
+        if (axis === 'x') pushBox(metal, { x: along, y: (y + towerY) * 0.5, z: fixed, sx: beamT * 1.5, sy: towerY - y, sz: beamT * 1.5 }, { ...metadata, architectureRole: 'hanger-tower', junctionYield: true });
+        else pushBox(metal, { x: fixed, y: (y + towerY) * 0.5, z: along, sx: beamT * 1.5, sy: towerY - y, sz: beamT * 1.5 }, { ...metadata, architectureRole: 'hanger-tower', junctionYield: true });
+      }
+    }
+    const bays = Math.max(4, Math.ceil(span / 3.2));
+    for (let i = 1; i < bays; i++) {
+      const along = lo + span * (i / bays);
+      const t = i / bays;
+      const cableY = towerY - Math.sin(Math.PI * t) * (towerY - y) * 0.58;
+      const h = Math.max(0.18, cableY - y);
+      for (const fixed of [edgeA, edgeB]) {
+        if (axis === 'x') pushBox(metal, { x: along, y: y + h * 0.5, z: fixed, sx: beamT * 0.55, sy: h, sz: beamT * 0.55 }, { ...metadata, architectureRole: 'vertical-hanger', junctionYield: true });
+        else pushBox(metal, { x: fixed, y: y + h * 0.5, z: along, sx: beamT * 0.55, sy: h, sz: beamT * 0.55 }, { ...metadata, architectureRole: 'vertical-hanger', junctionYield: true });
+      }
+    }
+  } else if (family === 'ramshackle-brace') {
+    sideBeam(edgeA, y - 0.18, beamT * 0.92, girderH * 0.88, { architectureRole: 'patched-side-beam' });
+    sideBeam(edgeB, y - 0.18, beamT * 1.18, girderH * 1.08, { architectureRole: 'patched-side-beam' });
+    const bays = Math.max(3, Math.ceil(span / 3.6));
+    for (let i = 0; i < bays; i++) {
+      const a = lo + span * (i / bays), b = lo + span * ((i + 1) / bays);
+      const fixed = i % 2 ? edgeA : edgeB;
+      pushBox(metal, diagonalBetween(axis, { along:a, y:y-0.18 }, { along:b, y:y-1.15-(i%3)*0.22 }, fixed, beamT * 0.82, { ...metadata, architectureRole: 'patched-underslung-brace' }), {});
+      if (i % 2 === 0) crossBeam((a+b)*0.5, y - 0.34, beamT * 0.88, w + 0.18, { architectureRole: 'patched-crossbeam' });
+    }
   } else if (family === 'underslung-arch') {
     sideBeam(edgeA, y - 0.14);
     sideBeam(edgeB, y - 0.14);

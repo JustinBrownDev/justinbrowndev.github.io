@@ -8,7 +8,7 @@ import { reservationIntersectsBox } from '../world/circulation-reservations.js';
 
 const engineSource = fs.readFileSync(new URL('../kowloon-fabric-engine.js', import.meta.url), 'utf8');
 assert.ok(engineSource.includes("from './world/scaffold-circulation-plan.js'"));
-assert.ok(engineSource.includes('function realizeExteriorScaffold({ physics, transforms, plan })'));
+assert.match(engineSource, /function\s+realizeExteriorScaffold\(\{\s*physics,\s*transforms,\s*plan(?:\s*,|\s*\})/, 'canonical scaffold realizer must remain the geometry authority even when visual-family context is added');
 assert.ok(engineSource.includes('const scaffoldOpeningByKey = new Map();'), 'scaffold apertures must be planned before wall publication');
 assert.ok(engineSource.includes("supportKind: 'scaffold-rail'"), 'guard rails must derive from accepted route landings');
 assert.ok(!engineSource.includes('function addExteriorScaffold({'), 'legacy geometry-first scaffold author must be gone');

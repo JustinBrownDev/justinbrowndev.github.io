@@ -599,7 +599,7 @@ function semanticStylePool(entity, buildingSemanticTruth = null) {
     const districtBiases = [...(districtPolicy.styleBiases ?? [])];
     if (!districtBiases.length) return physical;
     // Compatibility fallback only: normal managed buildings already carry shared
-    // Building Semantic Truth, which absorbs district identity before this planner.
+    // The building program record already absorbs district identity before this planner.
     return [...districtBiases, ...districtBiases, ...physical];
 }
 

@@ -73,7 +73,7 @@ assert.ok(Object.isFrozen(truthA1));
 assert.ok(Object.isFrozen(truthA1.exteriorTendencies));
 
 // Legacy authored entities without a physical-use descriptor are normalized once
-// by Building Semantic Truth rather than reinterpreted independently downstream.
+// by the building program record rather than reinterpreted independently downstream.
 const legacyIndustrialTruth = deriveBuildingSemanticTruth({
   worldSeed: WORLD_SEED,
   chunkKey: CHUNK_KEY,

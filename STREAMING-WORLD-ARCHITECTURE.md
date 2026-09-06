@@ -345,7 +345,7 @@ CITY-EXCHANGE THRESHOLD
 EXTERIOR SKYBRIDGE
 ```
 
-### Endpoint semantic authority
+### Endpoint binding
 
 A resolved bridge endpoint already owns its facade aperture and Building Plan exchange binding. Bridge semantic connectors therefore consult that explicit binding **before** geometric point-containment fallback. A bridge may not silently bind to an adjacent storage/private/program room merely because its endpoint lies inside that room's raster region.
 
@@ -569,7 +569,7 @@ Interior doors are no longer chosen by a stable hash from every topologically va
 
 ### Generic family is not a fake tenant
 
-Generic physical-use families no longer silently masquerade as specific programs such as `motel_room`, `library`, `electronics_repair` or `server_room`. When the district has not selected a specific operational program, semantic truth remains generic (`generic_residential`, `generic_mercantile`, `generic_industrial`, and so on). Specific program architecture is introduced only when there is actual program authority for it.
+Generic physical-use families no longer silently masquerade as specific programs such as `motel_room`, `library`, `electronics_repair` or `server_room`. When the district has not selected a specific operational program, the program stays generic (`generic_residential`, `generic_mercantile`, `generic_industrial`, and so on). Specific program architecture is introduced only when a specific program was actually selected.
 
 This preserves the distinction:
 
@@ -736,3 +736,56 @@ recognizable large-form architecture
 ```
 
 This is the point where skeleton-mode geometry should increasingly communicate the city before micro-enrichment is needed. 21X can therefore evaluate detail systems against stronger architectural silhouettes and remove decoration that is no longer carrying useful information.
+
+## Cut 21X — Subtraction / Performance Hardening
+
+21X treats the 21W macro architecture as the default visual carrier and removes old first-paint detail incentives that were useful when buildings were less expressive. The goal is not a low-detail city; it is a city whose structure, route hierarchy, program frontage and named architectural families remain legible before optional garnish is restored.
+
+### Lean browser baseline
+
+The browser `skeleton` profile keeps macro signage and spectacle but moves the following lanes out of default first paint:
+
+- plaza clutter;
+- moderate props;
+- sign-density stress;
+- deferred facade micro-detail such as graffiti, secondary pipes/awnings/flyers/ivy/security/service hardware;
+- street fixtures, roof clutter and cosmetic cable work.
+
+The normal baseline keeps at most one primary identity sign per building. Full mode and explicit query/profile opt-ins retain the older detail systems for comparison, and progressive exterior deepening can restore selected high-value facade detail after READY without changing traversal/collision authority.
+
+A deterministic representative fixture drops from 87 refinement tasks to 18, from 66 signs to 11, and from 79 realized detail objects to 16 while retaining 21W program-scale architecture, named stair expression and bridge expression. In the same container run, total build time fell from roughly 11.3s to 8.4s and refinement time from roughly 98ms to 32ms. These are fixture measurements, not universal browser timing guarantees.
+
+### Tests reward architectural identity, not raw clutter count
+
+Authored rooftop/plaza scene regressions no longer require arbitrary minimums such as twelve parts per place or several micro-parts per identity. They now protect the things subtraction must not erase:
+
+- deterministic place identity and variant behavior;
+- route ownership and footprint containment;
+- at least one visible identity payload;
+- paint/emissive/physical cues where required by the scene type;
+- clear route crosses, spokes, portals and junctions;
+- unchanged world-circulation reachability.
+
+This leaves room to simplify a scene when a single structural or identity element communicates more than a pile of small props.
+
+### Progressive detail remains optional capability
+
+Subtraction does not delete the detail system. Explicit progressive exterior enrichment still plans and publishes eligible facade detail after the baseline handoff while preserving the exact physics/circulation topology. Cosmetic candidates that cannot prove a valid placement simply fail closed instead of forcing a clutter lane back into baseline generation.
+
+Street fixtures are no longer a required hanging-city parity invariant. High-value facade identity/detail such as signs, pipes, awnings and service hardware remains available through explicit progressive enrichment.
+
+### Runtime terminology cleanup
+
+Where it was only explanatory prose, live comments/diagnostics now use concrete terms such as planner input, graph data, program record, structural owner and design motif instead of `source of truth`, `semantic truth` or `design ideology`. Compatibility-sensitive module names, schemas and historical checkpoint/CODELORE material are deliberately not renamed in this cut.
+
+### 21X regression expectations
+
+- skeleton first paint keeps optional clutter/detail lanes off by default;
+- full/explicit detail modes remain available;
+- progressive exterior detail can return without changing physics or circulation counts;
+- 21W macro/stair/bridge expression survives subtraction;
+- 21U rectangle-first rooms and 21V operational programs/frontage remain intact;
+- 21R–21T transfer/route/massing behavior remains intact;
+- generated egress and hanging-city parity remain one connected component with zero unreachable spaces/transport nodes;
+- authored-place tests protect identity and route clearance instead of minimum object density;
+- pre-existing regex/audit debt is differential-gated rather than silently rewritten into this performance cut.

@@ -2,10 +2,9 @@ import { hashString32 } from '../world-contract.js';
 import { CURATED_CLUTTER_CORPUS, CURATED_CLUTTER_FRAGMENTS } from '../content/curated-clutter/curated-clutter-corpus.js';
 import { CURATED_POETRY, CURATED_POETRY_META } from '../content/curated-clutter/curated-poetry-output.js';
 
-// Design ideology only: explicit architectural ideas of this world, not claims
-// about the author's political/religious beliefs. These are allowed to leak
-// into signs as the city's own operating doctrine.
-const DESIGN_IDEOLOGY = Object.freeze([
+// Short world-design motifs used as occasional signage/text fragments.
+// They describe generator behavior and architectural character.
+const DESIGN_MOTIFS = Object.freeze([
     'EVERY CHUNK LOADS ITSELF',
     'VISIBLE GEOMETRY OWNS COLLISION',
     'THE MAZE IS THE INTERFACE',
@@ -84,7 +83,7 @@ export function createProceduralTextExciter({ worldSeed = 0 } = {}) {
         const phraseA = pick(rng, CURATED_CLUTTER_CORPUS);
         const phraseB = pick(rng, CURATED_CLUTTER_CORPUS);
         const fragment = pick(rng, CURATED_CLUTTER_FRAGMENTS);
-        const doctrine = pick(rng, DESIGN_IDEOLOGY);
+        const motif = pick(rng, DESIGN_MOTIFS);
         const fallbackTitle = fallbackPair?.[0] || phraseA;
         const fallbackSubtitle = fallbackPair?.[1] || phraseB;
 
@@ -95,21 +94,21 @@ export function createProceduralTextExciter({ worldSeed = 0 } = {}) {
             phraseA,
             poem?.[0] || phraseA,
             `${phraseA} / ${fragment}`,
-            doctrine,
+            motif,
         ];
         const subtitleRecipes = [
             fallbackSubtitle,
             phraseB,
             poem?.slice(1, 4).join(' · ') || phraseB,
             `${fragmentPhrase(rng, phraseA)} :: ${fragmentPhrase(rng, phraseB)}`,
-            `${doctrine} · ${fragmentPhrase(rng, phraseB)}`,
+            `${motif} · ${fragmentPhrase(rng, phraseB)}`,
         ];
         let title = pick(rng, titleRecipes);
         let subtitle = pick(rng, subtitleRecipes);
 
         if (rng() < weird * 0.72) title = `${fragmentPhrase(rng, title, 5)} / ${fragmentPhrase(rng, pick(rng, CURATED_CLUTTER_CORPUS), 4)}`;
         if (rng() < weird * 0.64) subtitle = `${subtitle} // ${fragmentPhrase(rng, pick(rng, CURATED_CLUTTER_CORPUS), 5)}`;
-        if (rng() < 0.08 + weird * 0.27) subtitle = `${doctrine} :: ${subtitle}`;
+        if (rng() < 0.08 + weird * 0.27) subtitle = `${motif} :: ${subtitle}`;
 
         return [
             clip(mutateTypography(rng, title, intensity), 72),
@@ -123,8 +122,8 @@ export function createProceduralTextExciter({ worldSeed = 0 } = {}) {
         const source = rng() < 0.28 ? fallback
             : rng() < 0.58 ? pick(rng, CURATED_CLUTTER_FRAGMENTS)
             : fragmentPhrase(rng, pick(rng, CURATED_CLUTTER_CORPUS), 4);
-        const withDoctrine = rng() < 0.06 + weird * 0.24 ? `${source} // ${pick(rng, DESIGN_IDEOLOGY)}` : source;
-        return clip(mutateTypography(rng, withDoctrine, 0.28 + weird * 0.72), 48);
+        const withMotif = rng() < 0.06 + weird * 0.24 ? `${source} // ${pick(rng, DESIGN_MOTIFS)}` : source;
+        return clip(mutateTypography(rng, withMotif, 0.28 + weird * 0.72), 48);
     }
 
     return Object.freeze({
@@ -135,7 +134,7 @@ export function createProceduralTextExciter({ worldSeed = 0 } = {}) {
             fragments: CURATED_CLUTTER_FRAGMENTS.length,
             poems: CURATED_POETRY.length,
             poemMeta: CURATED_POETRY_META,
-            ideologyAxioms: DESIGN_IDEOLOGY.length,
+            designMotifs: DESIGN_MOTIFS.length,
         }),
     });
 }

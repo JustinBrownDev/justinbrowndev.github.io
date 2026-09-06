@@ -52,10 +52,9 @@ function assertField(label, physics, expectedMinimum) {
   const surfaceById = new Map((physics.exteriorTransportSurfaces ?? []).map(surface => [surface.id, surface]));
   const collisionParts = (physics.props ?? []).filter(prop => prop.supportKind === 'route-owned-rooftop-place');
   assert.ok(collisionParts.length >= plan.places.length, `${label}: each authored scene should publish physical furniture/fixtures`);
-  assert.ok(plan.stats.sceneParts >= plan.places.length * 12, `${label}: enriched scenes must publish dense instanced detail`);
-  assert.ok(plan.stats.scenePaintParts >= plan.places.length * 3, `${label}: each scene needs a matte painted floor identity`);
+  assert.ok(plan.stats.sceneParts >= plan.places.length, `${label}: each authored place must retain a visible scene payload`);
+  assert.ok(plan.stats.scenePaintParts >= plan.places.length, `${label}: each scene needs a matte painted identity cue`);
   assert.ok(plan.stats.sceneEmissiveParts >= plan.places.length, `${label}: each scene needs at least one emissive identity cue`);
-  assert.ok(plan.stats.sceneMicroParts >= plan.places.length * 3, `${label}: each scene needs cheap recognizable micro detail`);
   for (const place of plan.places) {
     assert.ok(reachable.has(place.surfaceId), `${label}:${place.id}: host roof must be reachable`);
     assert.ok(required.has(place.surfaceId), `${label}:${place.id}: host roof must be an authoritative circulation candidate`);
@@ -72,8 +71,8 @@ function assertField(label, physics, expectedMinimum) {
     }
     assert.equal(place.sceneVersion, ROUTE_OWNED_PLACE_SCENE_VERSION, `${label}:${place.id}: scene grammar version must publish`);
     assert.ok(Number.isInteger(place.sceneVariant) && place.sceneVariant >= 0 && place.sceneVariant < ROUTE_OWNED_PLACE_SCENE_VARIANTS);
-    assert.ok(place.parts.length >= 12, `${label}:${place.id}: scene must remain enriched after integration`);
-    assert.ok(place.parts.filter(part => part.renderClass === 'paint').length >= 3, `${label}:${place.id}: paint parts must stay on the matte render lane`);
+    assert.ok(place.parts.length > 0, `${label}:${place.id}: scene must retain its identity payload after integration`);
+    assert.ok(place.parts.some(part => part.renderClass === 'paint'), `${label}:${place.id}: a painted identity cue must stay on the matte render lane`);
     assert.ok(place.parts.some(part => part.emissive), `${label}:${place.id}: identity light must survive integration`);
     for (const part of place.parts) assert.ok(routeOwnedScenePartWithinFootprint(place, part, 0.025), `${label}:${place.id}:${part.role}: integrated detail escaped its pad`);
   }

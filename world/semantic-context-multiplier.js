@@ -3,7 +3,7 @@ import { exteriorAssetVisualImpact } from './exterior-spectacle-priority.js';
 
 export const SEMANTIC_CONTEXT_MULTIPLIER_SCHEMA = 'jweb.semantic-context-multiplier.v3';
 
-// This module is now a corpus-selection service, not a population authority.
+// This module is a corpus-selection service; population decisions live upstream.
 // The Exterior Composition Authority supplies one explicit request + one reserved
 // semantic opportunity. Nothing here walks opportunity grids or derives counts.
 const ROLE_BY_OPPORTUNITY = Object.freeze({

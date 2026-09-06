@@ -57,7 +57,7 @@ ok(main.includes('yieldControl: null') && main.includes('pump({ maxChunks, maxMi
 ok(main.includes('hasPendingRefinement: (chunk, payload) => cityFabricEngine.hasPendingRefinement(chunk, payload)') && streamer.includes('nearestRefinableChunk'), 'each generic chunk must carry independently resumable enrichment work scheduled by the outer streamer');
 ok(chunks.includes('kowloon-partition:') && chunks.includes('kowloon-site-class:') && chunks.includes('kowloon-compound:') && chunks.includes('kowloon-bridge:'), 'rich generic structure must use independent stable partition/site/compound/bridge RNG streams');
 ok(chunks.includes('partitionKowloonCompounds({') && chunks.includes('buildKowloonCompound({'), 'generic normal fabric must consume the shared compound grammar');
-ok(kowloon.includes('export function partitionKowloonCompounds') && kowloon.includes('export function analyzeKowloonCompound'), 'shared Kowloon structural source of truth missing');
+ok(kowloon.includes('export function partitionKowloonCompounds') && kowloon.includes('export function analyzeKowloonCompound'), 'shared Kowloon structural owner missing');
 
 ok(main.includes('createProgressiveStaticWorldOptimizer({'), 'spawn chunk optimizer must remain cooperative');
 ok(main.includes("await testYieldNow('optimizing completed spawn chunk"), 'optimizer must remain a cooperative background refinement after live authored completion');

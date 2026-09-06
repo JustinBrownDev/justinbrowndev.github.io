@@ -20,7 +20,7 @@
 // Scheduler budget override:
 //   ?buildBudgetMs=2..12
 //
-// Node/self-test imports default to FULL so semantic contract tests continue to
+// Node/self-test imports default to FULL so integration tests continue to
 // exercise the complete architecture unless they explicitly resolve another profile.
 
 const TRUE_RE = /^(?:1|true|on|yes)$/i;
@@ -34,11 +34,12 @@ export const GENERATION_PROFILE_DEFINITIONS = Object.freeze({
         signatureContent: false,
         microEnrichment: false,
         authoredDecoration: false,
-        // Cheap primitive/transformed plaza objects are the first detail lane restored.
-        // Keep this separately reversible with ?lanePlaza=0 while heavier lanes stay off.
-        plazaClutter: true,
-        moderateProps: true,
-        signageStress: true,
+        // 21X baseline: macro architecture now carries the scene. Cheap clutter,
+        // moderate props and sign-density stress stay opt-in/progressive instead of
+        // competing with first paint. Query overrides can still restore each lane.
+        plazaClutter: false,
+        moderateProps: false,
+        signageStress: false,
     }),
     full: Object.freeze({
         broadStrokesOnly: false,

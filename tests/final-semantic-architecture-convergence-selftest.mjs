@@ -154,7 +154,7 @@ for (const exteriorPlan of synchronous.plans) {
 }
 
 // Cleanup contract: dead local facade aperture/program authorities must not creep
-// back into semantic-context after Portal + Building Semantic Truth convergence.
+// back into semantic-context after portal + building-program convergence.
 const semanticContextSource = await readFile(new URL('../world/semantic-context.js', import.meta.url), 'utf8');
 assert.ok(!semanticContextSource.includes('function compileApertures('), 'dead duplicate aperture authority still present');
 assert.ok(!semanticContextSource.includes("family === 'mercantile-public'"), 'duplicate physical-family program interpretation still present');

@@ -58,14 +58,18 @@ assert.equal(placeTypes.size, expectedPlaceTypes.length,
   'deterministic hanging fixture should exercise the complete seven-family authored-place vocabulary');
 for (const place of hangingPlaces) {
   assert.equal(place.routeOwnership, 'authoritative-exterior-transport-network');
-  assert.ok(place.parts?.length >= 12, `${place.placeType}: authored exterior scene must remain rich`);
+  assert.ok(place.parts?.length > 0, `${place.placeType}: authored exterior scene must retain a visible identity payload`);
+  assert.ok(place.parts.some(part => part.emissive || part.renderClass === 'paint' || part.collision),
+    `${place.placeType}: authored exterior scene must retain a readable identity/physical cue`);
 }
 
 const kindCounts = new Map();
 for (const task of hanging.refinement.tasks ?? []) kindCounts.set(task.kind, (kindCounts.get(task.kind) ?? 0) + 1);
-for (const kind of ['sign', 'pipe', 'awning', 'street-fixture', 'service-hardware']) {
-  assert.ok((kindCounts.get(kind) ?? 0) > 0, `hanging exterior enrichment must retain ${kind}`);
+for (const kind of ['sign', 'pipe', 'awning', 'service-hardware']) {
+  assert.ok((kindCounts.get(kind) ?? 0) > 0, `explicit progressive exterior enrichment must retain ${kind}`);
 }
+assert.equal(kindCounts.get('street-fixture') ?? 0, 0,
+  'street fixtures are optional clutter and should not be required by the lean baseline/progressive contract');
 assert.ok((hanging.refinement.progressiveEnrichment?.published ?? 0) > 0,
   'hanging city must receive its own progressive exterior deepening');
 

@@ -245,12 +245,12 @@ function keepTaskUnderCommonDiagnosticCut(task) {
     return false;
 }
 
-// 21N: additive post-handoff richness. These kinds are deliberately cosmetic:
-// they do not own doors, circulation, blocking topology, or semantic interior
-// placement. That keeps progressive enrichment safe to request after READY.
+// Additive post-handoff detail. These kinds are cosmetic: they do not own
+// doors, circulation, blocking topology, or interior placement, so they are safe
+// to request after READY.
 export const PROGRESSIVE_EXTERIOR_DETAIL_KINDS = Object.freeze([
     'graffiti', 'pipe', 'awning', 'flyer', 'ivy', 'security',
-    'service-hardware', 'elevator-hardware', 'spray-cans', 'overhead-cable',
+    'service-hardware', 'elevator-hardware', 'spray-cans',
 ]);
 const PROGRESSIVE_EXTERIOR_DETAIL_KIND_SET = new Set(PROGRESSIVE_EXTERIOR_DETAIL_KINDS);
 export function isProgressiveExteriorDetailKind(kind) {
@@ -883,12 +883,14 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
             });
         }
 
-        // Independent sign stream: density can grow without perturbing the old
-        // facade/pipe/awning RNG sequence. Tight streets should read as vertical
-        // layers of projecting signs, not one token sign per building.
+        // Secondary sign density belongs to explicit/full detail, not baseline first paint.
+        // The primary identity sign above stays available in skeleton mode; additional
+        // projecting signs return in full mode, explicit sign-stress mode, or raw
+        // progressive planning without perturbing the primary sign seed.
         const signDensityRng = mulberry32(taskSeed(chunk, entity.id, 'sign-density'));
         const signageStress = GENERATION_LANES.signageStress && GENERATION_LANES.macroSignage;
-        const extraSignCount = signageStress
+        const secondarySignDetail = signageStress || !applyDiagnosticCut || !CUT_COMMON_KOWLOON_ENRICHMENT;
+        const extraSignCount = !secondarySignDetail ? 0 : signageStress
             ? 4
                 + (floors >= 2 ? 2 : 0)
                 + (floors >= 4 ? 1 : 0)
@@ -910,153 +912,161 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
             });
         }
 
-        if (rng() < 0.76) {
-            const graffitiRng = mulberry32(taskSeed(chunk, entity.id, 'graffiti-label'));
-            const baseText = graffitiRng() < 0.52
-                ? pickPoetryTag(graffitiRng)
-                : BASE_GRAFFITI_TAGS[Math.floor(graffitiRng() * BASE_GRAFFITI_TAGS.length) % BASE_GRAFFITI_TAGS.length];
-            const text = textExciter.tagFor(chunk, entity.id, 'graffiti-label', baseText);
-            tasks.push({
-                kind: 'graffiti', entityId: entity.id, side, facadeIndex: sideFacadeIndex,
-                y: 0.95 + rng() * 1.1, along: (rng() - 0.5) * 0.9,
-                width: 1.1 + rng() * 1.8, height: 0.5 + rng() * 0.65,
-                text, seed: taskSeed(chunk, entity.id, 'graffiti'),
-            });
-        }
-
-        const pipeCount = 1 + (rng() < 0.38 ? 1 : 0);
-        for (let i = 0; i < pipeCount; i++) {
-            tasks.push({
-                kind: 'pipe', entityId: entity.id, side: i ? back : side, facadeIndex: i ? backFacadeIndex : sideFacadeIndex,
-                y: wallHeight * 0.48,
-                height: clamp(wallHeight * (0.58 + rng() * 0.34), 2.5, wallHeight - 0.3),
-                along: (rng() - 0.5) * 1.25,
-                seed: taskSeed(chunk, entity.id, 'pipe', i),
-            });
-        }
-
-        if (rng() < 0.58) {
-            tasks.push({
-                kind: 'awning', entityId: entity.id, side: front, facadeIndex: frontFacadeIndex,
-                y: 2.52, along: 0,
-                width: clamp((front === 'north' || front === 'south' ? entity.halfX : entity.halfZ) * 1.25, 1.6, 4.4),
-                depth: 0.72 + rng() * 0.45,
-                seed: taskSeed(chunk, entity.id, 'awning'),
-            });
-        }
-
-        if (rng() < 0.64) {
-            const flyerCount = 1 + (rng() < 0.32 ? 1 : 0) + (rng() < 0.10 ? 1 : 0);
-            for (let i = 0; i < flyerCount; i++) {
-                const flyerRng = mulberry32(taskSeed(chunk, entity.id, 'flyer-label', i));
-                const basePair = pickDirtyFlavorPairForSurface(flyerRng, 'flyer');
-                const [title, subtitle] = textExciter.pairFor(chunk, entity.id, `flyer-label:${i}`, basePair);
+        // Do not allocate the old facade/prop/interior detail corpus during the lean
+        // browser baseline. Full mode, explicit moderate-prop opt-in, and raw
+        // progressive planning still use the exact deterministic corpus below.
+        const planDeferredDetailCorpus = !applyDiagnosticCut
+            || !CUT_COMMON_KOWLOON_ENRICHMENT
+            || GENERATION_LANES.moderateProps;
+        if (planDeferredDetailCorpus) {
+            if (rng() < 0.76) {
+                const graffitiRng = mulberry32(taskSeed(chunk, entity.id, 'graffiti-label'));
+                const baseText = graffitiRng() < 0.52
+                    ? pickPoetryTag(graffitiRng)
+                    : BASE_GRAFFITI_TAGS[Math.floor(graffitiRng() * BASE_GRAFFITI_TAGS.length) % BASE_GRAFFITI_TAGS.length];
+                const text = textExciter.tagFor(chunk, entity.id, 'graffiti-label', baseText);
                 tasks.push({
-                    kind: 'flyer', entityId: entity.id, side: i ? side : front, facadeIndex: i ? sideFacadeIndex : frontFacadeIndex,
-                    y: 1.05 + rng() * 1.55, along: (rng() - 0.5) * 1.35,
-                    width: 0.42 + rng() * 0.28, height: 0.54 + rng() * 0.34,
-                    title, subtitle, seed: taskSeed(chunk, entity.id, 'flyer', i),
+                    kind: 'graffiti', entityId: entity.id, side, facadeIndex: sideFacadeIndex,
+                    y: 0.95 + rng() * 1.1, along: (rng() - 0.5) * 0.9,
+                    width: 1.1 + rng() * 1.8, height: 0.5 + rng() * 0.65,
+                    text, seed: taskSeed(chunk, entity.id, 'graffiti'),
                 });
             }
-        }
 
-        if (floors >= 2 && rng() < 0.62) {
-            tasks.push({
-                kind: 'ivy', entityId: entity.id, side: back, facadeIndex: backFacadeIndex,
-                y: clamp(wallHeight * (0.35 + rng() * 0.26), 2.2, wallHeight - 1),
-                height: clamp(wallHeight * (0.35 + rng() * 0.34), 1.8, wallHeight - 0.5),
-                along: (rng() - 0.5) * 0.8,
-                count: 7 + Math.floor(rng() * 9),
-                seed: taskSeed(chunk, entity.id, 'ivy'),
-            });
-        }
-        // Independent service-hardware stream: AC case + duct + conduit + vent,
-        // all primitive-only and therefore cheap enough to restore before text micro-detail.
-        const serviceHardwareRng = mulberry32(taskSeed(chunk, entity.id, 'service-hardware-plan'));
-        if (floors >= 2 && serviceHardwareRng() < 0.74) {
-            tasks.push({
-                kind: 'service-hardware', entityId: entity.id, side, facadeIndex: sideFacadeIndex,
-                y: clamp(2.15 + serviceHardwareRng() * Math.min(3.8, wallHeight * 0.42), 1.9, Math.max(2.1, wallHeight - 0.8)),
-                along: (serviceHardwareRng() - 0.5) * 1.15,
-                seed: taskSeed(chunk, entity.id, 'service-hardware'),
-            });
-        }
+            const pipeCount = 1 + (rng() < 0.38 ? 1 : 0);
+            for (let i = 0; i < pipeCount; i++) {
+                tasks.push({
+                    kind: 'pipe', entityId: entity.id, side: i ? back : side, facadeIndex: i ? backFacadeIndex : sideFacadeIndex,
+                    y: wallHeight * 0.48,
+                    height: clamp(wallHeight * (0.58 + rng() * 0.34), 2.5, wallHeight - 0.3),
+                    along: (rng() - 0.5) * 1.25,
+                    seed: taskSeed(chunk, entity.id, 'pipe', i),
+                });
+            }
 
-        if (rng() < 0.44) {
-            tasks.push({
-                kind: 'security', entityId: entity.id, side, facadeIndex: sideFacadeIndex,
-                y: clamp(2.6 + rng() * 1.6, 2.5, Math.max(2.6, wallHeight - 0.7)),
-                along: (rng() - 0.5) * 1.15,
-                seed: taskSeed(chunk, entity.id, 'security'),
+            if (rng() < 0.58) {
+                tasks.push({
+                    kind: 'awning', entityId: entity.id, side: front, facadeIndex: frontFacadeIndex,
+                    y: 2.52, along: 0,
+                    width: clamp((front === 'north' || front === 'south' ? entity.halfX : entity.halfZ) * 1.25, 1.6, 4.4),
+                    depth: 0.72 + rng() * 0.45,
+                    seed: taskSeed(chunk, entity.id, 'awning'),
+                });
+            }
+
+            if (rng() < 0.64) {
+                const flyerCount = 1 + (rng() < 0.32 ? 1 : 0) + (rng() < 0.10 ? 1 : 0);
+                for (let i = 0; i < flyerCount; i++) {
+                    const flyerRng = mulberry32(taskSeed(chunk, entity.id, 'flyer-label', i));
+                    const basePair = pickDirtyFlavorPairForSurface(flyerRng, 'flyer');
+                    const [title, subtitle] = textExciter.pairFor(chunk, entity.id, `flyer-label:${i}`, basePair);
+                    tasks.push({
+                        kind: 'flyer', entityId: entity.id, side: i ? side : front, facadeIndex: i ? sideFacadeIndex : frontFacadeIndex,
+                        y: 1.05 + rng() * 1.55, along: (rng() - 0.5) * 1.35,
+                        width: 0.42 + rng() * 0.28, height: 0.54 + rng() * 0.34,
+                        title, subtitle, seed: taskSeed(chunk, entity.id, 'flyer', i),
+                    });
+                }
+            }
+
+            if (floors >= 2 && rng() < 0.62) {
+                tasks.push({
+                    kind: 'ivy', entityId: entity.id, side: back, facadeIndex: backFacadeIndex,
+                    y: clamp(wallHeight * (0.35 + rng() * 0.26), 2.2, wallHeight - 1),
+                    height: clamp(wallHeight * (0.35 + rng() * 0.34), 1.8, wallHeight - 0.5),
+                    along: (rng() - 0.5) * 0.8,
+                    count: 7 + Math.floor(rng() * 9),
+                    seed: taskSeed(chunk, entity.id, 'ivy'),
+                });
+            }
+            // Independent service-hardware stream: AC case + duct + conduit + vent,
+            // all primitive-only and therefore cheap enough to restore before text micro-detail.
+            const serviceHardwareRng = mulberry32(taskSeed(chunk, entity.id, 'service-hardware-plan'));
+            if (floors >= 2 && serviceHardwareRng() < 0.74) {
+                tasks.push({
+                    kind: 'service-hardware', entityId: entity.id, side, facadeIndex: sideFacadeIndex,
+                    y: clamp(2.15 + serviceHardwareRng() * Math.min(3.8, wallHeight * 0.42), 1.9, Math.max(2.1, wallHeight - 0.8)),
+                    along: (serviceHardwareRng() - 0.5) * 1.15,
+                    seed: taskSeed(chunk, entity.id, 'service-hardware'),
+                });
+            }
+
+            if (rng() < 0.44) {
+                tasks.push({
+                    kind: 'security', entityId: entity.id, side, facadeIndex: sideFacadeIndex,
+                    y: clamp(2.6 + rng() * 1.6, 2.5, Math.max(2.6, wallHeight - 0.7)),
+                    along: (rng() - 0.5) * 1.15,
+                    seed: taskSeed(chunk, entity.id, 'security'),
+                });
+            }
+            if (floors >= 3 && rng() < 0.28) {
+                tasks.push({
+                    kind: 'elevator-hardware', entityId: entity.id, side: back, facadeIndex: backFacadeIndex,
+                    y: 1.15, along: (rng() - 0.5) * 0.55, seed: taskSeed(chunk, entity.id, 'elevator-hardware'),
+                });
+            }
+            if (!entity.ceilingRooted) tasks.push({
+                kind: 'roof-clutter', entityId: entity.id, seed: taskSeed(chunk, entity.id, 'roof-clutter'),
+                count: 2 + (rng() < 0.35 ? 1 : 0),
             });
-        }
-        if (floors >= 3 && rng() < 0.28) {
-            tasks.push({
-                kind: 'elevator-hardware', entityId: entity.id, side: back, facadeIndex: backFacadeIndex,
-                y: 1.15, along: (rng() - 0.5) * 0.55, seed: taskSeed(chunk, entity.id, 'elevator-hardware'),
+            if (tasks.some(task => task.kind === 'graffiti') && rng() < 0.46) tasks.push({
+                kind: 'spray-cans', entityId: entity.id, side, facadeIndex: sideFacadeIndex,
+                seed: taskSeed(chunk, entity.id, 'spray-cans'),
             });
-        }
-        if (!entity.ceilingRooted) tasks.push({
-            kind: 'roof-clutter', entityId: entity.id, seed: taskSeed(chunk, entity.id, 'roof-clutter'),
-            count: 2 + (rng() < 0.35 ? 1 : 0),
-        });
-        if (tasks.some(task => task.kind === 'graffiti') && rng() < 0.46) tasks.push({
-            kind: 'spray-cans', entityId: entity.id, side, facadeIndex: sideFacadeIndex,
-            seed: taskSeed(chunk, entity.id, 'spray-cans'),
-        });
-        // Street-level identity belongs to the same deterministic payload as signs,
-        // pipes, and awnings. Use an independent RNG so adding this family does not
-        // perturb the established authored/procedural task sequence.
-        const fixtureRng = mulberry32(taskSeed(chunk, entity.id, 'street-fixture-plan'));
-        const fixtureCount = 2 + (fixtureRng() < 0.94 ? 1 : 0) + (fixtureRng() < 0.78 ? 1 : 0) + (fixtureRng() < 0.52 ? 1 : 0) + (fixtureRng() < 0.28 ? 1 : 0);
-        const variants = ['trash-can', 'crate', 'utility-box', 'planter', 'lantern', 'vending-machine', 'bollard', 'manhole', 'weeds', 'street-lamp', 'news-box', 'bench'];
-        for (let i = 0; i < fixtureCount; i++) {
-            const fixtureSide = i ? side : front;
-            tasks.push({
-                kind: 'street-fixture', entityId: entity.id, side: fixtureSide,
-                facadeIndex: i ? sideFacadeIndex : frontFacadeIndex,
-                along: (fixtureRng() - 0.5) * 1.48,
-                variant: variants[Math.floor(fixtureRng() * variants.length) % variants.length],
-                seed: taskSeed(chunk, entity.id, 'street-fixture', i),
-            });
-        }
-        if (!entity.suppressInteriorEnrichment && entity.footprintModules?.length) {
-            const semanticSlots = semanticSlotsForEntity(entity);
-            if (semanticSlots.length) {
-                const activeSlotCount = Math.max(1, Math.min(12, semanticSlots.length));
-                const slotStart = taskSeed(chunk, entity.id, 'semantic-space-rotation') % semanticSlots.length;
-                const activeSlots = Array.from({ length: activeSlotCount }, (_, i) => semanticSlots[(slotStart + i) % semanticSlots.length]);
-                for (let slotOrdinal = 0; slotOrdinal < activeSlots.length; slotOrdinal++) {
-                    const slot = activeSlots[slotOrdinal];
-                    const module = slot.module;
-                    const floor = slot.floor;
-                    const stableSpaceKey = slot.spaceId ?? `${module.key}:floor:${floor}`;
-                    const program = slot.program ?? semanticProgramForSpace(chunk, entity, module.key, floor);
-                    const recipe = semanticRecipeById.get(program)
-                        ?? SEMANTIC_ROOM_RECIPES[taskSeed(chunk, entity.id, `semantic-room-fallback:${stableSpaceKey}`) % SEMANTIC_ROOM_RECIPES.length];
-                    const phaseTargets = recipe?.population?.phaseTargets ?? { identity: 6, functional: 10, life: 8 };
-                    for (const phase of ['identity', 'functional', 'life']) {
-                        const target = Math.max(0, Math.floor(Number(phaseTargets[phase]) || 0));
-                        const base = Math.floor(target / activeSlots.length);
-                        const extra = slotOrdinal < target % activeSlots.length ? 1 : 0;
-                        const wanted = base + extra;
-                        const pool = recipe?.[phase] ?? [];
-                        const fallbackPool = semanticProgramPhasePools.get(`${program}:${phase}`) ?? semanticAllPhasePools.get(phase) ?? [];
-                        const phaseSeed = taskSeed(chunk, entity.id, `semantic-space:${stableSpaceKey}:${phase}`);
-                        for (let i = 0; i < wanted; i++) {
-                            const assetId = denseSemanticAssetId(pool, fallbackPool, phaseSeed, i);
-                            if (!assetId) continue;
-                            tasks.push({
-                                kind: `semantic-${phase}`, entityId: entity.id, assetId, program,
-                                moduleKey: module.key, floor, spaceId: slot.spaceId,
-                                architecturalSpaceRole: slot.role,
-                                architecturalSpaceType: slot.spaceType,
-                                architecturalProgram: slot.program,
-                                architecturalOperationalRole: slot.operationalRole,
-                                architecturalFunctionalFixture: slot.functionalFixture,
-                                architecturalTraversalPermission: slot.traversalPermission,
-                                seed: taskSeed(chunk, entity.id, `semantic-object:${stableSpaceKey}:${phase}`, i),
-                            });
+            // Street-level identity belongs to the same deterministic payload as signs,
+            // pipes, and awnings. Use an independent RNG so adding this family does not
+            // perturb the established authored/procedural task sequence.
+            const fixtureRng = mulberry32(taskSeed(chunk, entity.id, 'street-fixture-plan'));
+            const fixtureCount = 2 + (fixtureRng() < 0.94 ? 1 : 0) + (fixtureRng() < 0.78 ? 1 : 0) + (fixtureRng() < 0.52 ? 1 : 0) + (fixtureRng() < 0.28 ? 1 : 0);
+            const variants = ['trash-can', 'crate', 'utility-box', 'planter', 'lantern', 'vending-machine', 'bollard', 'manhole', 'weeds', 'street-lamp', 'news-box', 'bench'];
+            for (let i = 0; i < fixtureCount; i++) {
+                const fixtureSide = i ? side : front;
+                tasks.push({
+                    kind: 'street-fixture', entityId: entity.id, side: fixtureSide,
+                    facadeIndex: i ? sideFacadeIndex : frontFacadeIndex,
+                    along: (fixtureRng() - 0.5) * 1.48,
+                    variant: variants[Math.floor(fixtureRng() * variants.length) % variants.length],
+                    seed: taskSeed(chunk, entity.id, 'street-fixture', i),
+                });
+            }
+            if (!entity.suppressInteriorEnrichment && entity.footprintModules?.length) {
+                const semanticSlots = semanticSlotsForEntity(entity);
+                if (semanticSlots.length) {
+                    const activeSlotCount = Math.max(1, Math.min(12, semanticSlots.length));
+                    const slotStart = taskSeed(chunk, entity.id, 'semantic-space-rotation') % semanticSlots.length;
+                    const activeSlots = Array.from({ length: activeSlotCount }, (_, i) => semanticSlots[(slotStart + i) % semanticSlots.length]);
+                    for (let slotOrdinal = 0; slotOrdinal < activeSlots.length; slotOrdinal++) {
+                        const slot = activeSlots[slotOrdinal];
+                        const module = slot.module;
+                        const floor = slot.floor;
+                        const stableSpaceKey = slot.spaceId ?? `${module.key}:floor:${floor}`;
+                        const program = slot.program ?? semanticProgramForSpace(chunk, entity, module.key, floor);
+                        const recipe = semanticRecipeById.get(program)
+                            ?? SEMANTIC_ROOM_RECIPES[taskSeed(chunk, entity.id, `semantic-room-fallback:${stableSpaceKey}`) % SEMANTIC_ROOM_RECIPES.length];
+                        const phaseTargets = recipe?.population?.phaseTargets ?? { identity: 6, functional: 10, life: 8 };
+                        for (const phase of ['identity', 'functional', 'life']) {
+                            const target = Math.max(0, Math.floor(Number(phaseTargets[phase]) || 0));
+                            const base = Math.floor(target / activeSlots.length);
+                            const extra = slotOrdinal < target % activeSlots.length ? 1 : 0;
+                            const wanted = base + extra;
+                            const pool = recipe?.[phase] ?? [];
+                            const fallbackPool = semanticProgramPhasePools.get(`${program}:${phase}`) ?? semanticAllPhasePools.get(phase) ?? [];
+                            const phaseSeed = taskSeed(chunk, entity.id, `semantic-space:${stableSpaceKey}:${phase}`);
+                            for (let i = 0; i < wanted; i++) {
+                                const assetId = denseSemanticAssetId(pool, fallbackPool, phaseSeed, i);
+                                if (!assetId) continue;
+                                tasks.push({
+                                    kind: `semantic-${phase}`, entityId: entity.id, assetId, program,
+                                    moduleKey: module.key, floor, spaceId: slot.spaceId,
+                                    architecturalSpaceRole: slot.role,
+                                    architecturalSpaceType: slot.spaceType,
+                                    architecturalProgram: slot.program,
+                                    architecturalOperationalRole: slot.operationalRole,
+                                    architecturalFunctionalFixture: slot.functionalFixture,
+                                    architecturalTraversalPermission: slot.traversalPermission,
+                                    seed: taskSeed(chunk, entity.id, `semantic-object:${stableSpaceKey}:${phase}`, i),
+                                });
+                            }
                         }
                     }
                 }
@@ -1070,6 +1080,7 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
     }
 
     function planPlazaTasks(chunk, entity, { applyDiagnosticCut = true } = {}) {
+        if (applyDiagnosticCut && CUT_COMMON_KOWLOON_ENRICHMENT) return [];
         const rng = mulberry32(taskSeed(chunk, entity.id, 'plaza-plan'));
         const tasks = [];
         const density = clamp(entity.detailDensity ?? 1, 0, 1);
@@ -1187,6 +1198,7 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
 
 
     function planOverheadCableTasks(chunk, entities, { applyDiagnosticCut = true } = {}) {
+        if (applyDiagnosticCut && CUT_COMMON_KOWLOON_ENRICHMENT && !GENERATION_LANES.moderateProps) return [];
         const buildings = (entities || []).filter(entity => entity.kind === 'building' || entity.kind === 'district-landmark');
         const tasks = [];
         const seen = new Set();
@@ -2340,9 +2352,9 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
     }
 
     function finishPayloadPlanningState(chunk, payload, state, exteriorComposition, semanticPlanning = null) {
-        // Content selection consumes the binding after Exterior Composition has
-        // decided WHICH requests survive. No sign is created here and no quantity
-        // decision is revisited. Existing debug/signature text remains authoritative.
+        // Content selection consumes the binding after Exterior Composition decides
+        // which requests survive. No sign is created here and quantity is not revisited.
+        // Existing debug/signature text is preserved.
         for (const task of exteriorComposition.acceptedExteriorTasks) {
             const context = task.semanticContentContext;
             if (task.kind !== 'sign' || !context || task.semanticDebug || task.signatureIdentity) continue;
@@ -2390,9 +2402,8 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
         state.exteriorCoverage = createExteriorCoverageRuntime(exteriorComposition);
         if (semanticPlanning) state.semanticPlanning = semanticPlanning;
 
-        // Rebuild first-pass accounting from the one admitted queue. The authority
-        // guarantees exactly one building exterior anchor while leaving plaza and
-        // non-building first-pass work intact.
+        // Rebuild first-pass accounting from the admitted queue. The planner keeps
+        // one building exterior anchor while leaving plaza and non-building first-pass work intact.
         state.firstPassTargetByEntity = {};
         state.firstPassPublishedByEntity = {};
         state.firstPassPublicationTarget = 0;
@@ -2417,8 +2428,8 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
             acceptedByComposition: exteriorComposition.stats.plannerContextAccepted,
         };
 
-        // Traversal/collision truth remains an indivisible precommit invariant:
-        // cooperative planning cannot publish a half-planned collision world.
+        // Traversal/collision state is committed as one unit; cooperative planning
+        // cannot publish a half-planned collision world.
         state.topologyPrecommit = solveBlockingTopology(chunk, payload, state.tasks);
         state.exteriorPropField = {
             plannerRequestOnly: true,

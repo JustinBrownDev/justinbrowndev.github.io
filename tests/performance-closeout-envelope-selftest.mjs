@@ -13,19 +13,20 @@ assert.deepEqual({ ...skeleton.lanes }, {
     signatureContent: false,
     microEnrichment: false,
     authoredDecoration: false,
-    plazaClutter: true,
-    moderateProps: true,
-    signageStress: true,
-}, 'browser default must stay on the closed-out skeleton performance envelope');
+    plazaClutter: false,
+    moderateProps: false,
+    signageStress: false,
+}, 'browser default must keep optional clutter/detail lanes out of first paint');
 
-const kill = resolveGenerationProfile({
+const optIn = resolveGenerationProfile({
     browser: true,
-    search: '?generationProfile=skeleton&laneProps=0&lanePlaza=0&laneMacro=0&laneSpectacle=0',
+    search: '?generationProfile=skeleton&laneProps=1&lanePlaza=1&signageStress=1&laneMacro=0&laneSpectacle=0',
 });
-assert.equal(kill.lanes.moderateProps, false, 'moderate detail kill switch must remain available');
-assert.equal(kill.lanes.plazaClutter, false, 'plaza kill switch must remain available');
-assert.equal(kill.lanes.macroSignage, false, 'macro-signage kill switch must remain available');
-assert.equal(kill.lanes.spectacle, false, 'spectacle kill switch must remain available');
+assert.equal(optIn.lanes.moderateProps, true, 'moderate detail must remain explicitly restorable');
+assert.equal(optIn.lanes.plazaClutter, true, 'plaza clutter must remain explicitly restorable');
+assert.equal(optIn.lanes.signageStress, true, 'dense signage must remain explicitly restorable');
+assert.equal(optIn.lanes.macroSignage, false, 'macro-signage kill switch must remain available');
+assert.equal(optIn.lanes.spectacle, false, 'spectacle kill switch must remain available');
 
 const full = resolveGenerationProfile({ browser: true, search: '?generationProfile=full' });
 assert.equal(full.name, 'full');
@@ -38,10 +39,10 @@ const enrichment = read('../world/kowloon-fabric-enrichment.js');
 const mapMatch = enrichment.match(/const MODERATE_PROP_PERCENT = Object\.freeze\(\{([\s\S]*?)\}\);/);
 assert.ok(mapMatch, 'moderate detail admission map must remain explicit');
 const map = mapMatch[1];
-assert.match(map, /pipe: 65,/, 'primitive pipe admission must stay at the measured 65 percent closeout level');
-assert.match(map, /'spray-cans': 40,/, 'spray-can admission must stay at 40 percent');
-assert.match(map, /'overhead-cable': 30,/, 'overhead-cable admission must stay at 30 percent');
-assert.match(map, /security: 40,/, 'security-camera admission must stay at 40 percent');
+assert.match(map, /pipe: 65,/, 'explicit moderate-detail mode keeps bounded primitive pipe admission');
+assert.match(map, /'spray-cans': 40,/, 'explicit moderate-detail mode keeps bounded spray-can admission');
+assert.match(map, /'overhead-cable': 30,/, 'explicit moderate-detail mode keeps bounded overhead-cable admission');
+assert.match(map, /security: 40,/, 'explicit moderate-detail mode keeps bounded security-camera admission');
 assert.doesNotMatch(map, /flyer\s*:/, 'per-item flyer textures must not silently enter the moderate lane');
 assert.doesNotMatch(map, /interior-prop\s*:/, 'interior props must not silently enter the moderate lane');
 assert.doesNotMatch(map, /semantic-context-prop\s*:/, 'semantic-context GLB work must not silently enter the moderate lane');

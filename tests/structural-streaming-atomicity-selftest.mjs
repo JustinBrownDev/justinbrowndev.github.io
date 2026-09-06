@@ -123,7 +123,7 @@ assert.equal(roofCheckpoints.length, totalModules, 'each module roof/parapet pas
 assert.equal(streetFaceCheckpoints.length, totalModules, 'each module street-face classification pass must expose a cooperative boundary');
 assert.ok(shellFloorCheckpoints.length > structuralEntities.length, 'structural scheduling must be finer than one whole building/compound');
 
-// Scheduling must not become semantic authority. Drain the same live engine with no
+// Scheduling must not change planning results. Drain the same live engine with no
 // scheduler and compare the final structural/collision identity byte-for-byte at the
 // stable metadata level.
 const nonCooperative = createHarness(null);

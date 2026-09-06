@@ -43,11 +43,11 @@ const input = adapter.sidecarInputFromKowloon({ worldSeed: 9, chunk, entity: cho
 assert.equal(input.programHint, expected.programHint, 'Building Plan adapter ignored district program hint');
 assert.equal(input.districtCompositionId, composition.id, 'Building Plan adapter lost district provenance');
 assert.equal(input.districtComposition.blockRole, chosen.districtComposition.blockRole, 'Building Plan adapter lost block role');
-assert.equal(input.districtComposition.districtFamily, chosen.districtComposition.districtFamily, 'Building Plan adapter must pass full district identity into Building Semantic Truth');
+assert.equal(input.districtComposition.districtFamily, chosen.districtComposition.districtFamily, 'Building Plan adapter must pass full district identity into the building program record');
 assert.equal(input.districtComposition.exteriorHints.facadeSemanticFamily, chosen.districtComposition.exteriorHints.facadeSemanticFamily, 'Building Plan adapter flattened district exterior intent before shared identity');
 
 const explicit = adapter.sidecarInputFromKowloon({ worldSeed: 9, chunk, entity: chosen, physics: payload.physics, programHint: 'explicit_override' });
-assert.equal(explicit.programHint, 'explicit_override', 'explicit upstream Building Semantic Truth hint must remain authoritative over district fallback');
+assert.equal(explicit.programHint, 'explicit_override', 'explicit upstream program hint must take precedence over district fallback');
 
 const planned = adapter.planKowloonEntitySidecar({ worldSeed: 9, chunk, entity: chosen, physics: payload.physics });
 assert.equal(planned.received.programHint, expected.programHint, 'sidecar planner did not receive district-aware input');

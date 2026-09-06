@@ -7,7 +7,7 @@ import {
     resolveGenerationProfile,
 } from '../config/performance-isolation.js';
 
-// Node stays full-fidelity so the existing semantic suite is not silently neutered.
+// Node stays full-fidelity so the complete integration suite still exercises optional detail.
 assert.equal(GENERATION_PROFILE_NAME, 'full');
 assert.equal(GENERATION_LANES.broadStrokesOnly, false);
 assert.equal(CUT_AUTHORED_SPAWN_DECORATION, false);
@@ -21,19 +21,19 @@ assert.equal(skeleton.lanes.spectacle, true);
 assert.equal(skeleton.lanes.signatureContent, false);
 assert.equal(skeleton.lanes.microEnrichment, false);
 assert.equal(skeleton.lanes.authoredDecoration, false);
-assert.equal(skeleton.lanes.plazaClutter, true);
-assert.equal(skeleton.lanes.moderateProps, true);
-assert.equal(skeleton.lanes.signageStress, true);
+assert.equal(skeleton.lanes.plazaClutter, false);
+assert.equal(skeleton.lanes.moderateProps, false);
+assert.equal(skeleton.lanes.signageStress, false);
 
 const override = resolveGenerationProfile({
     browser: true,
-    search: '?generationProfile=skeleton&laneSignature=1&laneMacro=0&lanePlaza=0&laneProps=0&signageStress=0',
+    search: '?generationProfile=skeleton&laneSignature=1&laneMacro=0&lanePlaza=1&laneProps=1&signageStress=1',
 });
 assert.equal(override.lanes.signatureContent, true);
 assert.equal(override.lanes.macroSignage, false);
-assert.equal(override.lanes.plazaClutter, false);
-assert.equal(override.lanes.moderateProps, false);
-assert.equal(override.lanes.signageStress, false);
+assert.equal(override.lanes.plazaClutter, true);
+assert.equal(override.lanes.moderateProps, true);
+assert.equal(override.lanes.signageStress, true);
 
 const full = resolveGenerationProfile({ browser: true, search: '?generationProfile=full' });
 assert.equal(full.name, 'full');

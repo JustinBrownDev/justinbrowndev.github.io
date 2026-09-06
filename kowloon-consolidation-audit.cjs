@@ -141,9 +141,9 @@ for (const kind of ['sign', 'graffiti', 'pipe', 'awning', 'ivy', 'security', 'fl
 }
 assert.match(enrichment, /facadeIndex/, 'refinement no longer targets actual compound facades');
 
-// Design language + full corpus remains wired.
-for (const axiom of ['ACCRETION IS A BUILDING SYSTEM', 'ROOFS ARE STREETS', 'SERVICES LIVE ON THE SKIN']) {
-  assert.ok(exciter.includes(axiom), `design axiom missing: ${axiom}`);
+// Design motifs + full corpus remain wired.
+for (const motif of ['ACCRETION IS A BUILDING SYSTEM', 'ROOFS ARE STREETS', 'SERVICES LIVE ON THE SKIN']) {
+  assert.ok(exciter.includes(motif), `design motif missing: ${motif}`);
 }
 
 // Progressive optimizer API regression from the live console remains fixed on the actual controller.

@@ -84,7 +84,7 @@ export function planKowloonEntitySidecar(context) {
  *
  * Call after footprintModules + physical truth + connector reservations exist,
  * but before partition walls, slabs, generic windows, or semantic destinations
- * are emitted.  The returned floor spaces become the source of truth for those
+ * are emitted.  The returned floor spaces are the canonical input for those
  * downstream emitters.
  */
 export function integrationPhase() {

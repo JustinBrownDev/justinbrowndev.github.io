@@ -495,7 +495,7 @@ export function compileSpatialTopologyGraph({ chunk, payload } = {}) {
     for (const space of spaces) {
         if (space.entityId) edges.push(edge(`edge:entity-space:${space.entityId}:${space.id}`, 'contains-space', space.entityId, space.id));
     }
-    // Planned adjacency is semantic truth, not something to rediscover by testing
+    // Planned adjacency is explicit graph data; do not rediscover it from
     // already-rendered wall boxes. Publish one undirected graph relationship per
     // authored room pair while retaining access identity separately below.
     const plannedAdjacencyPairs = new Set();

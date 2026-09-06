@@ -6,7 +6,7 @@ import { chooseVolumetricCompoundTargetSize } from './building-scale-policy.js';
 // landmarks, and streamed infinity all consume this topology through the same
 // KowloonFabricEngine renderer/collision publisher. Unique authored content is a
 // recipe layered on top; it is not allowed to define a second wall/floor/stair
-// system. This module is the one source of truth for city massing and edge semantics.
+// system. This module owns shared city massing and edge definitions.
 
 export const KOWLOON_DIRS = Object.freeze([
     Object.freeze({ key: 'N', dc: 0, dr: -1, side: 'north' }),

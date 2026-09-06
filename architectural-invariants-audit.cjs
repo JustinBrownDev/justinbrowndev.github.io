@@ -13,6 +13,12 @@ const streetProps = read('world/street-props.js');
 const signage = read('world/signage.js');
 const performance = read('city-performance.js');
 const adornment = read('systems/adornment-assets.js');
+const buildingPlan = read('world/architecture/building-plan-sidecar.js');
+const semanticLayout = read('world/semantic-layout.js');
+const semanticContext = read('world/semantic-context.js');
+const semanticPlacement = read('world/semantic-placement.js');
+const frontageBinding = read('world/frontage-semantic-binding.js');
+const spatialClaims = read('world/spatial-claims.js');
 
 const retired = [
   'world/building-construction.js',
@@ -47,7 +53,14 @@ assert.doesNotMatch(fabric, /function buildKowloonCompound\(args\)/, 'synchronou
 assert.doesNotMatch(fabric, /runCompoundStepperToCompletion/, 'retired synchronous drain helper must not survive as a dangling reference');
 assert.match(fabric, /function buildAuthoredSite\(args = \{\}\)[\s\S]*?const stepper = buildAuthoredSiteSteps\(args\)/,
   'direct authored-site compatibility seam must drain the canonical stepped builder');
-assert.match(fabric, /planBuildingSidecar\(/);
+assert.match(fabric, /planBuildingSidecarSteps/);
+assert.match(fabric, /yield\* getOrCompileBuildingPlanSteps/);
+assert.match(buildingPlan, /export function\* planBuildingSidecarSteps\(/);
+assert.match(semanticLayout, /export function\* solveSemanticLayoutSteps\(/);
+assert.match(semanticContext, /export function\* compileSemanticContextSteps\(/);
+assert.match(semanticPlacement, /export function\* resolveSemanticPlacementSteps\(/);
+assert.match(frontageBinding, /export function\* bindFrontageSemanticTruthSteps\(/);
+assert.match(spatialClaims, /claimWithoutDisplacement\(claim\)/);
 assert.match(fabric, /accessAnchorsForBuildingPortals\(accessPortals\)/);
 assert.match(fabric, /districtComposition:\s*districtBuildingContext\s*\?\?\s*districtBuildingPolicy/);
 

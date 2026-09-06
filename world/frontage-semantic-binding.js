@@ -123,9 +123,16 @@ function spaceScore(surface, point, space) {
 function selectSpaceForSurface(surface, point, spaces) {
     if (!surface || !spaces?.length) return null;
     const inward = inwardPoint(surface, point);
-    return [...spaces]
-        .map(space => ({ space, score: spaceScore(surface, inward, space) }))
-        .sort((a, b) => a.score - b.score || String(a.space.id).localeCompare(String(b.space.id)))[0]?.space ?? null;
+    let best = null;
+    let bestScore = Infinity;
+    for (const space of spaces) {
+        const score = spaceScore(surface, inward, space);
+        if (score < bestScore || (score === bestScore && best && String(space.id).localeCompare(String(best.id)) < 0)) {
+            best = space;
+            bestScore = score;
+        }
+    }
+    return best;
 }
 
 function spaceProgram(space, entity) {
@@ -169,8 +176,10 @@ function classifyFrontage(space, entity) {
     return { frontageRole: 'mixed-frontage', publicRole: privacy || 'mixed' };
 }
 
-function destinationForSpace(destinations, spaceId) {
-    return (destinations ?? []).find(destination => String(destination.spaceId ?? '') === String(spaceId ?? '')) ?? null;
+function destinationForSpace(destinations, spaceId, destinationBySpace = null) {
+    const key = String(spaceId ?? '');
+    if (destinationBySpace) return destinationBySpace.get(key) ?? null;
+    return (destinations ?? []).find(destination => String(destination.spaceId ?? '') === key) ?? null;
 }
 
 function tangentForSurface(surface) {
@@ -184,19 +193,27 @@ function opportunityU(surface, opportunity) {
         + (finite(opportunity?.transform?.z, finite(surface?.z)) - finite(surface?.z)) * tangent.z;
 }
 
-function entranceRelationship(surface, opportunity, apertures) {
-    const candidates = (apertures ?? []).filter(aperture => aperture?.traversable && String(aperture.surfaceId ?? '') === String(surface?.id ?? ''));
+function entranceRelationship(surface, opportunity, apertures, aperturesBySurface = null) {
+    const surfaceId = String(surface?.id ?? '');
+    const candidates = aperturesBySurface?.get(surfaceId)
+        ?? (apertures ?? []).filter(aperture => aperture?.traversable && String(aperture.surfaceId ?? '') === surfaceId);
     if (!candidates.length) return { relation: 'none', apertureId: null, connectorId: null, distance: null };
     const u = opportunityU(surface, opportunity);
-    const nearest = candidates.map(aperture => {
+    let nearest = null;
+    let nearestDistance = Infinity;
+    for (const aperture of candidates) {
         const center = (finite(aperture.uMin) + finite(aperture.uMax)) * 0.5;
-        return { aperture, distance: Math.abs(u - center) };
-    }).sort((a, b) => a.distance - b.distance || String(a.aperture.id).localeCompare(String(b.aperture.id)))[0];
+        const distance = Math.abs(u - center);
+        if (distance < nearestDistance || (distance === nearestDistance && nearest && String(aperture.id).localeCompare(String(nearest.id)) < 0)) {
+            nearest = aperture;
+            nearestDistance = distance;
+        }
+    }
     return {
-        relation: nearest.distance <= 2.2 ? 'adjacent' : 'same-surface',
-        apertureId: nearest.aperture.id ?? null,
-        connectorId: nearest.aperture.connectorId ?? null,
-        distance: Math.round(nearest.distance * 1000) / 1000,
+        relation: nearestDistance <= 2.2 ? 'adjacent' : 'same-surface',
+        apertureId: nearest?.id ?? null,
+        connectorId: nearest?.connectorId ?? null,
+        distance: Math.round(nearestDistance * 1000) / 1000,
     };
 }
 
@@ -239,15 +256,15 @@ function compactSpaceDescriptor(space, entity, destination) {
     };
 }
 
-function bindingForSurface({ surface, opportunity = null, entity, spaces, apertures, destinations, district, point = null }) {
+function bindingForSurface({ surface, opportunity = null, entity, spaces, apertures, destinations, district, point = null, indexes = null }) {
     const sourcePoint = point ?? opportunity?.transform ?? surface;
     const space = selectSpaceForSurface(surface, sourcePoint, spaces);
-    const destination = destinationForSpace(destinations, space?.id);
+    const destination = destinationForSpace(destinations, space?.id, indexes?.destinationBySpace);
     const role = classifyFrontage(space, entity);
     const identity = buildingIdentity(entity);
     const compactSpace = compactSpaceDescriptor(space, entity, destination);
     const campaignKey = buildingCampaignKey(entity, district);
-    const entrance = entranceRelationship(surface, opportunity ?? sourcePoint, apertures);
+    const entrance = entranceRelationship(surface, opportunity ?? sourcePoint, apertures, indexes?.aperturesBySurface);
     const bindingKey = stableHash('frontage-binding', [
         identity.buildingId,
         surface?.id,
@@ -282,8 +299,8 @@ function surfaceForSegment(segment, surfaceById) {
     return surfaceById.get(String(segment?.surfaceId ?? '')) ?? null;
 }
 
-function aggregateOpportunityBinding({ opportunity, entity, spaces, surfaces, apertures, destinations, district }) {
-    const surfaceById = new Map((surfaces ?? []).map(surface => [String(surface.id), surface]));
+function aggregateOpportunityBinding({ opportunity, entity, spaces, surfaces, apertures, destinations, district, indexes = null }) {
+    const surfaceById = indexes?.surfaceById ?? new Map((surfaces ?? []).map(surface => [String(surface.id), surface]));
     const segmentBindings = [];
     for (const segment of opportunity?.segments ?? []) {
         const surface = surfaceForSegment(segment, surfaceById);
@@ -297,6 +314,7 @@ function aggregateOpportunityBinding({ opportunity, entity, spaces, surfaces, ap
             destinations,
             district,
             point: segment.transform ?? opportunity.transform,
+            indexes,
         }));
     }
 
@@ -304,21 +322,24 @@ function aggregateOpportunityBinding({ opportunity, entity, spaces, surfaces, ap
         ?? segmentBindings.map(binding => surfaceById.get(String(binding.surfaceId))).find(Boolean)
         ?? null;
     if (!segmentBindings.length && primarySurface) {
-        segmentBindings.push(bindingForSurface({ surface: primarySurface, opportunity, entity, spaces, apertures, destinations, district }));
+        segmentBindings.push(bindingForSurface({ surface: primarySurface, opportunity, entity, spaces, apertures, destinations, district, indexes }));
     }
     if (!segmentBindings.length) {
         // Roof/ground opportunities may intentionally have no facade surface. They
         // still inherit existing building/room truth for media/content context.
         const point = opportunity?.transform ?? opportunity?.bounds ?? { x: 0, y: 0, z: 0 };
-        const space = [...spaces]
-            .map(candidate => ({
-                space: candidate,
-                score: verticalDistance(finite(point.y), candidate) * 1000
-                    + distanceToSpace({ x: finite(point.x), z: finite(point.z) }, candidate) * 100,
-            }))
-            .sort((a, b) => a.score - b.score || String(a.space.id).localeCompare(String(b.space.id)))[0]?.space ?? null;
+        let space = null;
+        let bestScore = Infinity;
+        for (const candidate of spaces) {
+            const score = verticalDistance(finite(point.y), candidate) * 1000
+                + distanceToSpace({ x: finite(point.x), z: finite(point.z) }, candidate) * 100;
+            if (score < bestScore || (score === bestScore && space && String(candidate.id).localeCompare(String(space.id)) < 0)) {
+                space = candidate;
+                bestScore = score;
+            }
+        }
         if (!space) return null;
-        const destination = destinationForSpace(destinations, space.id);
+        const destination = destinationForSpace(destinations, space.id, indexes?.destinationBySpace);
         const role = classifyFrontage(space, entity);
         const identity = buildingIdentity(entity);
         const compactSpace = compactSpaceDescriptor(space, entity, destination);
@@ -395,7 +416,7 @@ export function frontageContentContextFromBinding(binding) {
     };
 }
 
-export function bindFrontageSemanticTruth({
+export function* bindFrontageSemanticTruthSteps({
     payload,
     district,
     surfaces = [],
@@ -405,6 +426,21 @@ export function bindFrontageSemanticTruth({
 } = {}) {
     const entities = entityMap(payload);
     const overlays = semanticSpaceOverlayMap(payload);
+    const surfaceById = new Map((surfaces ?? []).map(surface => [String(surface.id), surface]));
+    const destinationBySpace = new Map();
+    for (const destination of destinations ?? []) {
+        const key = String(destination?.spaceId ?? '');
+        if (!destinationBySpace.has(key)) destinationBySpace.set(key, destination);
+    }
+    const aperturesBySurface = new Map();
+    for (const aperture of apertures ?? []) {
+        if (!aperture?.traversable) continue;
+        const key = String(aperture.surfaceId ?? '');
+        const list = aperturesBySurface.get(key) ?? [];
+        list.push(aperture);
+        aperturesBySurface.set(key, list);
+    }
+    const indexes = { surfaceById, destinationBySpace, aperturesBySurface };
     const spacesByEntity = new Map();
     const getSpaces = entity => {
         const key = String(entity?.id ?? '');
@@ -417,25 +453,32 @@ export function bindFrontageSemanticTruth({
     let boundOpportunities = 0;
     let multiSurfaceOpportunities = 0;
 
-    for (const surface of surfaces ?? []) {
+    const surfaceList = surfaces ?? [];
+    for (let index = 0; index < surfaceList.length; index++) {
+        if ((index & 3) === 0) yield { phase: 'surfaces', current: index, total: surfaceList.length };
+        const surface = surfaceList[index];
         const entity = entities.get(String(surface?.entityId ?? ''));
         if (!entity) continue;
         const spaces = getSpaces(entity);
         if (!spaces.length) continue;
-        const binding = bindingForSurface({ surface, entity, spaces, apertures, destinations, district });
+        const binding = bindingForSurface({ surface, entity, spaces, apertures, destinations, district, indexes });
         surface.frontageBinding = binding;
         surface.frontageContentContext = frontageContentContextFromBinding(binding);
         bindings.push(binding);
         boundSurfaces++;
     }
+    if (surfaceList.length) yield { phase: 'surfaces', current: surfaceList.length, total: surfaceList.length };
 
-    for (const opportunity of opportunities ?? []) {
+    const opportunityList = opportunities ?? [];
+    for (let index = 0; index < opportunityList.length; index++) {
+        if ((index & 3) === 0) yield { phase: 'opportunities', current: index, total: opportunityList.length };
+        const opportunity = opportunityList[index];
         const entityId = String(opportunity?.entityId ?? opportunity?.hostId ?? '');
         const entity = entities.get(entityId);
         if (!entity) continue;
         const spaces = getSpaces(entity);
         if (!spaces.length) continue;
-        const binding = aggregateOpportunityBinding({ opportunity, entity, spaces, surfaces, apertures, destinations, district });
+        const binding = aggregateOpportunityBinding({ opportunity, entity, spaces, surfaces, apertures, destinations, district, indexes });
         if (!binding) continue;
         opportunity.frontageBinding = binding;
         opportunity.frontageContentContext = frontageContentContextFromBinding(binding);
@@ -443,6 +486,7 @@ export function bindFrontageSemanticTruth({
         boundOpportunities++;
         if (binding.multiSurface) multiSurfaceOpportunities++;
     }
+    if (opportunityList.length) yield { phase: 'opportunities', current: opportunityList.length, total: opportunityList.length };
 
     return {
         schema: FRONTAGE_BINDING_SCHEMA,
@@ -457,4 +501,12 @@ export function bindFrontageSemanticTruth({
             ownsTopology: false,
         },
     };
+}
+
+
+export function bindFrontageSemanticTruth(options = {}) {
+    const iterator = bindFrontageSemanticTruthSteps(options);
+    let step = iterator.next();
+    while (!step.done) step = iterator.next();
+    return step.value;
 }

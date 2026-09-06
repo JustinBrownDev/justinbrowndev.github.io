@@ -1,7 +1,7 @@
-import { ensureSemanticConnectorAuthority } from './semantic-connectors.js';
-import { compileSemanticContext } from './semantic-context.js';
-import { createSemanticPlacementRecord, resolveSemanticPlacement } from './semantic-placement.js';
-import { compileSpacePlans, spacePlanAcceptsBox } from './space-plan.js';
+import { ensureSemanticConnectorAuthoritySteps } from './semantic-connectors.js';
+import { compileSemanticContext, compileSemanticContextSteps } from './semantic-context.js';
+import { createSemanticPlacementRecord, resolveSemanticPlacementSteps } from './semantic-placement.js';
+import { compileSpacePlansSteps, spacePlanAcceptsBox } from './space-plan.js';
 import { chooseCompatibleProgram, programCompatibleWithPhysicalUse, programsForPhysicalUse } from './physical-use.js';
 
 function semanticTask(task) {
@@ -303,7 +303,7 @@ function publishSpace(payload, spaceById, plan, task) {
     return space;
 }
 
-export function solveSemanticLayout({ chunk, payload, tasks, assetById } = {}) {
+export function* solveSemanticLayoutSteps({ chunk, payload, tasks, assetById } = {}) {
     if (!chunk || !payload || !Array.isArray(tasks) || !assetById) {
         throw new Error('solveSemanticLayout requires chunk, payload, tasks, and assetById');
     }
@@ -311,17 +311,23 @@ export function solveSemanticLayout({ chunk, payload, tasks, assetById } = {}) {
     const spaces = payload.semanticSpaces ?? (payload.semanticSpaces = []);
     const spaceById = new Map(spaces.map(space => [space.id, space]));
 
+    let bindOrdinal = 0;
     for (const task of tasks) {
         if (!semanticTask(task)) continue;
         const entity = findEntity(payload, task.entityId);
         if (entity) bindTaskToBuildingPlanRoom(entity, task);
+        bindOrdinal++;
+        if ((bindOrdinal & 3) === 0) yield { phase: 'bind-destinations', current: bindOrdinal, total: tasks.length };
     }
+    yield { phase: 'destination-compatibility', current: 0, total: 1 };
     const destinationCompatibility = compileDestinationCompatibility({ chunk, payload, tasks, assetById });
+    yield { phase: 'destination-compatibility', current: 1, total: 1 };
     const baseSemanticTasks = destinationCompatibility.tasks;
     const semanticTasks = baseSemanticTasks;
     const densityReplicas = [];
     const densityPlanned = baseSemanticTasks.reduce((sum, task) => sum + densityCopies(task), 0);
     const activeSpaceIds = new Set();
+    let activeSpaceOrdinal = 0;
     for (const task of semanticTasks) {
         const entity = findEntity(payload, task.entityId);
         const module = findModule(entity, task.moduleKey);
@@ -330,14 +336,41 @@ export function solveSemanticLayout({ chunk, payload, tasks, assetById } = {}) {
         const floor = Math.max(floorBase, Math.min(floorBase + (module.floors || 1) - 1, Number(task.floor) || floorBase));
         const siteKey = entity.semanticSiteKey ?? entity.siteId ?? entity.id;
         activeSpaceIds.add(task.spaceId || semanticSpaceId(chunk.key, siteKey, module.key, floor));
+        activeSpaceOrdinal++;
+        if ((activeSpaceOrdinal & 3) === 0) yield { phase: 'active-spaces', current: activeSpaceOrdinal, total: semanticTasks.length };
     }
-    const spacePlans = compileSpacePlans({ chunk, payload, activeSpaceIds });
+    const spacePlanIterator = compileSpacePlansSteps({ chunk, payload, activeSpaceIds });
+    let spacePlanStep = spacePlanIterator.next();
+    while (!spacePlanStep.done) {
+        const checkpoint = spacePlanStep.value ?? {};
+        yield {
+            phase: `compile-space-plans:${checkpoint.phase ?? 'step'}`,
+            current: checkpoint.current ?? 0,
+            total: checkpoint.total ?? 1,
+        };
+        spacePlanStep = spacePlanIterator.next();
+    }
+    const spacePlans = spacePlanStep.value;
     const planById = new Map(spacePlans.map(plan => [plan.id, plan]));
-    const connectorAuthority = ensureSemanticConnectorAuthority(payload.physics, payload.semanticTopologySpaces ?? spacePlans);
+    const connectorIterator = ensureSemanticConnectorAuthoritySteps(payload.physics, payload.semanticTopologySpaces ?? spacePlans);
+    let connectorStep = connectorIterator.next();
+    while (!connectorStep.done) {
+        const checkpoint = connectorStep.value ?? {};
+        yield {
+            phase: `connector-authority:${checkpoint.phase ?? 'step'}`,
+            current: checkpoint.current ?? 0,
+            total: checkpoint.total ?? 1,
+        };
+        connectorStep = connectorIterator.next();
+    }
+    const connectorAuthority = connectorStep.value;
+    let connectorOrdinal = 0;
     for (const plan of spacePlans) {
         plan.connectorIds = (payload.physics?.semanticConnectors ?? [])
             .filter(connector => connector.spaceIds?.includes(plan.id) || connector.fromSpaceId === plan.id || connector.toSpaceId === plan.id)
             .map(connector => connector.id);
+        connectorOrdinal++;
+        if ((connectorOrdinal & 3) === 0) yield { phase: 'connector-index', current: connectorOrdinal, total: spacePlans.length };
     }
 
     const pending = [...semanticTasks].sort((a, b) => phaseRank(a) - phaseRank(b) || Number(!!a.densityReplica) - Number(!!b.densityReplica) || (a.seed >>> 0) - (b.seed >>> 0));
@@ -348,8 +381,11 @@ export function solveSemanticLayout({ chunk, payload, tasks, assetById } = {}) {
     for (let pass = 0; pass < Math.max(2, pending.length + 1) && pending.length; pass++) {
         passes++;
         let progress = 0;
+        let attemptOrdinal = 0;
         for (let i = 0; i < pending.length;) {
             const task = pending[i];
+            attemptOrdinal++;
+            yield { phase: 'placement-attempt', current: attemptOrdinal, total: Math.max(1, pending.length), pass };
             const entity = findEntity(payload, task.entityId);
             const module = findModule(entity, task.moduleKey);
             const def = assetById.get ? assetById.get(task.assetId) : assetById[task.assetId];
@@ -369,7 +405,7 @@ export function solveSemanticLayout({ chunk, payload, tasks, assetById } = {}) {
             }
             publishSpace(payload, spaceById, spacePlan, task);
             const instanceId = task.instanceId || `${spaceId}:semantic:${task.seed >>> 0}`;
-            const placement = resolveSemanticPlacement({
+            const placementIterator = resolveSemanticPlacementSteps({
                 def,
                 graph: def.semanticGraph ?? null,
                 module,
@@ -384,6 +420,18 @@ export function solveSemanticLayout({ chunk, payload, tasks, assetById } = {}) {
                 spaceId,
                 tryReserve: reservation => reserveSemanticEnvelope(payload, reservation, instanceId, spacePlan),
             });
+            let placementStep = placementIterator.next();
+            while (!placementStep.done) {
+                const checkpoint = placementStep.value ?? {};
+                yield {
+                    phase: `placement-${checkpoint.phase ?? 'step'}`,
+                    current: checkpoint.current ?? 0,
+                    total: checkpoint.total ?? 1,
+                    pass,
+                };
+                placementStep = placementIterator.next();
+            }
+            const placement = placementStep.value;
             if (!placement) {
                 i++;
                 continue;
@@ -451,7 +499,18 @@ export function solveSemanticLayout({ chunk, payload, tasks, assetById } = {}) {
         if (!progress) break;
     }
 
-    const semanticContext = compileSemanticContext({ chunk, payload, tasks });
+    const contextIterator = compileSemanticContextSteps({ chunk, payload, tasks });
+    let contextStep = contextIterator.next();
+    while (!contextStep.done) {
+        const checkpoint = contextStep.value ?? {};
+        yield {
+            phase: `semantic-context:${checkpoint.phase ?? 'step'}`,
+            current: checkpoint.current ?? 0,
+            total: checkpoint.total ?? 1,
+        };
+        contextStep = contextIterator.next();
+    }
+    const semanticContext = contextStep.value;
 
     return {
         schema: 'jweb.semantic-layout.v2',
@@ -475,4 +534,12 @@ export function solveSemanticLayout({ chunk, payload, tasks, assetById } = {}) {
         connectorAuthority,
         semanticContext: semanticContext.stats,
     };
+}
+
+
+export function solveSemanticLayout(options = {}) {
+    const iterator = solveSemanticLayoutSteps(options);
+    let step = iterator.next();
+    while (!step.done) step = iterator.next();
+    return step.value;
 }

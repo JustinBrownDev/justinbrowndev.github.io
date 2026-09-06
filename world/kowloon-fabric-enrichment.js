@@ -7,7 +7,7 @@ import { createProceduralTextExciter } from './procedural-text-exciter.js';
 import { SEMANTIC_RUNTIME_PROP_ASSETS as SEMANTIC_INTERIOR_ASSETS, SEMANTIC_RUNTIME_PROP_ASSET_BY_ID as SEMANTIC_INTERIOR_ASSET_BY_ID } from '../vendor/city-pack/semantic-megapack/runtime-props-v6.js';
 import { SEMANTIC_ROOM_RECIPES } from '../vendor/city-pack/semantic-megapack/room-recipes.js';
 import { anyReservationIntersectsBox } from './circulation-reservations.js';
-import { solveSemanticLayout } from './semantic-layout.js';
+import { solveSemanticLayout, solveSemanticLayoutSteps } from './semantic-layout.js';
 import { selectSemanticContextAsset, semanticContextCatalogStats } from './semantic-context-multiplier.js';
 import { createExteriorPropFieldSystem } from './exterior-prop-field.js';
 import { requiresSemanticExteriorPlacement, semanticExteriorProvenance, semanticPlacementPoint } from './semantic-exterior-authority.js';
@@ -2300,7 +2300,7 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
         };
     }
 
-    function preparePayloadPlanningState(chunk, payload) {
+    function preparePayloadPlanningBase(chunk, payload) {
         const detailRoot = new THREE.Group();
         detailRoot.name = `world-chunk-details:${chunk.key}`;
         detailRoot.userData.worldChunkDetailRoot = true;
@@ -2317,12 +2317,10 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
         const state = plan(chunk, payload.entities);
         progressiveState(state);
         progressiveInteriorState(state);
-        state.semanticLayout = solveSemanticLayout({
-            chunk,
-            payload,
-            tasks: state.tasks,
-            assetById: SEMANTIC_INTERIOR_ASSET_BY_ID,
-        });
+        return state;
+    }
+
+    function finishSemanticPlanningState(state) {
         state.semanticTasksPlanned = state.semanticLayout.planned;
         state.semanticTasksSolved = state.semanticLayout.solved;
         state.semanticTasksUnresolved = state.semanticLayout.unresolved;
@@ -2335,6 +2333,39 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
             (!String(task.kind).startsWith('semantic-') || !!task.semanticPlacement || !!task.exteriorPlacementDeferred)
             && (!requiresSemanticExteriorPlacement(task) || !!task.semanticPlacement || !!task.exteriorPlacementDeferred));
         return state;
+    }
+
+    function preparePayloadPlanningState(chunk, payload) {
+        const state = preparePayloadPlanningBase(chunk, payload);
+        state.semanticLayout = solveSemanticLayout({
+            chunk,
+            payload,
+            tasks: state.tasks,
+            assetById: SEMANTIC_INTERIOR_ASSET_BY_ID,
+        });
+        return finishSemanticPlanningState(state);
+    }
+
+    async function preparePayloadPlanningStateCooperative(chunk, payload, { yieldControl = null } = {}) {
+        const state = preparePayloadPlanningBase(chunk, payload);
+        const iterator = solveSemanticLayoutSteps({
+            chunk,
+            payload,
+            tasks: state.tasks,
+            assetById: SEMANTIC_INTERIOR_ASSET_BY_ID,
+        });
+        let step = iterator.next();
+        while (!step.done) {
+            const checkpoint = step.value ?? {};
+            if (yieldControl) await yieldControl(
+                `semantic-layout:${chunk.key}:${checkpoint.phase ?? 'step'}`,
+                checkpoint.current ?? 0,
+                checkpoint.total ?? 1,
+            );
+            step = iterator.next();
+        }
+        state.semanticLayout = step.value;
+        return finishSemanticPlanningState(state);
     }
 
     function exteriorCompositionInput(chunk, payload, state) {
@@ -2454,7 +2485,7 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
         yieldControl = null,
         maxUnitsPerSlice = 1,
     } = {}) {
-        const state = preparePayloadPlanningState(chunk, payload);
+        const state = await preparePayloadPlanningStateCooperative(chunk, payload, { yieldControl });
         const compiler = createExteriorCompositionCompiler(exteriorCompositionInput(chunk, payload, state));
         const compiled = await runCooperativeCompiler(compiler, {
             yieldControl,

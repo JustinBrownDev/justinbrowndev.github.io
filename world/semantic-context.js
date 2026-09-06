@@ -2,8 +2,8 @@ import { GENERATION_LANES } from '../config/performance-isolation.js';
 import { compileSpatialTopologyGraph } from './spatial-topology.js';
 import { bindSemanticExteriorPlacement, chooseSemanticExteriorOpportunity } from './semantic-exterior-authority.js';
 import { isManagedBuildingExteriorTask } from './exterior-composition-authority.js';
-import { attachDistrictBlockComposition, compileDistrictBlockComposition } from './district-block-composition.js';
-import { bindFrontageSemanticTruth } from './frontage-semantic-binding.js';
+import { attachDistrictBlockCompositionSteps, compileDistrictBlockCompositionSteps } from './district-block-composition.js';
+import { bindFrontageSemanticTruthSteps } from './frontage-semantic-binding.js';
 
 export const SEMANTIC_CONTEXT_SCHEMA = 'jweb.semantic-context.v1';
 
@@ -617,9 +617,37 @@ function debugLabel(context, opportunity) {
     return [`[ DISTRICT: ${district} ]`, `PROGRAM: ${program}  LAYER: ${layer}`];
 }
 
-export function compileSemanticContext({ chunk, payload, tasks = [], debugWeight = 0 } = {}) {
+export function* compileSemanticContextSteps({ chunk, payload, tasks = [], debugWeight = 0 } = {}) {
     if (!chunk || !payload || !Array.isArray(tasks)) throw new Error('compileSemanticContext requires chunk, payload, and tasks');
-    const districtComposition = attachDistrictBlockComposition(payload, payload.districtBlockComposition ?? compileDistrictBlockComposition({ chunk, payload }));
+    yield { phase: 'district-composition', current: 0, total: 1 };
+    let districtComposition = payload.districtBlockComposition ?? null;
+    if (!districtComposition) {
+        const districtIterator = compileDistrictBlockCompositionSteps({ chunk, payload });
+        let districtStep = districtIterator.next();
+        while (!districtStep.done) {
+            const checkpoint = districtStep.value ?? {};
+            yield {
+                phase: `district-composition:${checkpoint.phase ?? 'step'}`,
+                current: checkpoint.current ?? 0,
+                total: checkpoint.total ?? 1,
+            };
+            districtStep = districtIterator.next();
+        }
+        districtComposition = districtStep.value;
+    }
+    const attachIterator = attachDistrictBlockCompositionSteps(payload, districtComposition);
+    let attachStep = attachIterator.next();
+    while (!attachStep.done) {
+        const checkpoint = attachStep.value ?? {};
+        yield {
+            phase: `district-composition:${checkpoint.phase ?? 'attach'}`,
+            current: checkpoint.current ?? 0,
+            total: checkpoint.total ?? 1,
+        };
+        attachStep = attachIterator.next();
+    }
+    districtComposition = attachStep.value;
+    yield { phase: 'district-composition', current: 1, total: 1 };
     const district = {
         id: districtComposition.district.id,
         family: districtComposition.district.family,
@@ -631,14 +659,19 @@ export function compileSemanticContext({ chunk, payload, tasks = [], debugWeight
     };
     const entityContexts = [];
     const contextByEntity = new Map();
+    let entityContextOrdinal = 0;
     for (const entity of payload.entities ?? []) {
         const context = compactContext({ chunk, entity, district });
         entityContexts.push(context);
         contextByEntity.set(entity.id, context);
         entity.semanticContextId = context.id;
+        entityContextOrdinal++;
+        if ((entityContextOrdinal & 3) === 0) yield { phase: 'entity-contexts', current: entityContextOrdinal, total: payload.entities?.length ?? 0 };
     }
 
+    yield { phase: 'spatial-topology', current: 0, total: 1 };
     const spatialTopology = compileSpatialTopologyGraph({ chunk, payload });
+    yield { phase: 'spatial-topology', current: 1, total: 1 };
     const surfaces = spatialTopology.surfaces;
     const apertures = spatialTopology.apertures;
     // Apertures are reused by facade, portal and spectacle discovery. Index once
@@ -646,19 +679,29 @@ export function compileSemanticContext({ chunk, payload, tasks = [], debugWeight
     const aperturesBySurfaceId = indexAperturesBySurface(apertures);
     for (const surface of surfaces) surface.apertureIds = (aperturesBySurfaceId.get(surface.id) ?? []).map(item => item.id);
 
+    yield { phase: 'facade-opportunities', current: 0, total: 1 };
     const facade = facadeOpportunities(surfaces, aperturesBySurfaceId, contextByEntity);
+    yield { phase: 'facade-opportunities', current: 1, total: 1 };
     const roof = roofOpportunities(payload, contextByEntity);
+    yield { phase: 'roof-opportunities', current: 1, total: 1 };
     const spectacle = spectacleOpportunities(chunk, payload, surfaces, aperturesBySurfaceId, contextByEntity);
+    yield { phase: 'spectacle-opportunities', current: 1, total: 1 };
     // Candidate discovery is deliberately non-destructive. The building-level
     // composition authority decides which spectacle host actually claims a surface;
     // ordinary sign/service/hardware opportunities remain available until then.
+    const ground = groundOpportunities(payload, contextByEntity);
+    yield { phase: 'ground-opportunities', current: 1, total: 1 };
+    const connector = connectorOpportunities(payload, surfaces, contextByEntity);
+    yield { phase: 'connector-opportunities', current: 1, total: 1 };
+    const span = spanOpportunities(payload, tasks, contextByEntity);
+    yield { phase: 'span-opportunities', current: 1, total: 1 };
     const opportunities = [
         ...spectacle,
         ...facade,
-        ...groundOpportunities(payload, contextByEntity),
+        ...ground,
         ...roof,
-        ...connectorOpportunities(payload, surfaces, contextByEntity),
-        ...spanOpportunities(payload, tasks, contextByEntity),
+        ...connector,
+        ...span,
     ];
 
     const destinations = (payload.semanticSpaces ?? []).map(space => ({
@@ -670,6 +713,7 @@ export function compileSemanticContext({ chunk, payload, tasks = [], debugWeight
     }));
 
     const contextBySpace = new Map();
+    let spaceContextOrdinal = 0;
     for (const space of payload.semanticSpaces ?? []) {
         const entity = entityById(payload, space.entityId);
         const context = compactContext({ chunk, entity, program: space.program, floor: space.floor, y: space.yBase, district });
@@ -678,13 +722,15 @@ export function compileSemanticContext({ chunk, payload, tasks = [], debugWeight
         contextBySpace.set(space.id, context);
         space.semanticContext = context;
         space.semanticContextId = context.id;
+        spaceContextOrdinal++;
+        if ((spaceContextOrdinal & 3) === 0) yield { phase: 'space-contexts', current: spaceContextOrdinal, total: payload.semanticSpaces?.length ?? 0 };
     }
 
     // Binding only: interior/topology truth already exists, and opportunity discovery
     // already happened. Attach the room immediately behind each facade/opportunity so
     // downstream exterior selection/content can consume one stable semantic context.
     // This pass does not create opportunities, reservations, topology, or quantity.
-    const frontageBinding = bindFrontageSemanticTruth({
+    const frontageIterator = bindFrontageSemanticTruthSteps({
         payload,
         district,
         surfaces,
@@ -692,6 +738,17 @@ export function compileSemanticContext({ chunk, payload, tasks = [], debugWeight
         opportunities,
         destinations,
     });
+    let frontageStep = frontageIterator.next();
+    while (!frontageStep.done) {
+        const checkpoint = frontageStep.value ?? {};
+        yield {
+            phase: `frontage-binding:${checkpoint.phase ?? 'step'}`,
+            current: checkpoint.current ?? 0,
+            total: checkpoint.total ?? 1,
+        };
+        frontageStep = frontageIterator.next();
+    }
+    const frontageBinding = frontageStep.value;
 
     let integrated = 0;
     let exteriorPlacementDeferred = 0;
@@ -699,7 +756,10 @@ export function compileSemanticContext({ chunk, payload, tasks = [], debugWeight
     let debugSigns = 0;
     const debugEnabled = (hash32(`${chunk.key}:semantic-debug`) % 10000) < Math.floor(clamp(debugWeight, 0, 1) * 10000);
     let debugClaimed = false;
+    let taskContextOrdinal = 0;
     for (const task of tasks) {
+        taskContextOrdinal++;
+        if ((taskContextOrdinal & 3) === 0) yield { phase: 'task-contexts', current: taskContextOrdinal, total: tasks.length };
         const entity = entityById(payload, task.entityId);
         const context = task.spaceId ? contextBySpace.get(task.spaceId) : contextByEntity.get(task.entityId);
         task.semanticContext = context ?? null;
@@ -754,6 +814,7 @@ export function compileSemanticContext({ chunk, payload, tasks = [], debugWeight
     }
 
     const instances = [];
+    let placementContextOrdinal = 0;
     for (const placement of payload.semanticPlacements ?? []) {
         const context = contextBySpace.get(placement.spaceId) ?? contextByEntity.get(placement.entityId) ?? null;
         placement.semanticContextId = context?.id ?? null;
@@ -767,6 +828,8 @@ export function compileSemanticContext({ chunk, payload, tasks = [], debugWeight
             role: placement.mode ?? 'semantic-placement', relationTo: placement.relationTo ?? null,
             reservationId: placement.reservation?.ownerId ? `${placement.reservation.ownerId}:envelope` : null,
         });
+        placementContextOrdinal++;
+        if ((placementContextOrdinal & 7) === 0) yield { phase: 'placement-contexts', current: placementContextOrdinal, total: payload.semanticPlacements?.length ?? 0 };
     }
 
     const reservations = spatialTopology.reservations.map(item => ({
@@ -802,4 +865,12 @@ export function compileSemanticContext({ chunk, payload, tasks = [], debugWeight
     };
     payload.semanticContext = semanticContext;
     return semanticContext;
+}
+
+
+export function compileSemanticContext(options = {}) {
+    const iterator = compileSemanticContextSteps(options);
+    let step = iterator.next();
+    while (!step.done) step = iterator.next();
+    return step.value;
 }

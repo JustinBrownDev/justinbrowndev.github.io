@@ -43,7 +43,7 @@ import { BUILDING_SLAB_THICKNESS, storyCeilingLocalY } from './world/interior-ge
 import { planInteriorStairCoreStructuralFeasibility } from './world/interior-stair-core.js';
 import { recoverCellFootprintForCirculation } from './world/architecture/circulation-footprint-recovery.js';
 import { collapseSolidComponentsIntoSuperstructureSites, superstructureFallbackDecision } from './world/superstructure-fallback.js';
-import { planBuildingSidecar } from './world/architecture/building-plan-sidecar.js';
+import { planBuildingSidecarSteps } from './world/architecture/building-plan-sidecar.js';
 import { assertBuildingPlanAuthority, promoteBuildingPlanAuthority } from './world/architecture/building-plan-authority.js';
 import { applyTowerTransferAuthority, cityExchangeAnchorsForPortals } from './world/architecture/tower-transfer-authority.js';
 import { programFacadeFrontageDirectives } from './world/architecture/program-architecture.js';
@@ -458,6 +458,19 @@ export function createKowloonFabricEngine({
     const buildingPlanCache = createSemanticPlanCache({ maxEntries: 1024 });
     let authoredOriginChunkPayload = null;
     if (microCells < 5 || microCells % 2 === 0) throw new Error('microCells must be an odd integer >= 5');
+
+    function* getOrCompileBuildingPlanSteps({ key, planArgs, promotionArgs }) {
+        const cached = buildingPlanCache.get(key);
+        if (cached != null) return cached;
+        const iterator = planBuildingSidecarSteps(planArgs);
+        let step = iterator.next();
+        while (!step.done) {
+            const checkpoint = step.value ?? {};
+            yield { ...checkpoint, phase: `building-plan:${checkpoint.phase ?? 'step'}` };
+            step = iterator.next();
+        }
+        return buildingPlanCache.set(key, promoteBuildingPlanAuthority(step.value, promotionArgs));
+    }
 
     const unitBox = new THREE.BoxGeometry(1, 1, 1);
     const unitPlane = new THREE.PlaneGeometry(1, 1);
@@ -2404,7 +2417,9 @@ export function createKowloonFabricEngine({
             entityId: buildingPlanEntityId,
             planKind: `building-plan-authority:transfer:${transferPlanFingerprint}`,
         });
-        const buildingPlan = buildingPlanCache.getOrCreate(buildingPlanKey, () => promoteBuildingPlanAuthority(planBuildingSidecar({
+        const buildingPlan = yield* getOrCompileBuildingPlanSteps({
+            key: buildingPlanKey,
+            planArgs: {
             worldSeed,
             chunkKey: chunk.key,
             chunkX: chunk.x,
@@ -2435,12 +2450,14 @@ export function createKowloonFabricEngine({
                 primaryStairReservation,
                 ...[...entranceConnectorByKey.values()].flatMap(connector => connector.reservations ?? []),
             ],
-        }), {
-            coreReservationId: primaryStairReservation.id,
-            coreReservation: primaryStairReservation,
-            chunkKey: chunk.key,
-            entityId: buildingPlanEntityId,
-        }));
+        },
+            promotionArgs: {
+                coreReservationId: primaryStairReservation.id,
+                coreReservation: primaryStairReservation,
+                chunkKey: chunk.key,
+                entityId: buildingPlanEntityId,
+            },
+        });
         assertBuildingPlanAuthority(buildingPlan);
         const cityTransferAuthority = applyTowerTransferAuthority(buildingPlan, {
             demands: cityTransferDemands,
@@ -4019,7 +4036,9 @@ export function createKowloonFabricEngine({
             entityId: buildingPlanEntityId,
             planKind: `building-plan-authority:transfer:${transferPlanFingerprint}`,
         });
-        const buildingPlan = buildingPlanCache.getOrCreate(buildingPlanKey, () => promoteBuildingPlanAuthority(planBuildingSidecar({
+        const buildingPlan = yield* getOrCompileBuildingPlanSteps({
+            key: buildingPlanKey,
+            planArgs: {
             worldSeed,
             chunkKey: chunk.key,
             chunkX: chunk.x,
@@ -4050,12 +4069,14 @@ export function createKowloonFabricEngine({
                 primaryStairReservation,
                 ...[...entranceConnectorByKey.values()].flatMap(connector => connector.reservations ?? []),
             ],
-        }), {
-            coreReservationId: primaryStairReservation.id,
-            coreReservation: primaryStairReservation,
-            chunkKey: chunk.key,
-            entityId: buildingPlanEntityId,
-        }));
+        },
+            promotionArgs: {
+                coreReservationId: primaryStairReservation.id,
+                coreReservation: primaryStairReservation,
+                chunkKey: chunk.key,
+                entityId: buildingPlanEntityId,
+            },
+        });
         assertBuildingPlanAuthority(buildingPlan);
         const cityTransferAuthority = applyTowerTransferAuthority(buildingPlan, {
             demands: cityTransferDemands,
@@ -6737,18 +6758,28 @@ export function createKowloonFabricEngine({
             committed: false, disposed: false,
         };
         const enrichmentChunk = { ...phaseChunk, key: `ceiling:${source.key}` };
-        enrichment.initializePayload(enrichmentChunk, payload);
-        freezeChunkRoot(root);
         return {
             schema: HANGING_CITY_SCHEMA,
             frame: payload.frame,
             source,
             payload,
+            enrichmentChunk,
             buildings, plazas, skybridges, ladders, ladderRungs, cavernWallStairs: cavernWallStairs.length,
             facadeRouteGalleries,
             independentCount: buildings,
             dualPolarityCount: 0,
         };
+    }
+
+    async function finalizeCeilingLayerPlanning(layer) {
+        if (!layer?.payload || !layer?.enrichmentChunk) return layer;
+        await enrichment.initializePayloadCooperative(layer.enrichmentChunk, layer.payload, {
+            yieldControl,
+            maxUnitsPerSlice: 1,
+        });
+        freezeChunkRoot(layer.payload.root);
+        delete layer.enrichmentChunk;
+        return layer;
     }
 
     async function buildFullFatHangingCityLayer({
@@ -6762,10 +6793,10 @@ export function createKowloonFabricEngine({
         });
         let step = iterator.next();
         while (!step.done) {
-            if (yieldControl) await yieldControl(`building ceiling city ${chunk.key}`, step.value?.current ?? 0, step.value?.total ?? 1);
+            if (yieldControl) await yieldControl(`ceiling:${step.value?.phase ?? 'step'} ${chunk.key}`, step.value?.current ?? 0, step.value?.total ?? 1);
             step = iterator.next();
         }
-        return step.value;
+        return finalizeCeilingLayerPlanning(step.value);
     }
 
     async function buildAuthoredCeilingOverlay({ groundEntities = [], ownerId = `spawn-ceiling:${worldSeed}` } = {}) {
@@ -6783,7 +6814,7 @@ export function createKowloonFabricEngine({
             if (yieldControl) await yieldControl('building authored ceiling city', step.value?.current ?? 0, step.value?.total ?? 1);
             step = iterator.next();
         }
-        const result = step.value;
+        const result = await finalizeCeilingLayerPlanning(step.value);
         if (result?.payload?.root) {
             result.payload.root.userData.authoredSpawnCeilingCity = true;
             result.payload.chunk = chunk;

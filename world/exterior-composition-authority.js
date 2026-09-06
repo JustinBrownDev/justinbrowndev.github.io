@@ -822,33 +822,18 @@ function selectEntityEntries(chunkKey, entityId, entries, selectedSpectacleEntry
         if (entry && !selectedSet.has(entry) && !rejectionByEntry.has(entry)) rejectionByEntry.set(entry, reason);
     };
 
-    const canAdmit = entry => {
+    const admit = entry => {
         if (!entry || selectedSet.has(entry)) return false;
         if (selected.length >= plan.densityCeiling) {
             reject(entry, 'density-ceiling');
             return false;
         }
         const claim = exteriorSpatialClaimForEntry(chunkKey, entityId, entry, plan);
-        const resolved = claimAuthority.resolveWith(claim);
-        const acceptedIds = new Set(resolved.accepted.map(item => item.id));
-        const claimAccepted = acceptedIds.has(claim.id);
-        const wouldDisplace = claimAuthority.claims().some(item => !acceptedIds.has(item.id));
-        if (claimAccepted && !wouldDisplace) return true;
-        const rejected = resolved.rejected.find(item => item.claim.id === claim.id) ?? null;
-        reject(entry, rejected?.blocker?.claimType
-            ? `spatial-conflict:${rejected.blocker.claimType}`
-            : wouldDisplace ? 'spatial-would-displace' : 'spatial-conflict');
-        return false;
-    };
-
-    const admit = entry => {
-        if (!canAdmit(entry)) return false;
-        const claim = exteriorSpatialClaimForEntry(chunkKey, entityId, entry, plan);
-        const decision = claimAuthority.claim(claim);
-        if (!decision.accepted || decision.displaced.length) {
+        const decision = claimAuthority.claimWithoutDisplacement(claim);
+        if (!decision.accepted) {
             reject(entry, decision.rejected?.blocker?.claimType
                 ? `spatial-conflict:${decision.rejected.blocker.claimType}`
-                : decision.displaced.length ? 'spatial-would-displace' : 'spatial-conflict');
+                : decision.wouldDisplace ? 'spatial-would-displace' : 'spatial-conflict');
             return false;
         }
         selected.push(entry);

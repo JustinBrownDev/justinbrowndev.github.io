@@ -263,7 +263,7 @@ function genericCandidates(def, module, yBase, seed, spacePlan) {
     return result;
 }
 
-export function resolveSemanticPlacement({
+export function* resolveSemanticPlacementSteps({
     def,
     graph = def?.semanticGraph ?? null,
     module,
@@ -281,6 +281,7 @@ export function resolveSemanticPlacement({
     if (!def || !module) return null;
     const context = { entityId, moduleKey, floor, spaceId };
     const roomPlacements = placements.filter(item => sameSemanticRoom(item, context));
+    let candidateOrdinal = 0;
     const requirements = graphList(graph, 'requirements');
     const relationships = graphList(graph, 'relationships');
     const [width, , depth] = dimsOf(def);
@@ -289,6 +290,8 @@ export function resolveSemanticPlacement({
     if (requirements.includes('support-surface') || relationships.includes('sits-on-work-surface')) {
         const providers = roomPlacements.filter(supportsWorkSurface).reverse();
         for (const provider of providers) {
+            candidateOrdinal++;
+            if (candidateOrdinal === 1 || (candidateOrdinal & 3) === 0) yield { phase: 'candidate-batch', current: candidateOrdinal, mode: 'support-surface' };
             const [pw, , pd] = dimsOf(provider.def);
             if (pw + 0.08 < width || pd + 0.08 < depth) continue;
             const candidate = {
@@ -308,6 +311,8 @@ export function resolveSemanticPlacement({
     if (relationships.includes('faces-work-or-social-surface')) {
         const targets = roomPlacements.filter(supportsWorkSurface).reverse();
         for (const target of targets) {
+            candidateOrdinal++;
+            if (candidateOrdinal === 1 || (candidateOrdinal & 3) === 0) yield { phase: 'candidate-batch', current: candidateOrdinal, mode: 'faces-surface' };
             const front = frontVector(target.rotY);
             const [, , targetDepth] = dimsOf(target.def);
             const gap = targetDepth * 0.5 + depth * 0.5 + 0.18;
@@ -336,6 +341,8 @@ export function resolveSemanticPlacement({
             const firstSign = ((seed ^ placements.length) & 1) ? 1 : -1;
             for (const multiple of [1, 2, 3]) {
                 for (const sign of [firstSign, -firstSign]) {
+                    candidateOrdinal++;
+                    if (candidateOrdinal === 1 || (candidateOrdinal & 3) === 0) yield { phase: 'candidate-batch', current: candidateOrdinal, mode: 'row-aligned' };
                     const candidate = {
                         x: anchor.x + right.x * spacing * multiple * sign,
                         y: yBase - min[1],
@@ -361,6 +368,8 @@ export function resolveSemanticPlacement({
             ? fabricWallCandidates(def, spacePlan, yBase, floorH, seed)
             : moduleWallCandidates(def, module, yBase, floorH, seed);
         for (const candidate of candidates) {
+            candidateOrdinal++;
+            if (candidateOrdinal === 1 || (candidateOrdinal & 3) === 0) yield { phase: 'candidate-batch', current: candidateOrdinal, mode: candidate.mode ?? 'wall-context' };
             const placed = tryCandidate(def, graph, candidate, tryReserve, module, spacePlan);
             if (placed) return placed;
         }
@@ -368,10 +377,19 @@ export function resolveSemanticPlacement({
     }
 
     for (const candidate of genericCandidates(def, module, yBase, seed, spacePlan)) {
+        candidateOrdinal++;
+        if (candidateOrdinal === 1 || (candidateOrdinal & 3) === 0) yield { phase: 'candidate-batch', current: candidateOrdinal, mode: candidate.mode ?? 'generic' };
         const placed = tryCandidate(def, graph, candidate, tryReserve, module, spacePlan);
         if (placed) return placed;
     }
     return null;
+}
+
+export function resolveSemanticPlacement(options = {}) {
+    const iterator = resolveSemanticPlacementSteps(options);
+    let step = iterator.next();
+    while (!step.done) step = iterator.next();
+    return step.value;
 }
 
 export function createSemanticPlacementRecord({ def, graph, placement, instanceId = null, spaceId = null, entityId, moduleKey, floor, program }) {

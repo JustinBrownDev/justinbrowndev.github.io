@@ -657,6 +657,9 @@ function buildFloorGrid({ modules, floor, floorH, reservations, accessAnchors, m
   const maxIz = Math.ceil(bounds.maxZ / cellSize);
   const cells = [];
   const byKey = new Map();
+  const lookupWidth = maxIx - minIx;
+  const lookupHeight = maxIz - minIz;
+  const denseCells = new Array(lookupWidth * lookupHeight).fill(null);
   for (let iz = minIz; iz < maxIz; iz++) {
     for (let ix = minIx; ix < maxIx; ix++) {
       const x = (ix + 0.5) * cellSize;
@@ -675,6 +678,7 @@ function buildFloorGrid({ modules, floor, floorH, reservations, accessAnchors, m
       };
       cells.push(cell);
       byKey.set(cell.key, cell);
+      denseCells[(iz - minIz) * lookupWidth + (ix - minIx)] = cell;
     }
   }
   const dirs = [
@@ -693,16 +697,23 @@ function buildFloorGrid({ modules, floor, floorH, reservations, accessAnchors, m
   return {
     activeModules, plannedModules, deferredModules: occupancy.deferredModules,
     floorComponentCount: occupancy.componentCount,
-    bounds, cellSize, cells, byKey, y0, y1,
+    bounds, cellSize, cells, byKey,
+    minIx, maxIx, minIz, maxIz, lookupWidth, lookupHeight, denseCells,
+    y0, y1,
   };
+}
+
+function cellAt(grid, ix, iz) {
+  if (ix < grid.minIx || ix >= grid.maxIx || iz < grid.minIz || iz >= grid.maxIz) return null;
+  return grid.denseCells[(iz - grid.minIz) * grid.lookupWidth + (ix - grid.minIx)] ?? null;
 }
 
 function neighborsOf(cell, grid) {
   return [
-    grid.byKey.get(`${cell.ix + 1},${cell.iz}`),
-    grid.byKey.get(`${cell.ix - 1},${cell.iz}`),
-    grid.byKey.get(`${cell.ix},${cell.iz + 1}`),
-    grid.byKey.get(`${cell.ix},${cell.iz - 1}`),
+    cellAt(grid, cell.ix + 1, cell.iz),
+    cellAt(grid, cell.ix - 1, cell.iz),
+    cellAt(grid, cell.ix, cell.iz + 1),
+    cellAt(grid, cell.ix, cell.iz - 1),
   ].filter(Boolean);
 }
 
@@ -782,7 +793,7 @@ function rectangleCells(grid, minIx, minIz, width, depth) {
   const cells = [];
   for (let dz = 0; dz < depth; dz++) {
     for (let dx = 0; dx < width; dx++) {
-      const cell = grid.byKey.get(`${minIx + dx},${minIz + dz}`);
+      const cell = cellAt(grid, minIx + dx, minIz + dz);
       if (!cell) return null;
       cells.push(cell);
     }
@@ -790,15 +801,18 @@ function rectangleCells(grid, minIx, minIz, width, depth) {
   return cells;
 }
 
-function boundaryCountAgainstSpace(cells, grid, spaceKey) {
+function rectangleBoundaryCountAgainstSpace(grid, minIx, minIz, width, depth, spaceKey) {
   if (!spaceKey) return 0;
   let count = 0;
-  const set = new Set(cells.map(cell => cell.key));
-  for (const cell of cells) {
-    for (const neighbor of neighborsOf(cell, grid)) {
-      if (set.has(neighbor.key)) continue;
-      if (neighbor.spaceId === spaceKey) count++;
-    }
+  const maxIx = minIx + width - 1;
+  const maxIz = minIz + depth - 1;
+  for (let ix = minIx; ix <= maxIx; ix++) {
+    if (cellAt(grid, ix, minIz - 1)?.spaceId === spaceKey) count++;
+    if (cellAt(grid, ix, maxIz + 1)?.spaceId === spaceKey) count++;
+  }
+  for (let iz = minIz; iz <= maxIz; iz++) {
+    if (cellAt(grid, minIx - 1, iz)?.spaceId === spaceKey) count++;
+    if (cellAt(grid, maxIx + 1, iz)?.spaceId === spaceKey) count++;
   }
   return count;
 }
@@ -817,15 +831,19 @@ function candidateRectangleAnchors({ space, spaces, parentKey, routeSpaceKey, gr
   // semantic neighbor into the geometric anchor search, which can overconstrain
   // repeated rectangular rooms.
   const source = routeAdjacent.length ? routeAdjacent : (parentAdjacent.length ? parentAdjacent : available);
-  return source.sort((a, b) => {
-    const aExposure = a.exposure + a.exposedSides.length;
-    const bExposure = b.exposure + b.exposedSides.length;
-    const frontageBias = routeFrontageWeight(space) > 0 ? (bExposure - aExposure) * routeFrontageWeight(space) : 0;
+  const frontageWeight = routeFrontageWeight(space);
+  const scoreKey = `${stableKey}:rectangle-anchor`;
+  const ranked = source.map(cell => ({
+    cell,
+    exposure: cell.exposure + cell.exposedSides.length,
+    preference: preferenceScore(cell, space, profile, scoreKey),
+  }));
+  ranked.sort((a, b) => {
+    const frontageBias = frontageWeight > 0 ? (b.exposure - a.exposure) * frontageWeight : 0;
     if (frontageBias) return frontageBias;
-    return preferenceScore(b, space, profile, `${stableKey}:rectangle-anchor`)
-      - preferenceScore(a, space, profile, `${stableKey}:rectangle-anchor`)
-      || a.key.localeCompare(b.key);
-  }).slice(0, 32);
+    return b.preference - a.preference || a.cell.key.localeCompare(b.cell.key);
+  });
+  return ranked.slice(0, 32).map(item => item.cell);
 }
 
 function placeRectangleFirstSpace({
@@ -836,6 +854,8 @@ function placeRectangleFirstSpace({
   const anchors = candidateRectangleAnchors({ space, spaces, parentKey, routeSpaceKey, grid, profile, stableKey });
   if (!anchors.length) return null;
   const dimensions = rectangleDimensionsForCells(target);
+  const preferenceKey = `${stableKey}:rectangle`;
+  const preferenceByCell = new Map(grid.cells.map(cell => [cell, preferenceScore(cell, space, profile, preferenceKey)]));
   let best = null;
   for (const anchor of anchors) {
     for (const dim of dimensions) {
@@ -845,11 +865,11 @@ function placeRectangleFirstSpace({
           const minIz = anchor.iz - offZ;
           const cells = rectangleCells(grid, minIx, minIz, dim.width, dim.depth);
           if (!cells || cells.some(cell => cell.spaceId || !cellEligibleForSpace(cell, space))) continue;
-          const parentBoundary = boundaryCountAgainstSpace(cells, grid, parentKey);
+          const parentBoundary = rectangleBoundaryCountAgainstSpace(grid, minIx, minIz, dim.width, dim.depth, parentKey);
           if (parentKey && !parentBoundary) continue;
-          const routeBoundary = boundaryCountAgainstSpace(cells, grid, routeSpaceKey);
+          const routeBoundary = rectangleBoundaryCountAgainstSpace(grid, minIx, minIz, dim.width, dim.depth, routeSpaceKey);
           const exposure = cells.reduce((sum, cell) => sum + cell.exposure, 0);
-          const preference = cells.reduce((sum, cell) => sum + preferenceScore(cell, space, profile, `${stableKey}:rectangle`), 0)
+          const preference = cells.reduce((sum, cell) => sum + preferenceByCell.get(cell), 0)
             / Math.max(1, cells.length);
           const sliverPenalty = target >= 4 && Math.min(dim.width, dim.depth) < 2 ? 18 : 0;
           const excessPenalty = Math.max(0, dim.area - target) * 1.35;
@@ -891,14 +911,27 @@ function assignedRectangleBounds(space, grid) {
   return { minIx, maxIx, minIz, maxIz, width, depth, cells };
 }
 
-function rectangularExpansionOptions(space, grid, profile, stableKey) {
+function rectangularGrowthState(space, grid) {
   const bounds = assignedRectangleBounds(space, grid);
-  if (!bounds) return [];
+  if (!bounds) return null;
+  return {
+    count: bounds.cells.length,
+    bounds: {
+      minIx: bounds.minIx, maxIx: bounds.maxIx,
+      minIz: bounds.minIz, maxIz: bounds.maxIz,
+      width: bounds.width, depth: bounds.depth,
+    },
+  };
+}
+
+function rectangularExpansionOptions(space, grid, profile, stableKey, bounds = null) {
+  const rectangle = bounds ?? assignedRectangleBounds(space, grid);
+  if (!rectangle) return [];
   const specs = [
-    { side: 'west', minIx: bounds.minIx - 1, minIz: bounds.minIz, width: 1, depth: bounds.depth },
-    { side: 'east', minIx: bounds.maxIx + 1, minIz: bounds.minIz, width: 1, depth: bounds.depth },
-    { side: 'north', minIx: bounds.minIx, minIz: bounds.minIz - 1, width: bounds.width, depth: 1 },
-    { side: 'south', minIx: bounds.minIx, minIz: bounds.maxIz + 1, width: bounds.width, depth: 1 },
+    { side: 'west', minIx: rectangle.minIx - 1, minIz: rectangle.minIz, width: 1, depth: rectangle.depth },
+    { side: 'east', minIx: rectangle.maxIx + 1, minIz: rectangle.minIz, width: 1, depth: rectangle.depth },
+    { side: 'north', minIx: rectangle.minIx, minIz: rectangle.minIz - 1, width: rectangle.width, depth: 1 },
+    { side: 'south', minIx: rectangle.minIx, minIz: rectangle.maxIz + 1, width: rectangle.width, depth: 1 },
   ];
   return specs.flatMap(spec => {
     const cells = rectangleCells(grid, spec.minIx, spec.minIz, spec.width, spec.depth);
@@ -909,35 +942,52 @@ function rectangularExpansionOptions(space, grid, profile, stableKey) {
   }).sort((a, b) => b.score - a.score || a.cells.length - b.cells.length || a.side.localeCompare(b.side));
 }
 
-function growExistingSpaceRectangular({ space, target, grid, stableKey, profile, allowOvershoot = false, oneStep = false }) {
+function applyRectangularGrowth(state, option) {
+  state.count += option.cells.length;
+  if (option.side === 'west') state.bounds.minIx -= 1;
+  else if (option.side === 'east') state.bounds.maxIx += 1;
+  else if (option.side === 'north') state.bounds.minIz -= 1;
+  else if (option.side === 'south') state.bounds.maxIz += 1;
+  state.bounds.width = state.bounds.maxIx - state.bounds.minIx + 1;
+  state.bounds.depth = state.bounds.maxIz - state.bounds.minIz + 1;
+  return state;
+}
+
+function growExistingSpaceRectangular({
+  space, target, grid, stableKey, profile, allowOvershoot = false, oneStep = false, growthState = null,
+}) {
   if (!rectangleFirstPreferred(profile) || ['circulation', 'entry'].includes(space.role)) return null;
-  if (!assignedRectangleBounds(space, grid)) return null;
-  let assigned = grid.cells.filter(cell => cell.spaceId === space.key);
+  const state = growthState ?? rectangularGrowthState(space, grid);
+  if (!state) return null;
   let steps = 0;
-  while ((allowOvershoot || assigned.length < target) && steps++ < grid.cells.length) {
-    const options = rectangularExpansionOptions(space, grid, profile, stableKey)
-      .filter(option => allowOvershoot || assigned.length + option.cells.length <= target);
+  while ((allowOvershoot || state.count < target) && steps++ < grid.cells.length) {
+    const options = rectangularExpansionOptions(space, grid, profile, stableKey, state.bounds)
+      .filter(option => allowOvershoot || state.count + option.cells.length <= target);
     if (!options.length) break;
-    for (const cell of options[0].cells) cell.spaceId = space.key;
-    assigned = grid.cells.filter(cell => cell.spaceId === space.key);
+    const selected = options[0];
+    for (const cell of selected.cells) cell.spaceId = space.key;
+    applyRectangularGrowth(state, selected);
     if (oneStep) break;
   }
-  return assigned;
+  return state;
 }
 
 function absorbRegularSurplus({ grid, spaces, profile, stableKey }) {
   if (!rectangleFirstPreferred(profile)) return 0;
   const ordinary = spaces.filter(space => !['circulation', 'entry'].includes(space.role));
+  const growthStateByKey = new Map(ordinary.map(space => [space.key, rectangularGrowthState(space, grid)]));
   let claimed = 0;
   let rounds = 0;
   while (rounds++ < grid.cells.length) {
     let progress = 0;
     for (const space of ordinary) {
-      const before = grid.cells.filter(cell => cell.spaceId === space.key).length;
+      const state = growthStateByKey.get(space.key);
+      if (!state) continue;
+      const before = state.count;
       const grown = growExistingSpaceRectangular({
-        space, target: Infinity, grid, stableKey: `${stableKey}:surplus:${rounds}`, profile, allowOvershoot: true, oneStep: true,
+        space, target: Infinity, grid, stableKey: `${stableKey}:surplus:${rounds}`, profile, allowOvershoot: true, oneStep: true, growthState: state,
       });
-      const after = grown?.length ?? before;
+      const after = grown?.count ?? before;
       if (after > before) {
         claimed += after - before;
         progress += after - before;
@@ -1473,11 +1523,43 @@ function targetCellCounts(spaces, grid, floorH) {
   return targets;
 }
 
+function preferredFrontierCell(frontier, space, profile, stableKey, scoreCache = null) {
+  let best = null;
+  let bestScore = -Infinity;
+  for (const cell of frontier.values()) {
+    let score = scoreCache?.get(cell.key);
+    if (score == null) {
+      score = preferenceScore(cell, space, profile, stableKey);
+      scoreCache?.set(cell.key, score);
+    }
+    if (score > bestScore || (score === bestScore && best && cell.key.localeCompare(best.key) < 0)) {
+      best = cell;
+      bestScore = score;
+    }
+  }
+  return best;
+}
+
+function preferredCell(cells, space, profile, stableKey) {
+  let best = null;
+  let bestScore = -Infinity;
+  for (const cell of cells) {
+    const score = preferenceScore(cell, space, profile, stableKey);
+    if (score > bestScore || (score === bestScore && best && cell.key.localeCompare(best.key) < 0)) {
+      best = cell;
+      bestScore = score;
+    }
+  }
+  return best;
+}
+
 function growSpace({ space, seed, target, grid, stableKey, profile, reserveForRemaining }) {
   if (!seed) return [];
   const assigned = [seed];
   seed.spaceId = space.key;
+  let unassignedEligible = grid.cells.reduce((count, cell) => count + (!cell.spaceId && cellEligibleForSpace(cell, space) ? 1 : 0), 0);
   const frontier = new Map();
+  const scoreCache = new Map();
   const considerNeighbors = cell => {
     for (const neighbor of neighborsOf(cell, grid)) {
       if (neighbor.spaceId || !cellEligibleForSpace(neighbor, space)) continue;
@@ -1487,15 +1569,13 @@ function growSpace({ space, seed, target, grid, stableKey, profile, reserveForRe
   considerNeighbors(seed);
 
   while (assigned.length < target && frontier.size) {
-    const unassignedEligible = grid.cells.filter(c => !c.spaceId && cellEligibleForSpace(c, space)).length;
     if (unassignedEligible <= reserveForRemaining) break;
-    const candidates = [...frontier.values()];
-    candidates.sort((a, b) => preferenceScore(b, space, profile, stableKey) - preferenceScore(a, space, profile, stableKey)
-      || a.key.localeCompare(b.key));
-    const next = candidates[0];
+    const next = preferredFrontierCell(frontier, space, profile, stableKey, scoreCache);
+    if (!next) break;
     frontier.delete(next.key);
-    if (!next || next.spaceId) continue;
+    if (next.spaceId) continue;
     next.spaceId = space.key;
+    unassignedEligible--;
     assigned.push(next);
     considerNeighbors(next);
   }
@@ -1508,15 +1588,14 @@ function growExistingSpace({ space, target, grid, stableKey, profile }) {
 
   if (!assigned.length) {
     const seeds = grid.cells.filter(cell => !cell.spaceId && cellEligibleForSpace(cell, space));
-    seeds.sort((a, b) => preferenceScore(b, space, profile, `${stableKey}:repair-seed`) - preferenceScore(a, space, profile, `${stableKey}:repair-seed`)
-      || a.key.localeCompare(b.key));
-    const seed = seeds[0];
+    const seed = preferredCell(seeds, space, profile, `${stableKey}:repair-seed`);
     if (!seed) return assigned;
     seed.spaceId = space.key;
     assigned = [seed];
   }
 
   const frontier = new Map();
+  const scoreCache = new Map();
   const considerNeighbors = cell => {
     for (const neighbor of neighborsOf(cell, grid)) {
       if (neighbor.spaceId || !cellEligibleForSpace(neighbor, space)) continue;
@@ -1526,12 +1605,10 @@ function growExistingSpace({ space, target, grid, stableKey, profile }) {
   for (const cell of assigned) considerNeighbors(cell);
 
   while (assigned.length < target && frontier.size) {
-    const candidates = [...frontier.values()];
-    candidates.sort((a, b) => preferenceScore(b, space, profile, stableKey) - preferenceScore(a, space, profile, stableKey)
-      || a.key.localeCompare(b.key));
-    const next = candidates[0];
+    const next = preferredFrontierCell(frontier, space, profile, stableKey, scoreCache);
+    if (!next) break;
     frontier.delete(next.key);
-    if (!next || next.spaceId) continue;
+    if (next.spaceId) continue;
     next.spaceId = space.key;
     assigned.push(next);
     considerNeighbors(next);
@@ -1689,7 +1766,7 @@ function attemptMinimumProgramPlacement({
       stableKey: `${stableKey}:floor:${floor}:minimum-rectangle-repair`,
       profile,
     });
-    if ((rectangularRepair?.length ?? 0) >= minimumTarget) continue;
+    if ((rectangularRepair?.count ?? 0) >= minimumTarget) continue;
     // Near-city strict rectangles are a hard planning contract. If a private or
     // route-frontage room cannot reach its physical minimum without breaking its
     // rectangle, leave the shortfall visible so the outer program-fit loop drops
@@ -2068,7 +2145,7 @@ function facadeIntents({ spaces, grid, profile }) {
   }).sort((a, b) => a.side.localeCompare(b.side) || a.spaceKey.localeCompare(b.spaceKey));
 }
 
-function planFloor({
+function* planFloorSteps({
   floor, baseFloor = 0, modules, floorH, reservations, accessAnchors, grammar, profile, authoredIntent,
   semanticProgram, programArchitecture = null, physicalTruth, stableKey,
 }) {
@@ -2079,6 +2156,7 @@ function planFloor({
       || 0.86);
   const grid = buildFloorGrid({ modules, floor, floorH, reservations, accessAnchors, minimumClearWidth });
   if (!grid || !grid.cells.length) return null;
+  yield { phase: 'building-plan-floor-grid', floor, cellCount: grid.cells.length };
   const area = grid.plannedModules.reduce((sum, module) => sum + moduleArea(module), 0);
   const routeServed = accessAnchors.some(anchor => anchor.floor === floor && anchor.kind === 'city-exchange');
   let spaces = expandedTemplates({ grammar, floor, baseFloor, area, profile, authoredIntent, stableKey, semanticProgram, programArchitecture, routeServed });
@@ -2089,6 +2167,7 @@ function planFloor({
   // this is the final fallback for constrained leftover sites.
   const programFit = fitSpacesToFloorCapacity(spaces, grid, floorH, floor, baseFloor);
   spaces = programFit.spaces;
+  yield { phase: 'building-plan-floor-program-fit', floor, spaceCount: spaces.length, dropped: programFit.droppedSpaceKeys.length };
 
   // Capacity is necessary but not sufficient: a greedy region can geometrically
   // wall off a later room even when total cell counts fit. Retry from a clean
@@ -2114,6 +2193,13 @@ function planFloor({
       ? []
       : occupancyHallwayFrontageShortfalls(spaces, grid, floor, baseFloor);
     const placementShortfalls = [...minimumPlacement.shortfalls, ...hallwayFrontageShortfalls];
+    yield {
+      phase: 'building-plan-floor-minimum-placement',
+      floor,
+      attempt: minimumPlacementAttempts,
+      shortfallCount: placementShortfalls.length,
+      spaceCount: spaces.length,
+    };
     if (!placementShortfalls.length) break;
     const drop = chooseMinimumGeometryDropCandidate(spaces, placementShortfalls, floor, baseFloor);
     if (!drop) break;
@@ -2138,7 +2224,8 @@ function planFloor({
   // program has acquired its physical minimum.
   const targets = targetCellCounts(spaces, grid, floorH);
   if (!minimumPlacement.shortfalls.length) {
-    for (const space of order) {
+    for (let orderIndex = 0; orderIndex < order.length; orderIndex++) {
+      const space = order[orderIndex];
       const target = targets.get(space.key) ?? (minimumCellsByKey.get(space.key) ?? 1);
       const regular = growExistingSpaceRectangular({
         space,
@@ -2156,9 +2243,17 @@ function planFloor({
           profile,
         });
       }
+      yield {
+        phase: 'building-plan-floor-surplus-growth',
+        floor,
+        current: orderIndex + 1,
+        total: order.length,
+        spaceKey: space.key,
+      };
     }
   }
   const leftoverClosure = assignLeftovers({ grid, spaces, profile, stableKey: `${stableKey}:floor:${floor}` });
+  yield { phase: 'building-plan-floor-leftover-closure', floor, unclaimed: grid.cells.filter(cell => !cell.spaceId).length };
 
   const cellArea = grid.cellSize * grid.cellSize;
   const realizedSpaces = spaces.map(s => {
@@ -2223,6 +2318,7 @@ function planFloor({
       } : {}),
     };
   }).filter(s => s.cellCount > 0);
+  yield { phase: 'building-plan-floor-realized-spaces', floor, realizedSpaceCount: realizedSpaces.length };
 
   const minimumPlacementShortfallCells = spaces.reduce((sum, space) => {
     const assignedCount = grid.cells.filter(cell => cell.spaceId === space.key).length;
@@ -2244,6 +2340,7 @@ function planFloor({
     spaces: realizedSpaces, desiredEdges, grid, rootKey: rootSpace.key, stableKey: `${stableKey}:floor:${floor}`,
   });
   const realizedEdges = realizedTopology.edges;
+  yield { phase: 'building-plan-floor-topology', floor, realizedEdgeCount: realizedEdges.length };
   const cityExchangeBindings = (minimumPlacement.cityExchangeBindings ?? []).map(binding => {
     const space = realizedSpaces.find(candidate => candidate.key === binding.spaceKey);
     if (!space) throw new Error(`building plan floor ${floor}: city exchange ${binding.endpointId ?? binding.anchorId} lost its transfer space`);
@@ -2261,6 +2358,7 @@ function planFloor({
     floor,
     baseFloor,
   });
+  yield { phase: 'building-plan-floor-openings', floor, openingCount: openingPlan.openings.length, unresolved: openingPlan.unresolved.length };
   const reachable = realizedTopology.reachable;
   const unclaimedCells = grid.cells.filter(cell => !cell.spaceId);
   const occupancyHallway = realizedSpaces.find(space => space.circulationShape === 'occupancy-hallway') ?? null;
@@ -2350,6 +2448,20 @@ function planFloor({
       residualComponentSeedCount: leftoverClosure.residualComponentSeeds ?? 0,
     },
   };
+}
+
+
+function planFloor({
+  floor, baseFloor = 0, modules, floorH, reservations, accessAnchors, grammar, profile, authoredIntent,
+  semanticProgram, programArchitecture = null, physicalTruth, stableKey,
+}) {
+  const iterator = planFloorSteps({
+    floor, baseFloor, modules, floorH, reservations, accessAnchors, grammar, profile, authoredIntent,
+    semanticProgram, programArchitecture, physicalTruth, stableKey,
+  });
+  let step = iterator.next();
+  while (!step.done) step = iterator.next();
+  return step.value;
 }
 
 function verticalEdgesForFloors(floors, stableKey, profile) {
@@ -2450,7 +2562,7 @@ function planSignature({ signatureType, authoredIntent }) {
   };
 }
 
-export function planBuildingSidecar({
+export function* planBuildingSidecarSteps({
   worldSeed = 0,
   chunkKey = '0,0',
   chunkX = 0,
@@ -2499,7 +2611,7 @@ export function planBuildingSidecar({
   const maxGlobalFloorExclusive = Math.max(...normalized.map(module => module.floorTop));
   const floors = [];
   for (let floor = minGlobalFloor; floor < maxGlobalFloorExclusive; floor++) {
-    const planned = planFloor({
+    const planned = yield* planFloorSteps({
       floor,
       baseFloor: minGlobalFloor,
       modules: normalized,
@@ -2515,6 +2627,13 @@ export function planBuildingSidecar({
       stableKey,
     });
     if (planned) floors.push(planned);
+    yield {
+      phase: 'building-plan-floor',
+      current: floor - minGlobalFloor + 1,
+      total: maxGlobalFloorExclusive - minGlobalFloor,
+      floor,
+      planned: !!planned,
+    };
   }
 
   const allSpaces = floors.flatMap(f => f.spaces);
@@ -2627,6 +2746,13 @@ export function planBuildingSidecar({
     })),
   })).toString(16).padStart(8, '0');
   return result;
+}
+
+export function planBuildingSidecar(options = {}) {
+  const iterator = planBuildingSidecarSteps(options);
+  let step = iterator.next();
+  while (!step.done) step = iterator.next();
+  return step.value;
 }
 
 export function summarizeBuildingPlan(plan) {

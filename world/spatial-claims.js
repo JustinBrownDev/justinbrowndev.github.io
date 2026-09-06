@@ -349,6 +349,32 @@ export class SpatialClaimAuthority {
             && [...this._claims.keys()].every(id => resolved.accepted.some(item => item.id === id));
     }
 
+    claimWithoutDisplacement(claim) {
+        if (claim?.schema !== SPATIAL_CLAIM_SCHEMA) throw new Error('claimWithoutDisplacement requires a normalized spatial claim');
+        if (this._claims.has(claim.id)) throw new Error(`duplicate spatial claim id: ${claim.id}`);
+        // _claims already contains a mutually compatible resolved set. For a caller
+        // that forbids displacement, resolving every existing pair again is wasted
+        // O(n^2) work: the new claim is admissible iff it is compatible with every
+        // incumbent. Preserve the old deterministic blocker semantics by scanning
+        // incumbents in authority order.
+        const incumbents = [...this._claims.values()].sort(compareSpatialClaimAuthority);
+        for (const existing of incumbents) {
+            const pair = evaluateSpatialClaimPair(existing, claim);
+            if (pair.compatible) continue;
+            const wouldDisplace = pair.winner === claim.id;
+            return {
+                accepted: false,
+                displaced: [],
+                wouldDisplace,
+                rejected: wouldDisplace ? null : { claim, blocker: existing, decision: pair },
+                blocker: existing,
+                decision: pair,
+            };
+        }
+        this._claims.set(claim.id, claim);
+        return { accepted: true, displaced: [], wouldDisplace: false, rejected: null, blocker: null, decision: null };
+    }
+
     claim(claim) {
         const resolved = this.resolveWith(claim);
         const acceptedIds = new Set(resolved.accepted.map(item => item.id));

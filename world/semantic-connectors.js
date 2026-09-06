@@ -541,27 +541,36 @@ function wrapOrphanReservation(reservation) {
     };
 }
 
-export function ensureSemanticConnectorAuthority(physics, spacePlans = []) {
+export function* ensureSemanticConnectorAuthoritySteps(physics, spacePlans = []) {
     if (!physics) throw new Error('connector authority requires physics payload');
     const connectors = connectorList(physics);
     const reservations = reservationList(physics);
     const ownedReservationIds = new Set();
+    let ownedOrdinal = 0;
     for (const connector of connectors) {
         for (const reservation of connector.reservations ?? []) ownedReservationIds.add(reservation.id);
+        ownedOrdinal++;
+        if ((ownedOrdinal & 31) === 0) yield { phase: 'owned-reservations', current: ownedOrdinal, total: connectors.length };
     }
     let synthesized = 0;
+    let reservationOrdinal = 0;
     for (const reservation of reservations) {
-        if (ownedReservationIds.has(reservation.id) || reservation.semanticConnectorEligible === false) continue;
-        const connector = wrapOrphanReservation(reservation);
-        connectors.push(connector);
-        ownedReservationIds.add(reservation.id);
-        synthesized++;
+        if (!ownedReservationIds.has(reservation.id) && reservation.semanticConnectorEligible !== false) {
+            const connector = wrapOrphanReservation(reservation);
+            connectors.push(connector);
+            ownedReservationIds.add(reservation.id);
+            synthesized++;
+        }
+        reservationOrdinal++;
+        if ((reservationOrdinal & 31) === 0) yield { phase: 'synthesize-orphans', current: reservationOrdinal, total: reservations.length };
     }
 
     const knownSpaceIds = new Set(spacePlans.map(plan => String(plan?.id ?? '')).filter(Boolean));
     let preservedExplicitBindings = 0;
     let inferredBindings = 0;
     let resolvedEdges = 0;
+    let connectorOrdinal = 0;
+    const connectorTotal = connectors.length;
     for (const connector of connectors) {
         // Structural/BuildingPlan authorities may already know every semantic space
         // served by a connector (especially a persistent stair spanning many floors).
@@ -586,16 +595,22 @@ export function ensureSemanticConnectorAuthority(physics, spacePlans = []) {
         connector.spaceIds = spaceIds;
         if (!connector.fromSpaceId && spaceIds[0]) connector.fromSpaceId = spaceIds[0];
         if (!connector.toSpaceId && spaceIds[1]) connector.toSpaceId = spaceIds[1];
-        for (const reservation of connector.reservations ?? []) {
-            reservation.connectorId = connector.id;
-        }
+        for (const reservation of connector.reservations ?? []) reservation.connectorId = connector.id;
         if (connector.fromSpaceId && connector.toSpaceId) resolvedEdges++;
+        connectorOrdinal++;
+        if ((connectorOrdinal & 3) === 0) yield { phase: 'bind-connectors', current: connectorOrdinal, total: connectorTotal };
     }
 
+    yield { phase: 'access-portals', current: 0, total: 1 };
     const portals = normalizeAccessPortalSet(connectors.map(connector => accessPortalFromConnector(connector, { spaces: spacePlans })));
     physics.accessPortals = portals;
     const portalById = new Map(portals.map(portal => [portal.id, portal]));
-    for (const connector of connectors) connector.accessPortal = portalById.get(String(connector.id)) ?? null;
+    let portalOrdinal = 0;
+    for (const connector of connectors) {
+        connector.accessPortal = portalById.get(String(connector.id)) ?? null;
+        portalOrdinal++;
+        if ((portalOrdinal & 31) === 0) yield { phase: 'attach-portals', current: portalOrdinal, total: connectors.length };
+    }
 
     return {
         connectors: connectors.length,
@@ -607,4 +622,11 @@ export function ensureSemanticConnectorAuthority(physics, spacePlans = []) {
         inferredBindings,
         orphanReservations: reservations.filter(reservation => reservation.semanticConnectorEligible !== false && !reservation.connectorId).length,
     };
+}
+
+export function ensureSemanticConnectorAuthority(physics, spacePlans = []) {
+    const iterator = ensureSemanticConnectorAuthoritySteps(physics, spacePlans);
+    let step = iterator.next();
+    while (!step.done) step = iterator.next();
+    return step.value;
 }

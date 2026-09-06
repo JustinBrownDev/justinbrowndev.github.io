@@ -307,12 +307,22 @@ function buildPlan({ topology, physics, targetCellSize = 0.30 }) {
     };
 }
 
-export function compileSpacePlans({ chunk, payload, targetCellSize = 0.30, activeSpaceIds = null } = {}) {
+export function* compileSpacePlansSteps({ chunk, payload, targetCellSize = 0.30, activeSpaceIds = null } = {}) {
     if (!chunk || !payload) throw new Error('compileSpacePlans requires chunk and payload');
     const active = activeSpaceIds ? new Set(activeSpaceIds) : null;
     const topologySpaces = [];
     const plans = [];
-    for (const entity of payload.entities ?? []) {
+    const entities = payload.entities ?? [];
+    const total = entities.reduce((sum, entity) => {
+        const authoredSpaces = Array.isArray(entity?.buildingPlan?.topologySpaces)
+            ? entity.buildingPlan.topologySpaces
+            : [];
+        if (authoredSpaces.length) return sum + authoredSpaces.length;
+        return sum + (entity.footprintModules ?? []).reduce((floorSum, module) =>
+            floorSum + Math.max(0, Math.floor(finiteOr(module.floors, 0))), 0);
+    }, 0);
+    let processed = 0;
+    for (const entity of entities) {
         const authoredSpaces = Array.isArray(entity?.buildingPlan?.topologySpaces)
             ? entity.buildingPlan.topologySpaces
             : [];
@@ -320,7 +330,10 @@ export function compileSpacePlans({ chunk, payload, targetCellSize = 0.30, activ
             for (const space of authoredSpaces) {
                 const topology = authoredTopologySpace({ chunkKey: chunk.key, entity, space });
                 topologySpaces.push(topology);
-                if (!active || active.has(topology.id)) plans.push(buildPlan({ topology, physics: payload.physics, targetCellSize }));
+                const selected = !active || active.has(topology.id);
+                if (selected) plans.push(buildPlan({ topology, physics: payload.physics, targetCellSize }));
+                processed++;
+                yield { phase: 'space-plan', current: processed, total, selected, topologyId: topology.id };
             }
             continue;
         }
@@ -329,13 +342,23 @@ export function compileSpacePlans({ chunk, payload, targetCellSize = 0.30, activ
             for (let floor = 0; floor < floors; floor++) {
                 const topology = topologySpace({ chunkKey: chunk.key, entity, module, floor });
                 topologySpaces.push(topology);
-                if (!active || active.has(topology.id)) plans.push(buildPlan({ topology, physics: payload.physics, targetCellSize }));
+                const selected = !active || active.has(topology.id);
+                if (selected) plans.push(buildPlan({ topology, physics: payload.physics, targetCellSize }));
+                processed++;
+                yield { phase: 'space-plan', current: processed, total, selected, topologyId: topology.id };
             }
         }
     }
     payload.semanticTopologySpaces = topologySpaces;
     payload.spacePlans = plans;
     return plans;
+}
+
+export function compileSpacePlans(options = {}) {
+    const iterator = compileSpacePlansSteps(options);
+    let step = iterator.next();
+    while (!step.done) step = iterator.next();
+    return step.value;
 }
 
 function planPointCell(plan, x, z) {

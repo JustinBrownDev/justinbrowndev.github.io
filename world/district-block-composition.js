@@ -355,7 +355,7 @@ function buildBuildingContext({
     return Object.freeze(context);
 }
 
-export function compileDistrictBlockComposition({ chunk, payload = null, entities = null } = {}) {
+export function* compileDistrictBlockCompositionSteps({ chunk, payload = null, entities = null } = {}) {
     if (!chunk) throw new Error('compileDistrictBlockComposition requires chunk');
     const buildings = buildingsFrom(payload, entities);
     const worldId = String(chunk.worldId ?? payload?.worldId ?? 'jweb.dev/world:unknown');
@@ -423,7 +423,9 @@ export function compileDistrictBlockComposition({ chunk, payload = null, entitie
         rooflineRhythm,
     };
     const extents = blockExtents(buildings, chunk);
+    yield { phase: 'block-extents', current: 1, total: 1 };
     const connectors = connectorPressureByEntity(payload);
+    yield { phase: 'connector-pressure', current: 1, total: 1 };
     const ranked = buildings.map(entity => ({
         entity,
         mass: entityMass(entity),
@@ -434,7 +436,9 @@ export function compileDistrictBlockComposition({ chunk, payload = null, entitie
     const secondaryCount = ranked.length >= 7 ? 2 : ranked.length >= 3 ? 1 : 0;
     const secondaryIds = new Set(ranked.slice(1, 1 + secondaryCount).map(item => String(item.entity.id)));
     const seedBasis = `${compositionId}:${blockSeed}`;
-    let contexts = buildings.map(entity => {
+    let contexts = [];
+    let contextOrdinal = 0;
+    for (const entity of buildings) {
         const edge = primaryEdgeFor(entity, extents);
         const connectorPressure = finite(connectors.get(String(entity.id)));
         const role = contextualRole({ entity, edge, edgeIntent: edges, anchorId, secondaryIds, connectorPressure, profile, seedBasis });
@@ -454,8 +458,10 @@ export function compileDistrictBlockComposition({ chunk, payload = null, entitie
             secondaryIds,
             seedBasis,
         });
-        return Object.freeze({ ...context, physicalUseFamily: entity?.physicalUse?.family ?? null });
-    });
+        contexts.push(Object.freeze({ ...context, physicalUseFamily: entity?.physicalUse?.family ?? null }));
+        contextOrdinal++;
+        if ((contextOrdinal & 1) === 0) yield { phase: 'building-contexts', current: contextOrdinal, total: buildings.length };
+    }
 
     // For a populated block, keep distinct service/commercial/quiet readings visible.
     // These are semantic roles only; they do not prescribe prop counts or geometry.
@@ -483,11 +489,15 @@ export function compileDistrictBlockComposition({ chunk, payload = null, entitie
             protectedIds.add(selected.entityId);
         };
         forceRole('commercial-frontage', 'commercialPressure');
+        yield { phase: 'role-normalization', current: 1, total: 3 };
         forceRole('service-edge', 'servicePressure');
+        yield { phase: 'role-normalization', current: 2, total: 3 };
         forceRole('quiet-edge', 'quietPressure');
+        yield { phase: 'role-normalization', current: 3, total: 3 };
     }
 
     contexts.sort((a, b) => a.entityId.localeCompare(b.entityId));
+    yield { phase: 'context-sort', current: contexts.length, total: contexts.length };
     const buildingContexts = Object.freeze(Object.fromEntries(contexts.map(context => [context.entityId, context])));
     const hierarchy = Object.freeze({
         anchorBuildingId: anchorId,
@@ -497,6 +507,7 @@ export function compileDistrictBlockComposition({ chunk, payload = null, entitie
         serviceBuildingIds: Object.freeze(contexts.filter(context => context.blockRole === 'service-edge' || context.blockRole === 'connector-node').map(context => context.entityId)),
         quietBuildingIds: Object.freeze(contexts.filter(context => context.blockRole === 'quiet-edge').map(context => context.entityId)),
     });
+    yield { phase: 'hierarchy', current: 1, total: 1 };
     const result = {
         schema: DISTRICT_BLOCK_COMPOSITION_SCHEMA,
         id: compositionId,
@@ -523,21 +534,40 @@ export function compileDistrictBlockComposition({ chunk, payload = null, entitie
     return Object.freeze(result);
 }
 
+export function compileDistrictBlockComposition(options = {}) {
+    const iterator = compileDistrictBlockCompositionSteps(options);
+    let step = iterator.next();
+    while (!step.done) step = iterator.next();
+    return step.value;
+}
+
 export function districtContextForEntity(composition, entityId) {
     if (!composition || entityId == null) return null;
     return composition.buildings?.[String(entityId)] ?? null;
 }
 
-export function attachDistrictBlockComposition(payload, composition) {
+export function* attachDistrictBlockCompositionSteps(payload, composition) {
     if (!payload || !composition) return composition;
     payload.districtBlockComposition = composition;
-    for (const entity of payload.entities ?? []) {
+    const entities = payload.entities ?? [];
+    let ordinal = 0;
+    for (const entity of entities) {
         const context = districtContextForEntity(composition, entity.id);
-        if (!context) continue;
-        entity.districtCompositionId = composition.id;
-        entity.districtComposition = context;
+        if (context) {
+            entity.districtCompositionId = composition.id;
+            entity.districtComposition = context;
+        }
+        ordinal++;
+        if ((ordinal & 63) === 0) yield { phase: 'attach-entity', current: ordinal, total: entities.length };
     }
     return composition;
+}
+
+export function attachDistrictBlockComposition(payload, composition) {
+    const iterator = attachDistrictBlockCompositionSteps(payload, composition);
+    let step = iterator.next();
+    while (!step.done) step = iterator.next();
+    return step.value;
 }
 
 export function districtBuildingPolicyForEntity(entity) {

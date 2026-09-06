@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import { planBuildingSidecar, summarizeBuildingPlan } from '../world/architecture/building-plan-sidecar.js';
 import { architecturalFieldProfile } from '../world/architecture/distance-inversion.js';
-import { integrationPhase } from '../world/architecture/jweb-adapter.js';
 
 const modules = [
   { key: '0,0', cx: -3, cz: -3, halfX: 3, halfZ: 3, floors: 3 },
@@ -111,11 +110,6 @@ const farProfile = architecturalFieldProfile({ distanceChunks: 40, weirdnessSamp
 assert.ok(nearProfile.inversion < farProfile.inversion);
 assert.ok(nearProfile.fidelity > farProfile.fidelity);
 assert.ok(farProfile.uncannyCoherence > 0.8);
-
-const seam = integrationPhase();
-assert.ok(seam.after.includes('resolved physical truth'));
-assert.ok(seam.before.includes('partition-wall emission'));
-assert.ok(seam.before.includes('semantic destination selection'));
 
 console.log(JSON.stringify({
   ok: true,

@@ -1,8 +1,7 @@
 import { CUT_AUTHORED_SPAWN_DECORATION } from '../config/performance-isolation.js';
 import * as THREE from '../vendor/three/three.module.js';
 import { QP } from '../runtime/main-quantitative-literals.js';
-import { SIGN_SHAPES, SIGN_FONTS, SIGN_BACKINGS, TEXT_FONTS, PAPER_COLORS, INK_COLORS } from '../content/text-style.js';
-import { fitCanvasText, drawCanvasLines } from '../systems/canvas-text.js';
+import { SIGN_SHAPES, TEXT_FONTS, PAPER_COLORS, INK_COLORS } from '../content/text-style.js';
 import { hashDisplaySeed, resolveDisplayRecipe } from '../content/sign-visual-language.js';
 import { renderDisplayCanvas } from '../systems/sign-display-renderer.js';
 import { boundedBladePanelHeight } from './signage-geometry-policy.js';
@@ -21,8 +20,6 @@ export function createSignageSystem(deps) {
     const pickTextFont = () => pick(TEXT_FONTS);
     const pickPaperColor = () => pick(PAPER_COLORS);
     const pickInkColor = () => pick(INK_COLORS);
-
-    const SIGN_BORDER_STYLES = ['solid', 'double', 'cut', 'none'];
 
     function pickWeightedSignShape() {
         const wide = SIGN_SHAPES.filter(shape => shape.w >= shape.h * 1.18);
@@ -527,8 +524,6 @@ export function createSignageSystem(deps) {
      
      
      
-    const _colliderBox = new THREE.Box3();
-    const _colliderSize = new THREE.Vector3();
     return Object.freeze({
         addSign,
         addGraffitiTag,

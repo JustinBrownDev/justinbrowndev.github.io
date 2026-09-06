@@ -3,7 +3,6 @@ import fs from 'node:fs';
 
 const contextSource = fs.readFileSync(new URL('../world/semantic-context.js', import.meta.url), 'utf8');
 const enrichmentSource = fs.readFileSync(new URL('../world/kowloon-fabric-enrichment.js', import.meta.url), 'utf8');
-const buildingSource = fs.readFileSync(new URL('../world/building-construction.js', import.meta.url), 'utf8');
 const fabricSource = fs.readFileSync(new URL('../kowloon-fabric-engine.js', import.meta.url), 'utf8');
 
 // Portal topology must produce both sacred negative space and positive semantic complements.
@@ -25,15 +24,14 @@ for (const name of ['createPanel','createPipe','createAwning','createIvy','creat
     assert.match(body, /semanticPlacementPoint\(/, `${name} must consume the authoritative semantic transform`);
 }
 
-// Retire the old geometry-first authored fire escape. Exterior stair imagery must
-// come from a connector-owned route, not a decorative staircase that invents travel.
-assert.doesNotMatch(buildingSource, /buildFireEscape\(facade,/, 'legacy geometry-first fire escape must not be active');
-assert.match(buildingSource, /legacyFireEscapeSuppressed/);
-assert.match(fabricSource, /visualFamilies = \[/, 'connector-owned exterior scaffold needs deterministic visual families');
-for (const family of ['switchback-mesh','tight-service','heavy-landing','long-industrial']) assert.match(fabricSource, new RegExp(family));
-assert.match(fabricSource, /visualFamily: visualFamily\.id/);
-assert.match(fabricSource, /registerSemanticConnector\(physics, createLandingConnector/);
-assert.match(fabricSource, /registerSemanticConnector\(physics, createRampConnector/);
+// Retired geometry-first authored building/fire-escape authority is gone entirely.
+// Exterior stair imagery comes from connector-owned routes in the live fabric engine.
+assert.equal(fs.existsSync(new URL('../world/building-construction.js', import.meta.url)), false);
+assert.match(fabricSource, /planExteriorScaffoldRoute\(/, 'connector-owned exterior scaffold must come from the canonical scaffold planner');
+assert.match(fabricSource, /realizeExteriorScaffold\(/, 'accepted scaffold plans must be realized through the shared exterior route path');
+assert.match(fabricSource, /const connector = createLandingConnector\(/);
+assert.match(fabricSource, /const connector = createRampConnector\(/);
+assert.match(fabricSource, /registerSemanticConnector\(physics, connector\)/);
 assert.match(fabricSource, /source: 'exterior-scaffold'/);
 
 console.log('PASS semantic circulation exterior authority');

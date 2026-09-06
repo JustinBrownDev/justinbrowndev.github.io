@@ -85,7 +85,6 @@ const terminologyFiles = [
   '../world/procedural-text-exciter.js',
   '../world/spatial-topology.js',
   '../world/exterior-composition-authority.js',
-  '../world/architecture/jweb-adapter.js',
   '../world/kowloon-structure.js',
   '../config/performance-isolation.js',
 ];

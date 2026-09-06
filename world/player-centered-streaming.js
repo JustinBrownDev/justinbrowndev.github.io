@@ -10,13 +10,21 @@ export const WORLD_STREAMING_GEAR = Object.freeze({
 // the moving player neighborhood. When the player crosses a chunk boundary these
 // predicates are recomputed around the new center and urgent work preempts depth.
 export function choosePlayerCenteredStreamingGear({
+    renderSettled = undefined,
+    visibleFirstPassSettled = undefined,
+    prefetchSettled = undefined,
+    // Compatibility aliases for tests/tools written before ring settlement became
+    // explicit. Runtime callers use the settled names.
     renderComplete = false,
     visibleFirstPassComplete = false,
     prefetchComplete = false,
 } = {}) {
-    if (!renderComplete) return WORLD_STREAMING_GEAR.VISIBLE_STRUCTURE;
-    if (!visibleFirstPassComplete) return WORLD_STREAMING_GEAR.VISIBLE_FIRST_PASS;
-    if (!prefetchComplete) return WORLD_STREAMING_GEAR.PREFETCH_STRUCTURE;
+    const renderReadyForScheduling = renderSettled ?? renderComplete;
+    const firstPassReadyForScheduling = visibleFirstPassSettled ?? visibleFirstPassComplete;
+    const prefetchReadyForScheduling = prefetchSettled ?? prefetchComplete;
+    if (!renderReadyForScheduling) return WORLD_STREAMING_GEAR.VISIBLE_STRUCTURE;
+    if (!firstPassReadyForScheduling) return WORLD_STREAMING_GEAR.VISIBLE_FIRST_PASS;
+    if (!prefetchReadyForScheduling) return WORLD_STREAMING_GEAR.PREFETCH_STRUCTURE;
     return WORLD_STREAMING_GEAR.LOCAL_DEEPEN;
 }
 

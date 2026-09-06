@@ -6,16 +6,17 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.dirname(here);
 const main = fs.readFileSync(path.join(root, 'main.js'), 'utf8');
 const facade = fs.readFileSync(path.join(root, 'world', 'facade-layout.js'), 'utf8');
-const buildings = fs.readFileSync(path.join(root, 'world', 'building-construction.js'), 'utf8');
+const fabric = fs.readFileSync(path.join(root, 'kowloon-fabric-engine.js'), 'utf8');
 const signatures = fs.readFileSync(path.join(root, 'world', 'signature-buildings.js'), 'utf8');
 const failures = [];
 const ok = (condition, message) => { if (!condition) failures.push(message); };
 
 ok(facade.includes('function* placeSignsOnFacadeSteps('), 'facade sign placement must expose a resumable generator');
 ok(facade.includes('yield { signIndex: i, placed }'), 'facade sign generator must yield between individual sign attempts');
-ok(buildings.includes("yield { phase: 'facade-sign'"), 'building generation must expose per-sign cooperative phases');
-ok(buildings.includes("yield { phase: 'facade-pipes'") && buildings.includes("yield { phase: 'facade-awning'") && buildings.includes("yield { phase: 'facade-access'"), 'facade detail work must be split into bounded cooperative phases');
-ok(buildings.includes("yield { phase: 'facade-shell'"), 'facade shell creation must yield between exposed faces');
+ok(fabric.includes('function* buildKowloonCompoundSteps('), 'ordinary structural fabric must expose a resumable compound stepper');
+ok(fabric.includes('async function buildKowloonCompoundCooperative('), 'ordinary structural fabric must retain cooperative scheduling');
+ok(fabric.includes("phase: 'broad-street-faces'"), 'compound structure must yield while collecting exposed street faces');
+ok(!fabric.includes('function buildKowloonCompound(args)'), 'retired synchronous compound wrapper must stay deleted');
 
 for (const name of ['buildArtGallerySteps', 'buildAS400ArchiveSteps', 'buildJustinIndexSteps', 'buildSystemsWorkshopSteps', 'buildLoreShrineSteps', 'buildFuturePlaceholderSteps']) {
   ok(signatures.includes(`function* ${name}(`), `${name} must remain a resumable generator`);
@@ -37,7 +38,7 @@ ok(optimizerAt >= 0 && optimizerAt < authoredLoopAt, 'optimizer ownership must p
 ok(physicsAt >= 0 && physicsAt < authoredLoopAt, 'real player physics must precede authored background construction');
 ok(!main.includes('staticWorldOptimizer.optimize({'), 'legacy whole-scene optimizer path must remain removed');
 ok(main.includes('_backgroundCompileSchedulingEnabled = true;'), 'live handoff must keep background shader compilation enabled');
-ok(main.includes('if (!_backgroundCompileSchedulingEnabled) return null;'), 'real-material shader prewarm must not compete with bootstrap structural publication');
+ok(main.includes('if (!_backgroundCompileSchedulingEnabled || _worldStreamPriorityLock || !playerNearAuthoredSpawn()) return null;'), 'real-material shader prewarm must not compete with bootstrap structural publication');
 ok(main.includes('requestAnimationFrame(() => setTimeout(() => scheduleBootstrapCompilePump(), 0));'), 'shader prewarm must begin only after the first full-runtime paint');
 const compileStageEnabledAt = main.indexOf('_bootstrapCompileStagingEnabled = true;');
 const compileStageLastDisableAt = main.lastIndexOf('_bootstrapCompileStagingEnabled = false;');
@@ -46,8 +47,8 @@ ok(main.includes('staticWorldOptimizer?.markDirtyObject(leaf);'), 'compiled stag
 ok(main.includes('let authoredStructuralReadySiteIds = null;') && main.includes('authoredStructuralReadySiteIds = new Set();'), 'authored structural readiness must be distinct from full content completion');
 ok(main.includes("phase === 'unified-fabric-structure'") && main.includes("phase === 'signature-unified-shell'") && main.includes("phase === 'signature-empty-parcel-ready'"), 'all authored site families must expose an explicit structural-ready phase');
 ok(main.includes('structuralOnly: true') && main.includes('!job.structuralReady'), 'minimum-safe bootstrap must stop scheduling content after each required shell becomes safe');
-ok(main.includes('!authoredStructuralReadySiteIds.has(id)') && main.includes('authoredStructuralReadySiteIds?.has(siteId) === true'), 'bootstrap gate and traversal availability must use structural readiness');
-ok(main.includes("await testYieldNow('minimum-safe authored district collision-ready · releasing construction safety gate')"), 'construction safety gate must release only after the minimum-safe authored neighborhood is collision-ready');
+ok(main.includes('!authoredStructuralReadySiteIds.has(id) && !authoredFailedSiteIds.has(id)') && main.includes('structuralOnly: true'), 'bootstrap gate must use structural readiness while allowing terminal local failures to settle');
+ok(main.includes("await testYieldNow('minimum-safe authored district collision-ready + spawn escape proven · releasing construction safety gate')"), 'construction safety gate must release only after local structure and spawn escape are proven');
 
 if (failures.length) {
   console.error(`[progressive-generation-selftest] FAIL (${failures.length})`);

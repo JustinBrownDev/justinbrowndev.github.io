@@ -738,7 +738,7 @@ export function createWorldChunkStreamer({
     }
 
     function nearestRefinableChunk(center = playerChunkCoords()) {
-        if (refineAfterPrefetchReady && !readyWithinRadius(prefetchRadiusChunks).complete) return null;
+        if (refineAfterPrefetchReady && !readyWithinRadius(prefetchRadiusChunks).settled) return null;
         let best = null;
         let bestVisibilityRank = Infinity;
         let bestFocusRank = Infinity;
@@ -968,8 +968,8 @@ export function createWorldChunkStreamer({
             let built = 0;
             let refined = 0;
             const visibleRefinementAtStart = hasPublishedVisibleRefinement(center);
-            const prefetchReadyAtPumpStart = readyWithinRadius(prefetchRadiusChunks).complete;
-            const canRefineBeforePrefetch = !refineAfterPrefetchReady && visibleRefinementAtStart && !prefetchReadyAtPumpStart;
+            const prefetchSettledAtPumpStart = readyWithinRadius(prefetchRadiusChunks).settled;
+            const canRefineBeforePrefetch = !refineAfterPrefetchReady && visibleRefinementAtStart && !prefetchSettledAtPumpStart;
 
             const runRefinementTurns = async ({ visibleOnly = false, budgetMs = timeCap, guaranteeOne = false } = {}) => {
                 // Refinement owns its own clock. Neighborhood maintenance, unloading,
@@ -1018,16 +1018,16 @@ export function createWorldChunkStreamer({
                 built++;
             }
 
-            const prefetchReadyForRefinement = readyWithinRadius(prefetchRadiusChunks).complete;
-            const renderCompleteForRefinement = publicationWithinRadius(renderRadiusChunks).complete;
+            const prefetchSettledForRefinement = readyWithinRadius(prefetchRadiusChunks).settled;
+            const renderSettledForRefinement = publicationWithinRadius(renderRadiusChunks).settled;
             const visibleRefinementAfterBuild = hasPublishedVisibleRefinement(center);
             if (!disposed && visibleRefinementAfterBuild && refined < refinementCap
-                && (!refineAfterPrefetchReady || prefetchReadyForRefinement)) {
+                && (!refineAfterPrefetchReady || prefetchSettledForRefinement)) {
                 const remainingPumpMs = Number.isFinite(timeCap)
                     ? Math.max(0, timeCap - (performance.now() - pumpStarted))
                     : refinementTimeCap;
                 await runRefinementTurns({
-                    visibleOnly: !renderCompleteForRefinement || !prefetchReadyForRefinement,
+                    visibleOnly: !renderSettledForRefinement || !prefetchSettledForRefinement,
                     budgetMs: Math.min(refinementTimeCap, remainingPumpMs),
                     // A newly published chunk may create the first local pending work.
                     // Even after a build overrun, do not return a 0-refinement pump.
@@ -1107,9 +1107,9 @@ export function createWorldChunkStreamer({
             failed,
             total,
             complete: ready === total,
-            // Scheduler/presentation liveness may advance once every slot is either
-            // genuinely READY or terminally FAILED. Strict complete remains readiness truth.
-            terminalSettled: ready + failed === total,
+            // Scheduler/presentation liveness advances once every slot is resolved as
+            // genuinely READY or FAILED. Strict complete remains readiness truth.
+            settled: ready + failed === total,
         };
     }
 
@@ -1150,10 +1150,10 @@ export function createWorldChunkStreamer({
             physicsAuthoritative,
             failed,
             complete: published === total && physicsAuthoritative === total,
-            // Do not fake render/physics readiness for failed geometry. This is a
-            // separate liveness signal for visual/scheduler gates that must not wait
-            // forever on a chunk which has already reached terminal FAILED state.
-            terminalSettled: published + failed === total
+            // Do not fake render/physics readiness for failed geometry. `settled` is a
+            // separate liveness signal for visual/scheduler gates: unresolved work is
+            // gone even when strict publication/physics completeness is impossible.
+            settled: published + failed === total
                 && physicsAuthoritative + failed === total,
         };
     }
@@ -1188,8 +1188,8 @@ export function createWorldChunkStreamer({
             ready, failed, total, pendingChunks, floorPendingChunks,
             floorComplete: ready === total && floorPendingChunks === 0,
             complete: ready === total && pendingChunks === 0,
-            terminalFloorSettled: ready + failed === total && floorPendingChunks === 0,
-            terminalSettled: ready + failed === total && pendingChunks === 0,
+            floorSettled: ready + failed === total && floorPendingChunks === 0,
+            settled: ready + failed === total && pendingChunks === 0,
         };
     }
 

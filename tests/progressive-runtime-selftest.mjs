@@ -8,7 +8,6 @@ const read = rel => fs.readFileSync(path.join(root, rel), 'utf8');
 const main = read('main.js');
 const music = read('systems/music-player.js');
 const signatures = read('world/signature-buildings.js');
-const buildings = read('world/building-construction.js');
 const facade = read('world/facade-layout.js');
 const chunks = read('kowloon-fabric-engine.js');
 const streamer = read('world-chunk-streamer.js');
@@ -28,13 +27,14 @@ ok(music.includes('const TRACKS = [') && music.includes("layer: 'undercity'") &&
 ok(main.includes('const PROGRESSIVE_PIXEL_RATIO = Math.min(1, TARGET_PIXEL_RATIO);'), 'progressive render resolution cap missing');
 ok(main.includes('bloomPass.enabled = false;'), 'bloom must remain disabled during structural progressive phase');
 ok(main.includes('function restoreFinalRenderQuality()'), 'final render-quality restoration hook missing');
-const warmAt = main.indexOf('while (!worldChunkStreamer.stats().localRenderRing.complete)');
-const prepareAt = main.indexOf('const materialRefinementStart = materialRefinementController.prepare();');
-ok(warmAt >= 0 && prepareAt > warmAt, 'authored material refinement must wait until the playable chunk ring is warm');
-ok(main.includes('maxReveals: 1, maxMillis: 2'), 'cosmetic reveal refinement must remain bounded per frame');
+ok(!main.includes('bootstrapPreviewOverrideActive') && !main.includes('scene.overrideMaterial = bootstrapPreviewMaterial'), 'global monochrome bootstrap override must remain retired');
+ok(main.includes('function bootstrapPreviewMaterialFor(') && main.includes('leaf.material = bootstrapPreviewForLeaf(leaf, originalMaterial);'), 'authored geometry must publish with color-preserving shader proxies');
+ok(main.includes("runtimeLatency.record('visual.publish-speculative'"), 'visual-only authored candidates should publish speculatively instead of hiding until final arbitration');
+ok(!main.includes('materialRefinementController') && !main.includes('createMaterialRefinementController'), 'late whole-scene material restoration pass must remain retired');
+ok(!fs.existsSync(path.join(root, 'systems/material-refinement.js')), 'retired material-refinement staging module should not survive');
 
 ok(signatures.includes('function* buildArtGallerySteps(site)') && signatures.includes('function* buildAS400ArchiveSteps(site)') && signatures.includes('function* buildJustinIndexSteps(site)') && signatures.includes('function* buildSystemsWorkshopSteps(site)') && signatures.includes('function* buildLoreShrineSteps(site)'), 'signature landmarks must remain resumable generators');
-ok(buildings.includes('function* addBuildingSiteSteps(site)') && buildings.includes("yield { phase: 'facade-sign'"), 'ordinary authored buildings must retain resumable semantic steps');
+ok(chunks.includes('function* buildKowloonCompoundSteps(') && chunks.includes('async function buildKowloonCompoundCooperative('), 'ordinary city fabric must retain resumable cooperative structural steps');
 ok(facade.includes('function* placeSignsOnFacadeSteps(') && facade.includes('yield { signIndex: i, placed }'), 'facade sign generation must remain interruptible below whole-facade granularity');
 
 // Infinite chunks use the same structural-first philosophy without smuggling frame sleeps
@@ -44,15 +44,15 @@ ok(chunks.includes('kowloon-partition:${chunk.key}:${chunk.seed}')
     && chunks.includes('kowloon-compound:${chunk.key}:${siteSignature}')
     && chunks.includes('kowloon-bridge:${identity}')
     && chunks.includes('kowloon-plaza:${chunk.key}:${signature}'), 'generic rich structure must use independent stable partition/site/compound/bridge/plaza RNG streams');
-ok(chunks.includes('partitionKowloonCompounds({') && chunks.includes('buildKowloonCompound({'), 'generic city fabric must use the shared multi-cell Kowloon compound grammar');
+ok(chunks.includes('partitionKowloonCompounds({') && chunks.includes('buildKowloonCompoundCooperative({'), 'generic city fabric must use the shared multi-cell Kowloon compound grammar');
 ok(kowloon.includes('export function partitionKowloonCompounds') && kowloon.includes('export function analyzeKowloonCompound'), 'spawn and infinity must share one structural planning module');
 ok(chunks.includes('enrichment.initializePayload(chunk, payload)'), 'generic chunk must create its own progressive detail state before publication');
-ok(chunks.includes('const refine = (chunk, payload, budget) => enrichment.pump(chunk, payload, budget)'), 'generic chunk must expose resumable local refinement');
+ok(chunks.includes('const refine = (chunk, payload, budget) =>') && chunks.includes('return enrichment.pump(chunk, payload, budget);'), 'generic chunk must expose resumable local refinement');
 ok(!chunks.includes('requestAnimationFrame('), 'generic structural factory must not contain inner requestAnimationFrame sleeps');
 ok(streamer.includes('priority < bestPriority') && streamer.includes('serial < bestSerial'), 'outer streamer must converge nearest visible detail before fairness among equally-prioritized peers');
 ok(main.includes('refineAfterPrefetchReady: false'), 'live runtime must allow visible chunk detail before the full prefetch ring is warm');
-ok(streamer.includes('const canRefineBeforePrefetch = !refineAfterPrefetchReady') && streamer.includes('visibleRefinementAtStart') && streamer.includes('prefetchReadyAtPumpStart'), 'streamer must reserve a visible detail turn while farther structural prefetch continues');
-ok(streamer.includes('visibleOnly: !renderCompleteForRefinement || !prefetchReadyForRefinement'), 'unfinished render/prefetch work must not spend detail budget on invisible chunks');
+ok(streamer.includes('const canRefineBeforePrefetch = !refineAfterPrefetchReady') && streamer.includes('visibleRefinementAtStart') && streamer.includes('prefetchSettledAtPumpStart'), 'streamer must reserve a visible detail turn while farther structural prefetch continues');
+ok(streamer.includes('visibleOnly: !renderSettledForRefinement || !prefetchSettledForRefinement'), 'unfinished render/prefetch work must not spend detail budget on invisible chunks');
 ok(streamer.includes('minimumVisibleRefinementTurns') && streamer.includes('floorPendingChunks'), 'visible chunks must receive a minimum richness layer before deep nearest-chunk convergence');
 ok(streamer.includes('refineFirst = false') && streamer.includes('refinementBudgetMs = Infinity'), 'streamer pump must support a bounded refinement-first sprint slice');
 ok(playerCentered.includes("VISIBLE_STRUCTURE: 'visible-structure-sprint'")
@@ -63,7 +63,7 @@ ok(main.includes('const structuralOnly = authoredStructuralReadySiteIds.size < b
     && main.includes('structuralOnly,'), 'authored local work must stop jobs at structural-ready until every authored site has structure');
 ok(main.includes('_worldStreamPriorityLock') && main.includes('player neighborhood first-pass populated + structural prefetch warm'), 'shader/content background work must stay locked out until player-centered worldgen reaches steady state');
 ok(chunkEnrichment.includes("kind: 'sign'") && chunkEnrichment.includes("kind: 'graffiti'") && chunkEnrichment.includes("kind: 'pipe'") && chunkEnrichment.includes("kind: 'awning'") && chunkEnrichment.includes("kind: 'ivy'"), 'infinite chunk enrichment must carry the authored-world facade vocabulary');
-ok(chunkEnrichment.includes('pickMassiveNoisePair') && chunkEnrichment.includes('pickPoetryTag'), 'infinite signage/graffiti must use the packaged text corpus instead of placeholder labels');
+ok(chunkEnrichment.includes('createProceduralTextExciter') && chunkEnrichment.includes('textExciter.pairFor'), 'infinite signage/graffiti must use the packaged procedural text corpus instead of placeholder labels');
 
 if (failures.length) {
   console.error(`[progressive-runtime] FAIL (${failures.length})`);

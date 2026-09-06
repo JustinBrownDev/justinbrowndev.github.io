@@ -3,16 +3,11 @@ import * as THREE from '../vendor/three/three.module.js';
 import { QP } from '../runtime/main-quantitative-literals.js';
 import { SpatialHash2D } from '../city-performance.js';
 import { JUNK_BASE_KINDS, JUNK_WEAR_STATES, JUNK_SIZE_CLASSES } from '../content/junk-content.js';
-import { outwardRotationY } from '../systems/cardinal.js';
 
 export function createStreetPropsSystem(deps) {
     const {
-        CELL, CONFIG, JUNK_RENDER_CHUNK_SIZE, grid, scene, unitPlaneGeo, takeDynamicLight,
-        getStaticWorldOptimizer, registerAnimatedMaterial, getPoetryShort, getPoetryMedium, getPickPoetryTag,
-        addFissureCrack, addWantedPoster, hexToCss, jitterGeometry, laneOffset, makePixelTexture,
-        pick, pickCityNoisePair, pickInkColor, pickNetworkNoise, pickPaperColor,
-        pickRandomizedCuratedPair, pickRandomizedLorePair, pickTextFont, placeRealModel,
-        randRange, rng, unseededPick
+        JUNK_RENDER_CHUNK_SIZE, scene, getStaticWorldOptimizer,
+        jitterGeometry, laneOffset, pick, randRange, rng,
     } = deps;
 
 
@@ -70,8 +65,6 @@ export function createStreetPropsSystem(deps) {
      
      
      
-    let _plazaGlowMaterial = null;
-    let _thicketShadeMaterial = null;
 
      
      

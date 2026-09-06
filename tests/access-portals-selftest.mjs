@@ -15,7 +15,6 @@ import {
     assertSpatialTopologyGraph,
     compileSpatialTopologyGraph,
 } from '../world/spatial-topology.js';
-import { sidecarInputFromKowloon } from '../world/architecture/jweb-adapter.js';
 
 function boxReservation(id, connectorId, { x, z, halfX, halfZ, yMin = 0, yMax = 2.2, kind = 'portal-sweep' }) {
     return {
@@ -152,17 +151,6 @@ const anchors = accessAnchorsForBuildingPortals(portals, entityA.id);
 assert.equal(anchors.find(anchor => anchor.kind === 'main-entry')?.portalId, main.id);
 assert.equal(anchors.find(anchor => anchor.kind === 'service-entry')?.portalId, service.id);
 assert.equal(anchors.find(anchor => anchor.kind === 'main-entry')?.insideSpaceId, entrySpace.id);
-
-const sidecarInput = sidecarInputFromKowloon({
-    worldSeed: 7, chunk, entity: entityA,
-    physics: registrationPhysics,
-    signatureInstance: {
-        type: 'authored-test', entityId: entityA.id,
-        mainEntrance: { doorX: 99, doorZ: 99, side: 'south' },
-    },
-});
-assert.equal(sidecarInput.accessAnchors.find(anchor => anchor.kind === 'main-entry')?.portalId, mainDoor.id);
-assert.notEqual(sidecarInput.accessAnchors.find(anchor => anchor.kind === 'main-entry')?.x, 99, 'authored signature entrance must not override a physical Portal');
 
 // Portal aperture + protected clearance become downstream topology views.
 const payload = {

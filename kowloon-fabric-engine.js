@@ -11,7 +11,6 @@ import {
     HANGING_CITY_CLAIM_MARGIN,
     HANGING_CITY_VERTICAL_CLEARANCE,
     HANGING_CITY_UNDERSIDE_RESERVE,
-    bridgePortalMapForPlans,
     ceilingFrame,
     ceilingSourceCoordinates,
     maximumCavernFloors,
@@ -30,8 +29,6 @@ import { planSkybridgeArchitecture } from './world/skybridge-architecture.js';
 import { planFacadeRouteGallery } from './world/facade-route-gallery.js';
 import { carveJunctionYieldingParts } from './world/transport-junction-clearance.js';
 import {
-    CAVERN_LADDER_APERTURE_DEPTH,
-    CAVERN_LADDER_APERTURE_WIDTH,
     CAVERN_LADDER_SCHEMA,
     planCavernLadderCandidates,
     splitRectAroundAperture,
@@ -137,12 +134,6 @@ function mulberry32(seed) {
 
 function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 function key(c, r) { return `${c},${r}`; }
-function oppositeSide(side) {
-    if (side === 'north') return 'south';
-    if (side === 'south') return 'north';
-    if (side === 'west') return 'east';
-    return 'west';
-}
 
 
 
@@ -2241,13 +2232,7 @@ export function createKowloonFabricEngine({
             }
         }
         const primaryStairAxis = primaryStairCore.axis;
-        const primaryRunInterior = primaryStairCore.metrics.availableAlong;
-        const primaryCrossInterior = primaryStairCore.metrics.availableCross;
-        const primaryNominalStairFlight = primaryStairCore.segmentFlight;
-        const primaryStairAvailableRun = primaryStairCore.segmentFlight.requiredRun;
         const primaryActualStairClearWidth = primaryStairCore.clearWidth;
-        const primaryStairCrossOpening = primaryStairAxis === 'z' ? primaryStairCore.opening.sx : primaryStairCore.opening.sz;
-        const primaryStairRunOpening = primaryStairAxis === 'z' ? primaryStairCore.opening.sz : primaryStairCore.opening.sx;
         const primaryStairGapW = primaryStairCore.opening.sx;
         const primaryStairGapD = primaryStairCore.opening.sz;
         const primaryStairCx = primaryStairCore.opening.x;
@@ -2466,14 +2451,6 @@ export function createKowloonFabricEngine({
                 if (touchesFacade) return touchesFacade;
             }
             return candidates[0] ?? sameFloor[0] ?? null;
-        };
-        const roofIntersectsInteriorCore = module => {
-            const roofY = moduleRoofLocalY(module, floorH);
-            const roofRect = computeKowloonSlabRect(module, moduleByKey, module.floors, { roof: true, floorAlignment: slabFloorAlignment });
-            return reservationIntersectsBox(primaryStairReservation, {
-                x: roofRect.cx, z: roofRect.cz, sx: roofRect.width, sz: roofRect.depth,
-                yMin: roofY - 0.02, yMax: roofY + 0.02,
-            });
         };
         const roofNeedsInteriorCoreOpening = module => {
             const roofY = moduleRoofLocalY(module, floorH);
@@ -3787,13 +3764,7 @@ export function createKowloonFabricEngine({
             }
         }
         const primaryStairAxis = primaryStairCore.axis;
-        const primaryRunInterior = primaryStairCore.metrics.availableAlong;
-        const primaryCrossInterior = primaryStairCore.metrics.availableCross;
-        const primaryNominalStairFlight = primaryStairCore.segmentFlight;
-        const primaryStairAvailableRun = primaryStairCore.segmentFlight.requiredRun;
         const primaryActualStairClearWidth = primaryStairCore.clearWidth;
-        const primaryStairCrossOpening = primaryStairAxis === 'z' ? primaryStairCore.opening.sx : primaryStairCore.opening.sz;
-        const primaryStairRunOpening = primaryStairAxis === 'z' ? primaryStairCore.opening.sz : primaryStairCore.opening.sx;
         const primaryStairGapW = primaryStairCore.opening.sx;
         const primaryStairGapD = primaryStairCore.opening.sz;
         const primaryStairCx = primaryStairCore.opening.x;
@@ -4106,11 +4077,6 @@ export function createKowloonFabricEngine({
             const actualStairClearWidth = Math.min(stairPhysicalTruth.stair.widthSI, Math.max(0.56, crossInterior - 0.14));
             const stairCrossOpening = Math.min(crossInterior, Math.max(actualStairClearWidth + 0.16, actualStairClearWidth * 1.08));
             const stairRunOpening = Math.min(runInterior + 0.18, Math.max(stairAvailableRun + 0.18, 1.35));
-            const stairGapW = stairRunAxis === 'z' ? stairCrossOpening : stairRunOpening;
-            const stairGapD = stairRunAxis === 'z' ? stairRunOpening : stairCrossOpening;
-            const stairFrom = stairRunAxis === 'z' ? stairCz - stairAvailableRun * 0.5 : stairCx - stairAvailableRun * 0.5;
-            const stairTo = stairRunAxis === 'z' ? stairCz + stairAvailableRun * 0.5 : stairCx + stairAvailableRun * 0.5;
-            const stairHalfWidth = actualStairClearWidth * 0.5;
             // Match the exact arithmetic used by the final stair flight arrival.
             // JS can represent floors * floorH and (floors - 1) * floorH + floorH
             // a few ulps apart, which breaks the circulation contract's exact roof key.
@@ -4676,16 +4642,6 @@ export function createKowloonFabricEngine({
         };
     }
 
-    function runCompoundStepperToCompletion(stepper) {
-        let step = stepper.next();
-        while (!step.done) step = stepper.next();
-        return step.value;
-    }
-
-    function buildKowloonCompound(args) {
-        return runCompoundStepperToCompletion(buildKowloonCompoundSteps(args));
-    }
-
     async function buildKowloonCompoundCooperative(args) {
         yieldControl?.resetSlice?.();
         const stepper = buildKowloonCompoundSteps(args);
@@ -5178,7 +5134,7 @@ export function createKowloonFabricEngine({
         // A district landmark is a Kowloon compound with a landmark profile, not a
         // second tower builder.  The recurring identity only controls recipe data
         // (height/footprint/entrance/crown); wall, floor, stair, facade and collision
-        // publication all go through buildKowloonCompound().
+        // publication all go through the cooperative Kowloon compound stepper.
         const typeIndex = districtLandmarkTypes.indexOf(spec.type);
         const weird = chunk.weirdness.sampled;
         const floors = Math.min(12, 5 + typeIndex + Math.floor(weird * 3));

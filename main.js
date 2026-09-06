@@ -14,23 +14,12 @@ import * as BOOTSTRAP_NOISE from './noise-data-bootstrap.js';
 import { createWorldChunkStreamer } from './world-chunk-streamer.js';
 import { createKowloonFabricEngine } from './kowloon-fabric-engine.js';
 import { createNoiseRemixer } from './systems/noise-remix.js';
-import { fitCanvasText, drawCanvasLines } from './systems/canvas-text.js';
-import { createOrganicGeometryTools, remapWallUV, computeNotchedRects, appendBoxData, boxesIntersect } from './systems/geometry-utils.js';
-import {
-    WORLD_FORMAT_VERSION,
-    SPAWN_SINGULAR_TYPES,
-    createSpawnSingularManifest,
-    singularEntityId,
-    worldWeirdnessAt,
-} from './world-contract.js';
-import { WIKI_FALLBACK, WANTED_TAGLINES } from './content/wanted-content.js';
-import { ART_GALLERY_CATALOG, AS400_CONTENT } from './content/signature-content.js';
+import { createOrganicGeometryTools } from './systems/geometry-utils.js';
+import { createSpawnSingularManifest, worldWeirdnessAt } from './world-contract.js';
+import { WANTED_TAGLINES } from './content/wanted-content.js';
 import { BASE_GRAFFITI_TAGS } from './content/graffiti-content.js';
 import { MYTHOLOGY_FRAGMENTS, INFRA_LORE_FRAGMENTS, UNDERCITY_LORE_FRAGMENTS } from './content/lore-fragments.js';
-import { JUNK_BASE_KINDS, JUNK_WEAR_STATES, JUNK_SIZE_CLASSES } from './content/junk-content.js';
-import { TEXT_FONTS, PAPER_COLORS, INK_COLORS, SIGN_SHAPES, SIGN_FONTS, SIGN_BACKINGS } from './content/text-style.js';
 import { createSignatureBuildingSystem } from './world/signature-buildings.js';
-import { CELL_SIDE_DEFS, outwardRotationY } from './systems/cardinal.js';
 import { createAdornmentSystem } from './systems/adornment-assets.js';
 import { createSignageSystem } from './world/signage.js';
 import { createStreetPropsSystem } from './world/street-props.js';
@@ -44,7 +33,6 @@ import { WORLD_STREAMING_GEAR, choosePlayerCenteredStreamingGear, createPrefetch
 import { createDynamicLightPool } from './systems/dynamic-light-pool.js';
 import { createRuntimeLatencyTelemetry } from './systems/runtime-latency.js';
 import { createCooperativeBuildYield } from './systems/cooperative-build-yield.js';
-import { createMaterialRefinementController } from './systems/material-refinement.js';
 import { createMusicPlayer } from './systems/music-player.js';
 
  
@@ -64,8 +52,6 @@ let {
 
 const GRAFFITI_TAGS = Object.freeze([...BASE_GRAFFITI_TAGS, ...POETRY_SHORT_NOISE]);
 const {
-    clipNoiseText,
-    poetryShard,
     pickRandomizedCuratedPair,
     pickRandomizedLorePair,
     pickRandomizedGraffitiTag,
@@ -462,12 +448,13 @@ let staticWorldOptimizer = null;
 let _backgroundCompileSchedulingEnabled = false;
 let _worldStreamPriorityLock = true;
 let _sceneMaterialRevision = 0;
-let _bootstrapCompileStagingEnabled = false;
+let _bootstrapCompileStagingEnabled = true;
 const _bootstrapCompileStaged = new Map();
 const _bootstrapCompileQueue = [];
 const _bootstrapCompileQueued = new Set();
 const _bootstrapCompileGroups = new Map();
 const _bootstrapCompiledPrograms = new Set();
+const _bootstrapPreviewMaterials = new Map();
 let _bootstrapCompilePumpPromise = null;
 let _generationAddedRoots = null;
 function bootstrapMaterialProgramKey(material) {
@@ -501,8 +488,8 @@ function bootstrapMaterialProgramKey(material) {
         customKey,
     ].join('|');
 }
-function bootstrapProgramKey(leaf) {
-    const materials = Array.isArray(leaf.material) ? leaf.material : [leaf.material];
+function bootstrapProgramKey(leaf, materialOverride = leaf.material) {
+    const materials = Array.isArray(materialOverride) ? materialOverride : [materialOverride];
     const attrs = Object.keys(leaf.geometry?.attributes || {}).sort().join(',');
     const morph = Object.keys(leaf.geometry?.morphAttributes || {}).sort().join(',');
     return [
@@ -514,12 +501,90 @@ function bootstrapProgramKey(leaf) {
         materials.map(bootstrapMaterialProgramKey).join('||'),
     ].join('::');
 }
+
+function bootstrapPreviewColorHex(material) {
+    if (material?.color?.isColor) return material.color.getHex();
+    if (material?.emissive?.isColor) return material.emissive.getHex();
+    return 0x62666d;
+}
+
+function bootstrapPreviewMaterialFor(material, leaf) {
+    if (!material) return material;
+    const kind = leaf.isLine ? 'line' : leaf.isPoints ? 'points' : leaf.isSprite ? 'sprite' : 'mesh';
+    const color = bootstrapPreviewColorHex(material);
+    const opacity = Number.isFinite(Number(material.opacity)) ? Math.max(0, Math.min(1, Number(material.opacity))) : 1;
+    const key = [
+        kind,
+        color.toString(16),
+        opacity.toFixed(3),
+        material.transparent ? 1 : 0,
+        material.depthTest === false ? 0 : 1,
+        material.depthWrite === false ? 0 : 1,
+        Number(material.side) || 0,
+        material.vertexColors ? 1 : 0,
+        material.wireframe ? 1 : 0,
+        Number(material.size) || 1,
+    ].join('|');
+    const cached = _bootstrapPreviewMaterials.get(key);
+    if (cached) return cached;
+    const common = {
+        color,
+        opacity,
+        transparent: !!material.transparent || opacity < 1,
+        depthTest: material.depthTest !== false,
+        depthWrite: material.depthWrite !== false,
+        side: material.side,
+        vertexColors: !!material.vertexColors,
+        fog: material.fog !== false,
+        toneMapped: false,
+    };
+    let preview;
+    if (leaf.isLine) preview = new THREE.LineBasicMaterial(common);
+    else if (leaf.isPoints) preview = new THREE.PointsMaterial({
+        ...common,
+        size: Math.max(0.01, Number(material.size) || 1),
+        sizeAttenuation: material.sizeAttenuation !== false,
+    });
+    else if (leaf.isSprite) preview = new THREE.SpriteMaterial({
+        ...common,
+        rotation: Number(material.rotation) || 0,
+    });
+    else preview = new THREE.MeshBasicMaterial({ ...common, wireframe: !!material.wireframe });
+    preview.name = `bootstrap-color-proxy:${material.name || material.type || kind}`;
+    _bootstrapPreviewMaterials.set(key, preview);
+    return preview;
+}
+
+function bootstrapPreviewForLeaf(leaf, material) {
+    return Array.isArray(material)
+        ? material.map(item => bootstrapPreviewMaterialFor(item, leaf))
+        : bootstrapPreviewMaterialFor(material, leaf);
+}
+
+function releaseBootstrapPreviewMaterialsIfIdle() {
+    if (_bootstrapCompileStaged.size || _bootstrapCompileQueue.length || _bootstrapCompilePumpPromise) return false;
+    for (const material of _bootstrapPreviewMaterials.values()) material?.dispose?.();
+    _bootstrapPreviewMaterials.clear();
+    return true;
+}
+
 function stageBootstrapCompileLeaf(leaf) {
     if (!(leaf?.isMesh || leaf?.isLine || leaf?.isPoints || leaf?.isSprite) || !leaf.material) return;
-    const key = bootstrapProgramKey(leaf);
+    const existing = _bootstrapCompileStaged.get(leaf);
+    const originalMaterial = existing?.material ?? leaf.material;
+    const key = existing?.key ?? bootstrapProgramKey(leaf, originalMaterial);
     if (_bootstrapCompiledPrograms.has(key)) return;
-    if (!_bootstrapCompileStaged.has(leaf)) _bootstrapCompileStaged.set(leaf, leaf.visible);
-    leaf.visible = false;
+    if (!existing) {
+        _bootstrapCompileStaged.set(leaf, {
+            key,
+            visible: leaf.visible,
+            material: originalMaterial,
+        });
+        // Minimum visual truth publishes immediately. The cheap proxy preserves the
+        // object's authored color while the expensive real shader program compiles
+        // in the background; geometry no longer disappears behind a global gray gate.
+        leaf.material = bootstrapPreviewForLeaf(leaf, originalMaterial);
+    }
     let group = _bootstrapCompileGroups.get(key);
     if (!group) {
         group = { key, representative: leaf, leaves: new Set() };
@@ -573,7 +638,6 @@ function updateDetailObjectCulling() {
     const px = camera.position.x, pz = camera.position.z;
     for (const obj of detailCullObjects) {
         if (!obj.parent) { detailCullObjects.delete(obj); continue; }
-        if (obj.userData?.__bootstrapDeferredVisual) continue;
         const cx = obj.userData.detailCullCenterX ?? obj.position.x;
         const cz = obj.userData.detailCullCenterZ ?? obj.position.z;
         const dx = cx - px, dz = cz - pz;
@@ -671,7 +735,6 @@ function takeDynamicLight(threshold) {
  
  
  
-const TEST_STREAMING_RUNTIME = true;
 const runtimeLatency = createRuntimeLatencyTelemetry();
 const _testParams = new URLSearchParams(location.search);
 const TEST_FRAME_BUDGET_MS = Math.max(2, Math.min(12, Number(_testParams.get('frameBudget')) || (QUALITY === CONFIG.quality.desktop ? 7 : 5)));
@@ -687,18 +750,24 @@ let _testGenerationPhase = 'loading corpus';
 let _testGenerationDone = 0;
 let _testGenerationTotal = 0;
 let _testCompileBarrierActive = false;
-let _testCompiledSceneRevision = -1;
 let _testCompileTotalMs = 0;
 let _testCompileMaxMs = 0;
 let _testCompileCount = 0;
 
 async function runBootstrapCompilePump() {
     if (typeof renderer.compileAsync !== 'function') {
-        for (const [leaf, visible] of _bootstrapCompileStaged) if (leaf.parent) leaf.visible = visible;
+        for (const [leaf, staged] of _bootstrapCompileStaged) {
+            if (leaf.parent) {
+                leaf.material = staged.material;
+                leaf.visible = staged.visible;
+            }
+        }
         _bootstrapCompileStaged.clear();
         _bootstrapCompileQueue.length = 0;
         _bootstrapCompileQueued.clear();
         _bootstrapCompileGroups.clear();
+        _testRefinementActive = false;
+        releaseBootstrapPreviewMaterialsIfIdle();
         return;
     }
     while (_bootstrapCompileQueue.length) {
@@ -707,46 +776,56 @@ async function runBootstrapCompilePump() {
         const group = _bootstrapCompileGroups.get(key);
         if (!group) continue;
         let representative = group.representative;
-        if (!representative?.material || !representative.parent) {
-            representative = [...group.leaves].find(leaf => leaf?.material && leaf.parent) ?? null;
+        let representativeStage = representative ? _bootstrapCompileStaged.get(representative) : null;
+        if (!representative?.parent || !representativeStage) {
+            representative = [...group.leaves].find(leaf => leaf?.parent && _bootstrapCompileStaged.has(leaf)) ?? null;
+            representativeStage = representative ? _bootstrapCompileStaged.get(representative) : null;
             group.representative = representative;
         }
-        if (!representative) {
+        if (!representative || !representativeStage) {
             for (const leaf of group.leaves) _bootstrapCompileStaged.delete(leaf);
             _bootstrapCompileGroups.delete(key);
             continue;
         }
+        // Compile a detached representative with the final material. Live geometry
+        // remains visible with its cheap color proxy during the async compile.
+        const compileTarget = representative.clone(false);
+        compileTarget.material = representativeStage.material;
+        compileTarget.visible = true;
+        compileTarget.frustumCulled = false;
         const started = performance.now();
         _testCompileBarrierActive = true;
         try {
-            await renderer.compileAsync(representative, camera, scene);
+            await renderer.compileAsync(compileTarget, camera, scene);
         } catch (error) {
-            console.warn('[shader-prewarm] program-family compile failed; publishing staged leaves for normal lazy compile', error);
+            console.warn('[shader-prewarm] program-family compile failed; restoring real material for normal lazy compile', error);
         } finally {
             _testCompileBarrierActive = false;
         }
         const ms = performance.now() - started;
         runtimeLatency.record('shader.compile-program', ms, {
             type: representative.type,
-            material: Array.isArray(representative.material) ? 'array' : representative.material?.type,
-            stagedLeaves: group.leaves.size,
+            material: Array.isArray(representativeStage.material) ? 'array' : representativeStage.material?.type,
+            proxyVisibleLeaves: group.leaves.size,
         });
         _testCompileCount++;
         _testCompileTotalMs += ms;
         _testCompileMaxMs = Math.max(_testCompileMaxMs, ms);
         _bootstrapCompiledPrograms.add(key);
         for (const leaf of group.leaves) {
-            const originalVisible = _bootstrapCompileStaged.get(leaf);
-            if (leaf.parent && originalVisible !== undefined) {
-                leaf.visible = originalVisible;
+            const staged = _bootstrapCompileStaged.get(leaf);
+            if (leaf.parent && staged) {
+                leaf.material = staged.material;
+                leaf.visible = staged.visible;
                 staticWorldOptimizer?.markDirtyObject(leaf);
             }
             _bootstrapCompileStaged.delete(leaf);
         }
         _bootstrapCompileGroups.delete(key);
-        if (ms > 16) console.warn(`[latency] shader.compile-program ${ms.toFixed(1)}ms · ${representative.type} · ${Array.isArray(representative.material) ? 'material[]' : representative.material?.type || 'material'} · ${group.leaves.size} staged leaf/leaves`);
+        if (ms > 16) console.warn(`[latency] shader.compile-program ${ms.toFixed(1)}ms · ${representative.type} · ${Array.isArray(representativeStage.material) ? 'material[]' : representativeStage.material?.type || 'material'} · ${group.leaves.size} color-proxy leaf/leaves`);
         await new Promise(resolve => requestAnimationFrame(resolve));
     }
+    if (!_bootstrapCompileStaged.size) _testRefinementActive = false;
 }
 
 function scheduleBootstrapCompilePump() {
@@ -754,6 +833,7 @@ function scheduleBootstrapCompilePump() {
     if (!_bootstrapCompileQueue.length || _bootstrapCompilePumpPromise) return _bootstrapCompilePumpPromise;
     _bootstrapCompilePumpPromise = runBootstrapCompilePump().finally(() => {
         _bootstrapCompilePumpPromise = null;
+        releaseBootstrapPreviewMaterialsIfIdle();
         if (_bootstrapCompileQueue.length) scheduleBootstrapCompilePump();
     });
     return _bootstrapCompilePumpPromise;
@@ -874,10 +954,6 @@ function testBootstrapCanStand(x, z) {
     return grid[row]?.[col] === false;
 }
 
-const bootstrapPreviewMaterial = new THREE.MeshBasicMaterial({ color: 0x171a20, fog: true });
-let bootstrapPreviewOverrideActive = true;
-let materialRefinementController = null;
-let materialRefinementReprioritizeAt = 0;
 let _testBootstrapLast = performance.now();
 function testBootstrapRenderLoop(now) {
     if (!_testBootstrapActive) return;
@@ -932,18 +1008,14 @@ function testBootstrapRenderLoop(now) {
     updateDynamicLightCulling();
     renderer.info.reset();
     const _renderStarted = performance.now();
-    const _previousOverrideMaterial = scene.overrideMaterial;
-    if (bootstrapPreviewOverrideActive) scene.overrideMaterial = bootstrapPreviewMaterial;
     renderer.render(scene, camera);
-    scene.overrideMaterial = _previousOverrideMaterial;
     const _renderMs = performance.now() - _renderStarted;
-    runtimeLatency.record('render.bootstrap', _renderMs, { phase: _testGenerationPhase, sceneChildren: scene.children.length, drawCalls: renderer.info.render.calls, triangles: renderer.info.render.triangles, compileActive: _testCompileBarrierActive });
+    runtimeLatency.record('render.bootstrap', _renderMs, { phase: _testGenerationPhase, sceneChildren: scene.children.length, drawCalls: renderer.info.render.calls, triangles: renderer.info.render.triangles, compileActive: _testCompileBarrierActive, colorProxyPending: _bootstrapCompileStaged.size });
     if (_renderMs > 8) console.warn(`[latency] render.bootstrap ${_renderMs.toFixed(1)}ms · phase=${_testGenerationPhase} · scene=${scene.children.length} · calls=${renderer.info.render.calls} · compile=${_testCompileBarrierActive ? 'yes' : 'no'}`);
     _testBootstrapFrame++;
 }
 requestAnimationFrame(testBootstrapRenderLoop);
-_bootstrapCompileStagingEnabled = true;
-console.log(`[stream-perf] progressive runtime active; frame work budget=${TEST_FRAME_BUDGET_MS}ms; authoritative runtime=main.js`);
+console.log(`[stream-perf] progressive color runtime active; frame work budget=${TEST_FRAME_BUDGET_MS}ms; authored geometry publishes with color proxies while final shaders compile`);
 window.__streamingDebug = {
     mode: 'full-fidelity-progressive',
     frameBudgetMs: TEST_FRAME_BUDGET_MS,
@@ -1055,13 +1127,6 @@ function pickCityNoisePair(rng, worldX, worldZ) {
     const { col, row } = worldToCell(worldX, worldZ);
     if (rng() < QP[253]) return stylizeNoisePair(rng, pickFromPools(rng, NOISE_DISTRICTS[districtForCell(col, row)]));
     return pickAnyNoisePair(rng);
-}
-
- 
- 
- 
-function pickNetworkNoise(rng) {
-    return stylizeNoisePair(rng, pickFromPools(rng, NOISE_DISTRICTS.network));
 }
 
  
@@ -1239,9 +1304,6 @@ const {
 function pick(arr) { return arr[Math.floor(rng() * arr.length)]; }
 function randRange(min, max) { return min + rng() * (max - min); }
 const { jitterGeometry, buildOrganicTowerGeometry } = createOrganicGeometryTools(randRange);
-function pickTextFont() { return pick(TEXT_FONTS); }
-function pickPaperColor() { return pick(PAPER_COLORS); }
-function pickInkColor() { return pick(INK_COLORS); }
 
 const _weightedPickCache = new WeakMap();
 function weightedPick(weights) {
@@ -1366,7 +1428,6 @@ const GRID_ROWS = CONFIG.maze.rows;
  
 const BLOCK = CONFIG.maze.blockSize;
 const STREET = CONFIG.maze.streetWidth;
-const CELL = BLOCK;
 function axisPitch(i) { return i % QP[540] === QP[541] ? STREET : BLOCK; }
 const colSize = Array.from({ length: GRID_COLS }, (_, i) => axisPitch(i));
 const rowSize = Array.from({ length: GRID_ROWS }, (_, i) => axisPitch(i));
@@ -1412,51 +1473,6 @@ function worldToCellIndex(x, z) {
  
  
  
-function makeCrackTexture() {
-    const data = CONFIG.realData.djiaMilestones;
-    const years = data.map(([y]) => y);
-    const logs = data.map(([, v]) => Math.log10(v));
-    const yMin = Math.min(...years), yMax = Math.max(...years);
-    const lMin = Math.min(...logs), lMax = Math.max(...logs);
-    return makePixelTexture((ctx, w, h) => {
-        ctx.fillStyle = '#141414';
-        ctx.fillRect(QP[561], QP[562], w, h);
-        ctx.strokeStyle = '#050505';
-        ctx.lineWidth = QP[563];
-        ctx.beginPath();
-        data.forEach(([year, val], i) => {
-            const px = ((year - yMin) / (yMax - yMin)) * w;
-            const py = h - ((Math.log10(val) - lMin) / (lMax - lMin)) * h;
-            if (i === QP[564]) ctx.moveTo(px, py); else ctx.lineTo(px, py);
-        });
-        ctx.stroke();
-        ctx.strokeStyle = '#3a3a3a';
-        ctx.lineWidth = QP[565];
-        ctx.stroke();
-    }, QP[566], QP[567]);
-}
-
- 
- 
- 
-let _topologyStainTexture = null;
-function makeTopologyStainTexture() {
-    if (_topologyStainTexture) return _topologyStainTexture;
-    const points = CONFIG.realData.elevationsFt;
-    const vals = points.map(([, ft]) => ft);
-    const min = Math.min(...vals), max = Math.max(...vals);
-    _topologyStainTexture = makePixelTexture((ctx, w, h) => {
-        points.forEach(([name, ft], i) => {
-            const t0 = i / points.length, t1 = (i + QP[568]) / points.length;
-            const norm = (ft - min) / (max - min);
-            const shade = Math.floor(QP[569] + norm * QP[570]);
-            const tint = name.startsWith('Illinois') ? [shade, shade + QP[571], shade] : [shade, shade, shade + QP[572]];
-            ctx.fillStyle = `rgb(${tint[QP[573]]},${tint[QP[574]]},${tint[QP[575]]})`;
-            ctx.fillRect(QP[576], Math.floor(h * (QP[577] - t1)), w, Math.ceil(h * (t1 - t0)) + QP[578]);
-        });
-    }, QP[579], QP[580]);
-    return _topologyStainTexture;
-}
 
  
  
@@ -1480,22 +1496,6 @@ function localRng(seed) {
         t ^= t + Math.imul(t ^ (t >>> QP[592]), t | QP[593]);
         return ((t ^ (t >>> QP[594])) >>> QP[595]) / QP[596];
     };
-}
-
- 
- 
- 
- 
- 
-function runWithStableStreamingRng(key, work) {
-    const previous = _rngSource;
-    const local = localRng(hashString32(`${SEED}:stream:${key}`));
-    _rngSource = local;
-    try {
-        return work();
-    } finally {
-        _rngSource = previous;
-    }
 }
 
 function createStableStreamingRngStepper(key, iteratorFactory) {
@@ -1579,72 +1579,6 @@ function sharedBuildingFacadeMaterial({ map = null, color = null } = {}) {
         _buildingFacadeMaterialCache.set(key, material);
     }
     return material;
-}
-const wantedPosterMeshes = [];
-
-function makeWantedTexture(title, subtitle, tagline1 = 'KNOWLEDGE OF THIS TOPIC', tagline2 = 'REWARD: PEACE OF MIND') {
-     
-     
-     
-    const paper = pickPaperColor();
-    const ink = pickInkColor();
-    const font = pickTextFont();
-    const borderWidth = Math.round(randRange(QP[643], QP[644]));
-    return makePixelTexture((ctx, w, h) => {
-        ctx.fillStyle = paper;
-        ctx.fillRect(QP[645], QP[646], w, h);
-        ctx.strokeStyle = ink;
-        ctx.lineWidth = borderWidth;
-        ctx.strokeRect(QP[647], QP[648], w - QP[649], h - QP[650]);
-        ctx.fillStyle = ink;
-        ctx.textAlign = 'center';
-        ctx.font = `bold 15px ${font}`;
-        ctx.fillText('WANTED', w / QP[651], QP[652]);
-        ctx.font = `bold 9px ${font}`;
-        ctx.fillText(title, w / QP[653], h / QP[654], w - QP[655]);
-        ctx.font = `8px ${font}`;
-        ctx.fillText(subtitle, w / QP[656], h / QP[657] + QP[658], w - QP[659]);
-        ctx.font = `7px ${font}`;
-        ctx.fillText(tagline1, w / QP[660], h - QP[661]);
-        ctx.fillText(tagline2, w / QP[662], h - QP[663]);
-    }, QP[664], QP[665]);
-}
-
-function addWantedPoster(x, z, rotY, placement = null) {
-    const [title, subtitle] = rng() < QP[667]
-        ? pick(WIKI_FALLBACK)
-        : pickCityNoisePair(rng, x, z);
-    const [tagline1, tagline2] = pickRandomizedWantedTaglines();
-    const tex = makeWantedTexture(title, subtitle, tagline1, tagline2);
-    const plane = new THREE.Mesh(
-        new THREE.PlaneGeometry(randRange(QP[668], QP[669]), randRange(QP[670], QP[671])),
-        new THREE.MeshStandardMaterial({ map: tex, roughness: QP[672] })
-    );
-    const posterH = plane.geometry.parameters.height;
-    const wallTop = placement?.wallHeight ?? QP[673];
-    const minCenter = QP[674] + posterH / QP[675];
-    const maxCenter = Math.max(minCenter, Math.min(QP[676], wallTop - QP[677] - posterH / QP[678]));
-    plane.position.set(x, randRange(minCenter, maxCenter), z);
-    plane.rotation.y = rotY;
-    scene.add(plane);
-    wantedPosterMeshes.push(plane);
-    return QP[679];
-}
-
- 
- 
- 
- 
-function addFissureCrack(x, z) {
-    const crack = new THREE.Mesh(
-        new THREE.PlaneGeometry(randRange(QP[683], QP[684]), randRange(QP[685], QP[686])),
-        new THREE.MeshBasicMaterial({ map: makeCrackTexture() })
-    );
-    crack.rotation.x = -Math.PI / QP[687];
-    crack.rotation.z = randRange(QP[688], Math.PI * QP[689]);
-    crack.position.set(x, QP[690], z);
-    scene.add(crack);
-    return QP[691];
 }
 
 function makeGroundTexture() {
@@ -1821,35 +1755,14 @@ const {
     propColliders,
     propCandidatesNear,
 } = createStreetPropsSystem({
-    CELL,
-    CONFIG,
     JUNK_RENDER_CHUNK_SIZE,
-    grid,
     scene,
-    unitPlaneGeo,
-    takeDynamicLight,
     getStaticWorldOptimizer: () => staticWorldOptimizer,
-    getPoetryShort: () => POETRY_SHORT_NOISE,
-    getPoetryMedium: () => POETRY_MEDIUM_NOISE,
-    getPickPoetryTag: () => pickPoetryTag,
-    addFissureCrack,
-    addWantedPoster,
-    hexToCss,
     jitterGeometry,
     laneOffset,
-    makePixelTexture,
     pick,
-    pickCityNoisePair,
-    pickInkColor,
-    pickNetworkNoise,
-    pickPaperColor,
-    pickRandomizedCuratedPair,
-    pickRandomizedLorePair,
-    pickTextFont,
-    placeRealModel,
     randRange,
     rng,
-    unseededPick,
 });
 // Unified building geometry is the only inter-site collision authority.
 // Synthetic maze-seal walls/fence planes are intentionally gone: if there is
@@ -2328,25 +2241,27 @@ function pumpUnifiedSpawnFabricRefinement({ maxSteps = QP[1024], maxMillis = QP[
     return { steps, pending: unifiedSpawnFabricRefinementQueue.length, ms: performance.now() - started };
 }
 
-function shouldDeferBootstrapVisualPhase(site, phase) {
+function shouldMarkBootstrapSpeculativeVisualPhase(site, phase) {
     if (!phase) return false;
     if (!site.signatureType) return phase === 'facade-sign' || phase === 'facade-signs';
     if (phase === 'floor' || phase === 'rooftop' || phase.endsWith('-module') || phase === 'signature-futurePlaceholder') return false;
     return phase !== 'complete';
 }
 
-function deferBootstrapVisualRoots(roots) {
-    let hidden = 0;
+function markBootstrapSpeculativeVisualRoots(roots, phase = '') {
+    let marked = 0;
     for (const root of roots) {
         root?.traverse?.(obj => {
-            if (!(obj.isMesh || obj.isLine || obj.isPoints || obj.isSprite) || !obj.visible || obj.userData?.__bootstrapDeferredVisual) return;
-            obj.userData.__bootstrapDeferredVisual = true;
-            obj.userData.__bootstrapDeferredVisible = obj.visible;
-            obj.visible = false;
-            hidden++;
+            if (!(obj.isMesh || obj.isLine || obj.isPoints || obj.isSprite) || !obj.visible) return;
+            // Visual candidates are allowed to be seen before later arbitration.
+            // If a later step replaces or removes them, that visible correction is
+            // intentional computational texture; traversal/physics authority is not speculative.
+            obj.userData.__bootstrapSpeculativeVisual = true;
+            obj.userData.__bootstrapSpeculativePhase = String(phase || '');
+            marked++;
         });
     }
-    return hidden;
+    return marked;
 }
 
 function buildingSiteDistanceSqToPlayer(site) {
@@ -2357,12 +2272,6 @@ function buildingSiteDistanceSqToPlayer(site) {
         best = Math.min(best, dx * dx + dz * dz);
     }
     return best;
-}
-
-function sortBuildingSitesNearestToPlayer(sites) {
-     
-     
-    sites.sort((a, b) => buildingSiteDistanceSqToPlayer(b) - buildingSiteDistanceSqToPlayer(a) || b.id - a.id);
 }
 
 const authoredBuildStart = performance.now();
@@ -2382,7 +2291,6 @@ const authoredBuildingJobs = buildingSites.map(site => {
         lastPhase: 'pending',
     };
 });
-const authoredBuildingJobBySiteId = new Map(authoredBuildingJobs.map(job => [job.site.id, job]));
 authoredCompletedSiteIds = new Set();
 authoredStructuralReadySiteIds = new Set();
 const authoredFailedSiteIds = new Set();
@@ -2492,10 +2400,10 @@ function stepAuthoredBuildingJob(job) {
     } finally {
         addedRoots = _generationAddedRoots;
         _generationAddedRoots = null;
-        deferredVisualPhase = !!(step && !step.done && shouldDeferBootstrapVisualPhase(site, step.value?.phase));
+        deferredVisualPhase = !!(step && !step.done && shouldMarkBootstrapSpeculativeVisualPhase(site, step.value?.phase));
         if (deferredVisualPhase) {
-            const hidden = deferBootstrapVisualRoots(addedRoots);
-            if (hidden) runtimeLatency.record('visual.defer-bootstrap', QP[1015], { siteId: site.id, type: site.signatureType || 'ordinary', phase: step.value?.phase, hidden });
+            const marked = markBootstrapSpeculativeVisualRoots(addedRoots, step.value?.phase);
+            if (marked) runtimeLatency.record('visual.publish-speculative', QP[1015], { siteId: site.id, type: site.signatureType || 'ordinary', phase: step.value?.phase, marked });
         }
     }
 
@@ -2614,53 +2522,6 @@ while ([...minimumSafeAuthoredSiteIds].some(id => !authoredStructuralReadySiteId
 const minimumSafeFailedCount = [...minimumSafeAuthoredSiteIds].filter(id => authoredFailedSiteIds.has(id)).length;
 console.log(`[stream-perf] minimum-safe authored neighborhood settled: ${minimumSafeAuthoredSiteIds.size - minimumSafeFailedCount} collision-ready, ${minimumSafeFailedCount} locally skipped; ${authoredBuildingJobs.length}/${buildingSites.length} authored content jobs continue in live background`);
 
- 
- 
- 
- 
- 
-function validateFacadeOccupancy() {
-     
-     
-     
-     
-     
-     
-     
-     
-     
-    let facadeBoundsViolations = QP[4724];
-    for (const facade of buildingFacades) {
-        for (const r of facade.occupied) {
-            if (r.vMin < facade.yMin - QP[4725] || r.vMax > facade.yMax + QP[4726]) {
-                facadeBoundsViolations++;
-                if (facadeBoundsViolations <= QP[4727]) {
-                    console.warn(`[testing] FAILED facade occupancy bounds: facade #${facade.id} (${facade.exposure}) yRange=[${facade.yMin.toFixed(QP[4728])},${facade.yMax.toFixed(QP[4729])}] but a reservation spans vMin=${r.vMin.toFixed(QP[4730])} vMax=${r.vMax.toFixed(QP[4731])}`);
-                }
-            }
-        }
-    }
-    console.log(`[testing] facade occupancy bounds self-test: ${facadeBoundsViolations === QP[4732] ? 'PASS' : `FAIL (${facadeBoundsViolations} violations)`} across ${buildingFacades.length} facades`);
-
-     
-     
-     
-     
-    let projectionIntersections = QP[4733];
-    const validationCandidates = [];
-    for (const box of exteriorDecorationVolumes) {
-        exteriorDecorationVolumeIndex.queryBounds({
-            minX: box.xMin, maxX: box.xMax,
-            minZ: box.zMin, maxZ: box.zMax,
-        }, validationCandidates);
-        for (const other of validationCandidates) {
-            if (other.__projectionId <= box.__projectionId) continue;
-            if (boxesIntersect(box, other)) projectionIntersections++;
-        }
-    }
-    console.log(`[testing] world-space projection intersection self-test: ${projectionIntersections === QP[4734] ? 'PASS' : `FAIL (${projectionIntersections} intersecting pairs)`} across ${exteriorDecorationVolumes.length} registered projections`);
-}
-
 let rooftopCatwalkCount = QP[1015];
 let hangingBridgeCount = QP[1015];
 let authoredPostStructureStarted = false;
@@ -2668,11 +2529,6 @@ let authoredPostStructureFinished = false;
 let authoredPostStructureResolve;
 const authoredPostStructureCompletePromise = new Promise(resolve => { authoredPostStructureResolve = resolve; });
 const authoredPostStructureJobs = [];
-
-function* authoredPostOneShotSteps(phase, work) {
-    yield { phase: `${phase}-ready` };
-    return work();
-}
 
 function* buildUnifiedAuthoredRelationshipSteps() {
     let guarded = 0, hanging = 0, skipped = 0;
@@ -2880,108 +2736,11 @@ function wallDirections(c, r) {
  
  
  
-function wallAnchorForOpenCell(c, r, w, standoff = QP[5035], tangentMargin = QP[5036]) {
-    const bc = c + w.dx, br = r + w.dz;
-    const fp = footprintOf[br]?.[bc];
-    if (!fp) return null;
-    const outwardX = -w.dx, outwardZ = -w.dz;
-    let wallX = fp.cx, wallZ = fp.cz, tx = QP[5037], tz = QP[5038], lo, hi;
-    const { x: openX, z: openZ } = cellToWorld(c, r);
-    if (w.dx !== QP[5039]) {
-        wallX = fp.cx - w.dx * fp.hwx;
-        tx = QP[5040]; tz = QP[5041];
-        lo = Math.max(fp.cz - fp.hwz, openZ - rowHalf(r)) + tangentMargin;
-        hi = Math.min(fp.cz + fp.hwz, openZ + rowHalf(r)) - tangentMargin;
-        if (lo > hi) return null;
-        wallZ = randRange(lo, hi);
-    } else {
-        wallZ = fp.cz - w.dz * fp.hwz;
-        tx = QP[5042]; tz = QP[5043];
-        lo = Math.max(fp.cx - fp.hwx, openX - colHalf(c)) + tangentMargin;
-        hi = Math.min(fp.cx + fp.hwx, openX + colHalf(c)) - tangentMargin;
-        if (lo > hi) return null;
-        wallX = randRange(lo, hi);
-    }
-    return {
-        x: wallX + outwardX * standoff,
-        z: wallZ + outwardZ * standoff,
-        wallX, wallZ, tx, tz,
-        normalX: outwardX, normalZ: outwardZ,
-        rotY: outwardRotationY(outwardX, outwardZ),
-        wallHeight: fp.height,
-        tangentLo: lo, tangentHi: hi,
-        building: fp,
-    };
-}
-
-function clearSpotAlongWall(anchor, radius) {
-    for (const shift of [QP[5044], QP[5045], QP[5046], QP[5047], QP[5048]]) {
-        let px = anchor.x + anchor.tx * shift, pz = anchor.z + anchor.tz * shift;
-        if (anchor.tx) px = THREE.MathUtils.clamp(px, anchor.tangentLo, anchor.tangentHi);
-        if (anchor.tz) pz = THREE.MathUtils.clamp(pz, anchor.tangentLo, anchor.tangentHi);
-        const blocked = propCandidatesNear(px, pz, radius + QP[5049]).some(p => {
-            const dx = px - p.x, dz = pz - p.z;
-            return dx * dx + dz * dz < (radius + p.radius + QP[5050]) ** QP[5051];
-        });
-        if (!blocked) return { ...anchor, x: px, z: pz };
-    }
-    return anchor;
-}
-
- 
- 
- 
- 
-function findCornerDirs(c, r) {
-    const walls = wallDirections(c, r);
-    for (let i = QP[5052]; i < walls.length; i++) {
-        for (let j = i + QP[5053]; j < walls.length; j++) {
-            const a = walls[i], b = walls[j];
-            if (a.dx * b.dx + a.dz * b.dz === QP[5054]) return [a, b];  
-        }
-    }
-    return null;
-}
-
- 
-
- 
- 
- 
- 
-function throughAxis(c, r) {
-    const openX = grid[r]?.[c - QP[5055]] === false && grid[r]?.[c + QP[5056]] === false;
-    const openZ = grid[r - QP[5057]]?.[c] === false && grid[r + QP[5058]]?.[c] === false;
-    if (openX && !openZ) return 'x';
-    if (openZ && !openX) return 'z';
-    return null;
-}
-
- 
- 
- 
- 
  
 function laneOffset(spread, axis) {
     if (!axis) return [randRange(-spread, spread), randRange(-spread, spread)];
     const side = (rng() < QP[5059] ? QP[5060] : QP[5061]) * randRange(QP[5062], QP[5063]) * spread;
     return axis === 'x' ? [randRange(-spread, spread), side] : [side, randRange(-spread, spread)];
-}
-
- 
- 
- 
- 
-function findClearSpot(cx, cz, radius, tryOffsets) {
-    for (const [ox, oz] of tryOffsets) {
-        const px = cx + ox, pz = cz + oz;
-        const blocked = propCandidatesNear(px, pz, radius + QP[5064]).some(p => {
-            const dx = px - p.x, dz = pz - p.z;
-            return dx * dx + dz * dz < (radius + p.radius + QP[5065]) ** QP[5066];
-        });
-        if (!blocked) return { x: px, z: pz };
-    }
-    return { x: cx + tryOffsets[QP[5067]][QP[5068]], z: cz + tryOffsets[QP[5069]][QP[5070]] };  
 }
 
 flushHorizontalPlaneBatches(); // unified fabric owns all building plates
@@ -3330,7 +3089,7 @@ function maybeReleaseBackgroundEnrichment() {
      
      
      
-    if (!(worldStats.localPrefetchRing.complete || worldStats.localPrefetchRing.terminalSettled) || !_spawnDistrictStructuresComplete) return false;
+    if (!(worldStats.localPrefetchRing.settled) || !_spawnDistrictStructuresComplete) return false;
     backgroundEnrichmentReleased = true;
     authoredAssetLaneOpened = true;
     adornmentLoadQueue.setConcurrency(CONFIG.streaming.adornmentConcurrency);
@@ -3527,6 +3286,8 @@ function maybeLogWorldDiagnostics(now) {
         + ' detailAvg=' + (refinement.avgStepMs ?? 0).toFixed(2) + 'ms'
         + ' detailWorst=' + (refinement.worstStepMs ?? 0).toFixed(2) + 'ms'
         + ' commitVisibleAvg=' + (throughput.avgCommitToVisibleMs ?? 0).toFixed(1) + 'ms'
+        + ' | paint proxy=' + _bootstrapCompileStaged.size
+        + ' compileQ=' + _bootstrapCompileQueue.length
         + ' | chunks q=' + (states.queued ?? 0)
         + ' building=' + (states.building ?? 0)
         + ' ready=' + (states.ready ?? 0)
@@ -3548,12 +3309,12 @@ function maybeLogWorldDiagnostics(now) {
 let worldStreamingGear = 'bootstrap';
 function worldStreamingGearFor(stats = worldChunkStreamer?.stats()) {
     return choosePlayerCenteredStreamingGear({
-        // Strict `complete` remains the actual geometry/physics truth. Presentation
-        // gears may also advance when every missing slot is terminally FAILED, so a
-        // local generation error cannot deadlock global color/quality forever.
-        renderComplete: !!(stats?.localRenderRing.complete || stats?.localRenderRing.terminalSettled),
-        visibleFirstPassComplete: !!(stats?.localRenderRefinement?.floorComplete || stats?.localRenderRefinement?.terminalFloorSettled),
-        prefetchComplete: !!(stats?.localPrefetchRing.complete || stats?.localPrefetchRing.terminalSettled),
+        // Strict `complete` remains geometry/physics truth. Streaming gears use
+        // the separate `settled` liveness contract so terminal local failures cannot
+        // deadlock unrelated color, enrichment, or quality restoration.
+        renderSettled: !!stats?.localRenderRing.settled,
+        visibleFirstPassSettled: !!stats?.localRenderRefinement?.floorSettled,
+        prefetchSettled: !!stats?.localPrefetchRing.settled,
     });
 }
 
@@ -3567,13 +3328,6 @@ function updateWorldStreamingGear(stats = worldChunkStreamer?.stats()) {
             + ' · prefetch=' + (stats?.localPrefetchRing.ready ?? 0) + '/' + (stats?.localPrefetchRing.total ?? 0)
             + ' · authored-near=' + playerNearAuthoredSpawn());
         worldStreamingGear = next;
-    }
-    if (next === WORLD_STREAMING_GEAR.VISIBLE_FIRST_PASS && bootstrapPreviewOverrideActive) {
-        // The global bootstrap material may not hide streamed enrichment once the
-        // structural render ring exists. From here on, nearby procedural detail
-        // must be visibly inspectable as it publishes.
-        bootstrapPreviewOverrideActive = false;
-        console.log('[stream-perf] published 5x5 shell ring · global preview override released for visible streamed enrichment');
     }
     if (next === WORLD_STREAMING_GEAR.LOCAL_DEEPEN && _worldStreamPriorityLock) {
         _worldStreamPriorityLock = false;
@@ -3774,11 +3528,8 @@ function animate(now = performance.now()) {
         updateWebGradient(camera.position.z, camera.position.y, elapsedTime);
         updateRain(delta);
         const _freecamRenderStarted = performance.now();
-        const _freecamOverrideMaterial = scene.overrideMaterial;
-        if (bootstrapPreviewOverrideActive) scene.overrideMaterial = bootstrapPreviewMaterial;
         composer.render();
-        scene.overrideMaterial = _freecamOverrideMaterial;
-        runtimeLatency.record('render.full', performance.now() - _freecamRenderStarted, { mode: 'freecam', sceneChildren: scene.children.length, drawCalls: renderer.info.render.calls, preview: bootstrapPreviewOverrideActive });
+        runtimeLatency.record('render.full', performance.now() - _freecamRenderStarted, { mode: 'freecam', sceneChildren: scene.children.length, drawCalls: renderer.info.render.calls, colorProxyPending: _bootstrapCompileStaged.size });
         return;
     }
 
@@ -3811,26 +3562,9 @@ function animate(now = performance.now()) {
     updateWebGradient(camera.position.z, camera.position.y, elapsedTime);
     updateRain(delta);
 
-    if (materialRefinementController && playerNearAuthoredSpawn()) {
-        if (now >= materialRefinementReprioritizeAt) {
-            const priorityResult = materialRefinementController.reprioritize();
-            if (priorityResult.sorted) runtimeLatency.record('material.refinement-priority', priorityResult.ms, priorityResult);
-            materialRefinementReprioritizeAt = now + 750;
-        }
-        const refinementResult = materialRefinementController.pump({ maxItems: QUALITY === CONFIG.quality.desktop ? 6 : 3, maxReveals: 1, maxMillis: 2 });
-        if (refinementResult.restored) runtimeLatency.record('material.refinement-pump', refinementResult.ms, { ...refinementResult, ...materialRefinementController.stats() });
-        if (materialRefinementController.stats().complete && _testRefinementActive) {
-            _testRefinementActive = false;
-            restoreFinalRenderQuality();
-            console.log('[perf] authored material refinement complete', materialRefinementController.stats());
-        }
-    }
     const _runtimeRenderStarted = performance.now();
-    const _runtimeOverrideMaterial = scene.overrideMaterial;
-    if (bootstrapPreviewOverrideActive) scene.overrideMaterial = bootstrapPreviewMaterial;
     composer.render();
-    scene.overrideMaterial = _runtimeOverrideMaterial;
-    runtimeLatency.record('render.full', performance.now() - _runtimeRenderStarted, { mode: 'player', sceneChildren: scene.children.length, drawCalls: renderer.info.render.calls, preview: bootstrapPreviewOverrideActive, materialPending: materialRefinementController?.stats().pending ?? 0 });
+    runtimeLatency.record('render.full', performance.now() - _runtimeRenderStarted, { mode: 'player', sceneChildren: scene.children.length, drawCalls: renderer.info.render.calls, colorProxyPending: _bootstrapCompileStaged.size, compileGroupsPending: _bootstrapCompileQueue.length });
 
      
      
@@ -3982,39 +3716,12 @@ void (async function continuePostHandoffWorldRefinement() {
         yieldControl: (phase, done, total) => testYieldIfNeeded(phase, done, total),
     });
     const staticWorldStats = staticWorldOptimizer.getStats();
-    materialRefinementController = createMaterialRefinementController({
-        scene,
-        camera,
-        previewMaterial: bootstrapPreviewMaterial,
-        dynamicMaterials: animatedMaterials,
-    });
     console.log(`[perf] background static-world refinement ${(performance.now() - staticOptimizeStart).toFixed(QP[5426])}ms wall-clock:`, staticWorldStats);
-    while (true) {
-        const materialGateStats = worldChunkStreamer.stats();
-        const materialRing = materialGateStats.localRenderRing;
-        if (materialRing.complete || materialRing.terminalSettled) {
-            if (!materialRing.complete) {
-                console.warn('[perf] material refinement proceeding around terminal failed visible chunks', {
-                    published: materialRing.published,
-                    physicsAuthoritative: materialRing.physicsAuthoritative,
-                    failed: materialRing.failed,
-                    total: materialRing.total,
-                });
-            }
-            break;
-        }
-        testStatus('warming playable chunk ring', materialRing.ready, materialRing.total);
-        await testNextPaint();
-    }
-    const materialRefinementStart = materialRefinementController.prepare();
-    bootstrapPreviewOverrideActive = false;
-    materialRefinementReprioritizeAt = performance.now();
-    if (materialRefinementStart.complete) {
-        _testRefinementActive = false;
-        restoreFinalRenderQuality();
-    }
-    console.log('[perf] playable chunk ring settled · staged authored material refinement started', materialRefinementStart);
-    console.log(`[perf] spawn refinement complete at ${bootElapsed()} since page start; live world remained authoritative throughout`);
+    // Color is not a post-handoff gate anymore. Authored leaves have already been
+    // visible with color-preserving proxies; the compile pump swaps each program
+    // family to its final material independently whenever it is ready.
+    scheduleBootstrapCompilePump();
+    console.log(`[perf] spawn structural refinement complete at ${bootElapsed()} since page start; final material programs continue deepening independently`);
     scheduleTraversalValidation();
 })().catch(error => {
     console.error('[runtime] post-handoff world refinement failed without taking down the live player runtime', error);

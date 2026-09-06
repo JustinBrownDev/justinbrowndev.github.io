@@ -789,3 +789,76 @@ Where it was only explanatory prose, live comments/diagnostics now use concrete 
 - generated egress and hanging-city parity remain one connected component with zero unreachable spaces/transport nodes;
 - authored-place tests protect identity and route clearance instead of minimum object density;
 - pre-existing regex/audit debt is differential-gated rather than silently rewritten into this performance cut.
+
+## Cut 21Z — District Arterials + Material Handwriting Integration
+
+21Z extends the route hierarchy established in 21S/21T beyond one local building cluster. A major hanging route can now carry one deterministic **district arterial identity** across a three-chunk macrocell. Local route composition remains responsible for the actual buildings and crossings inside each chunk; the district record supplies shared intent so those local decisions can participate in one longer piece of infrastructure.
+
+This does not create an abstract path that tunnels through mass. Catwalks and bridges remain exterior. Buildings participate only through the already-proven city-exchange / PUBLIC_THROUGH transfer system, and every exposed chunk-boundary stitch remains a short canonical exterior seam.
+
+### Shared district route intent
+
+`world/district-route-continuity.js` publishes a deterministic district route record with:
+
+- one stable `districtRouteId` across the participating three-chunk run;
+- an x/z route axis and shared district centerline;
+- a common preferred structural band for hanging circulation;
+- district entry / interior / exit roles;
+- route strength and corridor width intent.
+
+The city route composer uses that record as a preference, not an unconditional override. Candidate paths are rewarded for running along the shared centerline, spanning useful chunk territory and reaching the correct district boundaries. A local route may still branch away, and non-participating chunks retain the normal 21S/21T route logic.
+
+Route-driven massing consumes the same district identity before final section reconciliation. Towers on the arterial can therefore become collectors or transfer-serving segments because the city needs them, instead of receiving a district label only after their massing has already been fixed.
+
+### Long supported runs, short exposed seams
+
+The morphology remains intentionally asymmetric:
+
+```text
+building-supported gallery / sky street
+        ===========================
+                                  \
+                                   short exterior catwalk/seam
+                                                        \
+                                            ==========================
+                                            next supported route run
+```
+
+Major galleries can run the length of a building compound, wrap corners and continue across multiple participating buildings. They are encouraged to spend most of their length alongside/supporting building mass. They may peel away where the route requires it, but long unsupported point-to-point slabs are not promoted into district streets.
+
+At a loaded chunk boundary, matching district gallery mouths outrank unrelated nearby roof mouths. The boundary stitch itself remains catwalk-scale; the district route does **not** make the seam deck as wide as the long gallery. If no compatible district mouth exists, the established clear-roof seam fallback remains valid rather than deleting an otherwise legitimate cross-chunk connection.
+
+### District participation propagates into buildings
+
+A route-driven building now carries the district arterial id, axis and role into district/building context. This lets frontage, program and architectural-expression systems recognize that the building sits on an actual long-throughput route rather than merely having a coincidental bridge nearby.
+
+The existing 21U/21V frontage rule remains authoritative: public-facing programs may prefer the real circulation floor, including elevated sky-street levels. 21Z does not invent storefronts or program tenants merely because a district route passes nearby.
+
+### 21Y material handwriting is consumed, not replaced
+
+The 21Y material-handwriting module remains the visual material policy. 21Z does not introduce a competing palette system and does not change `world/architecture/material-handwriting.js`.
+
+Instead, route/gallery/bridge planners pass structurally meaningful context into the existing handwriting interface:
+
+- architectural family;
+- ground vs ceiling field;
+- real route-width / structural bulk;
+- compatible host program macro family where available.
+
+Facade-gallery and skybridge wrapper geometry therefore receives the same restrained family palette, hanging-field shift and bulk response already used by 21Y stair and program-macro architecture. When two sides of a cross-chunk district seam agree on a material family, the short seam inherits that family so the arterial does not visually reset at the chunk boundary.
+
+This makes district continuity readable through **structure + material character**, rather than reintroducing the sign/clutter density removed by 21X.
+
+### 21Z regression expectations
+
+- one deterministic three-chunk district run shares route id, axis, centerline and preferred band;
+- local route composition prefers the district centerline when a useful participating path exists without turning the entire connected component into one arterial;
+- route-driven massing receives district participation before bridge elevation is finalized;
+- matching district facade galleries outrank an unrelated closer roof mouth at a chunk boundary;
+- short cross-chunk decks remain catwalk-scale and canonical;
+- clear-roof seam eligibility remains backward-compatible even before post-commit reachability flags are republished;
+- facade galleries require proven reachability before they can own a cross-chunk mouth;
+- gallery and bridge wrapper geometry uses the existing 21Y material-handwriting function without changing its palette policy;
+- 21R transfer-serving towers, 21T long-gallery/junction rules, 21U believable plans, 21V program frontage, 21W expression families and 21X lean first paint remain intact;
+- generated egress, hanging-city parity and cavern circulation remain connected with zero unreachable required spaces/transport nodes;
+- canonical stair kernels, Building Plan paths, bridge/catwalk slabs and cross-chunk seam decks remain the only traversal/collision authorities.

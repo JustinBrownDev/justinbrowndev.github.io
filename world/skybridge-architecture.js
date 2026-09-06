@@ -1,3 +1,5 @@
+import { applyArchitectureMaterialHandwriting } from './architecture/material-handwriting.js';
+
 export const SKYBRIDGE_ARCHITECTURE_SCHEMA = 'jweb.skybridge-architecture.v1';
 
 function finite(value, fallback = 0) { const n = Number(value); return Number.isFinite(n) ? n : fallback; }
@@ -31,6 +33,7 @@ function diagonalBetween(axis, a, b, fixed, thickness, metadata) {
 export function planSkybridgeArchitecture({
   id = 'bridge', axis = 'x', from = 0, to = 1, fixedCoord = 0, y = 0, width = 1,
   family = 'simple-guarded', widthClass = 'local', stableKey = null, supportModeHint = null,
+  field = 'ground', materialFamilyHint = null, materialWeightScale = null,
 } = {}) {
   const start = finite(from), end = finite(to);
   const lo = Math.min(start, end), hi = Math.max(start, end);
@@ -215,14 +218,23 @@ export function planSkybridgeArchitecture({
     crossBeam(along, y - 0.48, beamT * 1.15, w + 0.50);
   }
 
+  const materialFamily = String(materialFamilyHint || family);
+  const materialHandwriting = applyArchitectureMaterialHandwriting({
+    family: materialFamily,
+    metal,
+    concrete,
+    field,
+    weightScale: materialWeightScale ?? (1 + Math.max(0, w - 1.2) * 0.18),
+  });
   return Object.freeze({
     schema: SKYBRIDGE_ARCHITECTURE_SCHEMA,
     family,
+    materialFamily,
     widthClass,
     span,
     width: w,
-    metal: Object.freeze(metal),
-    concrete: Object.freeze(concrete),
+    metal: materialHandwriting.metal,
+    concrete: materialHandwriting.concrete,
     parts: metal.length + concrete.length,
     supportMode,
     supportParts,

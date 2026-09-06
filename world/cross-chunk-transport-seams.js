@@ -122,12 +122,25 @@ function transportSurfaces(physics) {
 }
 
 function isSkyStreetSurface(surface) {
-  return surface?.kind === 'clear-roof-street-layer'
-    && Number.isFinite(Number(surface.x))
+  const kind = surface?.kind;
+  if (kind !== 'clear-roof-street-layer' && kind !== 'hanging-facade-route-gallery') return false;
+  // Preserve the established roof-mouth contract: clear roof street layers are
+  // canonical seam candidates even before their post-commit reachability flag is
+  // republished. New facade galleries are optional route additions and therefore
+  // must already be proven reachable before they can own a cross-chunk mouth.
+  if (kind === 'hanging-facade-route-gallery' && surface?.reachable === false) return false;
+  return Number.isFinite(Number(surface.x))
     && Number.isFinite(Number(surface.z))
     && Number.isFinite(Number(surface.y))
     && Number(surface.hx) > 0
     && Number(surface.hz) > 0;
+}
+
+function districtRouteIdentity(surface) {
+  const direct = surface?.districtRouteId;
+  if (direct) return String(direct);
+  const network = String(surface?.networkKey ?? '');
+  return network.startsWith('district-route:') ? network : null;
 }
 
 function overlap1d(a0, a1, b0, b1) {
@@ -202,6 +215,12 @@ function skyCandidate({ adjacency, firstPhysics, secondPhysics, chunkSize, maxGa
   if (mouthBlocked(secondPhysics, secondSurface, secondPoint, adjacency.axis)) return null;
 
   const tie = stableHash(`${adjacency.edgeKey}:${firstSurface.id}:${secondSurface.id}`) / 0xffffffff;
+  const firstDistrictRouteId = districtRouteIdentity(firstSurface);
+  const secondDistrictRouteId = districtRouteIdentity(secondSurface);
+  const districtRouteMatch = !!firstDistrictRouteId && firstDistrictRouteId === secondDistrictRouteId;
+  const firstMaterialFamily = firstSurface?.materialFamily ? String(firstSurface.materialFamily) : null;
+  const secondMaterialFamily = secondSurface?.materialFamily ? String(secondSurface.materialFamily) : null;
+  const materialFamilyHint = firstMaterialFamily && firstMaterialFamily === secondMaterialFamily ? firstMaterialFamily : null;
   return {
     firstSurface,
     secondSurface,
@@ -211,8 +230,11 @@ function skyCandidate({ adjacency, firstPhysics, secondPhysics, chunkSize, maxGa
     firstPoint,
     secondPoint,
     boundaryCoordinate,
-    // Gap dominates; then prefer the broadest shared roof mouth; stable hash is
-    // only a final deterministic tie-breaker.
+    districtRouteMatch,
+    districtRouteId: districtRouteMatch ? firstDistrictRouteId : null,
+    materialFamilyHint,
+    // Geometry remains the fallback ranking. If any compatible pair belongs to
+    // the same district arterial, the planner selects from that set first.
     score: gap * 1000 + rise * 100 - overlap.size * 10 + tie * 0.001,
   };
 }
@@ -262,10 +284,12 @@ export function planCrossChunkSkyStreetSeam({
       if (candidate) candidates.push(candidate);
     }
   }
-  candidates.sort((a, b) => a.score - b.score
+  const districtCandidates = candidates.filter(candidate => candidate.districtRouteMatch);
+  const ranked = districtCandidates.length ? districtCandidates : candidates;
+  ranked.sort((a, b) => a.score - b.score
     || String(a.firstSurface.id).localeCompare(String(b.firstSurface.id))
     || String(a.secondSurface.id).localeCompare(String(b.secondSurface.id)));
-  const best = candidates[0];
+  const best = ranked[0];
   if (!best) return null;
 
   const clearWidth = best.overlap.size;
@@ -292,6 +316,11 @@ export function planCrossChunkSkyStreetSeam({
     secondChunkKey: adjacency.second.key,
     firstSurfaceId: best.firstSurface.id,
     secondSurfaceId: best.secondSurface.id,
+    firstSurfaceKind: best.firstSurface.kind,
+    secondSurfaceKind: best.secondSurface.kind,
+    districtRouteId: best.districtRouteId,
+    networkKey: best.districtRouteId ?? adjacency.edgeKey,
+    materialFamilyHint: best.materialFamilyHint ?? null,
     from,
     to,
     fixedCoord,
@@ -305,7 +334,7 @@ export function planCrossChunkSkyStreetSeam({
     secondPoint: Object.freeze({ ...best.secondPoint, y: Number(best.secondSurface.y) }),
     ownerAuthority: 'canonical-cardinal-pair',
     physicalGeometry: 'short-level-seam-deck',
-    invariant: 'one canonical owner stitches compatible hanging roof streets across a loaded cardinal boundary; long ground catwalk fallback is forbidden',
+    invariant: 'one canonical owner stitches compatible hanging roof streets or facade galleries across a loaded cardinal boundary; matching district arterials are preferred and long ground catwalk fallback is forbidden',
   });
 }
 

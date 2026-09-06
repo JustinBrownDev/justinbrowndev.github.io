@@ -281,8 +281,11 @@ function buildBuildingContext({
     const servicePressure = clamp01(profile.service * 0.54 + edgeService * 0.40 + (role === 'service-edge' ? 0.20 : 0));
     const quietPressure = clamp01(profile.quiet * 0.58 + edgeQuiet * 0.40 + (role === 'quiet-edge' ? 0.18 : 0));
     const mechanicalPressure = clamp01(profile.mechanical * 0.68 + servicePressure * 0.28);
-    const connector = clamp01(connectorPressure / 1.5);
-    const bridgePressure = clamp01(profile.bridge * 0.66 + connector * 0.34);
+    const routeMassing = entity?.routeDrivenMassing ?? null;
+    const routePressure = clamp01(routeMassing?.score ?? 0);
+    const districtArterial = routeMassing?.districtArterial === true && !!routeMassing?.districtRouteId;
+    const connector = clamp01(Math.max(connectorPressure / 1.5, districtArterial ? routePressure * 0.95 : 0));
+    const bridgePressure = clamp01(profile.bridge * 0.60 + connector * 0.28 + (districtArterial ? routePressure * 0.22 : 0));
     const spectaclePriority = clamp01(
         profile.spectacle * 0.42
         + (spectacleCorridor ? 0.28 : 0)
@@ -297,10 +300,11 @@ function buildBuildingContext({
         + mechanicalPressure * 0.14
         - quietPressure * 0.20
     );
-    const frontageCharacter = quietPressure >= 0.72 ? 'quiet'
-        : servicePressure >= 0.70 ? 'service'
-            : commercialPressure >= 0.68 ? 'commercial-public'
-                : edge === edges.pedestrian ? 'pedestrian-active' : 'mixed';
+    const frontageCharacter = quietPressure >= 0.82 ? 'quiet'
+        : districtArterial && routePressure >= 0.58 ? 'circulation-frontage'
+            : servicePressure >= 0.70 ? 'service'
+                : commercialPressure >= 0.68 ? 'commercial-public'
+                    : edge === edges.pedestrian ? 'pedestrian-active' : 'mixed';
     const rooflineTarget = anchor ? 'anchor-crown'
         : secondaryLandmark ? 'secondary-step'
             : quietPressure >= 0.72 ? 'calm'
@@ -327,6 +331,11 @@ function buildBuildingContext({
         mechanicalPressure,
         bridgePressure,
         connectorPressure: connector,
+        routePressure,
+        districtArterial,
+        districtRouteId: districtArterial ? routeMassing.districtRouteId : null,
+        districtRouteAxis: districtArterial ? routeMassing.districtRouteAxis ?? null : null,
+        districtRouteRole: districtArterial ? routeMassing.districtRouteRole ?? null : null,
         spectaclePriority,
         visualIntensity,
         courtyardVoidTendency: block.courtyardVoidTendency,

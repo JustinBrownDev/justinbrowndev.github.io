@@ -123,7 +123,39 @@ function pathGeometry(path, geometry) {
   return { span: Math.hypot(last.x - first.x, last.z - first.z), absorbed };
 }
 
-function primaryPath(component, stableKey, geometry) {
+function districtPathAffinity(path, geometry, intent) {
+  if (!intent?.active || !path?.nodes?.length) return 0;
+  const centers = path.nodes.map(siteId => centerOf(geometryFor(geometry, siteId))).filter(Boolean);
+  if (centers.length < 2) return 0;
+  const first = centers[0], last = centers.at(-1);
+  const alongDelta = Math.abs(intent.axis === 'x' ? last.x - first.x : last.z - first.z);
+  const crossDelta = Math.abs(intent.axis === 'x' ? last.z - first.z : last.x - first.x);
+  const alignment = alongDelta / Math.max(1, alongDelta + crossDelta);
+  const halfWidth = Math.max(2, finite(intent.corridorHalfWidth, 10));
+  const centerline = finite(intent.centerline, 0);
+  const proximity = centers.reduce((sum, center) => {
+    const cross = intent.axis === 'x' ? center.z : center.x;
+    return sum + Math.max(0, 1 - Math.abs(cross - centerline) / halfWidth);
+  }, 0) / centers.length;
+  const spanTarget = Math.max(8, finite(intent.chunkSize, 64) * 0.56);
+  const spanCoverage = Math.min(1, alongDelta / spanTarget);
+  const bounds = intent.chunkBounds ?? null;
+  let boundaryCoverage = 0;
+  if (bounds) {
+    const axisMin = intent.axis === 'x' ? finite(bounds.minX, NaN) : finite(bounds.minZ, NaN);
+    const axisMax = intent.axis === 'x' ? finite(bounds.maxX, NaN) : finite(bounds.maxZ, NaN);
+    const firstAlong = intent.axis === 'x' ? first.x : first.z;
+    const lastAlong = intent.axis === 'x' ? last.x : last.z;
+    if (Number.isFinite(axisMin) && Number.isFinite(axisMax)) {
+      const reach = Math.max(3, finite(intent.chunkSize, 64) * 0.22);
+      const low = Math.min(firstAlong, lastAlong), high = Math.max(firstAlong, lastAlong);
+      boundaryCoverage = ((low <= axisMin + reach ? 1 : 0) + (high >= axisMax - reach ? 1 : 0)) * 0.5;
+    }
+  }
+  return Math.max(0, Math.min(1, proximity * 0.46 + alignment * 0.28 + spanCoverage * 0.18 + boundaryCoverage * 0.08));
+}
+
+function primaryPath(component, stableKey, geometry, districtRouteIntent = null) {
   if (component.nodes.length < 2) return { nodes: [...component.nodes], edges: [], absorbed: [], span: 0 };
   let best = null;
   for (let i = 0; i < component.nodes.length; i++) {
@@ -133,18 +165,26 @@ function primaryPath(component, stableKey, geometry) {
       const geo = pathGeometry(path, geometry);
       const endpointDegree = (component.adjacency.get(path.nodes[0])?.size ?? 0) + (component.adjacency.get(path.nodes.at(-1))?.size ?? 0);
       const tie = stableHash(`${stableKey}:${path.nodes.join('>')}`);
-      // Long district paths still dominate, but a path whose direct desire would
-      // physically run through intermediate tower mass is especially valuable:
-      // those towers can become route segments instead of obstacles.
-      const score = path.edges.length * 100 + geo.absorbed.length * 42 + Math.min(36, geo.span * 0.20) - endpointDegree * 2;
-      if (!best || score > best.score || (score === best.score && tie < best.tie)) best = { ...path, ...geo, score, tie };
+      const districtAffinity = districtPathAffinity(path, geometry, districtRouteIntent);
+      // Local path length still matters, but an active district arterial may
+      // choose a slightly shorter route when it stays on the shared centerline,
+      // runs along the district axis, and actually traverses the chunk.
+      const score = path.edges.length * 100
+        + geo.absorbed.length * 42
+        + Math.min(36, geo.span * 0.20)
+        + districtAffinity * 260
+        - endpointDegree * 2;
+      if (!best || score > best.score || (score === best.score && tie < best.tie)) best = { ...path, ...geo, districtAffinity, score, tie };
     }
   }
   if (!best) return { nodes: [...component.nodes.slice(0, 1)], edges: [], absorbed: [], span: 0 };
   // Keep hierarchy, but permit a genuinely long thoroughfare. The ceiling city
   // gets the longest cap because its primary gallery is meant to read as a street
   // threading several buildings, not a two-building landing pair.
-  const cap = 7 + (stableHash(`${stableKey}:primary-span-cap`) % 4);
+  const districtArterial = districtRouteIntent?.active && finite(best.districtAffinity, 0) >= 0.34;
+  const cap = districtArterial
+    ? 11 + (stableHash(`${stableKey}:district-primary-span-cap`) % 4)
+    : 7 + (stableHash(`${stableKey}:primary-span-cap`) % 4);
   if (best.edges.length <= cap) return best;
   const maxStart = best.edges.length - cap;
   const centerStart = Math.floor(maxStart * 0.5);
@@ -152,7 +192,8 @@ function primaryPath(component, stableKey, geometry) {
   const start = Math.max(0, Math.min(maxStart, centerStart + jitter));
   const sliced = { ...best, edges: best.edges.slice(start, start + cap), nodes: best.nodes.slice(start, start + cap + 1) };
   const geo = pathGeometry(sliced, geometry);
-  return { ...sliced, ...geo };
+  const districtAffinity = districtPathAffinity(sliced, geometry, districtRouteIntent);
+  return { ...sliced, ...geo, districtAffinity };
 }
 
 /**
@@ -160,7 +201,10 @@ function primaryPath(component, stableKey, geometry) {
  * individual bridge chooses its elevation or architecture. Buildings on the
  * primary path are intentional route segments; crossing spans remain exterior.
  */
-export function composeCityRoutes({ bridgePlans = [], field = 'ground', stableKey = 'city-routes', siteGeometry = null } = {}) {
+export function composeCityRoutes({
+  bridgePlans = [], field = 'ground', stableKey = 'city-routes', siteGeometry = null,
+  districtRouteIntent = null,
+} = {}) {
   const plans = Array.isArray(bridgePlans) ? bridgePlans : [];
   const geometry = normalizedGeometry(siteGeometry);
   const components = componentsFor(plans);
@@ -171,12 +215,21 @@ export function composeCityRoutes({ bridgePlans = [], field = 'ground', stableKe
   let primaryEdges = 0, branchEdges = 0, lateralThroughputSites = 0;
 
   components.forEach((component, componentIndex) => {
-    const primary = primaryPath(component, `${stableKey}:component:${componentIndex}`, geometry);
+    const primary = primaryPath(component, `${stableKey}:component:${componentIndex}`, geometry, districtRouteIntent);
     const primaryEdgeIds = new Set(primary.edges.map(edgeKey));
     const routeHash = stableHash(`${stableKey}:${field}:${componentIndex}:${primary.nodes.join('|')}`);
     const routeId = `${stableKey}:route:${componentIndex}`;
-    const preferredBandNorm = 0.5 + (unit(routeHash, 8) - 0.5) * 0.20;
-    const routeStrength = Math.min(1, 0.40 + primary.edges.length * 0.095 + component.edges.length * 0.025 + primary.absorbed.length * 0.055);
+    const districtArterial = !!districtRouteIntent?.active
+      && primary.edges.length >= 2
+      && finite(primary.districtAffinity, 0) >= 0.34;
+    const districtRouteId = districtArterial ? String(districtRouteIntent.routeId) : null;
+    const preferredBandNorm = districtArterial
+      ? finite(districtRouteIntent.preferredBandNorm, 0.5)
+      : 0.5 + (unit(routeHash, 8) - 0.5) * 0.20;
+    const localStrength = Math.min(1, 0.40 + primary.edges.length * 0.095 + component.edges.length * 0.025 + primary.absorbed.length * 0.055);
+    const routeStrength = districtArterial
+      ? Math.min(1, Math.max(localStrength, finite(districtRouteIntent.strength, 0.78) * (0.74 + finite(primary.districtAffinity, 0) * 0.26)))
+      : localStrength;
 
     const primaryDegree = new Map();
     for (const edge of primary.edges) {
@@ -196,6 +249,11 @@ export function composeCityRoutes({ bridgePlans = [], field = 'ground', stableKe
         absorbedInterveningTower: absorbed.has(siteId),
         routeEdgeCount: primary.edges.length,
         routeSpan: primary.span,
+        districtRouteId,
+        districtArterial,
+        districtRouteAxis: districtArterial ? districtRouteIntent.axis : null,
+        districtRouteAffinity: districtArterial ? finite(primary.districtAffinity, 0) : 0,
+        districtRouteRole: districtArterial ? districtRouteIntent.routeRole : null,
       }));
     }
 
@@ -215,6 +273,10 @@ export function composeCityRoutes({ bridgePlans = [], field = 'ground', stableKe
         cityRouteAbsorbedTowerCount: primary.absorbed.length,
         intermediateTowerRoute: primaryRole && primary.nodes.length >= 3,
         hangingLateralThroughput: primaryRole && siteGalleryDemand,
+        districtRouteId: primaryRole ? districtRouteId : null,
+        districtArterial: primaryRole && districtArterial,
+        districtRouteAxis: primaryRole && districtArterial ? districtRouteIntent.axis : null,
+        districtRouteAffinity: primaryRole && districtArterial ? finite(primary.districtAffinity, 0) : 0,
       });
       for (const endpoint of [edge.aEndpoint, edge.bEndpoint]) {
         if (!endpoint) continue;
@@ -225,6 +287,9 @@ export function composeCityRoutes({ bridgePlans = [], field = 'ground', stableKe
         endpoint.cityRouteStrength = edge.cityRouteStrength;
         endpoint.cityRouteSpan = primary.span;
         endpoint.absorbedInterveningTower = absorbed.has(siteId);
+        endpoint.districtRouteId = primaryRole ? districtRouteId : null;
+        endpoint.districtArterial = primaryRole && districtArterial;
+        endpoint.districtRouteAxis = primaryRole && districtArterial ? districtRouteIntent.axis : null;
       }
       if (primaryRole) primaryEdges++; else branchEdges++;
     }
@@ -241,6 +306,11 @@ export function composeCityRoutes({ bridgePlans = [], field = 'ground', stableKe
       routeStrength,
       routeSpan: primary.span,
       field,
+      districtRouteId,
+      districtArterial,
+      districtRouteAxis: districtArterial ? districtRouteIntent.axis : null,
+      districtRouteAffinity: districtArterial ? finite(primary.districtAffinity, 0) : 0,
+      districtRouteRole: districtArterial ? districtRouteIntent.routeRole : null,
     }));
   });
 
@@ -256,6 +326,8 @@ export function composeCityRoutes({ bridgePlans = [], field = 'ground', stableKe
     absorbedInterveningTowerCount: absorbedInterveningTowerIds.size,
     siteRouteDemands: Object.freeze([...siteDemand.values()]),
     lateralThroughputSites,
-    invariant: 'district route intent prefers long multi-building spines; towers lying in the direct desire line are intentionally absorbed as transfer segments',
+    districtRouteIntent: districtRouteIntent ? Object.freeze({ ...districtRouteIntent }) : null,
+    districtArterialRoutes: routeSummaries.filter(route => route.districtArterial).length,
+    invariant: 'local route intent prefers long multi-building spines; participating district arterials share route identity, direction and vertical band while towers in the direct desire line remain eligible transfer segments',
   });
 }

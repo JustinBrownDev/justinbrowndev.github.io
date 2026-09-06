@@ -106,9 +106,12 @@ export function assignBridgeSectionBands({
   fallbackFloors = field === 'ceiling' ? 6 : 5,
   stableKey = 'sectional-bridge-bands',
   siteGeometry = null,
+  districtRouteIntent = null,
 } = {}) {
   const plans = Array.isArray(bridgePlans) ? bridgePlans : [];
-  const cityRouteComposition = composeCityRoutes({ bridgePlans: plans, field, stableKey: `${stableKey}:composer`, siteGeometry });
+  const cityRouteComposition = composeCityRoutes({
+    bridgePlans: plans, field, stableKey: `${stableKey}:composer`, siteGeometry, districtRouteIntent,
+  });
   const fh = Math.max(0.25, finite(floorHeight, 3.15));
   const cy = Math.max(fh * 2, finite(ceilingY, 34.02));
   const midY = cy * 0.5;
@@ -137,13 +140,14 @@ export function assignBridgeSectionBands({
     const weird = clamp(weirdness, 0, 1);
     let targetNorm;
     if (plan.cityRouteRole === 'primary-spine' && Number.isFinite(Number(plan.cityRoutePreferredBandNorm))) {
-      const routeJitter = (unit(hash ^ 0x6d2b79f5, 3) - 0.5) * 0.055;
+      const districtArterial = plan.districtArterial === true && !!plan.districtRouteId;
+      const routeJitter = districtArterial ? 0 : (unit(hash ^ 0x6d2b79f5, 3) - 0.5) * 0.055;
       const routeCount = Math.max(0, Math.floor(Number(plan.cityRoutePrimaryEdgeCount) || 0));
       const routeOrder = Math.max(0, Math.floor(Number(plan.routeCompositionOrder) || 0));
-      // Normal routes hold a coherent band. Very long synthetic/district routes
-      // are allowed to step between broad vertical sections so one arterial does
-      // not collapse the whole city onto a single altitude.
-      const sectionShift = routeCount > 12
+      // A district arterial keeps one shared band across participating chunks so
+      // boundary seams can meet level. Extremely long local/synthetic routes may
+      // still step between broad vertical sections.
+      const sectionShift = !districtArterial && routeCount > 12
         ? (unit(stableHash(`${stableKey}:route-section:${plan.cityRouteId}:${Math.floor(routeOrder / 6)}`), 4) - 0.5) * 0.52
         : 0;
       targetNorm = Number(plan.cityRoutePreferredBandNorm) + routeJitter + sectionShift;

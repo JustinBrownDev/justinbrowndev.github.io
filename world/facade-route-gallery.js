@@ -1,3 +1,5 @@
+import { applyArchitectureMaterialHandwriting } from './architecture/material-handwriting.js';
+
 export const FACADE_ROUTE_GALLERY_SCHEMA = 'jweb.facade-route-gallery.v3';
 
 function finite(value, fallback = 0) { const n = Number(value); return Number.isFinite(n) ? n : fallback; }
@@ -102,10 +104,10 @@ function hugIntervalsForFace({ side, faceCoord, footprintModules, tangentLo, tan
  * explicit and braces attach only where real building mass exists.
  */
 export function planFacadeRouteGallery({
-  id = 'gallery', routeId = null, endpoint = null, module = null, field = 'ceiling',
+  id = 'gallery', routeId = null, districtRouteId = null, endpoint = null, module = null, field = 'ceiling',
   width = 3.0, widthClass = 'sky-street', floorHeight = 3.15, stableKey = id,
   hostBounds = null, footprintModules = null, routeStrength = 0.7, routeSpan = 0,
-  crossingWidth = null, junctionTangents = [],
+  crossingWidth = null, junctionTangents = [], materialFamilyHint = null,
 } = {}) {
   if (!endpoint?.resolved || !module || !['north', 'south', 'west', 'east'].includes(endpoint.side)) return null;
   const y = finite(endpoint.y, NaN);
@@ -140,6 +142,9 @@ export function planFacadeRouteGallery({
   const outerCoord = face.faceCoord + outward * (normalGap + w);
   const innerCoord = face.faceCoord + outward * normalGap;
   const hash = stableHash(`${stableKey}:${routeId ?? ''}:${id}:${side}`);
+  const familyHash = districtRouteId
+    ? stableHash(`${districtRouteId}:gallery-family:${field}:${widthClass}`)
+    : hash;
   const supportMode = field === 'ceiling' || unit(hash, 3) < 0.64 ? 'hung-from-above' : 'braced-from-below';
   const supportRise = supportMode === 'hung-from-above'
     ? Math.max(2.2, Math.min(4.4, finite(floorHeight, 3.15) * (0.82 + unit(hash, 9) * 0.30)))
@@ -152,9 +157,9 @@ export function planFacadeRouteGallery({
   const huggedLength = hugged.reduce((sum, interval) => sum + Math.max(0, interval.hi - interval.lo), 0);
   const unsupportedLength = Math.max(0, length - huggedLength);
   const hugCoverage = length > 0 ? huggedLength / length : 0;
-  const architectureFamily = galleryArchitectureFamily({ field, widthClass, hugCoverage, hash });
+  const architectureFamily = galleryArchitectureFamily({ field, widthClass, hugCoverage, hash: familyHash });
   const metadata = {
-    facadeRouteGallery: true, galleryId: id, cityRouteId: routeId, widthClass,
+    facadeRouteGallery: true, galleryId: id, cityRouteId: routeId, districtRouteId, widthClass,
     supportMode, architectureFamily, architectureRole: 'facade-lateral-throughput', traversalAuthority: 'canonical-transport-slab',
   };
   const crossingHalf = Math.max(0.78, finite(crossingWidth, finite(endpoint.width, 1.35)) * 0.62);
@@ -228,9 +233,19 @@ export function planFacadeRouteGallery({
   const surface = horizontalFace
     ? { x: galleryTangent, z: normalCenter, hx: length * 0.5, hz: w * 0.5, y }
     : { x: normalCenter, z: galleryTangent, hx: w * 0.5, hz: length * 0.5, y };
+  const materialFamily = String(materialFamilyHint || architectureFamily);
+  const materialHandwriting = applyArchitectureMaterialHandwriting({
+    family: materialFamily,
+    metal: [...metal, ...supports],
+    concrete: [],
+    field,
+    weightScale: 1 + Math.max(0, w - 1.4) * 0.18,
+  });
+  const tintedMetal = materialHandwriting.metal.slice(0, metal.length);
+  const tintedSupports = materialHandwriting.metal.slice(metal.length);
   return Object.freeze({
     schema: FACADE_ROUTE_GALLERY_SCHEMA,
-    id, routeId, field, side, widthClass, width: w, length, supportMode, architectureFamily, familyParts,
+    id, routeId, districtRouteId, field, side, widthClass, width: w, length, supportMode, architectureFamily, materialFamily, familyParts,
     routeStrength: strength, routeSpan: finite(routeSpan, 0),
     compoundFace: face.compound,
     cornerOverlap,
@@ -251,7 +266,7 @@ export function planFacadeRouteGallery({
           Object.freeze({ x1: innerCoord, z1: galleryTangent + length * 0.5, x2: outerCoord, z2: galleryTangent + length * 0.5 }),
         ]),
     junctionClearances: Object.freeze(clearances.map(item => Object.freeze(item))),
-    metal: Object.freeze(metal), supports: Object.freeze(supports),
+    metal: Object.freeze(tintedMetal), supports: Object.freeze(tintedSupports),
     invariant: 'major gallery is a long compound-scale thoroughfare; it hugs real mass where possible, permits short exposed continuation, and keeps intersections free of decorative structure',
   });
 }

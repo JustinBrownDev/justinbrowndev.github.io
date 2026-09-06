@@ -19,6 +19,7 @@ import {
 } from './world/hanging-city-topology.js';
 import { reconcileCavernFloorBudgets } from './world/cavern-joint-synthesis.js';
 import { composeCityRoutes } from './world/city-route-composer.js';
+import { planDistrictRouteIntent } from './world/district-route-continuity.js';
 import {
     SECTIONAL_CIRCULATION_SCHEMA,
     assignBridgeSectionBands,
@@ -4856,18 +4857,24 @@ export function createKowloonFabricEngine({
             });
         }
         for (const overlap of published.overlaps) smoothTransportUnion({ physics, transforms, a: surface, b: overlap });
+        const aMaterialFamily = aEntity?.programMacroArchitecture?.family ?? null;
+        const bMaterialFamily = bEntity?.programMacroArchitecture?.family ?? null;
+        const bridgeMaterialFamily = aMaterialFamily && aMaterialFamily === bMaterialFamily ? aMaterialFamily : null;
         const bridgeArchitecture = planSkybridgeArchitecture({
             id: bridge.id, axis: bridge.axis, from, to, fixedCoord, y, width,
             family: bridge.architectureFamily ?? 'simple-guarded', widthClass: bridge.widthClass ?? 'local',
             stableKey: `${worldSeed}:${bridge.id}:bridge-architecture`,
             supportModeHint: hanging && (bridge.widthClass === 'collector' || bridge.widthClass === 'sky-street') ? 'hung-from-above' : null,
+            field: hanging ? 'ceiling' : 'ground',
+            materialFamilyHint: bridgeMaterialFamily,
         });
         transforms.guardMetal.push(...bridgeArchitecture.metal);
         transforms.guardConcrete.push(...bridgeArchitecture.concrete);
         const architectureRegistry = physics.bridgeArchitecture ?? (physics.bridgeArchitecture = []);
         architectureRegistry.push(Object.freeze({
             schema: bridgeArchitecture.schema, bridgeId: bridge.id,
-            family: bridgeArchitecture.family, widthClass: bridgeArchitecture.widthClass,
+            family: bridgeArchitecture.family, materialFamily: bridgeArchitecture.materialFamily ?? bridgeArchitecture.family,
+            widthClass: bridgeArchitecture.widthClass,
             parts: bridgeArchitecture.parts, supportParts: bridgeArchitecture.supportParts ?? 0,
             supportMode: bridgeArchitecture.supportMode ?? null,
             span: bridgeArchitecture.span, width: bridgeArchitecture.width,
@@ -4951,13 +4958,15 @@ export function createKowloonFabricEngine({
             const module = entity?.footprintModules?.find(candidate => candidate.key === moduleKey);
             if (!entity || !module) return;
             const routeId = endpoint.cityRouteId ?? bridge.cityRouteId ?? bridge.id;
+            const districtRouteId = endpoint.districtRouteId ?? bridge.districtRouteId ?? null;
             const floorKey = endpoint.globalFloor ?? endpoint.floor;
             const keyId = `${routeId}:${siteId}:${floorKey}:${endpoint.side}`;
             if (!groups.has(keyId)) groups.set(keyId, {
-                key: keyId, routeId, siteId, floorKey, side: endpoint.side, entity, module,
+                key: keyId, routeId, districtRouteId, siteId, floorKey, side: endpoint.side, entity, module,
                 endpoints: [], bridges: [], requestedWidth: 0, widthClass: 'collector', routeStrength: 0, routeSpan: 0,
             });
             const group = groups.get(keyId);
+            if (!group.districtRouteId && districtRouteId) group.districtRouteId = districtRouteId;
             group.endpoints.push(endpoint);
             group.bridges.push({ bridge, endpoint, peerEndpoint, span: bridgeSpan(bridge) });
             group.requestedWidth = Math.max(group.requestedWidth, requested);
@@ -4995,6 +5004,7 @@ export function createKowloonFabricEngine({
             const gallery = planFacadeRouteGallery({
                 id: `${group.routeId}:site:${group.siteId}:gallery:${group.floorKey}:${group.side}`,
                 routeId: group.routeId,
+                districtRouteId: group.districtRouteId,
                 endpoint: group.endpoints[0], module: group.module, field,
                 width: galleryWidth, widthClass: group.widthClass,
                 floorHeight: group.entity.floorH ?? HANGING_CITY_FLOOR_HEIGHT,
@@ -5004,16 +5014,19 @@ export function createKowloonFabricEngine({
                 routeSpan: group.routeSpan,
                 crossingWidth,
                 junctionTangents: group.endpoints.slice(1).map(endpoint => endpoint.tangent),
+                materialFamilyHint: group.entity?.programMacroArchitecture?.family ?? null,
                 stableKey: `${worldSeed}:${group.routeId}:${group.siteId}:${group.side}:${group.floorKey}`,
             });
             if (!gallery) continue;
             const rawSurface = {
                 id: `${gallery.id}:surface`, kind: 'hanging-facade-route-gallery',
                 ...gallery.surface,
-                routeId: group.routeId, galleryId: gallery.id, networkKey: group.routeId,
+                routeId: group.routeId, districtRouteId: group.districtRouteId, galleryId: gallery.id,
+                networkKey: group.districtRouteId ?? group.routeId,
                 reachable: true, priority: 'walkway-authority',
                 endpointAuthority: group.endpoints[0].endpointAuthority ?? 'bridge-facade-endpoint-v1',
-                architectureFamily: gallery.architectureFamily, widthClass: gallery.widthClass,
+                architectureFamily: gallery.architectureFamily, materialFamily: gallery.materialFamily,
+                widthClass: gallery.widthClass,
                 routeCharacter: group.bridges[0]?.bridge?.routeCharacter ?? 'EXTERIOR_HEAVY',
                 traversalPermission: group.endpoints[0].traversalPermission ?? 'PUBLIC_THROUGH',
             };
@@ -5046,7 +5059,7 @@ export function createKowloonFabricEngine({
                         id: `${gallery.id}:union:${overlap.id}`,
                         kind: 'surface-union', source: 'facade-route-gallery-union',
                         aId: surface.id, bId: overlap.id,
-                        routeId: group.routeId, galleryId: gallery.id,
+                        routeId: group.routeId, districtRouteId: group.districtRouteId, galleryId: gallery.id,
                         traversalAuthority: 'physical-surface-overlap',
                     });
                 }
@@ -5054,11 +5067,13 @@ export function createKowloonFabricEngine({
             const endpointIds = group.endpoints.map(endpoint => endpoint.id);
             for (const endpointId of endpointIds) realizedByEndpoint.set(endpointId, gallery);
             registry.push(Object.freeze({
-                schema: gallery.schema, id: gallery.id, routeId: group.routeId, siteId: group.siteId,
+                schema: gallery.schema, id: gallery.id, routeId: group.routeId,
+                districtRouteId: group.districtRouteId, siteId: group.siteId,
                 endpointIds: Object.freeze(endpointIds), surfaceId: surface.id,
                 width: gallery.width, length: gallery.length,
                 widthClass: gallery.widthClass, supportMode: gallery.supportMode,
-                architectureFamily: gallery.architectureFamily, familyParts: gallery.familyParts,
+                architectureFamily: gallery.architectureFamily, materialFamily: gallery.materialFamily,
+                familyParts: gallery.familyParts,
                 compoundFace: gallery.compoundFace,
                 cornerOverlap: gallery.cornerOverlap,
                 huggedLength: gallery.huggedLength,
@@ -6130,13 +6145,17 @@ export function createKowloonFabricEngine({
         const ceilingSiteGeometry = geometryMapFor(
             ceilingField.sitePlans, ceilingField.cx0, ceilingField.cz0, ceilingField.half, ceilingField.cellSize,
         );
+        const groundDistrictRouteIntent = planDistrictRouteIntent({ worldSeed, chunk, field: 'ground', chunkSize });
+        const ceilingDistrictRouteIntent = planDistrictRouteIntent({ worldSeed, chunk, field: 'ceiling', chunkSize });
         const groundRouteComposition = composeCityRoutes({
             bridgePlans: groundBridgePlans, field: 'ground', siteGeometry: groundSiteGeometry,
             stableKey: `${worldSeed}:${chunk.key}:ground-sectional-bridges:composer`,
+            districtRouteIntent: groundDistrictRouteIntent,
         });
         const ceilingRouteComposition = composeCityRoutes({
             bridgePlans: ceilingField.bridgePlans, field: 'ceiling', siteGeometry: ceilingSiteGeometry,
             stableKey: `${worldSeed}:${chunk.key}:ceiling-sectional-bridges:composer`,
+            districtRouteIntent: ceilingDistrictRouteIntent,
         });
         const groundRouteDemandBySite = new Map(groundRouteComposition.siteRouteDemands.map(demand => [String(demand.siteId), demand]));
         const ceilingRouteDemandBySite = new Map(ceilingRouteComposition.siteRouteDemands.map(demand => [String(demand.siteId), demand]));
@@ -6189,6 +6208,10 @@ export function createKowloonFabricEngine({
                 routeRole: routeDemand?.role ?? null,
                 routePreferredBandNorm: routeDemand?.preferredBandNorm ?? null,
                 routeId: routeDemand?.routeId ?? null,
+                districtRouteId: routeDemand?.districtRouteId ?? null,
+                districtArterial: routeDemand?.districtArterial === true,
+                districtRouteAxis: routeDemand?.districtRouteAxis ?? null,
+                districtRouteRole: routeDemand?.districtRouteRole ?? null,
                 absorbedInterveningTower: routeDemand?.absorbedInterveningTower === true,
                 routeDrivenHeightTarget: desiredFloors,
                 baseDesiredFloors,
@@ -6219,6 +6242,10 @@ export function createKowloonFabricEngine({
                 routeRole: routeDemand?.role ?? null,
                 routePreferredBandNorm: routeDemand?.preferredBandNorm ?? null,
                 routeId: routeDemand?.routeId ?? null,
+                districtRouteId: routeDemand?.districtRouteId ?? null,
+                districtArterial: routeDemand?.districtArterial === true,
+                districtRouteAxis: routeDemand?.districtRouteAxis ?? null,
+                districtRouteRole: routeDemand?.districtRouteRole ?? null,
                 absorbedInterveningTower: routeDemand?.absorbedInterveningTower === true,
                 routeDrivenHeightTarget: routeHeightTarget,
                 baseDesiredFloors,
@@ -6251,6 +6278,7 @@ export function createKowloonFabricEngine({
             weirdness: weird, fallbackFloors: 5,
             stableKey: `${worldSeed}:${chunk.key}:ground-sectional-bridges`,
             siteGeometry: groundSiteGeometry,
+            districtRouteIntent: groundDistrictRouteIntent,
         });
         const ceilingSectionalCirculation = assignBridgeSectionBands({
             bridgePlans: ceilingField.bridgePlans,
@@ -6260,6 +6288,7 @@ export function createKowloonFabricEngine({
             weirdness: weird, fallbackFloors: 6,
             stableKey: `${worldSeed}:${chunk.key}:ceiling-sectional-bridges`,
             siteGeometry: ceilingSiteGeometry,
+            districtRouteIntent: ceilingDistrictRouteIntent,
         });
         ceilingField.sectionalCirculation = ceilingSectionalCirculation;
 
@@ -6278,6 +6307,10 @@ export function createKowloonFabricEngine({
                     score: intent.routeDemandScore,
                     role: intent.routeRole,
                     preferredBandNorm: intent.routePreferredBandNorm,
+                    districtRouteId: intent.districtRouteId,
+                    districtArterial: intent.districtArterial,
+                    districtRouteAxis: intent.districtRouteAxis,
+                    districtRouteRole: intent.districtRouteRole,
                     absorbedInterveningTower: intent.absorbedInterveningTower,
                     baseDesiredFloors: intent.baseDesiredFloors,
                     routeDrivenHeightTarget: intent.routeDrivenHeightTarget,
@@ -6298,6 +6331,8 @@ export function createKowloonFabricEngine({
             routeDrivenMassing: Object.freeze({
                 ground: groundRouteComposition,
                 ceiling: ceilingRouteComposition,
+                groundDistrictRouteIntent,
+                ceilingDistrictRouteIntent,
             }),
             sectionalCirculation: Object.freeze({
                 schema: SECTIONAL_CIRCULATION_SCHEMA,
@@ -6428,6 +6463,10 @@ export function createKowloonFabricEngine({
                         score: jointBudget.routeDemandScore,
                         role: jointBudget.routeRole ?? null,
                         preferredBandNorm: jointBudget.routePreferredBandNorm ?? null,
+                        districtRouteId: jointBudget.districtRouteId ?? null,
+                        districtArterial: jointBudget.districtArterial === true,
+                        districtRouteAxis: jointBudget.districtRouteAxis ?? null,
+                        districtRouteRole: jointBudget.districtRouteRole ?? null,
                         absorbedInterveningTower: jointBudget.absorbedInterveningTower === true,
                         routeDrivenHeightTarget: jointBudget.routeDrivenHeightTarget ?? jointBudget.desiredFloors,
                     } : null,
@@ -7364,7 +7403,9 @@ export function createKowloonFabricEngine({
             hz: plan.axis === 'x' ? Number(plan.halfWidth) : span * 0.5,
             y: Number(plan.y),
             routeId: plan.id,
-            networkKey: plan.edgeKey,
+            districtRouteId: plan.districtRouteId ?? null,
+            networkKey: plan.networkKey ?? plan.districtRouteId ?? plan.edgeKey,
+            materialFamily: plan.materialFamilyHint ?? null,
             reachable: true,
             priority: 'cross-chunk-seam',
             field: 'hanging',
@@ -7412,6 +7453,37 @@ export function createKowloonFabricEngine({
             });
         }
 
+        const seamArchitecture = planSkybridgeArchitecture({
+            id: `${plan.id}:architecture`,
+            axis: plan.axis,
+            from: plan.from,
+            to: plan.to,
+            fixedCoord: plan.fixedCoord,
+            y: plan.y,
+            width: Number(plan.halfWidth) * 2,
+            family: plan.districtRouteId ? 'heavy-beam' : 'simple-guarded',
+            widthClass: plan.districtRouteId ? 'collector' : 'local',
+            stableKey: `${worldSeed}:${plan.id}:cross-chunk-architecture`,
+            supportModeHint: 'hung-from-above',
+            field: 'ceiling',
+            materialFamilyHint: plan.materialFamilyHint ?? null,
+        });
+        transforms.guardMetal.push(...seamArchitecture.metal);
+        transforms.guardConcrete.push(...seamArchitecture.concrete);
+        physics.bridgeArchitecture = [Object.freeze({
+            schema: seamArchitecture.schema,
+            bridgeId: plan.id,
+            family: seamArchitecture.family,
+            materialFamily: seamArchitecture.materialFamily,
+            widthClass: seamArchitecture.widthClass,
+            parts: seamArchitecture.parts,
+            supportParts: seamArchitecture.supportParts ?? 0,
+            supportMode: seamArchitecture.supportMode ?? null,
+            span: seamArchitecture.span,
+            width: seamArchitecture.width,
+            traversalAuthority: seamArchitecture.traversalAuthority,
+        })];
+
         const connector = createBridgeConnector({
             id: `${plan.id}:connector`,
             axis: plan.axis,
@@ -7428,6 +7500,9 @@ export function createKowloonFabricEngine({
                 secondChunkKey: plan.secondChunkKey,
                 firstSurfaceId: plan.firstSurfaceId,
                 secondSurfaceId: plan.secondSurfaceId,
+                districtRouteId: plan.districtRouteId ?? null,
+                networkKey: plan.networkKey ?? plan.edgeKey,
+                materialFamily: seamArchitecture.materialFamily,
                 ownership: 'canonical-cardinal-pair',
             },
         });

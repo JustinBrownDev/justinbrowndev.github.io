@@ -2,17 +2,18 @@ import {
   physicalUseFamiliesForProgram,
   programCompatibleWithPhysicalUse,
 } from './physical-use.js';
+import { programArchitectureFor } from './architecture/program-architecture.js';
 
 export const BUILDING_SEMANTIC_TRUTH_SCHEMA = 'jweb.building-semantic-truth.v1';
 
 const DEFAULT_PROGRAM_BY_FAMILY = Object.freeze({
-  'residential-lodging': 'motel_room',
-  'mercantile-public': 'convenience',
-  business: 'office',
-  'assembly-institutional': 'library',
-  'industrial-service': 'electronics_repair',
-  storage: 'archive',
-  'maintenance-utility': 'server_room',
+  'residential-lodging': 'generic_residential',
+  'mercantile-public': 'generic_mercantile',
+  business: 'generic_business',
+  'assembly-institutional': 'generic_institutional',
+  'industrial-service': 'generic_industrial',
+  storage: 'generic_storage',
+  'maintenance-utility': 'generic_utility',
 });
 
 const FAMILY_CHARACTER = Object.freeze({
@@ -262,6 +263,7 @@ export function deriveBuildingSemanticTruth({
   const family = physicalUseFamily(physicalUse, programHint, exteriorMacroPreference);
   const character = FAMILY_CHARACTER[family] ?? FAMILY_CHARACTER['mercantile-public'];
   const decision = programDecision({ family, physicalUse, programHint, authoredIntent });
+  const specificProgramArchitecture = programArchitectureFor(decision.program);
   const morphology = morphologyOf(physicalUse, archetype);
   const semanticSeed = hashString32(`${stableKey}:building-semantic-truth`);
   const districtComposition = normalizeDistrictComposition(districtContext);
@@ -294,6 +296,34 @@ export function deriveBuildingSemanticTruth({
     archetype: morphology,
     program: decision.program,
     programDecision: decision.source,
+    programSpecificity: specificProgramArchitecture ? 'specific-operational-program' : 'generic-family-program',
+    programArchitecture: specificProgramArchitecture ? {
+      schema: specificProgramArchitecture.schema,
+      id: specificProgramArchitecture.id,
+      morphologies: [...specificProgramArchitecture.morphologies],
+      serviceCharacter: specificProgramArchitecture.serviceCharacter,
+      serviceSpineKeys: [...specificProgramArchitecture.serviceSpineKeys],
+      frontageKeys: [...specificProgramArchitecture.frontageKeys],
+      identityFixtures: [...specificProgramArchitecture.identityFixtures],
+      flows: specificProgramArchitecture.flows.map(flow => ({
+        id: flow.id,
+        sequence: [...flow.sequence],
+        routeClass: flow.routeClass,
+        permission: flow.permission,
+        mustRemainDistinctFrom: [...flow.mustRemainDistinctFrom],
+      })),
+      notes: specificProgramArchitecture.notes,
+    } : {
+      schema: 'jweb.program-architecture.generic-family.v1',
+      id: `generic:${family}`,
+      morphologies: [],
+      serviceCharacter: character.roofMechanicalCharacter,
+      serviceSpineKeys: [],
+      frontageKeys: [],
+      identityFixtures: [],
+      flows: [],
+      notes: 'Retain family-level semantics until district/authored evidence selects a specific operational program.',
+    },
     rejectedProgramHint: decision.rejectedProgramHint,
     publicFacingIdentity,
     tenantInstitutionServiceCharacter: decision.program,

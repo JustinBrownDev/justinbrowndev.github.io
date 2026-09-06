@@ -142,12 +142,15 @@ function classifyFrontage(space, entity) {
     const type = normalizedToken(space?.spaceType);
     const program = normalizedToken(spaceProgram(space, entity));
     const privacy = normalizedToken(space?.privacy);
-    const haystack = `${role} ${type} ${program} ${privacy}`;
+    const operationalRole = normalizedToken(space?.operationalRole);
+    const functionalFixture = normalizedToken(space?.functionalFixture);
+    const haystack = `${role} ${type} ${program} ${privacy} ${operationalRole} ${functionalFixture}`;
 
-    if (/mechanic|utility|plant|boiler|service|storage|loading|industrial|workshop/.test(haystack)) {
+    if (/mechanic|utility|plant|boiler|service|storage|loading|industrial|workshop|repair-bay|apparatus-bay|machine-bay/.test(haystack)
+        && !/customer-counter|sales-floor|service-counter/.test(haystack)) {
         return { frontageRole: /mechanic|utility|plant|boiler/.test(haystack) ? 'mechanical-service' : 'service', publicRole: 'service' };
     }
-    if (/retail|shop|store|market|mercantile|restaurant|food|bar|cafe/.test(haystack)) {
+    if (/retail|shop|store|market|mercantile|restaurant|food|bar|cafe|sales-floor|customer-counter|service-counter|dining-zone/.test(haystack)) {
         return { frontageRole: 'storefront', publicRole: 'public' };
     }
     if (role === 'entry' || /lobby|foyer|reception|entrance/.test(haystack)) {

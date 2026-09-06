@@ -10,6 +10,7 @@ import {
 import { claimUnassignedRasterToEligibleSpaces, chooseHumanScaleProgramDrop, minimumEligibleCellsReservedForRemaining } from './human-scale-capacity.js';
 import { stairWalkAroundClearance } from '../interior-geometry-policy.js';
 import { TRAVERSAL_PERMISSION } from '../sectional-circulation.js';
+import { programArchitectureFor, programMorphologyPool, programTemplatesForFloor } from './program-architecture.js';
 
 const SCHEMA = 'jweb.building-plan-sidecar.v1';
 const EPS = 1e-9;
@@ -50,6 +51,10 @@ function stableIndex(key, length) {
 
 function chooseGrammar({ stableKey, family, programHint, authoredIntent }) {
   if (authoredIntent?.grammar && PLAN_GRAMMARS[authoredIntent.grammar]) return PLAN_GRAMMARS[authoredIntent.grammar];
+  const programMorphologies = programMorphologyPool(programHint).filter(id => PLAN_GRAMMARS[id]);
+  if (programMorphologies.length) {
+    return PLAN_GRAMMARS[programMorphologies[stableIndex(`program-morphology:${stableKey}:${programHint}`, programMorphologies.length)]];
+  }
   if (programHint && PROGRAM_GRAMMAR[programHint] && PLAN_GRAMMARS[PROGRAM_GRAMMAR[programHint]]) {
     return PLAN_GRAMMARS[PROGRAM_GRAMMAR[programHint]];
   }
@@ -280,6 +285,7 @@ function minimumAreaForSpace(space, floorH) {
 
 function traversalPermissionForSpace(space) {
   if (!space) return TRAVERSAL_PERMISSION.NO_THROUGH;
+  if (space.traversalPermission) return space.traversalPermission;
   if (space.role === 'entry' || space.role === 'circulation' || space.role === 'public') {
     return TRAVERSAL_PERMISSION.PUBLIC_THROUGH;
   }
@@ -294,10 +300,21 @@ function traversalPermissionForSpace(space) {
   return TRAVERSAL_PERMISSION.SEMI_PUBLIC_THROUGH;
 }
 
-function expandedTemplates({ grammar, floor, baseFloor = 0, area, profile, authoredIntent, stableKey, semanticProgram }) {
+function expandedTemplates({ grammar, floor, baseFloor = 0, area, profile, authoredIntent, stableKey, semanticProgram, programArchitecture = null, routeServed = false }) {
   const isBaseFloor = floor === baseFloor;
-  const templates = isBaseFloor ? grammar.ground : grammar.upper;
+  const templates = (!authoredIntent ? programTemplatesForFloor(programArchitecture, { isBaseFloor, routeServed }) : null)
+    ?? (isBaseFloor ? grammar.ground : grammar.upper);
   const result = [];
+  const operationalFlowOrder = new Map();
+  if (programArchitecture) {
+    for (const flow of programArchitecture.flows ?? []) {
+      for (let index = 0; index < (flow.sequence ?? []).length; index++) {
+        const key = flow.sequence[index];
+        const current = operationalFlowOrder.get(key);
+        if (current == null || index < current) operationalFlowOrder.set(key, index);
+      }
+    }
+  }
 
   for (const template of templates) {
     let count = 1;
@@ -329,6 +346,12 @@ function expandedTemplates({ grammar, floor, baseFloor = 0, area, profile, autho
         requiredAdjacency: [...template.requiredAdjacency],
         preferredAdjacency: [...template.preferredAdjacency],
         semanticProgram,
+        operationalRole: template.operationalRole ?? template.key,
+        operationalFlowOrder: operationalFlowOrder.has(template.key) ? operationalFlowOrder.get(template.key) : null,
+        frontagePriority: template.frontagePriority ?? 'neutral',
+        serviceSpine: template.serviceSpine === true,
+        functionalFixture: template.functionalFixture ?? null,
+        unitEnvelope: template.unitEnvelope ?? null,
         spaceType: authoredType ?? template.program ?? `${semanticProgram}:${template.role}`,
         source: authoredType ? 'spawn-authored-intent' : 'grammar',
         traversalPermission: traversalPermissionForSpace(template),
@@ -657,11 +680,15 @@ function buildFloorGrid({ modules, floor, floorH, reservations, accessAnchors, m
   const dirs = [
     [0, -1, 'north'], [1, 0, 'east'], [0, 1, 'south'], [-1, 0, 'west'],
   ];
+  const coreCells = cells.filter(cell => /stair|core|shaft/i.test(String(cell.structuralReservationKind ?? '')));
   for (const cell of cells) {
     for (const [dx, dz, side] of dirs) {
       if (!byKey.has(`${cell.ix + dx},${cell.iz + dz}`)) cell.exposedSides.push(side);
     }
     cell.exposure = cell.exposedSides.length;
+    cell.coreDistance = coreCells.length
+      ? Math.min(...coreCells.map(core => Math.hypot(cell.x - core.x, cell.z - core.z)))
+      : Infinity;
   }
   return {
     activeModules, plannedModules, deferredModules: occupancy.deferredModules,
@@ -693,6 +720,10 @@ function preferenceScore(cell, space, profile, stableKey) {
   if (space.daylight === 'high') score += cell.exposure * (profile.rules.invertExteriorPreference ? 0.2 : 0.75);
   if (space.daylight === 'low') score += (4 - cell.exposure) * 0.45;
   if (space.role === 'circulation' && cell.structuralReservationId) score += 9;
+  if (space.serviceSpine && Number.isFinite(cell.coreDistance)) {
+    score += Math.max(0, 7.5 - cell.coreDistance * 0.82);
+    score += (4 - cell.exposure) * 0.55;
+  }
   if (space.circulationShape === 'occupancy-hallway') {
     const crossDistance = space.corridorAxis === 'x'
       ? Math.abs(cell.z - Number(space.corridorCenterZ || 0))
@@ -709,10 +740,20 @@ function rectangleFirstPreferred(profile) {
   return Number(profile?.inversion) < 0.58;
 }
 
+function routeFrontageWeight(space) {
+  if (!space || ['avoid', 'none'].includes(space.frontagePriority)) return 0;
+  if (space.traversalPermission === TRAVERSAL_PERMISSION.PRIVATE_DESTINATION_ONLY
+    || space.traversalPermission === TRAVERSAL_PERMISSION.NO_THROUGH
+    || space.traversalPermission === TRAVERSAL_PERMISSION.SECURE) return 0;
+  if (space.frontagePriority === 'required') return 3.2;
+  if (space.frontagePriority === 'preferred') return 2.1;
+  if (['public', 'shared'].includes(space.role)) return 1.25;
+  if (['work', 'program'].includes(space.role)) return 0.7;
+  return 0;
+}
+
 function routeFrontageEligible(space) {
-  return ['public', 'shared', 'work', 'program'].includes(space?.role)
-    && space?.traversalPermission !== TRAVERSAL_PERMISSION.PRIVATE_DESTINATION_ONLY
-    && space?.traversalPermission !== TRAVERSAL_PERMISSION.NO_THROUGH;
+  return routeFrontageWeight(space) > 0;
 }
 
 function rectangleDimensionsForCells(target) {
@@ -762,7 +803,7 @@ function boundaryCountAgainstSpace(cells, grid, spaceKey) {
   return count;
 }
 
-function candidateRectangleAnchors({ space, parentKey, routeSpaceKey, grid, profile, stableKey }) {
+function candidateRectangleAnchors({ space, spaces, parentKey, routeSpaceKey, grid, profile, stableKey }) {
   const available = grid.cells.filter(cell => !cell.spaceId && cellEligibleForSpace(cell, space));
   const parentAdjacent = parentKey
     ? available.filter(cell => neighborsOf(cell, grid).some(neighbor => neighbor.spaceId === parentKey))
@@ -770,24 +811,29 @@ function candidateRectangleAnchors({ space, parentKey, routeSpaceKey, grid, prof
   const routeAdjacent = routeSpaceKey && routeFrontageEligible(space)
     ? available.filter(cell => neighborsOf(cell, grid).some(neighbor => neighbor.spaceId === routeSpaceKey))
     : [];
+  // Preserve 21U's proven packing hierarchy: an actual city-route frontage wins,
+  // otherwise the topology parent owns placement. Operational flow order decides
+  // which rooms get first claim on those edges; it does not force every required
+  // semantic neighbor into the geometric anchor search, which can overconstrain
+  // repeated rectangular rooms.
   const source = routeAdjacent.length ? routeAdjacent : (parentAdjacent.length ? parentAdjacent : available);
   return source.sort((a, b) => {
     const aExposure = a.exposure + a.exposedSides.length;
     const bExposure = b.exposure + b.exposedSides.length;
-    const frontageBias = routeFrontageEligible(space) ? bExposure - aExposure : 0;
+    const frontageBias = routeFrontageWeight(space) > 0 ? (bExposure - aExposure) * routeFrontageWeight(space) : 0;
     if (frontageBias) return frontageBias;
     return preferenceScore(b, space, profile, `${stableKey}:rectangle-anchor`)
       - preferenceScore(a, space, profile, `${stableKey}:rectangle-anchor`)
       || a.key.localeCompare(b.key);
-  }).slice(0, 24);
+  }).slice(0, 32);
 }
 
 function placeRectangleFirstSpace({
-  space, target, parentKey, routeSpaceKey, grid, profile, stableKey,
+  space, spaces, target, parentKey, routeSpaceKey, grid, profile, stableKey,
 }) {
   if (!rectangleFirstPreferred(profile)) return null;
   if (!space || ['circulation', 'entry'].includes(space.role)) return null;
-  const anchors = candidateRectangleAnchors({ space, parentKey, routeSpaceKey, grid, profile, stableKey });
+  const anchors = candidateRectangleAnchors({ space, spaces, parentKey, routeSpaceKey, grid, profile, stableKey });
   if (!anchors.length) return null;
   const dimensions = rectangleDimensionsForCells(target);
   let best = null;
@@ -807,7 +853,8 @@ function placeRectangleFirstSpace({
             / Math.max(1, cells.length);
           const sliverPenalty = target >= 4 && Math.min(dim.width, dim.depth) < 2 ? 18 : 0;
           const excessPenalty = Math.max(0, dim.area - target) * 1.35;
-          const routeBonus = routeFrontageEligible(space) ? routeBoundary * 15 + exposure * 1.8 : routeBoundary * 1.5;
+          const frontageWeight = routeFrontageWeight(space);
+          const routeBonus = frontageWeight > 0 ? (routeBoundary * 12 + exposure * 1.4) * frontageWeight : routeBoundary * 0.5;
           const score = preference + parentBoundary * 8 + routeBonus
             - Math.max(0, dim.aspect - 2.4) * 3.5 - sliverPenalty - excessPenalty;
           const tie = hashString32(`${stableKey}:${space.key}:${minIx}:${minIz}:${dim.width}:${dim.depth}`) / 0xffffffff;
@@ -1008,7 +1055,103 @@ function circulationFrontageForSpace(space, cells, grid, routeSpaceKey) {
     exposedFacadeEdges,
     facadeSides: [...sides].sort(),
     priority: routeBoundaryEdges >= 2 ? 'major-public-circulation-frontage' : 'public-circulation-frontage',
-    programAuthority: 'frontage-only-program-deferred-to-21v',
+    programAuthority: 'program-architecture-authority-v1',
+    placementAuthority: 'program-aware-circulation-frontage-v1',
+  };
+}
+
+function nestedDwellingUnitPlan(space, cells, grid, routeSpaceKey) {
+  if (!space?.unitEnvelope || !cells.length || !rectangleFirstPreferred({ inversion: 0 })) return null;
+  const minIx = Math.min(...cells.map(cell => cell.ix));
+  const maxIx = Math.max(...cells.map(cell => cell.ix));
+  const minIz = Math.min(...cells.map(cell => cell.iz));
+  const maxIz = Math.max(...cells.map(cell => cell.iz));
+  const width = maxIx - minIx + 1;
+  const depth = maxIz - minIz + 1;
+  if (width * depth !== cells.length || width < 2 || depth < 2) return null;
+  const cellSize = grid.cellSize;
+  const bounds = {
+    minX: minIx * cellSize, maxX: (maxIx + 1) * cellSize,
+    minZ: minIz * cellSize, maxZ: (maxIz + 1) * cellSize,
+  };
+  const routeSideCounts = { north: 0, east: 0, south: 0, west: 0 };
+  const set = new Set(cells.map(cell => cell.key));
+  const dirs = [
+    [0, -1, 'north'], [1, 0, 'east'], [0, 1, 'south'], [-1, 0, 'west'],
+  ];
+  for (const cell of cells) {
+    for (const [dx, dz, side] of dirs) {
+      const neighbor = grid.byKey.get(`${cell.ix + dx},${cell.iz + dz}`);
+      if (neighbor && !set.has(neighbor.key) && neighbor.spaceId === routeSpaceKey) routeSideCounts[side]++;
+    }
+  }
+  const rankedSides = Object.entries(routeSideCounts).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  const corridorSide = rankedSides[0]?.[1] > 0
+    ? rankedSides[0][0]
+    : (width >= depth ? 'north' : 'west');
+  const horizontalEntry = corridorSide === 'north' || corridorSide === 'south';
+  const rooms = [];
+  const addRoom = (key, role, minX, maxX, minZ, maxZ) => {
+    if (maxX - minX < cellSize * 0.30 || maxZ - minZ < cellSize * 0.30) return;
+    rooms.push({
+      id: `${space.key}:unit-room:${key}`,
+      key, role,
+      minX, maxX, minZ, maxZ,
+      cx: (minX + maxX) * 0.5, cz: (minZ + maxZ) * 0.5,
+      halfX: (maxX - minX) * 0.5, halfZ: (maxZ - minZ) * 0.5,
+    });
+  };
+
+  // The unit is organized from the common-circulation edge inward. A shallow
+  // full-width entry band means the exterior/corridor door always lands in a
+  // legitimate unit hall instead of randomly opening straight into a bedroom
+  // or bathroom. Wet/service rooms then occupy the next band and the deeper
+  // facade zone is reserved for living + sleeping space.
+  if (horizontalEntry) {
+    const zSpan = bounds.maxZ - bounds.minZ;
+    const first = corridorSide === 'north' ? bounds.minZ : bounds.maxZ;
+    const direction = corridorSide === 'north' ? 1 : -1;
+    const entryEdge = first + direction * zSpan * 0.23;
+    const serviceEdge = first + direction * zSpan * 0.53;
+    const entryZ0 = Math.min(first, entryEdge), entryZ1 = Math.max(first, entryEdge);
+    const serviceZ0 = Math.min(entryEdge, serviceEdge), serviceZ1 = Math.max(entryEdge, serviceEdge);
+    const deepZ0 = Math.min(serviceEdge, corridorSide === 'north' ? bounds.maxZ : bounds.minZ);
+    const deepZ1 = Math.max(serviceEdge, corridorSide === 'north' ? bounds.maxZ : bounds.minZ);
+    const serviceSplitX = bounds.minX + (bounds.maxX - bounds.minX) * 0.55;
+    const deepSplitX = bounds.minX + (bounds.maxX - bounds.minX) * 0.58;
+    addRoom('entry', 'entry', bounds.minX, bounds.maxX, entryZ0, entryZ1);
+    addRoom('kitchen', 'work', bounds.minX, serviceSplitX, serviceZ0, serviceZ1);
+    addRoom('bathroom', 'service', serviceSplitX, bounds.maxX, serviceZ0, serviceZ1);
+    addRoom('living-dining', 'shared', bounds.minX, deepSplitX, deepZ0, deepZ1);
+    addRoom('bedroom', 'private', deepSplitX, bounds.maxX, deepZ0, deepZ1);
+  } else {
+    const xSpan = bounds.maxX - bounds.minX;
+    const first = corridorSide === 'west' ? bounds.minX : bounds.maxX;
+    const direction = corridorSide === 'west' ? 1 : -1;
+    const entryEdge = first + direction * xSpan * 0.23;
+    const serviceEdge = first + direction * xSpan * 0.53;
+    const entryX0 = Math.min(first, entryEdge), entryX1 = Math.max(first, entryEdge);
+    const serviceX0 = Math.min(entryEdge, serviceEdge), serviceX1 = Math.max(entryEdge, serviceEdge);
+    const deepX0 = Math.min(serviceEdge, corridorSide === 'west' ? bounds.maxX : bounds.minX);
+    const deepX1 = Math.max(serviceEdge, corridorSide === 'west' ? bounds.maxX : bounds.minX);
+    const serviceSplitZ = bounds.minZ + (bounds.maxZ - bounds.minZ) * 0.55;
+    const deepSplitZ = bounds.minZ + (bounds.maxZ - bounds.minZ) * 0.58;
+    addRoom('entry', 'entry', entryX0, entryX1, bounds.minZ, bounds.maxZ);
+    addRoom('kitchen', 'work', serviceX0, serviceX1, bounds.minZ, serviceSplitZ);
+    addRoom('bathroom', 'service', serviceX0, serviceX1, serviceSplitZ, bounds.maxZ);
+    addRoom('living-dining', 'shared', deepX0, deepX1, bounds.minZ, deepSplitZ);
+    addRoom('bedroom', 'private', deepX0, deepX1, deepSplitZ, bounds.maxZ);
+  }
+  if (rooms.length < 4) return null;
+  return {
+    schema: space.unitEnvelope.schema ?? 'jweb.dwelling-unit-program.v1',
+    parentSpaceKey: space.key,
+    corridorSide,
+    entryRoomKey: 'entry',
+    roomCount: rooms.length,
+    rooms,
+    adjacency: (space.unitEnvelope.adjacency ?? []).map(pair => [...pair]),
+    rule: 'common-circulation door -> full-width unit entry -> wet/service band -> deeper living and sleeping rooms',
   };
 }
 
@@ -1182,7 +1325,16 @@ function graphBfsOrder(spaces, edges, rootKey) {
     neighbors.get(edge.a)?.push(edge.b);
     neighbors.get(edge.b)?.push(edge.a);
   }
-  for (const values of neighbors.values()) values.sort();
+  const placementOrder = key => {
+    const space = byKey.get(key);
+    const rawFlowOrder = space?.operationalFlowOrder;
+    const flowOrder = rawFlowOrder == null ? NaN : Number(rawFlowOrder);
+    const flowRank = Number.isFinite(flowOrder) ? flowOrder : 1000;
+    const frontageRank = space?.frontagePriority === 'required' ? -30
+      : space?.frontagePriority === 'preferred' ? -15 : 0;
+    return flowRank * 100 + frontageRank;
+  };
+  for (const values of neighbors.values()) values.sort((a, b) => placementOrder(a) - placementOrder(b) || a.localeCompare(b));
   const parent = new Map([[rootKey, null]]);
   const order = [];
   const queue = [rootKey];
@@ -1459,6 +1611,7 @@ function attemptMinimumProgramPlacement({
     }
     const rectangle = placeRectangleFirstSpace({
       space,
+      spaces,
       target: minimumCellsByKey.get(space.key) ?? 1,
       parentKey: parent.get(space.key),
       routeSpaceKey: cityExchangeClaim.transferSpace?.key ?? null,
@@ -1476,6 +1629,18 @@ function attemptMinimumProgramPlacement({
         parentBoundaryCells: rectangle.parentBoundary,
         routeBoundaryCells: rectangle.routeBoundary,
       });
+      continue;
+    }
+    const strictRectangleRequired = rectangleFirstPreferred(profile)
+      && (space.role === 'private' || (!!cityExchangeClaim.transferSpace?.key && routeFrontageEligible(space)));
+    if (strictRectangleRequired) {
+      // Do not fall back to greedy cell growth for the room classes that define
+      // 21U's believable-plan contract. Mark the contract before the repair pass
+      // as well, so an unplaced strict room cannot be resurrected as a raster blob.
+      // The visible shortfall makes the outer fit loop yield a lower-priority room
+      // and replan the floor from scratch.
+      space.rectangleStrict = true;
+      geometryNotes.push({ spaceKey: space.key, kind: 'strict-rectangle-fit-unavailable' });
       continue;
     }
     const seedInfo = ordinal === 0
@@ -1525,6 +1690,12 @@ function attemptMinimumProgramPlacement({
       profile,
     });
     if ((rectangularRepair?.length ?? 0) >= minimumTarget) continue;
+    // Near-city strict rectangles are a hard planning contract. If a private or
+    // route-frontage room cannot reach its physical minimum without breaking its
+    // rectangle, leave the shortfall visible so the outer program-fit loop drops
+    // a lower-priority room and replans the floor. Never silently turn the room
+    // back into a greedy raster blob just to satisfy area.
+    if (rectangleFirstPreferred(profile) && space.rectangleStrict) continue;
     growExistingSpace({
       space,
       target: minimumTarget,
@@ -1899,7 +2070,7 @@ function facadeIntents({ spaces, grid, profile }) {
 
 function planFloor({
   floor, baseFloor = 0, modules, floorH, reservations, accessAnchors, grammar, profile, authoredIntent,
-  semanticProgram, physicalTruth, stableKey,
+  semanticProgram, programArchitecture = null, physicalTruth, stableKey,
 }) {
   const minimumClearWidth = Math.max(0.72,
     Number(physicalTruth?.route?.clearWidthSI)
@@ -1909,7 +2080,8 @@ function planFloor({
   const grid = buildFloorGrid({ modules, floor, floorH, reservations, accessAnchors, minimumClearWidth });
   if (!grid || !grid.cells.length) return null;
   const area = grid.plannedModules.reduce((sum, module) => sum + moduleArea(module), 0);
-  let spaces = expandedTemplates({ grammar, floor, baseFloor, area, profile, authoredIntent, stableKey, semanticProgram });
+  const routeServed = accessAnchors.some(anchor => anchor.floor === floor && anchor.kind === 'city-exchange');
+  let spaces = expandedTemplates({ grammar, floor, baseFloor, area, profile, authoredIntent, stableKey, semanticProgram, programArchitecture, routeServed });
   configureUpperOccupancyHallway(spaces, grid, floor, baseFloor);
 
   // Do not subdivide a small floor plate into implausible slivers. Room count
@@ -2031,6 +2203,16 @@ function planFloor({
       regions: compactSpaceCells(cells, grid.cellSize),
       regularity,
       circulationFrontage,
+      frontagePriority: s.frontagePriority ?? 'neutral',
+      operationalRole: s.operationalRole ?? s.templateKey,
+      operationalFlowOrder: s.operationalFlowOrder == null ? null
+        : (Number.isFinite(Number(s.operationalFlowOrder)) ? Number(s.operationalFlowOrder) : null),
+      serviceSpine: s.serviceSpine === true,
+      functionalFixture: s.functionalFixture ?? null,
+      unitPlan: nestedDwellingUnitPlan(s, cells, grid, minimumPlacement.cityTransferSpaceKey
+        ?? spaces.find(candidate => candidate.circulationShape === 'occupancy-hallway')?.key
+        ?? spaces.find(candidate => candidate.role === 'circulation')?.key
+        ?? null),
       facadePattern: s.facadePattern,
       structuralReservationIds: [...new Set(cells.map(c => c.structuralReservationId).filter(Boolean))],
       ...(s.key === minimumPlacement.cityTransferSpaceKey ? {
@@ -2198,6 +2380,67 @@ function verticalEdgesForFloors(floors, stableKey, profile) {
   return result;
 }
 
+function programArchitectureEvidenceForFloors(floors, programArchitecture) {
+  if (!programArchitecture) return {
+    schema: 'jweb.program-architecture-evidence.v1',
+    specific: false,
+    flowTransitions: [],
+    directTransitionRatio: 1,
+    flowHealthy: true,
+    serviceSpineSpaceCount: 0,
+    routeFrontageSpaceCount: 0,
+    nestedDwellingUnitCount: 0,
+  };
+  const transitions = [];
+  const matches = (space, key) => space?.templateKey === key || space?.operationalRole === key || space?.key === key;
+  for (const flow of programArchitecture.flows ?? []) {
+    for (let index = 0; index < flow.sequence.length - 1; index++) {
+      const fromKey = flow.sequence[index];
+      const toKey = flow.sequence[index + 1];
+      const candidates = [];
+      for (const floor of floors) {
+        const fromSpaces = (floor.spaces ?? []).filter(space => matches(space, fromKey));
+        const toSpaces = (floor.spaces ?? []).filter(space => matches(space, toKey));
+        if (!fromSpaces.length || !toSpaces.length) continue;
+        const direct = (floor.edges ?? []).some(edge => fromSpaces.some(space => edge.a === space.key || edge.b === space.key)
+          && toSpaces.some(space => edge.a === space.key || edge.b === space.key));
+        candidates.push({ floor: floor.floor, direct, fromSpaceKeys: fromSpaces.map(space => space.key), toSpaceKeys: toSpaces.map(space => space.key) });
+      }
+      const best = candidates.sort((a, b) => Number(b.direct) - Number(a.direct) || a.floor - b.floor)[0] ?? null;
+      transitions.push({
+        flowId: flow.id,
+        routeClass: flow.routeClass,
+        permission: flow.permission,
+        from: fromKey,
+        to: toKey,
+        applicable: !!best,
+        direct: !!best?.direct,
+        floor: best?.floor ?? null,
+        fromSpaceKeys: best?.fromSpaceKeys ?? [],
+        toSpaceKeys: best?.toSpaceKeys ?? [],
+      });
+    }
+  }
+  const applicable = transitions.filter(item => item.applicable);
+  const direct = applicable.filter(item => item.direct).length;
+  const directTransitionRatio = applicable.length ? direct / applicable.length : 1;
+  const allSpaces = floors.flatMap(floor => floor.spaces ?? []);
+  const routeFrontageSpaces = allSpaces.filter(space => space.circulationFrontage?.eligible);
+  return {
+    schema: 'jweb.program-architecture-evidence.v1',
+    specific: true,
+    programArchitectureId: programArchitecture.id,
+    flowTransitions: transitions,
+    directTransitionRatio,
+    flowHealthy: applicable.length === 0 || directTransitionRatio >= 0.75,
+    serviceSpineSpaceCount: allSpaces.filter(space => space.serviceSpine).length,
+    routeFrontageSpaceCount: routeFrontageSpaces.length,
+    requiredRouteFrontageSpaceCount: routeFrontageSpaces.filter(space => space.frontagePriority === 'required').length,
+    nestedDwellingUnitCount: allSpaces.filter(space => space.unitPlan?.roomCount >= 3).length,
+    identityFixtures: [...new Set(allSpaces.map(space => space.functionalFixture).filter(Boolean))].sort(),
+  };
+}
+
 function planSignature({ signatureType, authoredIntent }) {
   if (!signatureType) return null;
   return {
@@ -2245,6 +2488,7 @@ export function planBuildingSidecar({
   });
   const family = buildingSemanticTruth.physicalUseFamily;
   const semanticProgram = buildingSemanticTruth.program;
+  const programArchitecture = programArchitectureFor(semanticProgram);
   const stableKey = buildingSemanticTruth.stableKey;
   const profile = architecturalFieldProfile({ distanceChunks, weirdnessSampled, isSpawn });
   const grammar = chooseGrammar({ stableKey, family, programHint: semanticProgram, authoredIntent });
@@ -2266,6 +2510,7 @@ export function planBuildingSidecar({
       profile,
       authoredIntent,
       semanticProgram,
+      programArchitecture,
       physicalTruth,
       stableKey,
     });
@@ -2288,6 +2533,7 @@ export function planBuildingSidecar({
   const circulationDeferredModuleBands = floors.reduce((sum, f) => sum + (f.diagnostics.circulationDeferredModuleCount ?? 0), 0);
   const cityExchangeBindingCount = floors.reduce((sum, f) => sum + (f.cityExchangeBindings?.length ?? 0), 0);
   const cityTransferRouteCount = floors.reduce((sum, f) => sum + (f.cityTransferRoutes?.length ?? 0), 0);
+  const programArchitectureEvidence = programArchitectureEvidenceForFloors(floors, programArchitecture);
 
   const result = {
     schema: SCHEMA,
@@ -2303,13 +2549,31 @@ export function planBuildingSidecar({
     northStar: ARCHITECTURAL_NORTH_STAR,
     grammar: {
       id: grammar.id,
-      source: 'building-semantic-truth',
+      source: programArchitecture ? 'program-morphology-selection' : 'building-semantic-truth',
       buildingSemanticTruthId: buildingSemanticTruth.id,
       programDecision: buildingSemanticTruth.programDecision,
       physicalUseFamily: family,
       semanticProgram,
       notes: grammar.notes,
     },
+    programArchitecture: programArchitecture ? {
+      schema: programArchitecture.schema,
+      id: programArchitecture.id,
+      morphologies: [...programArchitecture.morphologies],
+      serviceCharacter: programArchitecture.serviceCharacter,
+      serviceSpineKeys: [...programArchitecture.serviceSpineKeys],
+      frontageKeys: [...programArchitecture.frontageKeys],
+      identityFixtures: [...programArchitecture.identityFixtures],
+      flows: programArchitecture.flows.map(flow => ({
+        id: flow.id,
+        sequence: [...flow.sequence],
+        routeClass: flow.routeClass,
+        permission: flow.permission,
+        mustRemainDistinctFrom: [...flow.mustRemainDistinctFrom],
+      })),
+      notes: programArchitecture.notes,
+    } : buildingSemanticTruth.programArchitecture,
+    programArchitectureEvidence,
     envelope: {
       moduleCount: normalized.length,
       floorCount: floors.length,
@@ -2343,6 +2607,11 @@ export function planBuildingSidecar({
       circulationDeferredModuleBands,
       cityExchangeBindingCount,
       cityTransferRouteCount,
+      programFlowHealthy: programArchitectureEvidence.flowHealthy,
+      programDirectTransitionRatio: programArchitectureEvidence.directTransitionRatio,
+      programServiceSpineSpaceCount: programArchitectureEvidence.serviceSpineSpaceCount,
+      programRouteFrontageSpaceCount: programArchitectureEvidence.routeFrontageSpaceCount,
+      nestedDwellingUnitCount: programArchitectureEvidence.nestedDwellingUnitCount,
       readyForFabricEmission: topologyHealthy && unclaimedCells === 0 && humanScaleHealthy,
     },
   };

@@ -598,6 +598,9 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
                     program: space.semanticProgram ?? null,
                     role: space.role ?? null,
                     spaceType: space.spaceType ?? null,
+                    operationalRole: space.operationalRole ?? null,
+                    functionalFixture: space.functionalFixture ?? null,
+                    traversalPermission: space.traversalPermission ?? null,
                 };
             }).filter(Boolean);
             if (slots.length) return slots;
@@ -1049,6 +1052,9 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
                                 architecturalSpaceRole: slot.role,
                                 architecturalSpaceType: slot.spaceType,
                                 architecturalProgram: slot.program,
+                                architecturalOperationalRole: slot.operationalRole,
+                                architecturalFunctionalFixture: slot.functionalFixture,
+                                architecturalTraversalPermission: slot.traversalPermission,
                                 seed: taskSeed(chunk, entity.id, `semantic-object:${stableSpaceKey}:${phase}`, i),
                             });
                         }

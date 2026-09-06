@@ -83,7 +83,7 @@ assert.ok(publicFrontage, 'public program envelope should be able to front an el
 assert.equal(publicFrontage.regularity.rectangularity, 1, 'route-front public envelope should remain rectangular near spawn');
 assert.ok(publicFrontage.circulationFrontage.routeBoundaryEdges >= 2);
 assert.ok(publicFrontage.circulationFrontage.exposedFacadeEdges > 0);
-assert.equal(publicFrontage.circulationFrontage.programAuthority, 'frontage-only-program-deferred-to-21v');
+assert.equal(publicFrontage.circulationFrontage.programAuthority, 'program-architecture-authority-v1');
 
 const promoted = promoteBuildingPlanAuthority(skyPublic, {
   coreReservationId: core.id,

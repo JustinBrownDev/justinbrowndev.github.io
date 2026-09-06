@@ -85,7 +85,8 @@ const legacyIndustrialTruth = deriveBuildingSemanticTruth({
   },
 });
 assert.equal(legacyIndustrialTruth.physicalUseFamily, 'industrial-service');
-assert.equal(legacyIndustrialTruth.program, 'electronics_repair');
+assert.equal(legacyIndustrialTruth.program, 'generic_industrial');
+assert.equal(legacyIndustrialTruth.programSpecificity, 'generic-family-program');
 assert.equal(legacyIndustrialTruth.exteriorTendencies.facadeSemanticFamily, 'vertical-mechanical');
 assert.equal(legacyIndustrialTruth.exteriorTendencies.roofSemanticFamily, 'roof-antenna');
 
@@ -180,7 +181,8 @@ assert.equal(mediaTask.mediaAssemblies[0].semanticProgram, commercialPlan.gramma
 // The old interior family->program authority must not remain in the migrated path.
 const sidecarSource = await readFile(new URL('../world/architecture/building-plan-sidecar.js', import.meta.url), 'utf8');
 assert.ok(!sidecarSource.includes('DEFAULT_PROGRAM_BY_FAMILY'), 'building plan sidecar must not retain a second family->program table');
-assert.ok(sidecarSource.includes("source: 'building-semantic-truth'"));
+assert.ok(sidecarSource.includes("building-semantic-truth"));
+assert.ok(sidecarSource.includes("program-morphology-selection"));
 
 console.log('building-semantic-truth-selftest: PASS');
 console.log(JSON.stringify({

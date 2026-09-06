@@ -35,6 +35,15 @@ const MORPHOLOGY_POOLS = Object.freeze({
 });
 
 const PROGRAM_USE = Object.freeze({
+    generic_residential: ['residential-lodging'],
+    generic_mercantile: ['mercantile-public'],
+    generic_business: ['business'],
+    generic_institutional: ['assembly-institutional'],
+    generic_industrial: ['industrial-service'],
+    generic_storage: ['storage'],
+    generic_utility: ['maintenance-utility'],
+    apartment: ['residential-lodging'],
+    warehouse: ['storage', 'industrial-service'],
     diner: ['mercantile-public'],
     laundromat: ['mercantile-public'],
     grocery: ['mercantile-public'],

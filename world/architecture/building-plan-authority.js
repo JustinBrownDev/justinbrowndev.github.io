@@ -128,6 +128,54 @@ function openingGapForRun(opening, run) {
   };
 }
 
+function nestedUnitWallRunsForFloor(plan, floor, startOrdinal = 0) {
+  const runs = [];
+  let ordinal = startOrdinal;
+  for (const parent of floor.spaces ?? []) {
+    const unit = parent.unitPlan;
+    if (!unit?.rooms?.length) continue;
+    const desiredPairs = new Set((unit.adjacency ?? []).map(pair => pairKey(pair[0], pair[1])));
+    for (let ai = 0; ai < unit.rooms.length; ai++) {
+      for (let bi = ai + 1; bi < unit.rooms.length; bi++) {
+        const a = unit.rooms[ai];
+        const b = unit.rooms[bi];
+        const boundary = touchingBoundary(a, b);
+        if (!boundary || boundary.spanB - boundary.spanA <= EPS) continue;
+        const pair = pairKey(a.key, b.key);
+        const gapWidth = Math.min(0.86, Math.max(0.68, (boundary.spanB - boundary.spanA) * 0.42));
+        const mid = (boundary.spanA + boundary.spanB) * 0.5;
+        const doorId = `${plan.deterministicKey}:floor:${floor.floor}:unit:${parent.key}:door:${a.key}:${b.key}`;
+        runs.push({
+          id: `${plan.deterministicKey}:floor:${floor.floor}:unit-wall:${ordinal++}`,
+          kind: 'planned-dwelling-unit-wall',
+          floor: floor.floor,
+          yBase: floor.yBase,
+          height: floor.floorHeight,
+          axis: boundary.axis,
+          fixedCoord: boundary.fixedCoord,
+          spanA: boundary.spanA,
+          spanB: boundary.spanB,
+          spaceAKey: `${parent.key}/${a.key}`,
+          spaceBKey: `${parent.key}/${b.key}`,
+          fromSpaceId: `${parent.id}:unit-room:${a.key}`,
+          toSpaceId: `${parent.id}:unit-room:${b.key}`,
+          spaceKeyPair: pairKey(`${parent.key}/${a.key}`, `${parent.key}/${b.key}`),
+          gaps: desiredPairs.has(pair) ? [{
+            lo: mid - gapWidth * 0.5,
+            hi: mid + gapWidth * 0.5,
+            height: 2.03,
+            openingIds: [doorId],
+          }] : [],
+          parentSpaceId: parent.id,
+          unitPlan: true,
+          authority: BUILDING_PLAN_AUTHORITY_SCHEMA,
+        });
+      }
+    }
+  }
+  return runs;
+}
+
 export function compileBuildingPlanWallRuns(plan) {
   if (!plan?.floors) return [];
   const result = [];
@@ -177,6 +225,9 @@ export function compileBuildingPlanWallRuns(plan) {
         });
       }
     }
+  }
+  for (const floor of plan.floors ?? []) {
+    result.push(...nestedUnitWallRunsForFloor(plan, floor, result.length));
   }
   return result.sort((a, b) => a.floor - b.floor || a.axis.localeCompare(b.axis)
     || a.fixedCoord - b.fixedCoord || a.spanA - b.spanA || a.id.localeCompare(b.id));
@@ -254,6 +305,17 @@ export function compileBuildingPlanTopologySpaces(plan, { chunkKey = plan?.chunk
         traversalPermission: space.traversalPermission ?? null,
         throughRoutingEligible: space.throughRoutingEligible === true,
         cityTransferSpine: space.cityTransferSpine === true,
+        operationalRole: space.operationalRole ?? null,
+        operationalFlowOrder: space.operationalFlowOrder == null ? null
+          : (Number.isFinite(Number(space.operationalFlowOrder)) ? Number(space.operationalFlowOrder) : null),
+        frontagePriority: space.frontagePriority ?? 'neutral',
+        serviceSpine: space.serviceSpine === true,
+        functionalFixture: space.functionalFixture ?? null,
+        unitPlan: space.unitPlan ? {
+          ...space.unitPlan,
+          rooms: (space.unitPlan.rooms ?? []).map(room => ({ ...room })),
+          adjacency: (space.unitPlan.adjacency ?? []).map(pair => [...pair]),
+        } : null,
         regularity: space.regularity ? { ...space.regularity } : null,
         circulationFrontage: space.circulationFrontage ? { ...space.circulationFrontage } : null,
         centroid: space.centroid ? { ...space.centroid } : null,

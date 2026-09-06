@@ -57,13 +57,13 @@ const DISTRICT_PROFILES = Object.freeze({
 });
 
 const PROGRAM_OPTIONS = Object.freeze({
-    'residential-lodging': Object.freeze({ commercial: 'motel_room', service: 'motel_room', quiet: 'motel_room', anchor: 'motel_room', fallback: 'motel_room' }),
-    'mercantile-public': Object.freeze({ commercial: 'convenience', service: 'hardware_store', quiet: 'pharmacy', anchor: 'bar', fallback: 'convenience' }),
-    business: Object.freeze({ commercial: 'bank', service: 'radio_station', quiet: 'office', anchor: 'post_office', fallback: 'office' }),
-    'assembly-institutional': Object.freeze({ commercial: 'library', service: 'fire_station', quiet: 'library', anchor: 'courtroom', fallback: 'library' }),
-    'industrial-service': Object.freeze({ commercial: 'auto_shop', service: 'electronics_repair', quiet: 'laboratory', anchor: 'factory_control', fallback: 'electronics_repair' }),
-    storage: Object.freeze({ commercial: 'archive', service: 'boiler_room', quiet: 'archive', anchor: 'mainframe_room', fallback: 'archive' }),
-    'maintenance-utility': Object.freeze({ commercial: 'server_room', service: 'boiler_room', quiet: 'server_room', anchor: 'mainframe_room', fallback: 'server_room' }),
+    'residential-lodging': Object.freeze({ commercial: 'motel_room', service: 'apartment', quiet: 'apartment', anchor: 'apartment', fallback: 'generic_residential' }),
+    'mercantile-public': Object.freeze({ commercial: 'convenience', service: 'hardware_store', quiet: 'pharmacy', anchor: 'bar', fallback: 'generic_mercantile' }),
+    business: Object.freeze({ commercial: 'bank', service: 'radio_station', quiet: 'office', anchor: 'post_office', fallback: 'generic_business' }),
+    'assembly-institutional': Object.freeze({ commercial: 'library', service: 'fire_station', quiet: 'library', anchor: 'courtroom', fallback: 'generic_institutional' }),
+    'industrial-service': Object.freeze({ commercial: 'auto_shop', service: 'electronics_repair', quiet: 'laboratory', anchor: 'factory_control', fallback: 'generic_industrial' }),
+    storage: Object.freeze({ commercial: 'archive', service: 'warehouse', quiet: 'archive', anchor: 'mainframe_room', fallback: 'generic_storage' }),
+    'maintenance-utility': Object.freeze({ commercial: 'server_room', service: 'boiler_room', quiet: 'server_room', anchor: 'mainframe_room', fallback: 'generic_utility' }),
 });
 
 function hash32(value) {

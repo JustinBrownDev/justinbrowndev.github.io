@@ -42,6 +42,7 @@ export function planFastFacadeArchitecture({
   floorH = 3.15,
   defaultDoorWidth = 1.35,
   defaultDoorHeight = 2.2,
+  programFrontages = [],
 } = {}) {
   const props = [];
   const windows = [];
@@ -59,7 +60,17 @@ export function planFastFacadeArchitecture({
     windows: 0,
     protectedOpeningFloors: 0,
     newPortalCount: 0,
+    programFrontages: 0,
+    elevatedProgramFrontages: 0,
+    programPortalFrontages: 0,
   };
+
+  const programFrontageByFaceFloor = new Map();
+  for (const frontage of [...programFrontages].sort((a, b) => String(a?.id ?? '').localeCompare(String(b?.id ?? '')))) {
+    const floor = Math.max(0, Math.floor(finite(frontage?.floor, 0)));
+    const key = `${frontage?.moduleKey ?? ''}:${frontage?.side ?? ''}:${floor}`;
+    if (!programFrontageByFaceFloor.has(key)) programFrontageByFaceFloor.set(key, { ...frontage, floor });
+  }
 
   const sortedFaces = [...faces].sort((a, b) =>
     `${a.moduleKey}:${a.dirKey}`.localeCompare(`${b.moduleKey}:${b.dirKey}`));
@@ -116,7 +127,116 @@ export function planFastFacadeArchitecture({
       }
     }
 
-    const groundOccupied = openingByFloor.has(0);
+    // Program frontage follows the real public route floor rather than a
+    // universal "ground floor = commercial" rule. A protected transport portal
+    // remains the walk-through entrance; adjacent route-facing glazing is a
+    // broad architectural opening with a real sill, so an elevated shopfront
+    // cannot accidentally become an unguarded fall-through hole.
+    const programFrontageFloors = new Set();
+    for (let floor = 0; floor < floors; floor++) {
+      const directive = programFrontageByFaceFloor.get(`${face.moduleKey}:${face.side}:${floor}`);
+      if (!directive) continue;
+      const protectedOpening = openingByFloor.get(floor) ?? null;
+      const faceMin = geometry.tangentCenter - geometry.tangentHalf + 0.12;
+      const faceMax = geometry.tangentCenter + geometry.tangentHalf - 0.12;
+      const desiredWidth = clamp(tangentSpan * 0.46, 1.55, Math.min(4.4, tangentSpan - 0.24));
+      const margin = 0.18;
+      let intervals = [{ lo: faceMin, hi: faceMax }];
+      if (protectedOpening) {
+        const openingLo = protectedOpening.center - protectedOpening.width * 0.5 - margin;
+        const openingHi = protectedOpening.center + protectedOpening.width * 0.5 + margin;
+        intervals = [
+          { lo: faceMin, hi: Math.min(faceMax, openingLo) },
+          { lo: Math.max(faceMin, openingHi), hi: faceMax },
+        ];
+      }
+      intervals = intervals
+        .map(interval => ({ ...interval, span: interval.hi - interval.lo }))
+        .filter(interval => interval.span >= 1.28)
+        .sort((a, b) => b.span - a.span || a.lo - b.lo);
+      const interval = intervals[0] ?? null;
+      const baseY = (floorBaseOf(face) + floor) * floorH;
+      if (interval) {
+        const width = Math.min(desiredWidth, interval.span - 0.08);
+        const center = (interval.lo + interval.hi) * 0.5;
+        const bottom = floor === 0 ? 0.58 : 0.82;
+        const height = clamp(floorH - bottom - 0.42, 1.15, 1.72);
+        const paneNormal = geometry.faceCoord + geometry.outward * 0.045;
+        const apertureId = `${stableKey}:${face.moduleKey}:${face.dirKey}:program-frontage:${floor}`;
+        apertures.push(freezeRecord({
+          id: `${apertureId}:aperture`,
+          kind: 'program-frontage-window', moduleKey: face.moduleKey, dirKey: face.dirKey, side: face.side,
+          floor, floorBase: floorBaseOf(face), center, width, height, bottom,
+          semanticProgram: directive.semanticProgram ?? null,
+          programArchitectureId: directive.programArchitectureId ?? null,
+          sourceSpaceId: directive.spaceId ?? null,
+          routeAligned: directive.routeAligned === true,
+        }));
+        windows.push(facadePlane(face, center, paneNormal, baseY + bottom + height * 0.5, width, height, {
+          facadeRole: 'program-frontage-glazing', moduleKey: face.moduleKey, dirKey: face.dirKey, floor,
+          semanticProgram: directive.semanticProgram ?? null, programArchitectureId: directive.programArchitectureId ?? null,
+          sourceSpaceId: directive.spaceId ?? null, routeAligned: directive.routeAligned === true,
+        }));
+        const frameT = 0.10;
+        const frameNormal = geometry.faceCoord + geometry.outward * 0.065;
+        const frameY = baseY + bottom + height * 0.5;
+        props.push(orientedBox(face, center - width * 0.5 - frameT * 0.5, frameNormal, frameY, frameT, 0.12, height + 0.16,
+          { facadeRole: 'program-frontage-frame', moduleKey: face.moduleKey, dirKey: face.dirKey, floor }));
+        props.push(orientedBox(face, center + width * 0.5 + frameT * 0.5, frameNormal, frameY, frameT, 0.12, height + 0.16,
+          { facadeRole: 'program-frontage-frame', moduleKey: face.moduleKey, dirKey: face.dirKey, floor }));
+        props.push(orientedBox(face, center, frameNormal, baseY + bottom - frameT * 0.5, width + frameT * 2, 0.12, frameT,
+          { facadeRole: 'program-frontage-sill', moduleKey: face.moduleKey, dirKey: face.dirKey, floor }));
+        props.push(orientedBox(face, center, frameNormal, baseY + bottom + height + frameT * 0.5, width + frameT * 2, 0.12, frameT,
+          { facadeRole: 'program-frontage-frame', moduleKey: face.moduleKey, dirKey: face.dirKey, floor }));
+        if (['storefront', 'food-frontage', 'workshop-frontage'].includes(String(directive.frontageKind))) {
+          const canopyDepth = 0.66;
+          const canopyY = Math.min(baseY + floorH - 0.22, baseY + bottom + height + 0.22);
+          props.push(orientedBox(face, center, geometry.faceCoord + geometry.outward * canopyDepth * 0.5, canopyY,
+            Math.min(tangentSpan - 0.10, width + 0.46), canopyDepth, 0.10,
+            { facadeRole: 'route-frontage-awning', moduleKey: face.moduleKey, dirKey: face.dirKey, floor,
+              semanticProgram: directive.semanticProgram ?? null }));
+          metrics.canopies++;
+        }
+        treatments.push(freezeRecord({
+          id: apertureId,
+          kind: 'program-frontage', moduleKey: face.moduleKey, dirKey: face.dirKey, side: face.side, floor,
+          center, width, height, bottom, semanticProgram: directive.semanticProgram ?? null,
+          programArchitectureId: directive.programArchitectureId ?? null,
+          frontageKind: directive.frontageKind ?? 'public-frontage', sourceSpaceId: directive.spaceId ?? null,
+          routeAligned: directive.routeAligned === true, functionalFixture: directive.functionalFixture ?? null,
+        }));
+        metrics.programFrontages++;
+        if (floorBaseOf(face) + floor > 0) metrics.elevatedProgramFrontages++;
+        metrics.windows++;
+        programFrontageFloors.add(floor);
+      } else if (protectedOpening) {
+        // Narrow facade: let the already-authoritative route portal itself read
+        // as the public frontage rather than forcing an overlapping second hole.
+        const canopyDepth = 0.70;
+        const canopyWidth = Math.min(tangentSpan - 0.10, protectedOpening.width + 0.90);
+        props.push(orientedBox(face, protectedOpening.center,
+          geometry.faceCoord + geometry.outward * canopyDepth * 0.5,
+          Math.min(baseY + floorH - 0.22, baseY + protectedOpening.height + 0.24),
+          canopyWidth, canopyDepth, 0.11,
+          { facadeRole: 'route-portal-frontage-canopy', moduleKey: face.moduleKey, dirKey: face.dirKey, floor,
+            semanticProgram: directive.semanticProgram ?? null }));
+        treatments.push(freezeRecord({
+          id: `${stableKey}:${face.moduleKey}:${face.dirKey}:program-portal-frontage:${floor}`,
+          kind: 'program-portal-frontage', moduleKey: face.moduleKey, dirKey: face.dirKey, side: face.side, floor,
+          openingKey: protectedOpening.openingKey ?? null, semanticProgram: directive.semanticProgram ?? null,
+          programArchitectureId: directive.programArchitectureId ?? null,
+          frontageKind: directive.frontageKind ?? 'public-frontage', sourceSpaceId: directive.spaceId ?? null,
+          routeAligned: directive.routeAligned === true, functionalFixture: directive.functionalFixture ?? null,
+        }));
+        metrics.programFrontages++;
+        metrics.programPortalFrontages++;
+        if (floorBaseOf(face) + floor > 0) metrics.elevatedProgramFrontages++;
+        metrics.canopies++;
+        programFrontageFloors.add(floor);
+      }
+    }
+
+    const groundOccupied = openingByFloor.has(0) || programFrontageFloors.has(0);
     const groundBaseY = floorBaseOf(face) * floorH;
     let groundBay = null;
     if (!groundOccupied && tangentSpan >= 2.0) {
@@ -168,6 +288,7 @@ export function planFastFacadeArchitecture({
 
     for (let floor = 0; floor < floors; floor++) {
       if (openingByFloor.has(floor)) continue;
+      if (programFrontageFloors.has(floor)) continue;
       if (floor === 0 && groundBay) continue;
       const y = (floorBaseOf(face) + floor) * floorH + floorH * 0.56;
       const windowCount = tangentSpan >= 5.6 ? 2 : 1;

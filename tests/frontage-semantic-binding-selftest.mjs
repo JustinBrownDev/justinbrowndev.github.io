@@ -18,7 +18,8 @@ function fixture() {
             topologySpaces: [
                 {
                     id: 'space:retail', entityId: 'building:A', floor: 0, yBase: 0, floorH: 3.2,
-                    role: 'public', spaceType: 'shop-floor', semanticProgram: 'retail', privacy: 'public',
+                    role: 'public', spaceType: 'convenience:public', semanticProgram: 'convenience', privacy: 'public',
+                    operationalRole: 'sales-floor', functionalFixture: 'primary-sales-display',
                     moduleKeys: ['main'], connectorIds: [],
                     bounds: { minX: -6, maxX: -1, minZ: -4, maxZ: 4, yMin: 0, yMax: 3.2 },
                     regions: [{ minX: -6, maxX: -1, minZ: -4, maxZ: 4 }],
@@ -107,7 +108,7 @@ const shopContext = frontageContentContextFromBinding(byId.get('opp:shop'));
 assert.equal(shopContext.schema, FRONTAGE_CONTENT_CONTEXT_SCHEMA);
 assert.equal(shopContext.buildingId, 'building:A');
 assert.equal(shopContext.buildingPlanId, 'plan:building:A');
-assert.equal(shopContext.program, 'retail');
+assert.equal(shopContext.program, 'convenience');
 assert.equal(shopContext.destinationId, 'space:retail:destination');
 assert.equal(shopContext.districtFamily, 'market');
 assert.equal(shopContext.frontageRole, 'storefront');

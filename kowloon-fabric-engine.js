@@ -48,6 +48,7 @@ import { collapseSolidComponentsIntoSuperstructureSites, superstructureFallbackD
 import { planBuildingSidecar } from './world/architecture/building-plan-sidecar.js';
 import { assertBuildingPlanAuthority, promoteBuildingPlanAuthority } from './world/architecture/building-plan-authority.js';
 import { applyTowerTransferAuthority, cityExchangeAnchorsForPortals } from './world/architecture/tower-transfer-authority.js';
+import { programFacadeFrontageDirectives } from './world/architecture/program-architecture.js';
 import { createSemanticPlanCache, semanticPlanCacheKey } from './world/architecture/semantic-plan-runtime.js';
 import { accessAnchorsForBuildingPortals, compileAccessPortals } from './world/access-portals.js';
 import { compileDistrictBlockComposition, districtBuildingPolicyForEntity, districtContextForEntity } from './world/district-block-composition.js';
@@ -2872,11 +2873,16 @@ export function createKowloonFabricEngine({
                 floors: face.module.floors, floorBase: moduleFloorBase(face.module), rect: { ...face.module.rect }, openings,
             };
         });
+        const programFacadeFrontages = programFacadeFrontageDirectives({
+            buildingPlan,
+            faces: facadeArchitectureFaces,
+        });
         const facadeArchitecture = planFastFacadeArchitecture({
             stableKey: `${chunk.key}:${siteSignature}:facade-07`,
             faces: facadeArchitectureFaces, floorH,
             defaultDoorWidth: defaultFacadeDoorWidth,
             defaultDoorHeight: defaultFacadeDoorHeight,
+            programFrontages: programFacadeFrontages,
         });
         const facadeAperturesByKey = new Map();
         for (const aperture of facadeArchitecture.apertures ?? []) {

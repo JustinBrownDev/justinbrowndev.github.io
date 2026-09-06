@@ -562,3 +562,90 @@ Interior doors are no longer chosen by a stable hash from every topologically va
 - service/support territory, not bedrooms, absorbs unavoidable irregular compound leftovers;
 - Building Plan authority, 21R transfer-serving towers, 21S route composition, 21T route-driven massing, cavern circulation and hanging-city unified reachability remain intact;
 - far architectural inversion remains free to relax rectangle-first planning.
+
+## Cut 21V — Program Architecture
+
+21V separates **what a building is for** from **what broad morphology it uses**. A fire station and an auto shop may both inhabit a clear-span/service-bay morphology, but they no longer collapse into the same semantic room recipe. Program authority now supplies operational zones, traversal regimes, frontage priorities, service spines, identity fixtures and explicit flow sequences that the 21U Building Plan must physically realize.
+
+### Generic family is not a fake tenant
+
+Generic physical-use families no longer silently masquerade as specific programs such as `motel_room`, `library`, `electronics_repair` or `server_room`. When the district has not selected a specific operational program, semantic truth remains generic (`generic_residential`, `generic_mercantile`, `generic_industrial`, and so on). Specific program architecture is introduced only when there is actual program authority for it.
+
+This preserves the distinction:
+
+```text
+MORPHOLOGY = broad architectural body / spatial grammar
+PROGRAM    = operational purpose / flow / permissions / service logic
+```
+
+The same morphology may therefore support multiple programs without erasing how those programs function.
+
+### Operational flows affect real placement
+
+`world/architecture/program-architecture.js` publishes reusable zone and flow contracts for residential, lodging, retail, food service, workshop/repair, fire response, clinic, court/police, laboratory, warehouse/server, office/archive and utility programs.
+
+Flow sequence is not decorative metadata. Spaces that participate in an operational route receive earlier geometric claim on the corridor/frontage edges they need. A support room may not win a critical shared boundary merely because its lexical key sorts first. Non-flow rooms remain ordinary program/support territory and do not accidentally acquire maximum route priority through null-number coercion.
+
+Examples include:
+
+```text
+fire station:
+public/admin -> living/dayroom -> response spine -> apparatus bay -> apron
+
+clinic:
+waiting -> reception -> patient corridor -> exam / nurse -> clean + soiled service
+
+warehouse:
+receiving -> staging -> storage -> pick/pack -> shipping
+```
+
+Building Plan diagnostics publish direct operational transition coverage and service/frontage counts so these relationships can be population-tested rather than inferred from labels.
+
+### Service spines are architecture
+
+Programs can mark real service-spine zones. The planner biases those rooms toward the persistent core and deeper/interior territory while preserving their required operational adjacencies. Storage, utilities, clean/dirty support, parts, loading support and similar rooms are therefore allowed to organize the back of the building instead of being scattered as equal-priority decorative rooms.
+
+This service logic remains subordinate to physical reachability and human-scale minimums; it does not create a second circulation system outside Building Plan authority.
+
+### Public frontage follows the city street
+
+21U introduced program-neutral `circulationFrontage`. 21V consumes it.
+
+Specific public-facing programs now prefer route-served frontage on the **actual public circulation floor**, including elevated sky-street/gallery levels. A shop, dining room, customer counter, workshop frontage or lobby can therefore become architecturally primary on floor 3, 6 or 9 when that is where the city street actually runs.
+
+The promoted Building Plan produces `jweb.program-facade-frontage.v1` directives. The fast facade layer uses those directives to create broad route-facing commercial/public frontage while preserving the real city-exchange portal as the only authoritative walk-through opening.
+
+Adjacent storefront glazing receives a safe sill and is placed outside the protected portal interval. If the facade is too narrow for both a portal and separate glazing, the portal itself receives the public frontage treatment rather than overlapping apertures or inventing another door.
+
+### Dwelling is an envelope, not one terminal room
+
+Apartment programs now treat each dwelling as a rectangular unit envelope with an internal five-zone plan:
+
+```text
+common corridor
+    -> unit entry band
+    -> kitchen + bathroom wet/service band
+    -> living/dining + bedroom deeper zone
+```
+
+The entry band spans the common-circulation side of the unit so the apartment door cannot randomly open straight into a bathroom or bedroom. The nested room graph has explicit adjacency, and Building Plan promotion emits the corresponding internal unit walls and door gaps.
+
+The outer unit remains `PRIVATE_DESTINATION_ONLY`; its internal rooms do not become shortcuts for the city circulation graph.
+
+### Program semantics propagate downstream
+
+Promoted topology spaces now carry operational role, operational flow order, frontage priority, service-spine status, functional fixture and nested-unit information. Semantic frontage binding and enrichment can therefore distinguish a sales floor, apparatus bay, repair bay, customer counter or service zone without re-guessing purpose from generic room names.
+
+This is groundwork for 21W's much richer architectural family expression; 21V establishes where and why those physical families belong.
+
+### 21V regression expectations
+
+- specific programs retain distinct operational flows even when they share a morphology;
+- generic families remain generic when no tenant/program has actually been chosen;
+- a broad specific-program population remains human-scale, reachable and mostly directly realizes defined operational transitions;
+- route-served public programs create actual elevated circulation frontage rather than defaulting to floor 0;
+- facade frontage never overlaps or replaces the authoritative city-exchange opening;
+- apartment envelopes produce connected entry / wet-service / living-sleeping subdivisions with real internal walls and doors;
+- near-city private rooms remain strict rectangles with zero neck cells;
+- 21R transfer authority, 21S route composition, 21T route-driven section, 21U believable plans, cavern fallbacks and unified hanging/upright circulation remain green;
+- canonical stair and catwalk traversal physics remain unchanged.

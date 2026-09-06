@@ -10,9 +10,9 @@ export const CONFIG = {
      
      
     scene: {
-        backgroundColor: 0x7ec4e8,
-        fogColor: 0xcfe8f0,
-        fogDensity: 0.018,
+        backgroundColor: 0x989c9f,
+        fogColor: 0x989c9f,
+        fogDensity: 0.0011,
     },
 
      
@@ -23,9 +23,9 @@ export const CONFIG = {
          
          
         lightWeb: {
-            fogColor: 0xf0f4e0,
-            fogDensity: 0.042,
-            ambientColor: 0xfff4d0,
+            fogColor: 0xa2a3a0,
+            fogDensity: 0.0010,
+            ambientColor: 0xb9b9b5,
             ambientIntensity: 3.1,
             hemiIntensity: 1.0,
             signChance: 0.95,
@@ -34,9 +34,9 @@ export const CONFIG = {
          
          
         darkWeb: {
-            fogColor: 0xc8d8d8,
-            fogDensity: 0.046,
-            ambientColor: 0xd0e8e8,
+            fogColor: 0x92979a,
+            fogDensity: 0.00125,
+            ambientColor: 0xaeb2b4,
             ambientIntensity: 2.5,
             hemiIntensity: 0.6,
             signChance: 0.85,
@@ -47,7 +47,7 @@ export const CONFIG = {
     camera: {
         fov: 78,
         near: 0.05,
-        far: 380,
+        far: 720,
         eyeHeight: 1.65,
         playerRadius: 0.22,
     },
@@ -56,9 +56,9 @@ export const CONFIG = {
      
      
     streaming: {
-        renderRadiusChunks: 1,
-        prefetchRadiusChunks: 3,
-        retentionRadiusChunks: 4,
+        renderRadiusChunks: 7,
+        prefetchRadiusChunks: 9,
+        retentionRadiusChunks: 11,
         landmarkSpacingChunks: 3,
          
          
@@ -98,14 +98,14 @@ export const CONFIG = {
     },
 
     lighting: {
-        ambientColor: 0xd8d8c8,
+        ambientColor: 0xb8b8b6,
         ambientIntensity: 1.8,
          
-        moonColor: 0xfff8e0,
+        moonColor: 0xe2e2de,
         moonIntensity: 1.2,
         moonPosition: { x: 20, y: 70, z: 10 },
          
-        fillColor: 0xfff4d0,
+        fillColor: 0xc4c5c3,
         fillIntensity: 0.6,
         signLight: {
             intensity: 5,
@@ -134,7 +134,7 @@ export const CONFIG = {
             maxPixelRatio: 2,
             antialias: true,
             bloom: { strength: 0.1, radius: 0.4, threshold: 0.88 },
-            drawDistance: 50,
+            drawDistance: 700,
             maxDynamicLights: 10,
             propDensity: 1.5,
             maxEnterableFloors: 4,  
@@ -144,7 +144,7 @@ export const CONFIG = {
             maxPixelRatio: 1.5,
             antialias: false,
             bloom: { strength: 0.1, radius: 0.35, threshold: 0.9 },
-            drawDistance: 100,
+            drawDistance: 520,
             maxDynamicLights: 8,
             propDensity: 1.45,
             maxEnterableFloors: 3,
@@ -158,7 +158,7 @@ export const CONFIG = {
             maxPixelRatio: 1,
             antialias: false,
             bloom: null,
-            drawDistance: 100,
+            drawDistance: 360,
             maxDynamicLights: 5,
             propDensity: 0.2,
             maxEnterableFloors: 3,

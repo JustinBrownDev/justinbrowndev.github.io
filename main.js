@@ -33,7 +33,6 @@ import { WORLD_STREAMING_GEAR, choosePlayerCenteredStreamingGear, createPrefetch
 import { createDynamicLightPool } from './systems/dynamic-light-pool.js';
 import { createRuntimeLatencyTelemetry } from './systems/runtime-latency.js';
 import { createCooperativeBuildYield } from './systems/cooperative-build-yield.js';
-import { createMusicPlayer } from './systems/music-player.js';
 
  
  
@@ -214,13 +213,13 @@ function randomizeConfig() {
      
     c.scene.backgroundColor = shiftHue(c.scene.backgroundColor, QP[49]);
     c.scene.fogColor = shiftHue(c.scene.fogColor, QP[50]);
-    c.scene.fogDensity = jitterClamped(c.scene.fogDensity, QP[51], QP[52], QP[53]);
+    c.scene.fogDensity = jitterClamped(c.scene.fogDensity, 0.04, 0.00095, 0.0013);
 
      
     for (const pole of [c.narrative.lightWeb, c.narrative.darkWeb]) {
         pole.fogColor = shiftHue(pole.fogColor, QP[54]);
         pole.ambientColor = shiftHue(pole.ambientColor, QP[55]);
-        pole.fogDensity = jitterClamped(pole.fogDensity, QP[56], QP[57], QP[58]);
+        pole.fogDensity = jitterClamped(pole.fogDensity, 0.035, 0.0009, 0.00135);
         pole.ambientIntensity = jitterClamped(pole.ambientIntensity, QP[59], QP[60], QP[61]);
         pole.hemiIntensity = jitterClamped(pole.hemiIntensity, QP[62], QP[63], QP[64]);
         pole.signChance = jitterClamped(pole.signChance, QP[65], QP[66], QP[67]);
@@ -935,7 +934,7 @@ function testEarlyKeyUp(e) {
     }
 }
 function testEarlyClick(e) {
-    if (IS_TOUCH || e.target.closest?.('#parameterEditorRoot, #bootStreamFilters, #escapeSiteButton, #musicPlayer')) return;
+    if (IS_TOUCH || e.target.closest?.('#parameterEditorRoot, #bootStreamFilters, #escapeSiteButton')) return;
     if (!controls.isLocked) controls.lock();
 }
 document.addEventListener('keydown', testEarlyKeyDown);
@@ -1150,89 +1149,41 @@ function webAlignment(worldZ) {
  
  
  
-const CAVE_FOG = new THREE.Color(QP[259]);
-const CAVE_AMBIENT = new THREE.Color(QP[260]);
-const HEAVEN_FOG = new THREE.Color(QP[261]);
-const HEAVEN_AMBIENT = new THREE.Color(QP[262]);
-const _vertColor = new THREE.Color();
-const _vertAmbient = new THREE.Color();
-const LAYER_Y = { caveTop: QP[263], heavenBase: QP[264] };
+const ATMOSPHERE_DARK_FOG = new THREE.Color(CONFIG.narrative.darkWeb.fogColor);
+const ATMOSPHERE_LIGHT_FOG = new THREE.Color(CONFIG.narrative.lightWeb.fogColor);
+const ATMOSPHERE_DARK_AMBIENT = new THREE.Color(CONFIG.narrative.darkWeb.ambientColor);
+const ATMOSPHERE_LIGHT_AMBIENT = new THREE.Color(CONFIG.narrative.lightWeb.ambientColor);
+const _atmosphereColor = new THREE.Color();
+const _atmosphereAmbient = new THREE.Color();
 let _lastCameraFar = camera.far;
 
-function verticalBandT(y) {
-    return THREE.MathUtils.clamp((y - LAYER_Y.caveTop) / (LAYER_Y.heavenBase - LAYER_Y.caveTop), QP[265], QP[266]);
-}
-
-function updateVerticalGradient(y, elapsed) {
-    const vt = verticalBandT(y);
-    if (vt <= QP[267]) {
-        _vertColor.copy(CAVE_FOG);
-        _vertAmbient.copy(CAVE_AMBIENT);
-    } else if (vt >= QP[268]) {
-        _vertColor.copy(HEAVEN_FOG);
-        _vertAmbient.copy(HEAVEN_AMBIENT);
-    } else {
-         
-         
-         
-        const hue = (vt * QP[269] + elapsed * QP[270]) % QP[271];
-        _vertColor.setHSL(hue, QP[272], QP[273]);
-        _vertAmbient.setHSL((hue + QP[274]) % QP[275], QP[276], QP[277]);
-    }
-    scene.fog.color.copy(_vertColor);
-    scene.background.copy(_vertColor);
-    ambientLight.color.copy(_vertAmbient);
-    return vt;
-}
-
-function updateWebGradient(worldZ, worldY, elapsed) {
+function updateWebGradient(worldZ) {
     const t = webAlignment(worldZ);
     const dark = CONFIG.narrative.darkWeb;
     const light = CONFIG.narrative.lightWeb;
 
-     
-     
-     
-    const vt = updateVerticalGradient(worldY, elapsed);
+    // One distant neutral atmosphere everywhere. Horizontal world alignment is
+    // allowed only a very small gray/cool/warm perturbation; altitude never
+    // changes fog color, density, or camera range.
+    _atmosphereColor.copy(ATMOSPHERE_DARK_FOG).lerp(ATMOSPHERE_LIGHT_FOG, t);
+    _atmosphereAmbient.copy(ATMOSPHERE_DARK_AMBIENT).lerp(ATMOSPHERE_LIGHT_AMBIENT, t);
+    scene.fog.color.copy(_atmosphereColor);
+    scene.background.copy(_atmosphereColor);
+    scene.fog.density = THREE.MathUtils.lerp(dark.fogDensity, light.fogDensity, t);
 
-    const baseDensity = THREE.MathUtils.lerp(dark.fogDensity, light.fogDensity, t);
-     
-     
-     
-     
-    scene.fog.density = baseDensity * THREE.MathUtils.lerp(QP[278], QP[279], vt);
-    // Horizontal streaming/detail culling is already cylindrical (XZ only).
-    // Keep the camera far plane outside that cylinder so a tall building cannot
-    // lose its upper or lower section merely because Y increased eye distance.
-    const horizontalDrawDistance = THREE.MathUtils.lerp(Math.min(QP[280], QUALITY.drawDistance), QUALITY.drawDistance, vt);
-    const nextFar = cylindricalFarPlaneDistance(horizontalDrawDistance);
+    const nextFar = cylindricalFarPlaneDistance(QUALITY.drawDistance);
     if (Math.abs(nextFar - _lastCameraFar) > QP[281]) {
         camera.far = nextFar;
         camera.updateProjectionMatrix();
         _lastCameraFar = nextFar;
     }
 
+    ambientLight.color.copy(_atmosphereAmbient);
     ambientLight.intensity = THREE.MathUtils.lerp(dark.ambientIntensity, light.ambientIntensity, t);
     hemiLight.intensity = THREE.MathUtils.lerp(dark.hemiIntensity, light.hemiIntensity, t);
-     
-     
-    rainMat.opacity = (QP[282] - t) * QP[283] * (QP[284] - vt * QP[285]);
-    updateAudioGradient(t, vt);
+    rainMat.opacity = (QP[282] - t) * QP[283];
 }
 
- 
- 
- 
- 
- 
- 
- 
- 
-const musicPlayer = createMusicPlayer();
-
-function updateAudioGradient(t, vt = QP[302]) {
-    musicPlayer.setWorldMix(t, vt);
-}
 
 function playFootstep() {}
 
@@ -2876,7 +2827,7 @@ if (IS_TOUCH) {
     showHint('click to look around · WASD to move · space to jump · shift to sprint · F freecam · P parameters · ESC to release');
 
     document.addEventListener('click', (e) => {
-        if (e.target.closest('#escapeSiteButton, #parameterEditorRoot, #musicPlayer')) return;
+        if (e.target.closest('#escapeSiteButton, #parameterEditorRoot')) return;
         if (!controls.isLocked) controls.lock();
     });
     controls.addEventListener('lock', () => fadeHint(QP[5323]));
@@ -3531,7 +3482,7 @@ function animate(now = performance.now()) {
         const flySpeed = moveSpeed * QP[5377];
         const vertical = (move.flyUp ? QP[5378] : QP[5379]) - (move.flyDown ? QP[5380] : QP[5381]);
         camera.position.y += vertical * flySpeed * delta;
-        updateWebGradient(camera.position.z, camera.position.y, elapsedTime);
+        updateWebGradient(camera.position.z);
         updateRain(delta);
         const _freecamRenderStarted = performance.now();
         composer.render();
@@ -3565,7 +3516,7 @@ function animate(now = performance.now()) {
     camera.up.set(0, 1, 0);
     camera.rotation.z = 0;
 
-    updateWebGradient(camera.position.z, camera.position.y, elapsedTime);
+    updateWebGradient(camera.position.z);
     updateRain(delta);
 
     const _runtimeRenderStarted = performance.now();

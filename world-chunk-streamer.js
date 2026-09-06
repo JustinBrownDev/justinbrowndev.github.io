@@ -143,6 +143,10 @@ export function createWorldChunkStreamer({
             visible: false,
             renderRequested: false,
             renderRequestedAt: 0,
+            // Build-time render intent is separate from authoritative publication.
+            // It allows the engine to show visual-only speculative geometry for the
+            // current render ring while physics and READY remain strictly pending.
+            provisionalRenderRequested: false,
             renderPublished: false,
             renderPublishedAt: 0,
             physicsAuthoritative: false,
@@ -844,6 +848,7 @@ export function createWorldChunkStreamer({
         if (chunk.state === CHUNK_STATE.READY) return chunk;
         if (chunk.state === CHUNK_STATE.BUILDING || chunk.state === CHUNK_STATE.COMMITTING) return chunk;
 
+        chunk.provisionalRenderRequested = shouldBeVisible(chunk, playerChunkCoords());
         state(chunk, CHUNK_STATE.BUILDING);
         chunk.buildOrder = ++buildSerial;
         try {
@@ -870,6 +875,7 @@ export function createWorldChunkStreamer({
             if (verifyChunkReady) await verifyChunkReady(chunk, chunk.payload, chunk.renderRequested);
             chunk.readyAt = performance.now();
             state(chunk, CHUNK_STATE.READY);
+            chunk.provisionalRenderRequested = false;
             if (chunk.visible) visibleReadyCount++;
             return chunk;
         } catch (error) {
@@ -879,6 +885,7 @@ export function createWorldChunkStreamer({
             chunk.failureMessage = String(error?.message ?? error);
             chunk.failureLabel = String(label ?? 'world chunk');
             failureCount++;
+            chunk.provisionalRenderRequested = false;
             state(chunk, CHUNK_STATE.FAILED);
             console.error?.('[world-chunk-failed]', {
                 key: chunk.key, label: chunk.failureLabel, code: chunk.failureCode,

@@ -1,3 +1,5 @@
+HISTORICAL VALIDATION SNAPSHOT: preserved as a record of its named cut. Some listed audits and staging rules have since been retired; use architectural-invariants-audit.cjs plus current selftests for present authority.
+
 jweb.dev progressive world self-loading landing
 baseline live commit: 92a4386fc80d3efdf6a33e77731609ea07284e9f
 

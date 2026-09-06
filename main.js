@@ -3220,6 +3220,7 @@ function maybeLogWorldDiagnostics(now) {
     const failureDiagnostics = stats.failureDiagnostics ?? {};
     const failedKeys = (failureDiagnostics.recent ?? []).slice(0, 4).map(item => item.key).join(',');
     const assets = adornmentLoadQueue.stats();
+    const speculative = cityFabricEngine?.speculativePreviewStats?.() ?? {};
     const playerChunk = worldChunkStreamer.playerChunkCoords();
     const streamFocusKey = `${playerChunk.x},${playerChunk.z}`;
     const streamFocus = richness.perChunk?.find(chunk => chunk.key === streamFocusKey) ?? null;
@@ -3288,6 +3289,11 @@ function maybeLogWorldDiagnostics(now) {
         + ' commitVisibleAvg=' + (throughput.avgCommitToVisibleMs ?? 0).toFixed(1) + 'ms'
         + ' | paint proxy=' + _bootstrapCompileStaged.size
         + ' compileQ=' + _bootstrapCompileQueue.length
+        + ' | preview chunks=' + (speculative.activeChunks ?? 0)
+        + ' groups=' + (speculative.activeGroups ?? 0) + '/' + (speculative.maxGroupsPerChunk ?? 0)
+        + ' inst=' + (speculative.activeInstances ?? 0)
+        + ' held=' + (speculative.activeSuppressedInstances ?? 0)
+        + ' published=' + (speculative.publishedInstances ?? 0)
         + ' | chunks q=' + (states.queued ?? 0)
         + ' building=' + (states.building ?? 0)
         + ' ready=' + (states.ready ?? 0)

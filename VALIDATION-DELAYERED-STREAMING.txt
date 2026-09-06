@@ -1,3 +1,5 @@
+HISTORICAL VALIDATION SNAPSHOT: preserved as a record of its named cut. Some listed audits and staging rules have since been retired; use architectural-invariants-audit.cjs plus current selftests for present authority.
+
 JUSTINBROWNDEV.GITHUB.IO - PROGRESSIVE RUNTIME / LLM-STRUCTURE VALIDATION
 Date: 2026-08-30
 

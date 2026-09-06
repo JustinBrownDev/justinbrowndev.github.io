@@ -498,6 +498,39 @@ export function createKowloonFabricEngine({
         ...wallMats.map((mat, index) => [mat, new THREE.Color([0xc08f69, 0x78a48d, 0xb86d72, 0x6e91b8][index])]),
     ]);
     for (const material of cavernMaterialCenter.keys()) material.color.set(0xffffff);
+
+    // BUILD-TIME VISUAL PREVIEW: streamed chunks may publish color-only geometry
+    // while topology/physics are still being solved. These Basic materials are
+    // deliberately shader-cheap and carry the exact same per-instance color field
+    // as the final Standard materials. They never own collision or traversal.
+    const makeSpeculativePreviewMaterial = source => {
+        const material = new THREE.MeshBasicMaterial({
+            color: 0xffffff,
+            side: source.side,
+            transparent: !!source.transparent,
+            opacity: Number.isFinite(Number(source.opacity)) ? Number(source.opacity) : 1,
+            depthTest: source.depthTest !== false,
+            depthWrite: source.depthWrite !== false,
+            fog: true,
+            toneMapped: false,
+        });
+        material.name = `speculative-color-proxy:${source.name || source.type}`;
+        cavernMaterialCenter.set(material, (cavernMaterialCenter.get(source) ?? new THREE.Color(0x8b8179)).clone());
+        return material;
+    };
+    const speculativePreviewMats = Object.freeze({
+        road: makeSpeculativePreviewMaterial(roadMat),
+        slab: makeSpeculativePreviewMaterial(slabMat),
+        step: makeSpeculativePreviewMaterial(stepMat),
+        prop: makeSpeculativePreviewMaterial(propMat),
+        guardMetal: makeSpeculativePreviewMaterial(guardMetalMat),
+        guardConcrete: makeSpeculativePreviewMaterial(guardConcreteMat),
+        door: makeSpeculativePreviewMaterial(doorMat),
+        window: makeSpeculativePreviewMaterial(windowMat),
+        interiorPaint: makeSpeculativePreviewMaterial(interiorPaintMat),
+        walls: Object.freeze(wallMats.map(makeSpeculativePreviewMaterial)),
+    });
+
     const cavernBlack = new THREE.Color(0x030405);
     const cavernWhite = new THREE.Color(0xf4f3ee);
     const cavernTintScratch = new THREE.Color();
@@ -4645,13 +4678,29 @@ export function createKowloonFabricEngine({
     async function buildKowloonCompoundCooperative(args) {
         yieldControl?.resetSlice?.();
         const stepper = buildKowloonCompoundSteps(args);
+        let visualCursor = args.speculativeVisualPublisher
+            ? captureFabricTransformCursor(args.transforms)
+            : null;
+        let yieldedVisualBoundaries = 0;
         let step = stepper.next();
         while (!step.done) {
             const checkpoint = step.value ?? {};
+            let yieldedFrame = false;
             if (yieldControl) {
-                await yieldControl(`${checkpoint.phase ?? 'compound-step'} ${args.chunk?.key ?? 'unknown'}`, checkpoint.current ?? 0, checkpoint.total ?? 0);
+                yieldedFrame = await yieldControl(`${checkpoint.phase ?? 'compound-step'} ${args.chunk?.key ?? 'unknown'}`, checkpoint.current ?? 0, checkpoint.total ?? 0) === true;
+            }
+            if (args.speculativeVisualPublisher && yieldedFrame) {
+                yieldedVisualBoundaries++;
+                if (yieldedVisualBoundaries % SPECULATIVE_PREVIEW_YIELD_STRIDE === 0) {
+                    visualCursor = args.speculativeVisualPublisher(args.transforms, visualCursor, checkpoint) ?? visualCursor;
+                }
             }
             step = stepper.next();
+        }
+        // One final building-level delta keeps short compounds visible too; the
+        // global group cap prevents this fallback from becoming unbounded.
+        if (args.speculativeVisualPublisher) {
+            visualCursor = args.speculativeVisualPublisher(args.transforms, visualCursor, { phase: 'compound-complete' }) ?? visualCursor;
         }
         return step.value;
     }
@@ -5257,6 +5306,133 @@ export function createKowloonFabricEngine({
             transforms: { wallGroups: wallMats.map(() => []), slabs: [], steps: [], props: [], guardMetal: [], guardConcrete: [], roads: [], windows: [], doors: [], interiorPaint: [] },
             physics: { mazeWalls: [], platforms: [], ramps: [], ceilings: [], props: [], guardSpans: [], circulationReservations: [], semanticConnectors: [], structuralSurfaceClaims: [] },
         };
+    }
+
+    const FABRIC_TRANSFORM_KEYS = Object.freeze(['slabs', 'steps', 'props', 'guardMetal', 'guardConcrete', 'roads', 'windows', 'doors', 'interiorPaint']);
+    // A preview is supposed to hide construction latency, not create a temporary
+    // draw-call bomb. Ground compounds publish at real scheduler yields only and
+    // this cap bounds the number of detached delta batches for any one build.
+    const SPECULATIVE_PREVIEW_YIELD_STRIDE = 4;
+    const MAX_SPECULATIVE_PREVIEW_GROUPS = 24;
+    const speculativePreviewRoots = new Map();
+    let speculativePreviewSerial = 0;
+    let speculativePreviewPublishedGroups = 0;
+    let speculativePreviewPublishedInstances = 0;
+    let speculativePreviewSuppressedInstances = 0;
+    let speculativePreviewDiscarded = 0;
+
+    function captureFabricTransformCursor(transforms) {
+        const cursor = {
+            wallGroups: (transforms?.wallGroups ?? []).map(list => list?.length ?? 0),
+        };
+        for (const key of FABRIC_TRANSFORM_KEYS) cursor[key] = transforms?.[key]?.length ?? 0;
+        return cursor;
+    }
+
+    function sliceFabricTransformDelta(transforms, cursor, { yOffset = 0 } = {}) {
+        const shift = item => yOffset && Number.isFinite(item?.y) ? { ...item, y: Number(item.y) + yOffset } : item;
+        const delta = { wallGroups: wallMats.map(() => []) };
+        for (let i = 0; i < delta.wallGroups.length; i++) {
+            delta.wallGroups[i] = (transforms?.wallGroups?.[i] ?? []).slice(cursor?.wallGroups?.[i] ?? 0).map(shift);
+        }
+        for (const key of FABRIC_TRANSFORM_KEYS) {
+            delta[key] = (transforms?.[key] ?? []).slice(cursor?.[key] ?? 0).map(shift);
+        }
+        return delta;
+    }
+
+    function countFabricTransformInstances(transforms) {
+        let count = 0;
+        for (const list of transforms?.wallGroups ?? []) count += list?.length ?? 0;
+        for (const key of FABRIC_TRANSFORM_KEYS) count += transforms?.[key]?.length ?? 0;
+        return count;
+    }
+
+    function ensureSpeculativePreviewRoot(chunk) {
+        if (!chunk?.provisionalRenderRequested) return null;
+        const key = String(chunk.key);
+        let record = speculativePreviewRoots.get(key);
+        if (record) return record;
+        const root = new THREE.Group();
+        root.name = `world-chunk-preview:${key}`;
+        root.userData.noSpatialChunk = true;
+        root.userData.worldChunkRoot = false;
+        root.userData.worldChunkKey = key;
+        root.userData.worldChunkOwnerId = chunk.ownerId ?? worldChunkOwnerId(worldSeed, chunk.x, chunk.z);
+        root.userData.renderAuthority = 'KowloonFabricEngine:speculative-visual';
+        root.userData.speculativeVisualOnly = true;
+        root.userData.collisionAuthority = 'none';
+        root.userData.traversalAuthority = 'none';
+        root.visible = true;
+        addStreamRoot(root);
+        record = { root, groups: 0, instances: 0, suppressedInstances: 0, createdAt: typeof performance !== 'undefined' ? performance.now() : Date.now() };
+        speculativePreviewRoots.set(key, record);
+        return record;
+    }
+
+    function publishSpeculativeVisualDelta(chunk, transforms, cursor, { phase = 'build', yOffset = 0 } = {}) {
+        const nextCursor = captureFabricTransformCursor(transforms);
+        if (!chunk?.provisionalRenderRequested) return nextCursor;
+        const delta = sliceFabricTransformDelta(transforms, cursor, { yOffset });
+        const instances = countFabricTransformInstances(delta);
+        if (!instances) return nextCursor;
+        const record = ensureSpeculativePreviewRoot(chunk);
+        if (!record) return nextCursor;
+        if (record.groups >= MAX_SPECULATIVE_PREVIEW_GROUPS) {
+            // Advance the cursor so skipped geometry does not get recopied at every
+            // later checkpoint. The authoritative root will replace the preview.
+            record.suppressedInstances += instances;
+            speculativePreviewSuppressedInstances += instances;
+            return nextCursor;
+        }
+        const group = new THREE.Group();
+        group.name = `speculative:${String(chunk.key)}:${String(phase)}:${++speculativePreviewSerial}`;
+        group.userData.speculativeVisualOnly = true;
+        group.userData.collisionAuthority = 'none';
+        group.userData.traversalAuthority = 'none';
+        group.userData.phase = String(phase);
+        const drawBatches = attachFabricMeshes(group, delta, group.name, { speculative: true });
+        if (!drawBatches) return nextCursor;
+        record.root.add(group);
+        record.groups += 1;
+        record.instances += instances;
+        speculativePreviewPublishedGroups += 1;
+        speculativePreviewPublishedInstances += instances;
+        return nextCursor;
+    }
+
+    function discardSpeculativePreview(chunkOrKey, reason = 'discard') {
+        const key = String(typeof chunkOrKey === 'object' ? chunkOrKey?.key : chunkOrKey);
+        const record = speculativePreviewRoots.get(key);
+        if (!record) return false;
+        if (record.root?.parent) record.root.parent.remove(record.root);
+        record.root?.clear?.();
+        speculativePreviewRoots.delete(key);
+        speculativePreviewDiscarded += 1;
+        return true;
+    }
+
+    function speculativePreviewStats() {
+        let activeGroups = 0;
+        let activeInstances = 0;
+        let activeSuppressedInstances = 0;
+        for (const record of speculativePreviewRoots.values()) {
+            activeGroups += record.groups;
+            activeInstances += record.instances;
+            activeSuppressedInstances += record.suppressedInstances;
+        }
+        return Object.freeze({
+            activeChunks: speculativePreviewRoots.size,
+            activeGroups,
+            activeInstances,
+            activeSuppressedInstances,
+            maxGroupsPerChunk: MAX_SPECULATIVE_PREVIEW_GROUPS,
+            yieldStride: SPECULATIVE_PREVIEW_YIELD_STRIDE,
+            publishedGroups: speculativePreviewPublishedGroups,
+            publishedInstances: speculativePreviewPublishedInstances,
+            suppressedInstances: speculativePreviewSuppressedInstances,
+            discarded: speculativePreviewDiscarded,
+        });
     }
 
 
@@ -6303,7 +6479,7 @@ export function createKowloonFabricEngine({
     function* buildCeilingCityLayerSteps({
         chunk, ownerId, groundEntities = [], parentRoot = null,
         worldChunkKey = chunk.key, weirdness = chunk.weirdness?.sampled ?? 0,
-        preparedPlan = null, ceilingBudgets = null,
+        preparedPlan = null, ceilingBudgets = null, speculativeVisualPublisher = null,
     }) {
         const field = preparedPlan ?? prepareCeilingCityField({ chunk, weirdness });
         const { source, weird, phaseChunk, cx0, cz0, half, cellSize, roadPlan, siteIdOf,
@@ -6403,7 +6579,7 @@ export function createKowloonFabricEngine({
 
             const local = createFabricBuffers();
             const materialIndex = hashString32(`${phaseChunk.seed}:ceiling-compound-facade:${signature}`) % wallMats.length;
-            const structural = yield* buildKowloonCompoundSteps({
+            const compoundStepper = buildKowloonCompoundSteps({
                 chunk: phaseChunk, site, siteIdOf, roadPlan, openSiteIds, bridgePortalsBySite,
                 physics: local.physics, transforms: local.transforms,
                 cx0, cz0, half, cellSize, materialIndex,
@@ -6430,6 +6606,17 @@ export function createKowloonFabricEngine({
                     } : null,
                 },
             });
+            // Hanging geometry stays local while the building is being solved.
+            // Publish it once after the final world-Y translation rather than
+            // emitting hundreds of temporary groups in an approximate frame.
+            let localVisualCursor = speculativeVisualPublisher ? captureFabricTransformCursor(local.transforms) : null;
+            let compoundStep = compoundStepper.next();
+            while (!compoundStep.done) {
+                const checkpoint = compoundStep.value ?? {};
+                yield checkpoint;
+                compoundStep = compoundStepper.next();
+            }
+            const structural = compoundStep.value;
             if (!structural) continue;
             const localTopY = structural.floors * structural.floorH;
             stripCeilingSideRoofIdentity(structural, local.transforms, local.physics);
@@ -6475,11 +6662,17 @@ export function createKowloonFabricEngine({
                     removedGuardSpans: ladder.carved.guardMouth?.removedGuardSpans ?? 0,
                 };
             }
+            if (speculativeVisualPublisher) {
+                localVisualCursor = speculativeVisualPublisher(local.transforms, localVisualCursor, {
+                    phase: 'ceiling-building-final', siteId: site.id,
+                }, { yOffset: 0 }) ?? localVisualCursor;
+            }
             mergeFabricBuffers(aggregate, local);
             entities.push(entity); buildings++;
             yield { phase: 'ceiling-building', current: buildings, total: sitePlans.length, sourceKey: source.key };
         }
 
+        let ceilingLateVisualCursor = captureFabricTransformCursor(aggregate.transforms);
         const entityBySite = new Map(entities.map(entity => [entity.siteId, entity]));
         let skybridges = 0;
         for (const bridge of bridgePlans) {
@@ -6494,6 +6687,8 @@ export function createKowloonFabricEngine({
             entities.push({ id: bridge.id, kind: 'skybridge', growthDirection: 'world-down', gravityDirection: 'world-down', ...bridge });
             skybridges++;
         }
+        if (speculativeVisualPublisher) ceilingLateVisualCursor = speculativeVisualPublisher(aggregate.transforms, ceilingLateVisualCursor, { phase: 'ceiling-skybridges' }) ?? ceilingLateVisualCursor;
+        yield { phase: 'ceiling-skybridges', current: skybridges, total: bridgePlans.length, sourceKey: source.key };
 
         const emittedBridgeIds = new Set(entities.filter(entity => entity.kind === 'skybridge').map(entity => entity.id));
         const emittedBridgePlans = bridgePlans.filter(bridge => emittedBridgeIds.has(bridge.id));
@@ -6501,6 +6696,8 @@ export function createKowloonFabricEngine({
             field: 'ceiling', bridgePlans: emittedBridgePlans, entityBySite,
             physics: aggregate.physics, transforms: aggregate.transforms,
         });
+        if (speculativeVisualPublisher) ceilingLateVisualCursor = speculativeVisualPublisher(aggregate.transforms, ceilingLateVisualCursor, { phase: 'ceiling-facade-galleries' }) ?? ceilingLateVisualCursor;
+        yield { phase: 'ceiling-facade-galleries', current: facadeRouteGalleries.realized ?? 0, total: emittedBridgePlans.length, sourceKey: source.key };
 
         // Hanging roofs publish the same authoritative transport topology as the
         // ground city.  Closing this graph before the cavern-wall fallback means
@@ -6510,14 +6707,20 @@ export function createKowloonFabricEngine({
             physics: aggregate.physics, transforms: aggregate.transforms,
             stableKey: `${worldSeed}:${chunk.key}:ceiling-exterior-transport`, field: 'ceiling',
         });
+        if (speculativeVisualPublisher) ceilingLateVisualCursor = speculativeVisualPublisher(aggregate.transforms, ceilingLateVisualCursor, { phase: 'ceiling-exterior-transport' }) ?? ceilingLateVisualCursor;
+        yield { phase: 'ceiling-exterior-transport', current: exteriorTransportNetwork?.realized ?? 0, total: exteriorTransportNetwork?.plan?.edges?.length ?? 1, sourceKey: source.key };
         const cavernWallStairs = realizePopularCavernWallStairs({
             field: 'ceiling', entities: entities.filter(entity => entity.kind === 'building'),
             physics: aggregate.physics, transforms: aggregate.transforms, maxRoutes: 2,
         });
+        if (speculativeVisualPublisher) ceilingLateVisualCursor = speculativeVisualPublisher(aggregate.transforms, ceilingLateVisualCursor, { phase: 'ceiling-cavern-wall-stairs' }) ?? ceilingLateVisualCursor;
+        yield { phase: 'ceiling-cavern-wall-stairs', current: cavernWallStairs.length, total: 2, sourceKey: source.key };
         const routeOwnedRooftopPlaces = realizeRouteOwnedRooftopPlaces({
             chunk: phaseChunk, field: 'ceiling', physics: aggregate.physics, transforms: aggregate.transforms,
             entities, transportNetwork: exteriorTransportNetwork, maxPlaces: 7,
         });
+        if (speculativeVisualPublisher) ceilingLateVisualCursor = speculativeVisualPublisher(aggregate.transforms, ceilingLateVisualCursor, { phase: 'ceiling-rooftop-places' }) ?? ceilingLateVisualCursor;
+        yield { phase: 'ceiling-rooftop-places', current: routeOwnedRooftopPlaces.stats?.realized ?? 0, total: 7, sourceKey: source.key };
         attachFabricMeshes(root, aggregate.transforms, `ceiling:${chunk.key}`);
         const payload = {
             formatVersion: WORLD_FORMAT_VERSION,
@@ -6548,11 +6751,14 @@ export function createKowloonFabricEngine({
         };
     }
 
-    async function buildFullFatHangingCityLayer({ chunk, root, ownerId, groundEntities, weird, preparedPlan = null, ceilingBudgets = null }) {
+    async function buildFullFatHangingCityLayer({
+        chunk, root, ownerId, groundEntities, weird, preparedPlan = null, ceilingBudgets = null,
+        speculativeVisualPublisher = null,
+    }) {
         const iterator = buildCeilingCityLayerSteps({
             chunk, ownerId: `${ownerId}:ceiling`, groundEntities,
             parentRoot: root, worldChunkKey: chunk.key, weirdness: weird,
-            preparedPlan, ceilingBudgets,
+            preparedPlan, ceilingBudgets, speculativeVisualPublisher,
         });
         let step = iterator.next();
         while (!step.done) {
@@ -6585,23 +6791,29 @@ export function createKowloonFabricEngine({
         return result?.payload ?? null;
     }
 
-    function attachFabricMeshes(root, transforms, namePrefix) {
-        const roadMesh = makeInstanced(`${namePrefix}-roads`, unitPlane, roadMat, transforms.roads);
+    function attachFabricMeshes(root, transforms, namePrefix, { speculative = false } = {}) {
+        const materials = speculative ? speculativePreviewMats : {
+            road: roadMat, slab: slabMat, step: stepMat, prop: propMat,
+            guardMetal: guardMetalMat, guardConcrete: guardConcreteMat,
+            window: windowMat, door: doorMat, interiorPaint: interiorPaintMat, walls: wallMats,
+        };
+        const beforeChildren = root.children.length;
+        const roadMesh = makeInstanced(`${namePrefix}-roads`, unitPlane, materials.road, transforms.roads);
         if (roadMesh) root.add(roadMesh);
         for (let i = 0; i < transforms.wallGroups.length; i++) {
-            const mesh = makeInstanced(`${namePrefix}-walls-${i}`, unitBox, wallMats[i], transforms.wallGroups[i]);
+            const mesh = makeInstanced(`${namePrefix}-walls-${i}`, unitBox, materials.walls[i], transforms.wallGroups[i]);
             if (mesh) root.add(mesh);
         }
-        const slabMesh = makeInstanced(`${namePrefix}-slabs`, unitBox, slabMat, transforms.slabs);
-        const stepMesh = makeInstanced(`${namePrefix}-steps`, unitBox, stepMat, transforms.steps);
-        const propMesh = makeInstanced(`${namePrefix}-props`, unitBox, propMat, transforms.props);
-        const guardMetalMesh = makeInstanced(`${namePrefix}-guard-metal`, unitBox, guardMetalMat, transforms.guardMetal);
-        const guardConcreteMesh = makeInstanced(`${namePrefix}-guard-concrete`, unitBox, guardConcreteMat, transforms.guardConcrete);
-        const windowMesh = makeInstanced(`${namePrefix}-windows`, unitBox, windowMat, transforms.windows);
-        const doorMesh = makeInstanced(`${namePrefix}-doors`, unitBox, doorMat, transforms.doors);
-        const interiorPaintMesh = makeInstanced(`${namePrefix}-building-plan-interior-paint`, unitBox, interiorPaintMat, transforms.interiorPaint);
+        const slabMesh = makeInstanced(`${namePrefix}-slabs`, unitBox, materials.slab, transforms.slabs);
+        const stepMesh = makeInstanced(`${namePrefix}-steps`, unitBox, materials.step, transforms.steps);
+        const propMesh = makeInstanced(`${namePrefix}-props`, unitBox, materials.prop, transforms.props);
+        const guardMetalMesh = makeInstanced(`${namePrefix}-guard-metal`, unitBox, materials.guardMetal, transforms.guardMetal);
+        const guardConcreteMesh = makeInstanced(`${namePrefix}-guard-concrete`, unitBox, materials.guardConcrete, transforms.guardConcrete);
+        const windowMesh = makeInstanced(`${namePrefix}-windows`, unitBox, materials.window, transforms.windows);
+        const doorMesh = makeInstanced(`${namePrefix}-doors`, unitBox, materials.door, transforms.doors);
+        const interiorPaintMesh = makeInstanced(`${namePrefix}-building-plan-interior-paint`, unitBox, materials.interiorPaint, transforms.interiorPaint);
         for (const mesh of [slabMesh, stepMesh, propMesh, guardMetalMesh, guardConcreteMesh, windowMesh, doorMesh, interiorPaintMesh]) if (mesh) root.add(mesh);
-        return root.children.length;
+        return root.children.length - beforeChildren;
     }
 
     function buildAuthoredOriginChunk({ singulars = [] } = {}) {
@@ -6721,7 +6933,13 @@ export function createKowloonFabricEngine({
     }
 
     function buildAuthoredSite(args = {}) {
-        return runCompoundStepperToCompletion(buildAuthoredSiteSteps(args));
+        // Compatibility/test seam: runtime uses the stepped API, but callers that
+        // explicitly request the synchronous form still need a complete payload.
+        // Keep the drain local so there is no second structural builder authority.
+        const stepper = buildAuthoredSiteSteps(args);
+        let step = stepper.next();
+        while (!step.done) step = stepper.next();
+        return step.value;
     }
 
 
@@ -6874,7 +7092,7 @@ export function createKowloonFabricEngine({
         };
     }
 
-    async function build(chunk) {
+    async function buildAuthoritativeChunk(chunk) {
         const rng = mulberry32(chunk.seed ^ (worldSeed >>> 0));
         const roadPlan = planRoads(chunk);
         let districtLandmarkSpec = districtLandmarkFor(chunk);
@@ -6896,6 +7114,13 @@ export function createKowloonFabricEngine({
         root.visible = false;
 
         const { transforms, physics } = createFabricBuffers();
+        const initialVisualCursor = captureFabricTransformCursor(transforms);
+        const publishChunkPreview = (sourceTransforms, cursor, checkpoint = {}, options = {}) => publishSpeculativeVisualDelta(
+            chunk, sourceTransforms, cursor, {
+                phase: checkpoint.phase ?? 'chunk-build',
+                yOffset: options.yOffset ?? 0,
+            },
+        );
         const entities = [];
         const ownerId = chunk.ownerId ?? worldChunkOwnerId(worldSeed, chunk.x, chunk.z);
         const cx0 = chunk.centerX;
@@ -6928,6 +7153,8 @@ export function createKowloonFabricEngine({
          
          
         addOwnedBoundaryBarriers(chunk, roadPlan, physics, transforms.wallGroups[0], cellSize);
+        publishChunkPreview(transforms, initialVisualCursor, { phase: 'ground-street-skeleton' });
+        if (yieldControl) await yieldControl(`publishing provisional street skeleton ${chunk.key}`, 1, 1);
 
         // Sparse one-cell landmarks use the same stair truth. If the landmark exhausts
         // its legal cell and still cannot fit circulation, return the cell to the solid
@@ -6974,6 +7201,7 @@ export function createKowloonFabricEngine({
         if (districtLandmarkCell) {
             const cellCx = cx0 - half + (districtLandmarkCell.c + 0.5) * cellSize;
             const cellCz = cz0 - half + (districtLandmarkCell.r + 0.5) * cellSize;
+            const landmarkVisualCursor = captureFabricTransformCursor(transforms);
             const landmark = await buildDistrictLandmark({
                 chunk,
                 spec: districtLandmarkSpec,
@@ -6987,6 +7215,7 @@ export function createKowloonFabricEngine({
             });
             entities.push({ ...landmark, kind: 'district-landmark' });
             buildings++;
+            publishChunkPreview(transforms, landmarkVisualCursor, { phase: 'ground-landmark' });
             if (yieldControl) await yieldControl(`building landmark ${chunk.key}`, entities.length, microCells * microCells);
         }
 
@@ -7137,6 +7366,7 @@ export function createKowloonFabricEngine({
         for (const plan of sitePlans) {
             const { site, signature } = plan;
             const siteEntityId = worldEntityId(worldSeed, chunk.x, chunk.z, plan.isPlaza ? 'plaza' : 'building', signature);
+            const siteVisualCursor = plan.isPlaza ? captureFabricTransformCursor(transforms) : null;
             if (plan.isPlaza) {
                 const plazaRng = mulberry32(hashString32(`${worldSeed}:kowloon-plaza:${chunk.key}:${signature}`));
                 let clutter = 0;
@@ -7201,6 +7431,7 @@ export function createKowloonFabricEngine({
                     physics, transforms, cx0, cz0, half, cellSize, materialIndex, districtBuildingContext,
                     courtyardCellOverride: plan.superstructure ? null : undefined,
                     structureProfile: structuralProfile,
+                    speculativeVisualPublisher: publishChunkPreview,
                 });
                 if (!structural) continue;
                 entities.push({
@@ -7215,6 +7446,7 @@ export function createKowloonFabricEngine({
                 });
                 buildings++;
             }
+            if (siteVisualCursor) publishChunkPreview(transforms, siteVisualCursor, { phase: 'ground-plaza' });
             if (yieldControl) await yieldControl(`building Kowloon compound ${chunk.key}`, entities.length, sitePlans.length + (districtLandmarkCell ? 1 : 0));
         }
 
@@ -7222,12 +7454,14 @@ export function createKowloonFabricEngine({
             chunk, root, ownerId, sitePlans, siteIdOf, roadPlan, bridgePlans,
             groundEntities: entities, physics, transforms, cx0, cz0, half, cellSize, weird,
             preparedPlan: cavernSynthesis.ceilingField, ceilingBudgets: cavernSynthesis.ceilingBudgets,
+            speculativeVisualPublisher: publishChunkPreview,
         });
 
         // Cross-building footprint overlap is a generator contract failure, not a
         // visual defect to hide later. Fail before bridges, enrichment, or publish.
         const buildingFootprintInvariant = assertBuildingFootprintsDoNotOverlap(entities);
 
+        let lateVisualCursor = captureFabricTransformCursor(transforms);
         const compoundEntityBySite = new Map(entities.filter(entity => entity.kind === 'building').map(entity => [entity.siteId, entity]));
         let skybridges = 0;
         for (const bridge of bridgePlans) {
@@ -7237,21 +7471,31 @@ export function createKowloonFabricEngine({
             entities.push({ id: bridge.id, kind: 'skybridge', ...bridge });
             skybridges++;
         }
+        lateVisualCursor = publishChunkPreview(transforms, lateVisualCursor, { phase: 'ground-skybridges' }) ?? lateVisualCursor;
+        if (yieldControl) await yieldControl(`publishing ground skybridges ${chunk.key}`, skybridges, bridgePlans.length);
 
         const exteriorTransportNetwork = realizeExteriorTransportNetwork({
             physics, transforms, stableKey: `${worldSeed}:${chunk.key}:exterior-transport`, field: 'ground',
         });
+        lateVisualCursor = publishChunkPreview(transforms, lateVisualCursor, { phase: 'ground-exterior-transport' }) ?? lateVisualCursor;
+        if (yieldControl) await yieldControl(`publishing exterior transport ${chunk.key}`, 1, 1);
         const cavernWallStairs = realizePopularCavernWallStairs({
             field: 'ground', entities: entities.filter(entity => entity.kind === 'building'),
             physics, transforms, maxRoutes: 2,
         });
+        lateVisualCursor = publishChunkPreview(transforms, lateVisualCursor, { phase: 'ground-cavern-wall-stairs' }) ?? lateVisualCursor;
+        if (yieldControl) await yieldControl(`publishing cavern wall stairs ${chunk.key}`, cavernWallStairs.length, 2);
         const routeOwnedRooftopPlaces = realizeRouteOwnedRooftopPlaces({
             chunk, field: 'ground', physics, transforms, entities,
             transportNetwork: exteriorTransportNetwork, maxPlaces: 8,
         });
+        lateVisualCursor = publishChunkPreview(transforms, lateVisualCursor, { phase: 'ground-rooftop-places' }) ?? lateVisualCursor;
+        if (yieldControl) await yieldControl(`publishing rooftop places ${chunk.key}`, routeOwnedRooftopPlaces.stats?.realized ?? 0, 8);
         const routeOwnedPlazaPlaces = realizeRouteOwnedPlazaPlaces({
             chunk, field: 'ground', physics, transforms, entities, maxPlaces: 6,
         });
+        lateVisualCursor = publishChunkPreview(transforms, lateVisualCursor, { phase: 'ground-plaza-places' }) ?? lateVisualCursor;
+        if (yieldControl) await yieldControl(`publishing plaza places ${chunk.key}`, routeOwnedPlazaPlaces.stats?.realized ?? 0, 6);
         const exteriorDebugSnapshot = buildExteriorDebugSnapshot({
             chunk, physics, entities, exteriorTransportNetwork,
         });
@@ -7297,6 +7541,19 @@ export function createKowloonFabricEngine({
         payload.drawBatches = root.children.length;
         freezeChunkRoot(root);
         return payload;
+    }
+
+    async function build(chunk) {
+        // A previous cancelled/failed attempt for the same coordinate must never
+        // survive into a retry. Speculative geometry is intentionally visible,
+        // but its lifetime is still strictly bounded by the active build attempt.
+        discardSpeculativePreview(chunk, 'retry-reset');
+        try {
+            return await buildAuthoritativeChunk(chunk);
+        } catch (error) {
+            discardSpeculativePreview(chunk, 'build-failed');
+            throw error;
+        }
     }
 
     function crossChunkCoordKey(chunk) {
@@ -7643,6 +7900,9 @@ export function createKowloonFabricEngine({
 
     async function commit(chunk, payload) {
         if (!payload || payload.committed) return payload;
+        // Build-time preview is render-only and must disappear before authority
+        // publication begins. If commit later fails, no stale ghost city survives.
+        discardSpeculativePreview(chunk, 'commit-start');
         // ONE publication boundary for authored spawn, singular shells, surface
         // patches, cross-site links, and generic streamed chunks. Build stays
         // off-scene. A player-conflicting owner may attach staged, but neither its
@@ -7725,6 +7985,7 @@ export function createKowloonFabricEngine({
             throw new Error(`chunk ${chunk.key} READY verification failed: legacy optimizer owns streamed root`);
         }
         if (!payload.worldMatricesReady) throw new Error(`chunk ${chunk.key} READY verification failed: world matrices not committed`);
+        if (speculativePreviewRoots.has(String(chunk.key))) throw new Error(`chunk ${chunk.key} READY verification failed: speculative preview survived authoritative commit`);
         if (!committedOwners.has(payload.ownerId)) throw new Error(`chunk ${chunk.key} READY verification failed: physics owner is not registered`);
         if (payload.requestedVisible !== !!expectedVisible) throw new Error(`chunk ${chunk.key} READY verification failed: visibility request does not match streamer authority`);
         const physicsReady = (!payload.physics || payload.physicsActivationState === 'active')
@@ -7735,6 +7996,7 @@ export function createKowloonFabricEngine({
     }
 
     async function unload(chunk, payload) {
+        discardSpeculativePreview(chunk, 'unload');
         if (!payload) return;
         releaseCrossChunkTransportPairsForPayload(payload);
         const crossChunkKey = crossChunkCoordKey(chunk);
@@ -7769,6 +8031,12 @@ export function createKowloonFabricEngine({
     }
 
     function disposeShared() {
+        for (const key of [...speculativePreviewRoots.keys()]) discardSpeculativePreview(key, 'dispose-shared');
+        for (const material of [
+            speculativePreviewMats.road, speculativePreviewMats.slab, speculativePreviewMats.step, speculativePreviewMats.prop,
+            speculativePreviewMats.guardMetal, speculativePreviewMats.guardConcrete, speculativePreviewMats.door,
+            speculativePreviewMats.window, speculativePreviewMats.interiorPaint, ...speculativePreviewMats.walls,
+        ]) material.dispose();
         for (const record of [...crossChunkTransportPairs.values()]) releaseCrossChunkTransportPair(record);
         committedChunkPayloads.clear();
         unitBox.dispose();
@@ -7808,5 +8076,5 @@ export function createKowloonFabricEngine({
     };
     const planningCacheStats = () => buildingPlanCache.stats();
 
-    return { build, buildAuthoredOriginChunk, buildAuthoredCeilingOverlay, buildAuthoredSite, buildAuthoredSiteSteps, buildAuthoredPlaza, buildAuthoredSurfacePatch, buildAuthoredBridge, planAuthoredBridgeNetwork, commit, setVisible, verifyReady, unload, requestProgressiveDeepening, refine, hasPendingRefinement, planChunk, districtLandmarkFor, planningCacheStats, crossChunkSeamStats, disposeShared };
+    return { build, buildAuthoredOriginChunk, buildAuthoredCeilingOverlay, buildAuthoredSite, buildAuthoredSiteSteps, buildAuthoredPlaza, buildAuthoredSurfacePatch, buildAuthoredBridge, planAuthoredBridgeNetwork, commit, setVisible, verifyReady, unload, requestProgressiveDeepening, refine, hasPendingRefinement, planChunk, districtLandmarkFor, planningCacheStats, crossChunkSeamStats, speculativePreviewStats, disposeShared };
 }

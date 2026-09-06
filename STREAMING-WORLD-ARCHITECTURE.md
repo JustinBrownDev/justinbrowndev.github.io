@@ -61,10 +61,18 @@ The streaming lifecycle is:
 
 `PLANNED -> QUEUED -> BUILDING -> COMMITTING -> READY -> UNLOADING -> deleted`
 
-Generic chunk construction happens off-scene. Commit is the atomic publication boundary: render
-objects and owned physics become authoritative together. Unloading removes owned scene and physics
-state, then the scheduler record itself is deleted. Queue/planned/failed metadata outside retention
-is also pruned. Resident memory therefore depends on local retention distance, not distance traveled.
+The authoritative chunk root and owned physics are built off-scene. Commit remains the atomic
+authority boundary: final render objects and collision become authoritative together. While a
+current render-ring chunk is still `BUILDING`, the fabric engine may attach a separate render-only
+speculative preview root at selected cooperative frame-yield/building checkpoints. That preview uses cheap
+color-preserving materials, has no collision or traversal authority, is never used for `READY`, and
+is removed before commit begins. A failed or unloaded build removes the preview as well. Prefetch-only
+chunks do not publish previews. Seeing a provisional visual get replaced by the final authoritative
+geometry is therefore permitted; seeing ghost collision or stale rejected geometry is not.
+
+Unloading removes owned scene and physics state, then the scheduler record itself is deleted.
+Queue/planned/failed metadata outside retention is also pruned. Resident memory therefore depends on
+local retention distance, not distance traveled.
 
 ## Runtime loading policy
 
@@ -144,18 +152,20 @@ These are extensions, not prerequisites for the shipping client.
 
 ## Post-handoff CPU policy
 
-Generic infinite chunks are intentionally atomic off-scene builds. Do not add
-`requestAnimationFrame`/idle sleeps inside the generic chunk factory merely to
-make it "cooperative": a normal generic chunk is millisecond-scale work and
-nested yielding can cost orders of magnitude more wall-clock time than the work
-itself. The live world streamer owns the single scheduling budget and yields
-only between complete chunks.
+Generic infinite construction is cooperatively sliced at the fabric generator's existing
+structural checkpoints. Do not add arbitrary nested `requestAnimationFrame`/idle sleeps around tiny
+operations: the world streamer still owns the scheduling budget, and the fabric engine yields only
+at meaningful construction boundaries. Selected frame-yield/building boundaries are allowed to publish render-only
+speculative deltas for a chunk that is currently inside the visible render ring. Preview batching is
+hard-bounded per chunk so visibility cannot turn into an unbounded draw-call tax. This makes long
+builds perceptually incremental without inventing a second collision lifecycle.
 
-Current runtime policy keeps the local render ring urgent, then fills the
-prefetch ring. A pump is bounded by both a chunk cap and a millisecond budget;
-a fast client therefore builds several chunks per rendered frame while a slow
-client naturally completes fewer. Visual and physics publication remain one
-atomic commit per chunk.
+Current runtime policy keeps the local render ring urgent, then fills the prefetch ring. A pump is
+bounded by both a chunk cap and a millisecond budget. Prefetch-only chunks stay off-scene while they
+build. For visible chunks, provisional pixels may appear during `BUILDING`, but the final chunk root,
+physics ownership, traversal truth, and `READY` state still cross one atomic commit boundary. The
+preview is discarded at commit start, on build failure, and on unload, so it can never become a
+second authority owner.
 
 ## Render authority: one owner, no nesting
 

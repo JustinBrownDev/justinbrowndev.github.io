@@ -406,8 +406,21 @@ function verticalCoreForPlan(plan, topologySpaces, explicitReservationId, explic
   const floorSpaceIds = [...byFloor.entries()]
     .sort((a, b) => a[0] - b[0])
     .map(([, spaces]) => [...spaces].sort((a, b) => {
-      const rank = role => role === 'circulation' ? 0 : role === 'entry' ? 1 : 2;
-      return rank(a.role) - rank(b.role) || a.id.localeCompare(b.id);
+      // A city exchange branch is preclaimed all the way to this same persistent
+      // stair/core reservation. When more than one circulation space touches the
+      // reservation on a floor, the public transfer spine must be the canonical
+      // representative. Otherwise the vertical graph can select an unrelated hall,
+      // making a physically valid facade->core branch appear disconnected and
+      // causing JWEB_TOWER_TRANSFER_UNREALIZED to abort the whole chunk.
+      const rank = space => {
+        if (space.cityTransferSpine === true) return 0;
+        if (space.role === 'circulation' && space.traversalPermission === 'PUBLIC_THROUGH') return 1;
+        if (space.role === 'circulation' && space.throughRoutingEligible === true) return 2;
+        if (space.role === 'circulation') return 3;
+        if (space.role === 'entry') return 4;
+        return 5;
+      };
+      return rank(a) - rank(b) || a.id.localeCompare(b.id);
     })[0]?.id)
     .filter(Boolean);
   const reservation = explicitReservation?.id === reservationId

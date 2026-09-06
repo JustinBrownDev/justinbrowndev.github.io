@@ -27,6 +27,37 @@ for (const side of ['north', 'south', 'west', 'east']) {
   assert.deepEqual(planExteriorScaffoldRoute({ fp: { cx: 0, cz: 0, halfX: 10, halfZ: 10 }, siteId: 4, moduleKey: `module:${side}`, floors: 4, floorH: 3.2, side, seed: 808, physicalTruth: truth, maxExteriorDepth: 4.0, routeId: `canonical:${side}` }), plan);
 }
 
+
+const thoroughfare = planExteriorScaffoldRoute({
+  fp: { cx: 0, cz: 0, halfX: 12, halfZ: 9 },
+  siteId: 9,
+  moduleKey: 'module:arterial',
+  floors: 8,
+  floorH: 3.2,
+  side: 'east',
+  seed: 991,
+  physicalTruth: truth,
+  maxExteriorDepth: 4.5,
+  clearWidthOverride: 1.80,
+  family: 'district-thoroughfare-stair',
+  routeClass: 'thoroughfare',
+  districtRouteId: 'district:arterial:1',
+  districtArterial: true,
+  majorRoadConnector: true,
+  horizontalRouteId: 'city-route:1',
+  routeId: 'district-thoroughfare:east',
+});
+assert.ok(thoroughfare, 'district thoroughfare stair must fit a broad facade');
+assert.equal(thoroughfare.routeClass, 'thoroughfare');
+assert.equal(thoroughfare.family, 'district-thoroughfare-stair');
+assert.equal(thoroughfare.clearWidth, 1.8);
+assert.equal(thoroughfare.flights.length, 8);
+assert.equal(thoroughfare.openings.length, 8);
+assert.equal(thoroughfare.majorRoadConnector, true);
+assert.equal(thoroughfare.districtRouteId, 'district:arterial:1');
+assert.equal(thoroughfare.networkKey, thoroughfare.id, 'district identity must not teleport-union separate stair towers');
+assert.equal(scaffoldRouteIsContinuous(thoroughfare), true);
+
 const source = fs.readFileSync(new URL('../world/scaffold-circulation-plan.js', import.meta.url), 'utf8');
 assert.match(source, /stairCarveAllowed:\s*false/);
 assert.match(source, /incomingMouth/);

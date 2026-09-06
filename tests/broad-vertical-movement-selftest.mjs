@@ -30,6 +30,15 @@ assert.deepEqual([...noBridgePolicy.occupancyPortalFloors], [1, 4], 'four transp
 const bridgePolicy = policyMod.planExteriorStreetLayerPolicy({ floors: 5, existingPortalFloors: [1], maxLayers: 4, maxExteriorConnections: 2 });
 assert.deepEqual([...bridgePolicy.layerFloors], [1, 2, 3, 4]);
 assert.deepEqual([...bridgePolicy.occupancyPortalFloors], [4], 'existing walkway portal consumes the exterior-connection budget first');
+const thoroughfarePolicy = policyMod.planExteriorStreetLayerPolicy({
+  floors: 9, existingPortalFloors: [4], preferredOccupancyFloors: [4, 7],
+  maxLayers: 9, maxExteriorConnections: 4, includeRoof: true,
+});
+assert.deepEqual([...thoroughfarePolicy.layerFloors], [1, 2, 3, 4, 5, 6, 7, 8, 9],
+  'district thoroughfare policy must be able to span the entire host tower including a clear roof');
+assert.equal(thoroughfarePolicy.roofFloor, 9);
+assert.deepEqual([...thoroughfarePolicy.occupancyPortalFloors], [7, 1, 8],
+  'the big-road exchange band must consume sparse occupancy handoff budget before generic low/high doors');
 assert.ok(!policyMod.EXTERIOR_CIRCULATION_DEBT.some(item => item.tag === 'CIRC_DEBT_REAL_ROOM_AUTHORITY'),
   '11 closes real-room authority by binding skeleton exterior demands to Building Plan spaces');
 assert.ok(!policyMod.EXTERIOR_CIRCULATION_DEBT.some(item => item.tag === 'CIRC_DEBT_STANDALONE_FIRE_ESCAPE_HEADROOM'),
@@ -84,6 +93,27 @@ for (const flight of shared.flights) {
   assert.ok(flight.fixedCoord + flight.halfWidth < -fp.halfZ,
     'unsupported wall stair must remain outside the occupancy footprint');
 }
+
+const thoroughfareLayers = Array.from({ length: 7 }, (_, index) => ({
+  floor: index + 1, transportKind: index === 3 ? 'bridge-anchored-street-layer' : 'balcony-street-layer', portals: [],
+}));
+const thoroughfare = vertical.planExteriorStreetLayerTrunk({
+  routeId: 'unit:district-thoroughfare', family: 'district-thoroughfare-stair', routeClass: 'thoroughfare',
+  districtRouteId: 'district:arterial:x:0', districtArterial: true, majorRoadConnector: true,
+  horizontalRouteId: 'city-route:primary', fp: { cx: 0, cz: 0, halfX: 7.5, halfZ: 4.5 },
+  moduleKey: 'major', dirKey: 'N', side: 'north', floorH, physicalTruth: truth,
+  layerStops: thoroughfareLayers, maxRun: 6.2, clearWidthOverride: 1.80,
+});
+assert.ok(thoroughfare, 'wide full-height district stair must fit a legitimate major-road facade');
+assert.equal(vertical.assertFastVerticalRoute(thoroughfare), true);
+assert.equal(thoroughfare.routeClass, 'thoroughfare');
+assert.equal(thoroughfare.majorRoadConnector, true);
+assert.equal(thoroughfare.districtRouteId, 'district:arterial:x:0');
+assert.equal(thoroughfare.networkKey, thoroughfare.id, 'district grouping must not fake physical network continuity');
+assert.equal(thoroughfare.clearWidth, 1.80);
+assert.ok(thoroughfare.clearWidth > shared.clearWidth, 'thoroughfare stairs must be physically thicker than local service trunks');
+assert.equal(thoroughfare.flights.length, 7, 'full-height stair must expose one flight per neighboring vertical layer');
+assert.equal(thoroughfare.streetLayers.length, 7);
 
 function wallBlocksPortal(wall, portal) {
   const probeY = portal.y + Math.min(1.0, portal.height * 0.5);

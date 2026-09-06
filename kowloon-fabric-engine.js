@@ -952,6 +952,19 @@ export function createKowloonFabricEngine({
         const slabT = 0.12;
         const horizontalFace = plan.side === 'north' || plan.side === 'south';
         const outward = plan.side === 'north' || plan.side === 'west' ? -1 : 1;
+        const thoroughfare = plan.routeClass === 'thoroughfare';
+        const guardFamily = thoroughfare ? 'municipal-concrete' : 'fire-escape-pipe';
+        const landingVisualRole = thoroughfare ? 'district-thoroughfare-landing' : 'fire-escape-landing';
+        const flightVisualRole = thoroughfare ? 'district-thoroughfare-flight' : 'fire-escape-flight';
+        const routeMetadata = {
+            routeId: plan.id,
+            routeClass: plan.routeClass ?? 'local',
+            districtRouteId: plan.districtRouteId ?? null,
+            districtArterial: plan.districtArterial === true,
+            majorRoadConnector: plan.majorRoadConnector === true,
+            horizontalRouteId: plan.horizontalRouteId ?? null,
+            clearWidth: plan.clearWidth,
+        };
 
         // Visual support cage is derived from the accepted route envelope. It has
         // no independent layout authority and cannot create an alternate stair.
@@ -962,7 +975,7 @@ export function createKowloonFabricEngine({
         const postH = plan.floors * plan.floorH + 0.75;
         for (const x of [minX, maxX]) {
             for (const z of [minZ, maxZ]) {
-                transforms.props.push({ x, y: postH * 0.5, z, sx: 0.10, sy: postH, sz: 0.10, routeId: plan.id });
+                transforms.props.push({ x, y: postH * 0.5, z, sx: thoroughfare ? 0.16 : 0.10, sy: postH, sz: thoroughfare ? 0.16 : 0.10, ...routeMetadata });
             }
         }
 
@@ -970,20 +983,20 @@ export function createKowloonFabricEngine({
             transforms.slabs.push({
                 x: landing.x, y: landing.y - slabT * 0.5, z: landing.z,
                 sx: landing.sx, sy: slabT, sz: landing.sz,
-                routeId: plan.id, landingId: landing.id,
+                ...routeMetadata, landingId: landing.id,
             });
             // Stair landings meet flights on a literal edge.  Player-radius
             // support inflation here creates a 22cm invisible shelf over the
             // first/last tread and is especially noticeable on steep flights.
-            addRectPlatform(physics.platforms, landing.x, landing.z, landing.sx, landing.sz, landing.y, 'scaffold', 0);
+            addRectPlatform(physics.platforms, landing.x, landing.z, landing.sx, landing.sz, landing.y, thoroughfare ? 'district-thoroughfare-landing' : 'scaffold', 0);
             const platform = physics.platforms[physics.platforms.length - 1];
             platform.routeId = plan.id;
             platform.landingId = landing.id;
             const scaffoldSurface = registerExteriorTransportSurface(physics, {
                 id: `${landing.id}:street-layer`, kind: 'scaffold-landing-street-layer',
                 x: landing.x, z: landing.z, hx: landing.sx * 0.5, hz: landing.sz * 0.5, y: landing.y,
-                siteId: plan.siteId ?? null, moduleKey: plan.moduleKey, routeId: plan.id, networkKey: plan.id,
-                reachable: true, priority: 'circulation-owned', physicalTruth: plan.physicalTruth,
+                siteId: plan.siteId ?? null, moduleKey: plan.moduleKey, ...routeMetadata, networkKey: plan.networkKey ?? plan.id,
+                reachable: true, priority: thoroughfare ? 'district-thoroughfare' : 'circulation-owned', physicalTruth: plan.physicalTruth,
             });
             platform.surfaceId = scaffoldSurface.id;
             const scaffoldSlabTransform = transforms.slabs[transforms.slabs.length - 1];
@@ -1001,16 +1014,16 @@ export function createKowloonFabricEngine({
                     physics, transforms, wallList: transforms.wallGroups[0], surfaceId: scaffoldSurface.id,
                     x1: landing.x - landing.sx * 0.5, z1: outerZ,
                     x2: landing.x + landing.sx * 0.5, z2: outerZ,
-                    y: landing.y, supportKind: 'scaffold-rail', guardFamily: 'fire-escape-pipe',
-                    metadata: { routeId: plan.id, landingId: landing.id, physicalUse: plan.physicalTruth?.physicalUse, visualRole: 'fire-escape-landing', guardSegmentRole: 'street-edge' },
+                    y: landing.y, supportKind: thoroughfare ? 'district-thoroughfare-rail' : 'scaffold-rail', guardFamily,
+                    metadata: { ...routeMetadata, landingId: landing.id, physicalUse: plan.physicalTruth?.physicalUse, visualRole: landingVisualRole, guardSegmentRole: 'street-edge' },
                 });
                 for (const [index, x] of [landing.x - landing.sx * 0.5, landing.x + landing.sx * 0.5].entries()) {
                     emitTransportRail({
                         physics, transforms, wallList: transforms.wallGroups[0], surfaceId: scaffoldSurface.id,
                         x1: x, z1: landing.z - landing.sz * 0.5,
                         x2: x, z2: landing.z + landing.sz * 0.5,
-                        y: landing.y, supportKind: 'scaffold-rail', guardFamily: 'fire-escape-pipe',
-                        metadata: { routeId: plan.id, landingId: landing.id, physicalUse: plan.physicalTruth?.physicalUse, visualRole: 'fire-escape-landing', guardSegmentRole: `end:${index}` },
+                        y: landing.y, supportKind: thoroughfare ? 'district-thoroughfare-rail' : 'scaffold-rail', guardFamily,
+                        metadata: { ...routeMetadata, landingId: landing.id, physicalUse: plan.physicalTruth?.physicalUse, visualRole: landingVisualRole, guardSegmentRole: `end:${index}` },
                     });
                 }
             } else {
@@ -1019,16 +1032,16 @@ export function createKowloonFabricEngine({
                     physics, transforms, wallList: transforms.wallGroups[0], surfaceId: scaffoldSurface.id,
                     x1: outerX, z1: landing.z - landing.sz * 0.5,
                     x2: outerX, z2: landing.z + landing.sz * 0.5,
-                    y: landing.y, supportKind: 'scaffold-rail', guardFamily: 'fire-escape-pipe',
-                    metadata: { routeId: plan.id, landingId: landing.id, physicalUse: plan.physicalTruth?.physicalUse, visualRole: 'fire-escape-landing', guardSegmentRole: 'street-edge' },
+                    y: landing.y, supportKind: thoroughfare ? 'district-thoroughfare-rail' : 'scaffold-rail', guardFamily,
+                    metadata: { ...routeMetadata, landingId: landing.id, physicalUse: plan.physicalTruth?.physicalUse, visualRole: landingVisualRole, guardSegmentRole: 'street-edge' },
                 });
                 for (const [index, z] of [landing.z - landing.sz * 0.5, landing.z + landing.sz * 0.5].entries()) {
                     emitTransportRail({
                         physics, transforms, wallList: transforms.wallGroups[0], surfaceId: scaffoldSurface.id,
                         x1: landing.x - landing.sx * 0.5, z1: z,
                         x2: landing.x + landing.sx * 0.5, z2: z,
-                        y: landing.y, supportKind: 'scaffold-rail', guardFamily: 'fire-escape-pipe',
-                        metadata: { routeId: plan.id, landingId: landing.id, physicalUse: plan.physicalTruth?.physicalUse, visualRole: 'fire-escape-landing', guardSegmentRole: `end:${index}` },
+                        y: landing.y, supportKind: thoroughfare ? 'district-thoroughfare-rail' : 'scaffold-rail', guardFamily,
+                        metadata: { ...routeMetadata, landingId: landing.id, physicalUse: plan.physicalTruth?.physicalUse, visualRole: landingVisualRole, guardSegmentRole: `end:${index}` },
                     });
                 }
             }
@@ -1048,11 +1061,11 @@ export function createKowloonFabricEngine({
                 halfX: landing.sx * 0.5, halfZ: landing.sz * 0.5,
                 y: landing.y,
                 source: 'exterior-scaffold',
-                visualRole: landing.kind === 'switchback-landing' ? 'fire-escape-turn-landing' : 'fire-escape-landing',
-                reservationKind: 'scaffold-landing',
+                visualRole: thoroughfare ? 'district-thoroughfare-landing' : (landing.kind === 'switchback-landing' ? 'fire-escape-turn-landing' : 'fire-escape-landing'),
+                reservationKind: thoroughfare ? 'district-thoroughfare-landing' : 'scaffold-landing',
                 physicalTruth: plan.physicalTruth,
                 metadata: {
-                    routeId: plan.id,
+                    ...routeMetadata,
                     landingId: landing.id,
                     nodeIds: landing.nodeIds,
                     openingIds,
@@ -1074,7 +1087,7 @@ export function createKowloonFabricEngine({
             if (!flight.headroomClearance) throw new Error(`${plan.id}:${flight.id}: scaffold flight headroom clearance missing`);
             scaffoldFlightClearances.push({
                 ...flight.headroomClearance,
-                routeId: plan.id,
+                ...routeMetadata,
                 flightId: flight.id,
                 landingId: flight.toLandingId,
                 y: flight.y1,
@@ -1089,11 +1102,11 @@ export function createKowloonFabricEngine({
                 halfWidth: flight.halfWidth,
                 y0: flight.y0,
                 y1: flight.y1,
-                supportKind: 'scaffold',
+                supportKind: thoroughfare ? 'district-thoroughfare-stair' : 'scaffold',
                 supportMargin: STAIR_ENDPOINT_SUPPORT_OVERLAP,
                 collisionAuthority: 'physics-ramp',
                 designIntent: STAIR_WALKABILITY_DESIGN_INTENT,
-                routeId: plan.id,
+                ...routeMetadata,
                 flightId: flight.id,
             };
             physics.ramps.push(ramp);
@@ -1101,12 +1114,12 @@ export function createKowloonFabricEngine({
                 physics, transforms, idPrefix: `${flight.id}:guard`,
                 axis: flight.axis, from: flight.from, to: flight.to, fixedCoord: flight.fixedCoord,
                 halfWidth: flight.halfWidth, y0: flight.y0, y1: flight.y1,
-                family: 'fire-escape-pipe', supportKind: 'scaffold-flight-guard',
-                metadata: { routeId: plan.id, flightId: flight.id, physicalUse: plan.physicalTruth?.physicalUse, visualRole: 'fire-escape-flight' },
+                family: guardFamily, supportKind: thoroughfare ? 'district-thoroughfare-flight-guard' : 'scaffold-flight-guard',
+                metadata: { ...routeMetadata, flightId: flight.id, physicalUse: plan.physicalTruth?.physicalUse, visualRole: flightVisualRole },
             });
             const connector = createRampConnector({
                 id: `${flight.id}:connector`,
-                kind: 'fire-escape',
+                kind: thoroughfare ? 'stair' : 'fire-escape',
                 axis: flight.axis,
                 from: flight.from,
                 to: flight.to,
@@ -1115,13 +1128,13 @@ export function createKowloonFabricEngine({
                 y0: flight.y0,
                 y1: flight.y1,
                 headroom: flight.headroom,
-                source: 'exterior-scaffold',
-                visualRole: 'fire-escape-flight',
-                reservationKind: 'scaffold-ramp',
+                source: thoroughfare ? 'district-thoroughfare-stair' : 'exterior-scaffold',
+                visualRole: flightVisualRole,
+                reservationKind: thoroughfare ? 'district-thoroughfare-ramp' : 'scaffold-ramp',
                 physicalTruth: plan.physicalTruth,
                 stairFlight: flight.stairFlight,
                 metadata: {
-                    routeId: plan.id,
+                    ...routeMetadata,
                     flightId: flight.id,
                     fromNodeId: flight.fromNodeId,
                     toNodeId: flight.toNodeId,
@@ -1146,7 +1159,7 @@ export function createKowloonFabricEngine({
             transforms.steps.push(...planVisualStairTreads({
                 axis: flight.axis, from: flight.from, to: flight.to, fixedCoord: flight.fixedCoord,
                 width: flight.clearWidth, y0: flight.y0, y1: flight.y1, stairFlight: flight.stairFlight,
-                thickness: stepThickness, metadata: { routeId: plan.id, flightId: flight.id },
+                thickness: stepThickness, metadata: { ...routeMetadata, flightId: flight.id, visualRole: flightVisualRole },
             }));
         }
         const stairArchitecture = planStairArchitectureExpression({
@@ -1426,6 +1439,9 @@ export function createKowloonFabricEngine({
     }) {
         const slabT = BUILDING_SLAB_THICKNESS;
         const stairOwnerId = metadata?.stairId ?? core.id ?? 'interior-stair';
+        const thoroughfare = metadata?.routeClass === 'thoroughfare';
+        const stairVisualRole = thoroughfare ? 'district-thoroughfare-stair' : 'interior-stair';
+        const stairSupportKind = thoroughfare ? 'district-thoroughfare-core-stair' : 'compound-stair';
         const addLanding = (landing, y, supportKind, landingRole) => {
             const stairPartId = `${stairOwnerId}:floor:${floor}:landing:${landingRole}`;
             physics.platforms.push({
@@ -1451,7 +1467,7 @@ export function createKowloonFabricEngine({
         // where a floating landing used to merely touch the floor edge.
         for (const landing of core.intermediateLandings) {
             const landingY = y0 + (y1 - y0) * landing.yFraction;
-            addLanding(landing.geometry, landingY, 'compound-stair-mid-landing', landing.sideRole);
+            addLanding(landing.geometry, landingY, thoroughfare ? 'district-thoroughfare-core-landing' : 'compound-stair-mid-landing', landing.sideRole);
         }
 
         for (const flight of core.flights) {
@@ -1461,7 +1477,7 @@ export function createKowloonFabricEngine({
             physics.ramps.push({
                 axis: flight.axis, from: flight.from, to: flight.to, fixedCoord: flight.fixedCoord,
                 halfWidth: core.halfWidth, y0: flightY0, y1: flightY1,
-                supportKind: 'compound-stair',
+                supportKind: stairSupportKind,
                 supportMargin: Math.max(core.endpointSupportOverlap ?? 0, STAIR_ENDPOINT_SUPPORT_OVERLAP),
                 collisionAuthority: 'physics-ramp',
                 designIntent: STAIR_WALKABILITY_DESIGN_INTENT,
@@ -1475,6 +1491,7 @@ export function createKowloonFabricEngine({
                 width: core.clearWidth, y0: flightY0, y1: flightY1, stairFlight: core.segmentFlight,
                 thickness: stepThickness, maxTreads: treadVisualBudget,
                 metadata: {
+                    ...(metadata || {}),
                     stairTopology: core.topology, floor, flightId: flight.id, stairOwnerId,
                     stairPartParentId: flightPartId, stairPartKind: 'step',
                     collisionAuthority: 'physics-ramp', designIntent: STAIR_WALKABILITY_DESIGN_INTENT,
@@ -1487,9 +1504,9 @@ export function createKowloonFabricEngine({
                 physics, transforms, idPrefix: `${metadata?.stairId ?? "interior-stair"}:${floor}:${flight.id}:guard`,
                 axis: flight.axis, from: guardFrom, to: guardTo, fixedCoord: flight.fixedCoord,
                 halfWidth: core.halfWidth, y0: flightY0, y1: flightY1,
-                family: guardFamily, supportKind: "compound-stair-guard",
+                family: guardFamily, supportKind: thoroughfare ? 'district-thoroughfare-core-guard' : 'compound-stair-guard',
                 metadata: {
-                    ...(metadata || {}), floor, flightId: flight.id, visualRole: "interior-stair",
+                    ...(metadata || {}), floor, flightId: flight.id, visualRole: stairVisualRole,
                     stairOwnerId, stairPartParentId: flightPartId, stairPartKind: 'flight-guard',
                 },
             });
@@ -1501,9 +1518,9 @@ export function createKowloonFabricEngine({
                 physics, transforms, edges: landing.guardEdges ?? (landing.backGuard ? [{ role: 'outer-edge', ...landing.backGuard }] : []),
                 y: landingY,
                 idPrefix: `${metadata?.stairId ?? "interior-stair"}:${floor}:${landing.id}:perimeter-guard`,
-                family: guardFamily, supportKind: "compound-stair-mid-landing-guard",
+                family: guardFamily, supportKind: thoroughfare ? 'district-thoroughfare-core-landing-guard' : 'compound-stair-mid-landing-guard',
                 stairOwnerId, stairPartParentId: landingPartId, stairPartKind: 'landing-perimeter-guard',
-                metadata: { ...(metadata || {}), floor, landingId: landing.id, visualRole: "interior-stair-mid-landing" },
+                metadata: { ...(metadata || {}), floor, landingId: landing.id, visualRole: thoroughfare ? 'district-thoroughfare-turn-landing' : 'interior-stair-mid-landing' },
             });
         }
 
@@ -1514,11 +1531,11 @@ export function createKowloonFabricEngine({
             emitInteriorStairGuardEdges({
                 physics, transforms, edges: core.slabOpeningGuardEdges, y: y0,
                 idPrefix: `${metadata?.stairId ?? "interior-stair"}:${floor}:shaft-opening-guard`,
-                family: guardFamily, supportKind: 'compound-stair-shaft-opening-guard',
+                family: guardFamily, supportKind: thoroughfare ? 'district-thoroughfare-core-opening-guard' : 'compound-stair-shaft-opening-guard',
                 stairOwnerId,
                 stairPartParentId: `${stairOwnerId}:slab-opening`,
                 stairPartKind: 'shaft-opening-guard',
-                metadata: { ...(metadata || {}), floor, visualRole: 'interior-stair-shaft-opening' },
+                metadata: { ...(metadata || {}), floor, visualRole: thoroughfare ? 'district-thoroughfare-shaft-opening' : 'interior-stair-shaft-opening' },
             });
         }
     }
@@ -2010,6 +2027,11 @@ export function createKowloonFabricEngine({
                 stairFlight: flight.stairFlight,
                 metadata: {
                     routeId: plan.id, family: plan.family, shape: plan.shape,
+                    routeClass: plan.routeClass ?? 'local',
+                    districtRouteId: plan.districtRouteId ?? null,
+                    districtArterial: plan.districtArterial === true,
+                    majorRoadConnector: plan.majorRoadConnector === true,
+                    horizontalRouteId: plan.horizontalRouteId ?? null,
                     graphAuthority: plan.graphAuthority ?? null,
                     fromLandingId: flight.fromLandingId, toLandingId: flight.toLandingId,
                     lowerSupport: plan.lowerSupport, upperSupport: plan.upperSupport,
@@ -2057,7 +2079,12 @@ export function createKowloonFabricEngine({
             const rawDeckUnionSurface = {
                 id: `${landing.id}:deck`, kind: 'balcony-street-layer',
                 x: geometry.x, z: geometry.z, hx: geometry.hx, hz: geometry.hz, y: landing.y,
-                siteId: plan.siteId ?? null, moduleKey: plan.moduleKey, routeId: plan.id, networkKey: plan.id,
+                siteId: plan.siteId ?? null, moduleKey: plan.moduleKey, routeId: plan.id, networkKey: plan.networkKey ?? plan.id,
+                districtRouteId: plan.districtRouteId ?? null,
+                districtArterial: plan.districtArterial === true,
+                routeClass: plan.routeClass ?? 'local',
+                majorRoadConnector: plan.majorRoadConnector === true,
+                horizontalRouteId: plan.horizontalRouteId ?? null,
                 reachable: true, priority: 'circulation-owned', physicalTruth: plan.physicalTruth,
                 stairThroat: throat,
             };
@@ -2093,7 +2120,12 @@ export function createKowloonFabricEngine({
                 id: deckSurfaceId,
                 kind: 'balcony-street-layer',
                 x: geometry.x, z: geometry.z, hx: geometry.hx, hz: geometry.hz, y: landing.y,
-                siteId: plan.siteId ?? null, moduleKey: plan.moduleKey, routeId: plan.id, networkKey: plan.id,
+                siteId: plan.siteId ?? null, moduleKey: plan.moduleKey, routeId: plan.id, networkKey: plan.networkKey ?? plan.id,
+                districtRouteId: plan.districtRouteId ?? null,
+                districtArterial: plan.districtArterial === true,
+                routeClass: plan.routeClass ?? 'local',
+                majorRoadConnector: plan.majorRoadConnector === true,
+                horizontalRouteId: plan.horizontalRouteId ?? null,
                 reachable: true, priority: 'circulation-owned', physicalTruth: plan.physicalTruth,
                 stairThroat: throat,
             });
@@ -2138,7 +2170,7 @@ export function createKowloonFabricEngine({
                 if (!mouth?.point) continue;
                 carveTransportRailGap({
                     physics, transforms, surfaceId: deckSurface.id,
-                    point: mouth.point, width: (Number(plan.physicalTruth?.stair?.widthSI) || 0.9) + 0.18,
+                    point: mouth.point, width: (Number(plan.clearWidth) || Number(plan.physicalTruth?.stair?.widthSI) || 0.9) + 0.18,
                 });
             }
             for (const overlap of deckOverlapCuts) {
@@ -2154,6 +2186,11 @@ export function createKowloonFabricEngine({
                 physicalTruth: plan.physicalTruth,
                 metadata: {
                     routeId: plan.id, landingId: landing.id, family: plan.family, shape: plan.shape,
+                    routeClass: plan.routeClass ?? 'local',
+                    districtRouteId: plan.districtRouteId ?? null,
+                    districtArterial: plan.districtArterial === true,
+                    majorRoadConnector: plan.majorRoadConnector === true,
+                    horizontalRouteId: plan.horizontalRouteId ?? null,
                     graphAuthority: plan.graphAuthority ?? null,
                     support: landing.support, generated: true, deckKind: 'exterior-street-layer', surfaceId: deckSurface.id,
                     stairThroat: throat,
@@ -2171,6 +2208,9 @@ export function createKowloonFabricEngine({
                 id: deckSurface.id, surfaceId: deckSurface.id, routeId: plan.id, landingId: landing.id,
                 faceKey: `${plan.moduleKey}:${plan.dirKey}`, floor,
                 kind: 'exterior-street-layer', priority: 'circulation-owned', portalIds,
+                routeClass: plan.routeClass ?? 'local', districtRouteId: plan.districtRouteId ?? null,
+                districtArterial: plan.districtArterial === true, majorRoadConnector: plan.majorRoadConnector === true,
+                horizontalRouteId: plan.horizontalRouteId ?? null, clearWidth: plan.clearWidth,
                 stairThroat: throat, pieceCount: pieces.length,
                 x: geometry.x, z: geometry.z, hx: geometry.hx, hz: geometry.hz, y: landing.y,
             });
@@ -2522,8 +2562,8 @@ export function createKowloonFabricEngine({
             rampFrom: primaryStairFrom,
             rampTo: primaryStairTo,
             rampHalfWidth: primaryStairHalfWidth,
-            source: 'compound-stair',
-            visualRole: 'vertical-spine',
+            source: primaryStairArchitecture.routeClass === 'thoroughfare' ? 'district-thoroughfare-core' : 'compound-stair',
+            visualRole: primaryStairArchitecture.routeClass === 'thoroughfare' ? 'district-thoroughfare-vertical-spine' : 'vertical-spine',
             fromSpaceId: null,
             toSpaceId: null,
             physicalTruth: stairPhysicalTruth,
@@ -2543,6 +2583,14 @@ export function createKowloonFabricEngine({
                 designIntent: STAIR_WALKABILITY_DESIGN_INTENT,
                 architectureReplanMode: primaryStairArchitecture.replanMode,
                 consumedModuleKeys: [...primaryStairArchitecture.consumedModuleKeys],
+                routeClass: primaryStairArchitecture.routeClass ?? 'local',
+                districtRouteId: primaryStairArchitecture.districtRouteId ?? null,
+                districtArterial: primaryStairArchitecture.districtArterial === true,
+                majorRoadConnector: primaryStairArchitecture.majorRoadConnector === true,
+                horizontalRouteId: primaryStairArchitecture.horizontalRouteId ?? null,
+                requestedClearWidth: primaryStairArchitecture.requestedClearWidth ?? null,
+                realizedClearWidth: primaryStairArchitecture.realizedClearWidth ?? primaryActualStairClearWidth,
+                widthFallback: primaryStairArchitecture.widthFallback === true,
             },
         });
         registerSemanticConnector(physics, primaryStairConnector);
@@ -2563,6 +2611,14 @@ export function createKowloonFabricEngine({
         primaryStairReservation.structuralFeasibilitySchema = primaryStairArchitecture.schema;
         primaryStairReservation.structuralFeasibilityClaims = primaryStairArchitecture.claims;
         primaryStairReservation.structuralFeasibilityHistory = primaryStairArchitecture.replanHistory;
+        primaryStairReservation.routeClass = primaryStairArchitecture.routeClass ?? 'local';
+        primaryStairReservation.districtRouteId = primaryStairArchitecture.districtRouteId ?? null;
+        primaryStairReservation.districtArterial = primaryStairArchitecture.districtArterial === true;
+        primaryStairReservation.majorRoadConnector = primaryStairArchitecture.majorRoadConnector === true;
+        primaryStairReservation.horizontalRouteId = primaryStairArchitecture.horizontalRouteId ?? null;
+        primaryStairReservation.requestedClearWidth = primaryStairArchitecture.requestedClearWidth ?? null;
+        primaryStairReservation.realizedClearWidth = primaryStairArchitecture.realizedClearWidth ?? primaryActualStairClearWidth;
+        primaryStairReservation.widthFallback = primaryStairArchitecture.widthFallback === true;
         const primaryStairSlabOpening = primaryStairCore.slabOpening;
         if (!primaryStairSlabOpening) throw new Error(`${chunk.key}:${siteSignature}:${primaryModule.key}: stair core missing slab opening`);
         const primaryStairSlabOpeningReservation = createBoxCirculationReservation({
@@ -2595,6 +2651,13 @@ export function createKowloonFabricEngine({
             slabOpeningReservationId: primaryStairSlabOpeningReservation.id,
             moduleKey: primaryModule.key,
             floors: primaryModule.floors,
+            routeClass: primaryStairArchitecture.routeClass ?? 'local',
+            districtRouteId: primaryStairArchitecture.districtRouteId ?? null,
+            districtArterial: primaryStairArchitecture.districtArterial === true,
+            majorRoadConnector: primaryStairArchitecture.majorRoadConnector === true,
+            horizontalRouteId: primaryStairArchitecture.horizontalRouteId ?? null,
+            clearWidth: primaryActualStairClearWidth,
+            stairTopology: primaryStairCore.topology,
             topology: primaryStairCore.topology,
             flightIds: Object.freeze(primaryStairCore.flights.map(flight => flight.id)),
             landingIds: Object.freeze(primaryStairCore.intermediateLandings.map(landing => landing.id)),
@@ -2863,6 +2926,23 @@ export function createKowloonFabricEngine({
         for (const faceKey of fastBridgeFaceKeys) if (!bridgeFaceRegistry.includes(faceKey)) bridgeFaceRegistry.push(faceKey);
         const debtRegistry = physics.exteriorCirculationDebtTags ?? (physics.exteriorCirculationDebtTags = []);
         for (const item of EXTERIOR_CIRCULATION_DEBT) if (!debtRegistry.includes(item.tag)) debtRegistry.push(item.tag);
+        const routeMassing = structureProfile?.routeDrivenMassing ?? null;
+        const districtArterialTower = routeMassing?.districtArterial === true && !!routeMassing?.districtRouteId;
+        const majorBridgePortal = portal => portal?.districtArterial === true
+            || portal?.widthClass === 'sky-street'
+            || portal?.facadeGalleryWidthClass === 'sky-street';
+        const serviceStairWidth = Math.max(0.72, Number(servicePhysicalTruth?.stair?.widthSI) || 0.90);
+        const thoroughfareClearWidth = portal => Math.min(2.20, Math.max(
+            1.65,
+            serviceStairWidth * 1.75,
+            1.60 + Math.max(0, Math.min(1, Number(routeMassing?.score) || 0)) * 0.38,
+            Math.min(2.08, (Number(portal?.width) || 0) * 0.72),
+        ));
+        const thoroughfareFallbackWidth = Math.min(1.82, Math.max(1.45, serviceStairWidth * 1.55));
+        const districtExchangeFloors = [...new Set((bridgePortals ?? [])
+            .filter(portal => majorBridgePortal(portal) || districtArterialTower)
+            .map(portal => Math.max(1, Math.floor(Number(portal.floor) || 0)))
+            .filter(Number.isFinite))].sort((a, b) => a - b);
 
         const broadVerticalCandidates = streetFaces
             .filter(face => !face.courtyard && face.module.floors >= 2 && (!ceilingAligned || moduleFloorBase(face.module) === 0))
@@ -2947,6 +3027,11 @@ export function createKowloonFabricEngine({
                 physicalTruth: servicePhysicalTruth,
                 metadata: {
                     routeId: route.id,
+                    routeClass: route.routeClass ?? 'local',
+                    districtRouteId: route.districtRouteId ?? null,
+                    districtArterial: route.districtArterial === true,
+                    majorRoadConnector: route.majorRoadConnector === true,
+                    horizontalRouteId: route.horizontalRouteId ?? null,
                     portalId: portal.id,
                     moduleKey: route.moduleKey,
                     dirKey: route.dirKey,
@@ -2984,31 +3069,54 @@ export function createKowloonFabricEngine({
             }
             return { floor, support, accessDemands, transportKind };
         });
-        const acceptStreetLayerRoute = (face, policy, family) => {
+        const acceptStreetLayerRoute = (face, policy, family, {
+            routeClass = 'local',
+            districtRouteId = null,
+            districtArterial = false,
+            majorRoadConnector = false,
+            horizontalRouteId = null,
+            clearWidthCandidates = [null],
+        } = {}) => {
             if (!face || !canUseBroadVerticalFace(face) || !policy?.layerFloors?.length) return false;
             const routeId = `${chunk.key}:${siteSignature}:${face.module.key}:street-layers:${family}:${face.dir.side}`;
-            const plan = planExteriorStreetLayerTrunk({
-                routeId,
-                family,
-                fp: face.module.rect,
-                siteId: site.id,
-                moduleKey: face.module.key,
-                dirKey: face.dir.key,
-                side: face.dir.side,
-                floorH,
-                physicalTruth: servicePhysicalTruth,
-                layerStops: buildStreetLayerStops(face, policy),
-                stableKey: routeId,
-                maxRun: 6.2,
-            });
-            if (!plan) return false;
-            const collision = evaluateExteriorCandidate(plan, face, family);
-            if (!collision.accepted) return false;
-            const circulationConflict = firstCirculationVolumeConflict(collision.reservations, acceptedExteriorClearances, 0.02);
-            if (circulationConflict) {
-                recordExteriorCollisionReject(plan, face, family, collision, circulationConflict);
-                return false;
+            const widths = [...new Set((clearWidthCandidates?.length ? clearWidthCandidates : [null])
+                .map(value => value == null ? null : Math.round(Number(value) * 1000) / 1000))];
+            let accepted = null;
+            for (const clearWidthOverride of widths) {
+                const plan = planExteriorStreetLayerTrunk({
+                    routeId,
+                    family,
+                    routeClass,
+                    fp: face.module.rect,
+                    siteId: site.id,
+                    moduleKey: face.module.key,
+                    dirKey: face.dir.key,
+                    districtRouteId,
+                    districtArterial,
+                    networkKey: routeId,
+                    majorRoadConnector,
+                    horizontalRouteId,
+                    side: face.dir.side,
+                    floorH,
+                    physicalTruth: servicePhysicalTruth,
+                    layerStops: buildStreetLayerStops(face, policy),
+                    stableKey: routeId,
+                    maxRun: 6.2,
+                    clearWidthOverride,
+                });
+                if (!plan) continue;
+                const collision = evaluateExteriorCandidate(plan, face, family);
+                if (!collision.accepted) continue;
+                const circulationConflict = firstCirculationVolumeConflict(collision.reservations, acceptedExteriorClearances, 0.02);
+                if (circulationConflict) {
+                    recordExteriorCollisionReject(plan, face, family, collision, circulationConflict);
+                    continue;
+                }
+                accepted = { plan, collision };
+                break;
             }
+            if (!accepted) return false;
+            const { plan, collision } = accepted;
             publishExteriorRouteClearances(collision.reservations);
             usedBroadVerticalFaces.add(broadVerticalFaceKey(face));
             broadVerticalRoutes.push(plan);
@@ -3019,7 +3127,7 @@ export function createKowloonFabricEngine({
                 if (roofFlight) fastRoofAccessByModuleSide.set(`${face.module.key}:${face.dir.key}`, {
                     floor: policy.roofFloor,
                     center: roofFlight.to,
-                    width: Math.max(0.90, Number(plan.physicalTruth?.stair?.widthSI) * 1.35 || 1.10),
+                    width: Math.max(0.90, Number(plan.clearWidth) * 1.10 || Number(plan.physicalTruth?.stair?.widthSI) * 1.35 || 1.10),
                     routeId: plan.id,
                 });
             }
@@ -3046,16 +3154,64 @@ export function createKowloonFabricEngine({
             const existingFloors = (bridgePortals ?? [])
                 .filter(item => item.moduleKey === face.module.key && item.dirKey === face.dir.key)
                 .map(item => Number(item.floor));
+            const thoroughfare = majorBridgePortal(bridgePortal);
             const policy = planExteriorStreetLayerPolicy({
                 floors: face.module.floors,
                 existingPortalFloors: existingFloors,
-                maxLayers: 5,
-                maxExteriorConnections: 2,
+                preferredOccupancyFloors: thoroughfare ? districtExchangeFloors : [],
+                maxLayers: thoroughfare ? face.module.floors : 5,
+                maxExteriorConnections: thoroughfare ? 4 : 2,
                 includeRoof: roofClearForTransport(face.module),
             });
-            if (acceptStreetLayerRoute(face, policy, 'walkway-anchored-street-trunk')) {
+            const family = thoroughfare ? 'district-thoroughfare-stair' : 'walkway-anchored-street-trunk';
+            if (acceptStreetLayerRoute(face, policy, family, thoroughfare ? {
+                routeClass: 'thoroughfare',
+                districtRouteId: bridgePortal.districtRouteId ?? routeMassing?.districtRouteId ?? null,
+                districtArterial: bridgePortal.districtArterial === true || districtArterialTower,
+                majorRoadConnector: true,
+                horizontalRouteId: bridgePortal.cityRouteId ?? bridgePortal.bridgeId ?? null,
+                clearWidthCandidates: [thoroughfareClearWidth(bridgePortal), thoroughfareFallbackWidth],
+            } : {})) {
                 streetLayerRouteAccepted = true;
                 break;
+            }
+        }
+
+        // A district arterial tower must have a deterministic vertical interchange
+        // even when the exact bridge facade is too congested to host it. Try the
+        // widest remaining transport facades and give the stair a door at the
+        // district exchange band; the Building Plan then carries that handoff
+        // through the tower to the actual road/bridge facade.
+        if (!streetLayerRouteAccepted && districtArterialTower) {
+            const districtCandidates = [...broadVerticalCandidates].sort((a, b) => {
+                const tangentSpan = face => (face.dir.side === 'north' || face.dir.side === 'south')
+                    ? Number(face.module.rect.halfX) * 2
+                    : Number(face.module.rect.halfZ) * 2;
+                return tangentSpan(b) - tangentSpan(a)
+                    || b.module.floors - a.module.floors
+                    || `${a.module.key}:${a.dir.side}`.localeCompare(`${b.module.key}:${b.dir.side}`);
+            });
+            for (const face of districtCandidates) {
+                if (!canUseBroadVerticalFace(face)) continue;
+                const policy = planExteriorStreetLayerPolicy({
+                    floors: face.module.floors,
+                    existingPortalFloors: [],
+                    preferredOccupancyFloors: districtExchangeFloors,
+                    maxLayers: face.module.floors,
+                    maxExteriorConnections: 4,
+                    includeRoof: roofClearForTransport(face.module),
+                });
+                if (acceptStreetLayerRoute(face, policy, 'district-thoroughfare-stair', {
+                    routeClass: 'thoroughfare',
+                    districtRouteId: routeMassing.districtRouteId,
+                    districtArterial: true,
+                    majorRoadConnector: true,
+                    horizontalRouteId: routeMassing.routeId ?? null,
+                    clearWidthCandidates: [thoroughfareClearWidth(null), thoroughfareFallbackWidth],
+                })) {
+                    streetLayerRouteAccepted = true;
+                    break;
+                }
             }
         }
 
@@ -3269,13 +3425,21 @@ export function createKowloonFabricEngine({
                 }
 
                 if (module === primaryModule) {
-                    const stairGuardFamily = guardFamilyForContext({ supportKind: 'compound-stair', visualRole: 'interior-stair', physicalUse: stairPhysicalTruth?.physicalUse });
+                    const stairGuardFamily = primaryStairArchitecture.routeClass === 'thoroughfare'
+                        ? 'municipal-concrete'
+                        : guardFamilyForContext({ supportKind: 'compound-stair', visualRole: 'interior-stair', physicalUse: stairPhysicalTruth?.physicalUse });
                     realizeInteriorSwitchbackStory({
                         physics, transforms, core: primaryStairCore, floor, y0, y1, guardFamily: stairGuardFamily,
                         treadVisualBudget: GENERATION_LANES.broadStrokesOnly ? 3 : Infinity,
                         metadata: {
                             stairId: `${chunk.key}:${siteSignature}:${module.key}:compound-stair`,
                             moduleKey: module.key, physicalUse: stairPhysicalTruth?.physicalUse,
+                            routeClass: primaryStairArchitecture.routeClass ?? 'local',
+                            districtRouteId: primaryStairArchitecture.districtRouteId ?? null,
+                            districtArterial: primaryStairArchitecture.districtArterial === true,
+                            majorRoadConnector: primaryStairArchitecture.majorRoadConnector === true,
+                            horizontalRouteId: primaryStairArchitecture.horizontalRouteId ?? null,
+                            clearWidth: primaryActualStairClearWidth,
                         },
                     });
                 }
@@ -3551,6 +3715,19 @@ export function createKowloonFabricEngine({
             buildingPlanAuthority: buildingPlan.authoritySchema,
             buildingPlanFingerprint: buildingPlan.fingerprint,
             buildingPlanInspection: buildingPlan.inspection,
+            primaryStairRoute: {
+                id: primaryStairOwnerId,
+                routeClass: primaryStairArchitecture.routeClass ?? 'local',
+                clearWidth: primaryActualStairClearWidth,
+                requestedClearWidth: primaryStairArchitecture.requestedClearWidth ?? null,
+                widthFallback: primaryStairArchitecture.widthFallback === true,
+                floors: primaryModule.floors,
+                topology: primaryStairCore.topology,
+                districtRouteId: primaryStairArchitecture.districtRouteId ?? null,
+                districtArterial: primaryStairArchitecture.districtArterial === true,
+                majorRoadConnector: primaryStairArchitecture.majorRoadConnector === true,
+                horizontalRouteId: primaryStairArchitecture.horizontalRouteId ?? null,
+            },
             internalOpenFaces,
             exposedSetbackFaces,
             partyFaces,
@@ -3773,15 +3950,55 @@ export function createKowloonFabricEngine({
         // the allocated primary cell, reclaim that cell envelope before portals,
         // apertures, collision or geometry become authoritative.
         let primaryModule = modulePlans.find(module => module.key === primaryKey) || modulePlans[0];
-        const stairFeasibilityArgs = () => ({
+        const coreRouteMassing = structureProfile?.routeDrivenMassing ?? null;
+        const districtThoroughfareCore = coreRouteMassing?.districtArterial === true && !!coreRouteMassing?.districtRouteId;
+        const baseCoreClearWidth = Math.max(0.78, Number(stairPhysicalTruth?.stair?.widthSI) || 0.91);
+        const requestedThoroughfareCoreWidth = districtThoroughfareCore
+            ? Math.min(1.95, Math.max(
+                1.65,
+                baseCoreClearWidth * 1.70,
+                1.58 + Math.max(0, Math.min(1, Number(coreRouteMassing?.score) || 0)) * 0.40,
+            ))
+            : null;
+        const thoroughfareCoreWidthCandidates = districtThoroughfareCore
+            ? [...new Set([
+                requestedThoroughfareCoreWidth,
+                Math.min(requestedThoroughfareCoreWidth, Math.max(1.45, baseCoreClearWidth * 1.48)),
+                null,
+            ].map(value => value == null ? null : Math.round(value * 1000) / 1000))]
+            : [null];
+        const stairFeasibilityArgs = clearWidthOverride => ({
             modulePlans,
             primaryModule,
             floorH,
             physicalTruth: stairPhysicalTruth,
             traversalEnvelope,
             stableKey: `${chunk.key}:${siteSignature}:${primaryModule.key}:switchback-core`,
+            clearWidthOverride,
         });
-        let primaryStairArchitecture = planInteriorStairCoreStructuralFeasibility(stairFeasibilityArgs());
+        const solvePrimaryStairArchitecture = () => {
+            let lastRejected = null;
+            for (const clearWidthOverride of thoroughfareCoreWidthCandidates) {
+                const result = planInteriorStairCoreStructuralFeasibility(stairFeasibilityArgs(clearWidthOverride));
+                if (!result.accepted) {
+                    lastRejected = result;
+                    continue;
+                }
+                return Object.freeze({
+                    ...result,
+                    routeClass: districtThoroughfareCore ? 'thoroughfare' : 'local',
+                    districtRouteId: districtThoroughfareCore ? coreRouteMassing.districtRouteId : null,
+                    districtArterial: districtThoroughfareCore,
+                    majorRoadConnector: districtThoroughfareCore,
+                    horizontalRouteId: districtThoroughfareCore ? (coreRouteMassing.routeId ?? null) : null,
+                    requestedClearWidth: requestedThoroughfareCoreWidth,
+                    realizedClearWidth: result.core?.clearWidth ?? null,
+                    widthFallback: districtThoroughfareCore && Number(result.core?.clearWidth) + 1e-9 < Number(requestedThoroughfareCoreWidth),
+                });
+            }
+            return lastRejected ?? planInteriorStairCoreStructuralFeasibility(stairFeasibilityArgs(null));
+        };
+        let primaryStairArchitecture = solvePrimaryStairArchitecture();
         if (!primaryStairArchitecture.accepted) {
             const failedBeforeRecovery = primaryStairArchitecture;
             const recovery = recoverCellFootprintForCirculation({
@@ -3790,7 +4007,7 @@ export function createKowloonFabricEngine({
             if (recovery) {
                 const originalRect = primaryModule.rect;
                 primaryModule.rect = { ...recovery.rect };
-                const recovered = planInteriorStairCoreStructuralFeasibility(stairFeasibilityArgs());
+                const recovered = solvePrimaryStairArchitecture();
                 if (recovered.accepted) {
                     primaryStairArchitecture = Object.freeze({
                         ...recovered,
@@ -4074,27 +4291,75 @@ export function createKowloonFabricEngine({
         const scaffoldOpeningByKey = new Map();
         let scaffoldPlan = null;
         let scaffoldSide = null;
+        const fullRouteMassing = structureProfile?.routeDrivenMassing ?? null;
+        const fullDistrictArterialTower = fullRouteMassing?.districtArterial === true && !!fullRouteMassing?.districtRouteId;
+        const fullMajorBridgePortal = portal => portal?.districtArterial === true
+            || portal?.widthClass === 'sky-street'
+            || portal?.facadeGalleryWidthClass === 'sky-street';
+        const fullMajorBridgePortals = (bridgePortals ?? []).filter(fullMajorBridgePortal);
+        const fullThoroughfareRequired = fullDistrictArterialTower || fullMajorBridgePortals.length > 0;
+        const fullMajorRoadModules = new Set(fullMajorBridgePortals.map(portal => String(portal.moduleKey)));
+        const fullServiceStairWidth = Math.max(0.72, Number(servicePhysicalTruth?.stair?.widthSI) || 0.90);
+        const widestMajorPortal = fullMajorBridgePortals.reduce((best, portal) => Math.max(best, Number(portal?.width) || 0), 0);
+        const fullThoroughfareClearWidth = Math.min(2.20, Math.max(
+            1.65,
+            fullServiceStairWidth * 1.75,
+            1.60 + Math.max(0, Math.min(1, Number(fullRouteMassing?.score) || 0)) * 0.38,
+            Math.min(2.08, widestMajorPortal * 0.72),
+        ));
+        const fullThoroughfareFallbackWidth = Math.min(1.82, Math.max(1.45, fullServiceStairWidth * 1.55));
         if (scaffoldCandidates.length) {
             const scaffoldPresenceRng = mulberry32(hashString32(`${siteSeed}:scaffold-presence`));
-            if (scaffoldPresenceRng() < intensity.scaffoldChance) {
+            if (fullThoroughfareRequired || scaffoldPresenceRng() < intensity.scaffoldChance) {
                 const scaffoldBulkScale = 1 + Math.min(0.62, (bridgePortals?.length ?? 0) * 0.13);
-                const scaffoldClearWidth = Math.min(2.20, (Number(servicePhysicalTruth?.stair?.widthSI) || 0.90) * scaffoldBulkScale);
-                const scaffoldEnvelopeDepth = Math.max(1.2, Math.min(3.35, Math.max(cellSize * 0.34, scaffoldClearWidth * 2.15)));
+                const localScaffoldClearWidth = Math.min(2.20, fullServiceStairWidth * scaffoldBulkScale);
+                const targetWidths = fullThoroughfareRequired
+                    ? [fullThoroughfareClearWidth, fullThoroughfareFallbackWidth]
+                    : [localScaffoldClearWidth];
+                const scaffoldEnvelopeDepth = fullThoroughfareRequired
+                    ? Math.max(3.85, Math.min(4.80, Math.max(cellSize * 0.42, Math.max(...targetWidths) * 2.36)))
+                    : Math.max(1.2, Math.min(3.35, Math.max(cellSize * 0.34, Math.max(...targetWidths) * 2.15)));
                 const validScaffolds = scaffoldCandidates.map(face => {
                     const seed = hashString32(`${siteSeed}:scaffold:${face.module.key}:${face.dir.side}`);
-                    const plan = planExteriorScaffoldRoute({
-                        fp: face.module.rect,
-                        siteId: site.id,
-                        moduleKey: face.module.key,
-                        floors: face.module.floors,
-                        floorH,
-                        side: face.dir.side,
-                        seed,
-                        physicalTruth: servicePhysicalTruth,
-                        clearWidthOverride: scaffoldClearWidth,
-                        maxExteriorDepth: scaffoldEnvelopeDepth,
-                        routeId: `${chunk.key}:${siteSignature}:${face.module.key}:scaffold:${face.dir.side}`,
-                    });
+                    const faceMajorPortal = fullMajorBridgePortals.find(portal =>
+                        String(portal.moduleKey) === String(face.module.key) && portal.dirKey === face.dir.key) ?? null;
+                    let acceptedPlan = null;
+                    for (const clearWidthOverride of targetWidths) {
+                        const plan = planExteriorScaffoldRoute({
+                            fp: face.module.rect,
+                            siteId: site.id,
+                            moduleKey: face.module.key,
+                            floors: face.module.floors,
+                            floorH,
+                            side: face.dir.side,
+                            seed,
+                            physicalTruth: servicePhysicalTruth,
+                            clearWidthOverride,
+                            maxExteriorDepth: scaffoldEnvelopeDepth,
+                            family: fullThoroughfareRequired ? 'district-thoroughfare-stair' : 'exterior-scaffold',
+                            routeClass: fullThoroughfareRequired ? 'thoroughfare' : 'local',
+                            districtRouteId: fullThoroughfareRequired
+                                ? (faceMajorPortal?.districtRouteId ?? fullRouteMassing?.districtRouteId ?? fullMajorBridgePortals[0]?.districtRouteId ?? null)
+                                : null,
+                            districtArterial: fullThoroughfareRequired
+                                && (faceMajorPortal?.districtArterial === true || fullDistrictArterialTower),
+                            majorRoadConnector: fullThoroughfareRequired,
+                            horizontalRouteId: fullThoroughfareRequired
+                                ? (faceMajorPortal?.cityRouteId ?? faceMajorPortal?.bridgeId
+                                    ?? fullRouteMassing?.routeId ?? fullMajorBridgePortals[0]?.cityRouteId
+                                    ?? fullMajorBridgePortals[0]?.bridgeId ?? null)
+                                : null,
+                            // Keep physical continuity local to this tower. District identity
+                            // is descriptive and cross-tower joins still require real surfaces.
+                            networkKey: `${chunk.key}:${siteSignature}:${face.module.key}:scaffold:${face.dir.side}`,
+                            routeId: `${chunk.key}:${siteSignature}:${face.module.key}:${fullThoroughfareRequired ? 'thoroughfare-stair' : 'scaffold'}:${face.dir.side}`,
+                        });
+                        if (plan) {
+                            acceptedPlan = plan;
+                            break;
+                        }
+                    }
+                    const plan = acceptedPlan;
                     if (!plan) return null;
                     const primaryCirculationConflict = plan.landings.some(landing =>
                         reservationIntersectsBox(primaryStairEnvelope, {
@@ -4104,7 +4369,7 @@ export function createKowloonFabricEngine({
                     ) || plan.flights.some(flight => {
                         const corridor = createRampCirculationReservation({
                             id: `${plan.id}:${flight.id}:preflight`,
-                            kind: 'scaffold-preflight-ramp',
+                            kind: fullThoroughfareRequired ? 'district-thoroughfare-preflight-ramp' : 'scaffold-preflight-ramp',
                             axis: flight.axis,
                             from: flight.from,
                             to: flight.to,
@@ -4114,7 +4379,7 @@ export function createKowloonFabricEngine({
                             y1: flight.y1,
                             capsuleRadius: 0.28,
                             headroom: flight.headroom,
-                            source: 'exterior-scaffold-preflight',
+                            source: fullThoroughfareRequired ? 'district-thoroughfare-preflight' : 'exterior-scaffold-preflight',
                         });
                         return reservationIntersectsBox(primaryStairEnvelope, {
                             x: corridor.x, z: corridor.z, hx: corridor.halfX, hz: corridor.halfZ,
@@ -4124,14 +4389,30 @@ export function createKowloonFabricEngine({
                     if (primaryCirculationConflict) return null;
                     const openingConflict = plan.openings.some(opening => {
                         const openingKey = `${face.module.key}:${face.dir.key}:${opening.level}`;
-                        return bridgeOpeningKeys.has(openingKey)
-                            || cantileverOpeningKeys.has(openingKey)
-                            || serviceCageOpeningKeys.has(openingKey)
+                        const structuralConflict = bridgeOpeningKeys.has(openingKey)
                             || entranceConnectorByKey.has(openingKey);
+                        const optionalConflict = cantileverOpeningKeys.has(openingKey)
+                            || serviceCageOpeningKeys.has(openingKey);
+                        // Public district circulation outranks optional facade weirdness.
+                        // Ordinary fire escapes keep the previous conservative behavior.
+                        return structuralConflict || (!fullThoroughfareRequired && optionalConflict);
                     });
                     return openingConflict ? null : { face, plan };
                 }).filter(Boolean);
                 validScaffolds.sort((a, b) => {
+                    if (fullThoroughfareRequired) {
+                        // Stay in the same tower/module as a major road exchange when
+                        // possible, but use another facade so the public stair doorway
+                        // does not collide with the bridge doorway itself.
+                        const roadModuleRank = Number(fullMajorRoadModules.has(String(b.face.module.key)))
+                            - Number(fullMajorRoadModules.has(String(a.face.module.key)));
+                        if (roadModuleRank) return roadModuleRank;
+                        const aSpan = (a.face.dir.side === 'north' || a.face.dir.side === 'south')
+                            ? Number(a.face.module.rect.halfX) * 2 : Number(a.face.module.rect.halfZ) * 2;
+                        const bSpan = (b.face.dir.side === 'north' || b.face.dir.side === 'south')
+                            ? Number(b.face.module.rect.halfX) * 2 : Number(b.face.module.rect.halfZ) * 2;
+                        if (Math.abs(aSpan - bSpan) > 1e-9) return bSpan - aSpan;
+                    }
                     const heightRank = b.face.module.floors - a.face.module.floors;
                     if (heightRank) return heightRank;
                     const topologyRank = (a.plan.topology === 'canonical-facade-zigzag' ? 0 : 1) - (b.plan.topology === 'canonical-facade-zigzag' ? 0 : 1);
@@ -4145,10 +4426,31 @@ export function createKowloonFabricEngine({
                 if (accepted) {
                     scaffoldPlan = accepted.plan;
                     scaffoldSide = accepted.face.dir.side;
+                    if (scaffoldPlan.routeClass === 'thoroughfare') {
+                        // The thoroughfare is structural circulation. Remove optional
+                        // exterior rooms/cages that asked for the same facade rather
+                        // than allowing those decorations to veto the public stair.
+                        for (let index = cantileverPlans.length - 1; index >= 0; index--) {
+                            const item = cantileverPlans[index];
+                            if (item.face.module.key !== accepted.face.module.key || item.face.dir.key !== accepted.face.dir.key) continue;
+                            cantileverOpeningKeys.delete(`${item.face.module.key}:${item.face.dir.key}:${item.level}`);
+                            cantileverPlans.splice(index, 1);
+                        }
+                        for (let index = serviceCagePlans.length - 1; index >= 0; index--) {
+                            const item = serviceCagePlans[index];
+                            if (item.face.module.key !== accepted.face.module.key || item.face.dir.key !== accepted.face.dir.key) continue;
+                            serviceCageOpeningKeys.delete(`${item.face.module.key}:${item.face.dir.key}:${item.level}`);
+                            serviceCagePlans.splice(index, 1);
+                        }
+                    }
                     for (const opening of scaffoldPlan.openings) {
                         scaffoldOpeningByKey.set(
                             `${accepted.face.module.key}:${accepted.face.dir.key}:${opening.level}`,
-                            { width: opening.width, height: opening.height, center: opening.tangent, routeId: scaffoldPlan.id, openingId: opening.id },
+                            {
+                                width: opening.width, height: opening.height, center: opening.tangent,
+                                routeId: scaffoldPlan.id, openingId: opening.id,
+                                routeClass: scaffoldPlan.routeClass, districtRouteId: scaffoldPlan.districtRouteId,
+                            },
                         );
                     }
                 }
@@ -4185,8 +4487,8 @@ export function createKowloonFabricEngine({
             rampFrom: primaryStairFrom,
             rampTo: primaryStairTo,
             rampHalfWidth: primaryStairHalfWidth,
-            source: 'compound-stair',
-            visualRole: 'vertical-spine',
+            source: primaryStairArchitecture.routeClass === 'thoroughfare' ? 'district-thoroughfare-core' : 'compound-stair',
+            visualRole: primaryStairArchitecture.routeClass === 'thoroughfare' ? 'district-thoroughfare-vertical-spine' : 'vertical-spine',
             fromSpaceId: null,
             toSpaceId: null,
             physicalTruth: stairPhysicalTruth,
@@ -4206,6 +4508,14 @@ export function createKowloonFabricEngine({
                 designIntent: STAIR_WALKABILITY_DESIGN_INTENT,
                 architectureReplanMode: primaryStairArchitecture.replanMode,
                 consumedModuleKeys: [...primaryStairArchitecture.consumedModuleKeys],
+                routeClass: primaryStairArchitecture.routeClass ?? 'local',
+                districtRouteId: primaryStairArchitecture.districtRouteId ?? null,
+                districtArterial: primaryStairArchitecture.districtArterial === true,
+                majorRoadConnector: primaryStairArchitecture.majorRoadConnector === true,
+                horizontalRouteId: primaryStairArchitecture.horizontalRouteId ?? null,
+                requestedClearWidth: primaryStairArchitecture.requestedClearWidth ?? null,
+                realizedClearWidth: primaryStairArchitecture.realizedClearWidth ?? primaryActualStairClearWidth,
+                widthFallback: primaryStairArchitecture.widthFallback === true,
             },
         });
         registerSemanticConnector(physics, primaryStairConnector);
@@ -4226,6 +4536,14 @@ export function createKowloonFabricEngine({
         primaryStairReservation.structuralFeasibilitySchema = primaryStairArchitecture.schema;
         primaryStairReservation.structuralFeasibilityClaims = primaryStairArchitecture.claims;
         primaryStairReservation.structuralFeasibilityHistory = primaryStairArchitecture.replanHistory;
+        primaryStairReservation.routeClass = primaryStairArchitecture.routeClass ?? 'local';
+        primaryStairReservation.districtRouteId = primaryStairArchitecture.districtRouteId ?? null;
+        primaryStairReservation.districtArterial = primaryStairArchitecture.districtArterial === true;
+        primaryStairReservation.majorRoadConnector = primaryStairArchitecture.majorRoadConnector === true;
+        primaryStairReservation.horizontalRouteId = primaryStairArchitecture.horizontalRouteId ?? null;
+        primaryStairReservation.requestedClearWidth = primaryStairArchitecture.requestedClearWidth ?? null;
+        primaryStairReservation.realizedClearWidth = primaryStairArchitecture.realizedClearWidth ?? primaryActualStairClearWidth;
+        primaryStairReservation.widthFallback = primaryStairArchitecture.widthFallback === true;
         const primaryStairSlabOpening = primaryStairCore.slabOpening;
         if (!primaryStairSlabOpening) throw new Error(`${chunk.key}:${siteSignature}:${primaryModule.key}: stair core missing slab opening`);
         const primaryStairSlabOpeningReservation = createBoxCirculationReservation({
@@ -4263,6 +4581,12 @@ export function createKowloonFabricEngine({
             slabOpeningReservationId: primaryStairSlabOpeningReservation.id,
             stairTopology: primaryStairCore.topology,
             floors: primaryModule.floors,
+            routeClass: primaryStairArchitecture.routeClass ?? 'local',
+            districtRouteId: primaryStairArchitecture.districtRouteId ?? null,
+            districtArterial: primaryStairArchitecture.districtArterial === true,
+            majorRoadConnector: primaryStairArchitecture.majorRoadConnector === true,
+            horizontalRouteId: primaryStairArchitecture.horizontalRouteId ?? null,
+            clearWidth: primaryActualStairClearWidth,
             flightIds: (primaryStairCore.flights ?? []).map(flight => flight.id),
             landingIds: (primaryStairCore.landings ?? []).map(landing => landing.id ?? landing.sideRole).filter(Boolean),
             ownershipAuthority: 'stair-core-owns-opening-and-children-v1',
@@ -4284,9 +4608,25 @@ export function createKowloonFabricEngine({
             siteId: site.id,
             field: ceilingAlignedModules ? 'ceiling' : 'ground',
         });
-        const accessAnchors = [...entranceAccessAnchors, ...cityExchangeAnchors];
-        const transferPlanFingerprint = hashString32(cityExchangeAnchors
-            .map(anchor => `${anchor.endpointId}:${anchor.floor}:${anchor.side}`).sort().join('|'));
+        const thoroughfareAccessAnchors = scaffoldPlan?.routeClass === 'thoroughfare'
+            ? scaffoldPlan.openings.map(opening => ({
+                id: `${opening.id}:public-exchange`,
+                kind: 'city-exchange',
+                x: opening.x, z: opening.z, side: scaffoldPlan.side, floor: opening.level,
+                connectorId: `${opening.landingId}:connector`,
+                endpointId: opening.id,
+                routeCharacter: 'DISTRICT_THOROUGHFARE_VERTICAL',
+                traversalPermission: 'PUBLIC_THROUGH',
+                circulationClass: 'district-thoroughfare-stair',
+                authority: scaffoldPlan.schema,
+            }))
+            : [];
+        // A public exterior stair is not just a hole in the shell. Every served
+        // floor becomes an explicit boundary exchange, so the Building Plan reserves
+        // a real walk-through path from the landing to the persistent tower core.
+        const accessAnchors = [...entranceAccessAnchors, ...cityExchangeAnchors, ...thoroughfareAccessAnchors];
+        const transferPlanFingerprint = hashString32([...cityExchangeAnchors, ...thoroughfareAccessAnchors]
+            .map(anchor => `${anchor.endpointId}:${anchor.floor}:${anchor.side}:${anchor.circulationClass ?? ''}`).sort().join('|'));
         const buildingPlanKey = semanticPlanCacheKey({
             worldSeed,
             chunkKey: chunk.key,
@@ -4511,13 +4851,21 @@ export function createKowloonFabricEngine({
                 // Planned wall runs are emitted once after the envelope/slab pass.
 
                 if (isSpine && floor < module.floors) {
-                    const stairGuardFamily = guardFamilyForContext({ supportKind: 'compound-stair', visualRole: 'interior-stair', physicalUse: stairPhysicalTruth?.physicalUse });
+                    const stairGuardFamily = primaryStairArchitecture.routeClass === 'thoroughfare'
+                        ? 'municipal-concrete'
+                        : guardFamilyForContext({ supportKind: 'compound-stair', visualRole: 'interior-stair', physicalUse: stairPhysicalTruth?.physicalUse });
                     realizeInteriorSwitchbackStory({
                         physics, transforms, core: primaryStairCore, floor, y0, y1, guardFamily: stairGuardFamily,
                         treadVisualBudget: GENERATION_LANES.broadStrokesOnly ? 3 : Infinity,
                         metadata: {
                             stairId: `${chunk.key}:${siteSignature}:${module.key}:compound-stair`,
                             moduleKey: module.key, physicalUse: stairPhysicalTruth?.physicalUse,
+                            routeClass: primaryStairArchitecture.routeClass ?? 'local',
+                            districtRouteId: primaryStairArchitecture.districtRouteId ?? null,
+                            districtArterial: primaryStairArchitecture.districtArterial === true,
+                            majorRoadConnector: primaryStairArchitecture.majorRoadConnector === true,
+                            horizontalRouteId: primaryStairArchitecture.horizontalRouteId ?? null,
+                            clearWidth: primaryActualStairClearWidth,
                         },
                     });
                 }
@@ -5001,6 +5349,19 @@ export function createKowloonFabricEngine({
             buildingPlanAuthority: buildingPlan.authoritySchema,
             buildingPlanFingerprint: buildingPlan.fingerprint,
             buildingPlanInspection: buildingPlan.inspection,
+            primaryStairRoute: {
+                id: primaryStairOwnerId,
+                routeClass: primaryStairArchitecture.routeClass ?? 'local',
+                clearWidth: primaryActualStairClearWidth,
+                requestedClearWidth: primaryStairArchitecture.requestedClearWidth ?? null,
+                widthFallback: primaryStairArchitecture.widthFallback === true,
+                floors: primaryModule.floors,
+                topology: primaryStairCore.topology,
+                districtRouteId: primaryStairArchitecture.districtRouteId ?? null,
+                districtArterial: primaryStairArchitecture.districtArterial === true,
+                majorRoadConnector: primaryStairArchitecture.majorRoadConnector === true,
+                horizontalRouteId: primaryStairArchitecture.horizontalRouteId ?? null,
+            },
             programMacroArchitecture: programMacroArchitecture ? {
                 schema: programMacroArchitecture.schema, family: programMacroArchitecture.family, parts: programMacroArchitecture.parts,
                 features: [...programMacroArchitecture.features], routeFrontageFeatureCount: programMacroArchitecture.routeFrontageFeatureCount,
@@ -5012,6 +5373,15 @@ export function createKowloonFabricEngine({
             balconySide,
             scaffoldSide,
             scaffoldLandings,
+            scaffoldRoute: scaffoldPlan ? {
+                id: scaffoldPlan.id, family: scaffoldPlan.family, routeClass: scaffoldPlan.routeClass,
+                clearWidth: scaffoldPlan.clearWidth, floors: scaffoldPlan.floors,
+                districtRouteId: scaffoldPlan.districtRouteId ?? null,
+                districtArterial: scaffoldPlan.districtArterial === true,
+                majorRoadConnector: scaffoldPlan.majorRoadConnector === true,
+                horizontalRouteId: scaffoldPlan.horizontalRouteId ?? null,
+                networkKey: scaffoldPlan.networkKey ?? scaffoldPlan.id,
+            } : null,
             serviceCages,
             cantileverRooms,
             mezzanines,

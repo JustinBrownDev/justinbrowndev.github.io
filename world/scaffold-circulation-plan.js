@@ -82,6 +82,13 @@ export function planExteriorScaffoldRoute({
   wallGap = 0.10,
   routeId = null,
   clearWidthOverride = null,
+  family = 'exterior-scaffold',
+  routeClass = 'local',
+  districtRouteId = null,
+  districtArterial = false,
+  majorRoadConnector = false,
+  horizontalRouteId = null,
+  networkKey = null,
 } = {}) {
   const count = Math.max(0, Math.floor(Number(floors) || 0));
   const rise = Number(floorH);
@@ -213,6 +220,15 @@ export function planExteriorScaffoldRoute({
     id,
     siteId,
     moduleKey,
+    family,
+    routeClass,
+    districtRouteId,
+    districtArterial: districtArterial === true,
+    majorRoadConnector: majorRoadConnector === true,
+    horizontalRouteId,
+    // networkKey is reserved for literal physical continuity. districtRouteId
+    // groups public thoroughfares, but must not teleport-union separate towers.
+    networkKey: networkKey ?? id,
     face: Object.freeze({ moduleKey: moduleKey ?? null, side, rect: Object.freeze({ ...fp }) }),
     topology: 'canonical-facade-zigzag',
     geometryAuthority: FACADE_STAIR_AUTHORITY_SCHEMA,
@@ -241,6 +257,11 @@ export function planExteriorScaffoldRoute({
     fitStatus: 'fits-resolved-truth',
   });
   if (openings.length !== count || !graphIsContinuous(plan)) return null;
+  if (plan.routeClass === 'thoroughfare') {
+    if (!plan.majorRoadConnector) throw new Error(`${plan.id}: thoroughfare scaffold must connect a major road`);
+    if (!(plan.clearWidth >= 1.40)) throw new Error(`${plan.id}: thoroughfare scaffold clear width must be at least 1.40m`);
+    if (!plan.districtRouteId && !plan.horizontalRouteId) throw new Error(`${plan.id}: thoroughfare scaffold requires horizontal route identity`);
+  }
   assertCanonicalFacadeZigzag(plan);
   return plan;
 }

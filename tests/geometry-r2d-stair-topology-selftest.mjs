@@ -67,6 +67,18 @@ for (const landing of four.intermediateLandings) {
 }
 assert.deepEqual(four.intermediateLandings.map(landing => landing.mouthEdge), ['low', 'high', 'low'], 'switchback landing mouths must alternate with flight direction');
 
+const arterial = planInteriorSwitchbackStairCore({
+  rect: { cx: 0, cz: 0, halfX: 4.4, halfZ: 4.4 },
+  floorH: 3.35,
+  physicalTruth: truth,
+  traversalEnvelope: { playerRadius: 0.22 },
+  clearWidthOverride: 1.80,
+  stableKey: 'geometry-r2d-district-thoroughfare',
+});
+assert.ok(arterial, 'district thoroughfare stair must fit when the structural bay is large enough');
+assert.equal(arterial.clearWidth, 1.80, 'explicit arterial clear width must reach the physical stair core, not remain metadata-only');
+assert.equal(arterial.halfWidth, 0.90);
+
 // Exact reported hanging-city specimen: verify the real first stair publishes
 // complete landing/shaft perimeter rails and physically truthful tread identities.
 const worldSeed = 671278205, x = 8, z = 8, chunkSize = 64;

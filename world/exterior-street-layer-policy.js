@@ -30,6 +30,7 @@ function sortedUniqueFloors(values, minFloor, maxFloor) {
 export function planExteriorStreetLayerPolicy({
   floors,
   existingPortalFloors = [],
+  preferredOccupancyFloors = [],
   maxLayers = 5,
   maxExteriorConnections = 2,
   includeRoof = false,
@@ -60,13 +61,19 @@ export function planExteriorStreetLayerPolicy({
 
   const eligibleDoorFloors = layerFloors.filter(floor => floor <= highestOccupancyFloor && floor !== roofFloor);
   const candidateDoors = [];
+  // Route interchanges can nominate the levels that matter to the wider city.
+  // These are still ordinary occupancy thresholds; this only makes sure a
+  // district stair has a real handoff to the building/city circulation at the
+  // exchange band instead of spending its sparse door budget elsewhere.
+  const preferred = sortedUniqueFloors(preferredOccupancyFloors, 1, Math.min(highestOccupancyFloor, layerTop));
+  for (const floor of preferred) if (eligibleDoorFloors.includes(floor) && !existing.includes(floor)) candidateDoors.push(floor);
   if (eligibleDoorFloors.includes(1) && !existing.includes(1)) candidateDoors.push(1);
   const highestDoorFloor = eligibleDoorFloors[eligibleDoorFloors.length - 1];
   if (highestDoorFloor > 1 && !existing.includes(highestDoorFloor)) candidateDoors.push(highestDoorFloor);
   for (const floor of eligibleDoorFloors) {
     if (floor !== 1 && floor !== highestDoorFloor && !existing.includes(floor)) candidateDoors.push(floor);
   }
-  const occupancyPortalFloors = candidateDoors.slice(0, remainingDoorBudget);
+  const occupancyPortalFloors = [...new Set(candidateDoors)].slice(0, remainingDoorBudget);
 
   return Object.freeze({
     schema: EXTERIOR_STREET_LAYER_POLICY_SCHEMA,

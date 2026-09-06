@@ -78,8 +78,36 @@ function circulationGraph(plan) {
       if (a && b) link(a, b, 'interior-door');
     }
   }
-  const coreIds = plan?.verticalCore?.floorSpaceIds ?? [];
-  for (let i = 1; i < coreIds.length; i++) link(coreIds[i - 1], coreIds[i], 'vertical-core');
+  // The persistent stair/core is a reserved circulation volume inside the
+  // Building Plan, not the entire room that happens to contain its cells. A
+  // secure program may therefore surround a public-through shaft. Modeling the
+  // host room itself as the vertical node made valid tower transfers fail any
+  // time an intermediate floor's circulation room was SECURE/NO_THROUGH.
+  // Publish one synthetic public core node per occupied floor instead. Only a
+  // through-eligible host space can enter/exit that node; intermediate secure
+  // rooms remain sealed while the stair shaft stays vertically continuous.
+  const core = plan?.verticalCore ?? null;
+  const coreNodes = [];
+  for (const spaceId of core?.floorSpaceIds ?? []) {
+    const host = spaces.get(spaceId);
+    if (!host) continue;
+    const nodeId = `${core.id}:floor:${host.floor}`;
+    const node = {
+      id: nodeId,
+      floor: host.floor,
+      role: 'circulation',
+      traversalPermission: TRAVERSAL_PERMISSION.PUBLIC_THROUGH,
+      throughRoutingEligible: true,
+      verticalCoreNode: true,
+      structuralReservationIds: core.reservationId ? [core.reservationId] : [],
+    };
+    spaces.set(nodeId, node);
+    edges.set(nodeId, []);
+    coreNodes.push(node);
+    if (allowedThroughSpace(host)) link(host.id, nodeId, 'vertical-core-entry');
+  }
+  coreNodes.sort((a, b) => Number(a.floor) - Number(b.floor) || a.id.localeCompare(b.id));
+  for (let i = 1; i < coreNodes.length; i++) link(coreNodes[i - 1].id, coreNodes[i].id, 'vertical-core');
   return { spaces, edges };
 }
 
@@ -113,6 +141,43 @@ function findPublicPath(graph, from, to) {
   return null;
 }
 
+function transferFailureDiagnostic(plan, graph, demand, from, to) {
+  const summarize = id => {
+    const space = graph.spaces.get(id);
+    return space ? {
+      id: space.id, floor: space.floor, role: space.role,
+      traversalPermission: space.traversalPermission ?? null,
+      cityTransferSpine: space.cityTransferSpine === true,
+      throughRoutingEligible: space.throughRoutingEligible === true,
+      coreReservation: (space.structuralReservationIds ?? []).includes(plan?.verticalCore?.reservationId),
+      neighbors: (graph.edges.get(id) ?? []).map(edge => ({ to: edge.to, kind: edge.kind })),
+    } : { id, missing: true };
+  };
+  const reachable = [];
+  const queue = [from.spaceId];
+  const seen = new Set(queue);
+  while (queue.length) {
+    const current = queue.shift();
+    reachable.push(summarize(current));
+    for (const edge of graph.edges.get(current) ?? []) {
+      if (seen.has(edge.to) || !allowedThroughSpace(graph.spaces.get(edge.to))) continue;
+      seen.add(edge.to); queue.push(edge.to);
+    }
+  }
+  return {
+    demandId: demand.id,
+    from: { ...from, space: summarize(from.spaceId) },
+    to: { ...to, space: summarize(to.spaceId) },
+    verticalCore: plan?.verticalCore ? {
+      id: plan.verticalCore.id,
+      reservationId: plan.verticalCore.reservationId,
+      floorSpaceIds: [...(plan.verticalCore.floorSpaceIds ?? [])],
+      occupiedSpaceIds: [...(plan.verticalCore.occupiedSpaceIds ?? [])],
+    } : null,
+    reachable,
+  };
+}
+
 export function applyTowerTransferAuthority(plan, { demands = [], portals = [] } = {}) {
   const requested = [...(demands ?? [])];
   const bindings = transferBindings(plan);
@@ -132,7 +197,12 @@ export function applyTowerTransferAuthority(plan, { demands = [], portals = [] }
     }
   }
   for (const binding of bindings) {
-    if (portalIds.size && binding.endpointId && !portalIds.has(String(binding.endpointId))) {
+    // A district thoroughfare stair is also a legitimate PUBLIC_THROUGH
+    // exchange boundary, but it is not a skybridge portal and therefore does
+    // not appear in `portals`.  Keep the fail-closed orphan check for actual
+    // exterior bridge exchanges without falsely rejecting public stair doors.
+    const auxiliaryPublicExchange = binding.routeCharacter === 'DISTRICT_THOROUGHFARE_VERTICAL';
+    if (portalIds.size && binding.endpointId && !portalIds.has(String(binding.endpointId)) && !auxiliaryPublicExchange) {
       const error = new Error(`${binding.endpointId}: Building Plan transfer binding has no resolved exterior exchange portal`);
       error.code = 'JWEB_TOWER_TRANSFER_ORPHAN_BINDING';
       throw error;
@@ -146,7 +216,7 @@ export function applyTowerTransferAuthority(plan, { demands = [], portals = [] }
       routes: Object.freeze([]), requested: 0, realized: 0, failed: 0,
       persistentVerticalCoreId: plan?.verticalCore?.id ?? null,
       verificationAuthority: 'building-plan+compileWorldCirculationGraph',
-      invariant: 'every city exchange binds to a public interior transfer spine even when no cross-tower transfer pair is requested',
+      invariant: 'every bridge exchange and auxiliary public-thoroughfare exchange binds to a public interior transfer spine even when no cross-tower transfer pair is requested',
     });
     plan.cityTransferAuthority = authority;
     if (plan.inspection) plan.inspection.cityTransfers = { requested: 0, realized: 0, routeIds: [] };
@@ -179,6 +249,7 @@ export function applyTowerTransferAuthority(plan, { demands = [], portals = [] }
     if (!path) {
       const error = new Error(`${demand.id}: Building Plan cannot realize a public through-route between requested exchanges`);
       error.code = 'JWEB_TOWER_TRANSFER_UNREALIZED';
+      error.transferDiagnostic = transferFailureDiagnostic(plan, graph, demand, from, to);
       throw error;
     }
     const verticalTransfers = path.edgeKinds.filter(kind => kind === 'vertical-core').length;

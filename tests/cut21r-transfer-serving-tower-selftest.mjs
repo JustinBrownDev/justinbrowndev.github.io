@@ -33,6 +33,16 @@ const portals = [
   },
 ];
 const exchangeAnchors = cityExchangeAnchorsForPortals(portals, { siteId: 21, field: 'ground' });
+const thoroughfareAnchor = {
+  id: 'cut21r:district-thoroughfare-floor2',
+  endpointId: 'cut21r:district-thoroughfare-floor2',
+  kind: 'city-exchange',
+  x: 7.0, z: -1.0, side: 'east', floor: 2, globalFloor: 2,
+  routeCharacter: 'DISTRICT_THOROUGHFARE_VERTICAL',
+  traversalPermission: 'PUBLIC_THROUGH',
+  circulationClass: 'district-thoroughfare-stair',
+  authority: 'jweb.scaffold-circulation-plan.v4',
+};
 
 const hangingAnchor = cityExchangeAnchorsForPortals([{
   id: 'cut21r:hanging-exchange', bridgeId: 'bridge-hanging', resolved: true,
@@ -52,6 +62,7 @@ const sidecar = planBuildingSidecar({
   accessAnchors: [
     { id: 'cut21r:street-entry', kind: 'main-entry', x: 0, z: 7, side: 'south', floor: 0 },
     ...exchangeAnchors,
+    thoroughfareAnchor,
   ],
   circulationReservations: [core],
 });
@@ -79,7 +90,11 @@ assert.equal(authority.requested, 1);
 assert.equal(authority.realized, 1);
 assert.equal(plan.diagnostics.cityTransferAuthorityReady, true);
 assert.equal(authority.routes[0].verticalTransfers, 2, 'floor 1 -> 3 must consume two canonical vertical-core handoffs');
-assert.ok(authority.routes[0].edgeKinds.every(kind => kind === 'vertical-core' || kind === 'interior-door'));
+assert.ok(authority.routes[0].edgeKinds.every(kind => ['vertical-core', 'vertical-core-entry', 'interior-door'].includes(kind)));
+assert.equal(authority.routes[0].edgeKinds.filter(kind => kind === 'vertical-core-entry').length, 2,
+  'public exchange spaces must enter and leave the dedicated core volume without opening intermediate secure rooms');
+assert.ok(authority.bindings.some(item => item.endpointId === thoroughfareAnchor.id),
+  'district thoroughfare stair doors are valid auxiliary public exchanges even though they are not skybridge portals');
 
 for (const portal of portals) {
   const binding = authority.bindings.find(item => item.endpointId === portal.id);

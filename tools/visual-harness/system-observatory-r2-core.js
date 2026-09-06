@@ -203,6 +203,9 @@ function stairRowsFromPayload(payload) {
 
 function analyzeStairRhythm(payload) {
   const { ownership, expressions } = stairRowsFromPayload(payload);
+  const thoroughfareOwners = ownership.filter(item => item?.routeClass === 'thoroughfare');
+  const thoroughfareWidths = thoroughfareOwners.map(item => finite(item?.clearWidth, 0)).filter(value => value > 0);
+  const thoroughfareStories = thoroughfareOwners.reduce((sum, item) => sum + Math.max(0, finite(item?.floors, 0)), 0);
   const explicitTopology = ownership.filter(item => item?.stairTopology != null && String(item.stairTopology).length);
   const missingTopologyMetadata = ownership.length - explicitTopology.length;
   const topologyCounts = countBy(explicitTopology, item => item?.stairTopology);
@@ -236,10 +239,15 @@ function analyzeStairRhythm(payload) {
     stairGuardPrimitiveCount: guardPrimitiveCount,
     guardSpansPerOwnedStory,
     guardPrimitivesPerOwnedStory,
+    thoroughfareCount: thoroughfareOwners.length,
+    thoroughfareStories,
+    thoroughfareWidthMedian: quantile(thoroughfareWidths, 0.5),
+    thoroughfareWidthMax: thoroughfareWidths.length ? Math.max(...thoroughfareWidths) : 0,
+    thoroughfareDistrictRoutes: countBy(thoroughfareOwners, item => item?.districtRouteId ?? '(none)'),
     architectureExpressionCount: expressions.length,
     architectureFamilies: countBy(expressions, item => item?.family ?? '(none)'),
     expressionCoverage: ownership.length ? Math.min(1, expressions.length / ownership.length) : 0,
-    ownership: ownership.map(item => ({ id: item?.id ?? null, layer: item.layer, topology: item?.stairTopology ?? '(metadata missing)', floors: finite(item?.floors, 0), buildingPlanId: item?.buildingPlanId ?? null })),
+    ownership: ownership.map(item => ({ id: item?.id ?? null, layer: item.layer, topology: item?.stairTopology ?? '(metadata missing)', floors: finite(item?.floors, 0), buildingPlanId: item?.buildingPlanId ?? null, routeClass: item?.routeClass ?? 'local', clearWidth: finite(item?.clearWidth, 0), districtRouteId: item?.districtRouteId ?? null })),
     expressions: expressions.map(item => ({ id: item?.id ?? null, layer: item.layer, family: item?.family ?? '(none)', programArchitectureId: item?.programArchitectureId ?? null, parts: finite(item?.parts, 0) })),
   };
 }
@@ -318,6 +326,7 @@ export function classifyBuildFailure(error, chunk = {}) {
     lens: code === 'JWEB_TOWER_TRANSFER_UNREALIZED' ? 'F01' : null,
     message: String(error?.message ?? message.split('\n')[0] ?? code),
     stack: message,
+    ...(error?.transferDiagnostic ? { transferDiagnostic: error.transferDiagnostic } : {}),
   };
 }
 
@@ -376,6 +385,10 @@ export function buildSweepAnalysisR2(chunks, failures = []) {
       stairGuardSpans: list.reduce((sum, item) => sum + item.stairRhythm.stairGuardSpans, 0),
       stairGuardPrimitiveCount: list.reduce((sum, item) => sum + item.stairRhythm.stairGuardPrimitiveCount, 0),
       guardPrimitivesPerOwnedStory: list.reduce((sum, item) => sum + item.stairRhythm.ownedStories, 0) ? list.reduce((sum, item) => sum + item.stairRhythm.stairGuardPrimitiveCount, 0) / list.reduce((sum, item) => sum + item.stairRhythm.ownedStories, 0) : 0,
+      thoroughfareCount: list.reduce((sum, item) => sum + finite(item.stairRhythm?.thoroughfareCount, 0), 0),
+      thoroughfareStories: list.reduce((sum, item) => sum + finite(item.stairRhythm?.thoroughfareStories, 0), 0),
+      thoroughfareWidthMedian: quantile(list.flatMap(item => arr(item.stairRhythm?.ownership).filter(owner => owner?.routeClass === 'thoroughfare').map(owner => finite(owner?.clearWidth, 0)).filter(value => value > 0)), 0.5),
+      thoroughfareWidthMax: Math.max(0, ...list.flatMap(item => arr(item.stairRhythm?.ownership).filter(owner => owner?.routeClass === 'thoroughfare').map(owner => finite(owner?.clearWidth, 0)).filter(value => value > 0))),
     },
     runtimeCounts,
     transferDemandTotal: list.reduce((sum, item) => sum + finite(item.transfers?.demands, 0), 0),
@@ -654,7 +667,7 @@ export function renderSweepIndexHtmlR2(sweep, { title = 'JWEB System Observatory
 }
 
 export function renderFindingsMarkdownR2(sweep) {
-  const lines = ['# JWEB System Observatory R2 — generated sweep findings','', '> This is a triage report. It deliberately distinguishes measured runtime/code facts from aesthetic hypotheses.','', `Built chunks: **${sweep.totals.chunks}**`, `Build failures: **${sweep.failures.length}** (${sweep.transferFailures} tower-transfer unrealized)`, `Median combined 9×9 module occupancy: **${pct(sweep.macro.unionOccupancyMedian)}**`, `Median vertical interlock among shared ground/hanging plan cells: **${pct(sweep.macro.interlockShareMedian)}**`, `Bridge architecture records: **${sweep.bridgeGrammar.total}**`, `Non-suspension bridge families carrying suspended-catenary grammar: **${sweep.bridgeGrammar.suspensionOverlayConflicts}**`, `Bridges carrying family + variant + support systems: **${sweep.bridgeGrammar.stackedLargeSystems}**`, `Exact compound-stair ownership records: **${sweep.stairRhythm.total}**`, `Topology-tagged stair owners: **${sweep.stairRhythm.explicitTopologyCount}**; missing topology metadata: **${sweep.stairRhythm.missingTopologyMetadata}**`, `Stair guard visual primitives: **${sweep.stairRhythm.stairGuardPrimitiveCount}** across **${sweep.stairRhythm.ownedStories}** owned stories (**${sweep.stairRhythm.guardPrimitivesPerOwnedStory.toFixed(1)}/story**)`, `Semantic spaces/connectors/portals emitted: **${sweep.runtimeCounts?.spaces ?? 0} / ${sweep.runtimeCounts?.connectors ?? 0} / ${sweep.runtimeCounts?.portals ?? 0}**`, ''];
+  const lines = ['# JWEB System Observatory R2 — generated sweep findings','', '> This is a triage report. It deliberately distinguishes measured runtime/code facts from aesthetic hypotheses.','', `Built chunks: **${sweep.totals.chunks}**`, `Build failures: **${sweep.failures.length}** (${sweep.transferFailures} tower-transfer unrealized)`, `Median combined 9×9 module occupancy: **${pct(sweep.macro.unionOccupancyMedian)}**`, `Median vertical interlock among shared ground/hanging plan cells: **${pct(sweep.macro.interlockShareMedian)}**`, `Bridge architecture records: **${sweep.bridgeGrammar.total}**`, `Non-suspension bridge families carrying suspended-catenary grammar: **${sweep.bridgeGrammar.suspensionOverlayConflicts}**`, `Bridges carrying family + variant + support systems: **${sweep.bridgeGrammar.stackedLargeSystems}**`, `Exact compound-stair ownership records: **${sweep.stairRhythm.total}**`, `Topology-tagged stair owners: **${sweep.stairRhythm.explicitTopologyCount}**; missing topology metadata: **${sweep.stairRhythm.missingTopologyMetadata}**`, `District thoroughfare stairs: **${sweep.stairRhythm.thoroughfareCount}** spanning **${sweep.stairRhythm.thoroughfareStories}** owned stories; median/max clear width **${sweep.stairRhythm.thoroughfareWidthMedian.toFixed(2)}m / ${sweep.stairRhythm.thoroughfareWidthMax.toFixed(2)}m**`, `Stair guard visual primitives: **${sweep.stairRhythm.stairGuardPrimitiveCount}** across **${sweep.stairRhythm.ownedStories}** owned stories (**${sweep.stairRhythm.guardPrimitivesPerOwnedStory.toFixed(1)}/story**)`, `Semantic spaces/connectors/portals emitted: **${sweep.runtimeCounts?.spaces ?? 0} / ${sweep.runtimeCounts?.connectors ?? 0} / ${sweep.runtimeCounts?.portals ?? 0}**`, ''];
   lines.push('## Audit lens incidence','');
   for (const lens of AUDIT_LENSES) lines.push(`- **${lens.id} ${lens.short}:** ${sweep.lensTotals[lens.id]?.chunksFlagged ?? 0} chunks/failures flagged by this diagnostic lens.`);
   lines.push('', '## Bridge family census',''); for (const [k,v] of Object.entries(sweep.bridgeGrammar.families).sort((a,b)=>b[1]-a[1])) lines.push(`- ${k}: ${v}`);

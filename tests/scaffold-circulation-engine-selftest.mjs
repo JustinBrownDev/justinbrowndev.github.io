@@ -10,7 +10,8 @@ const engineSource = fs.readFileSync(new URL('../kowloon-fabric-engine.js', impo
 assert.ok(engineSource.includes("from './world/scaffold-circulation-plan.js'"));
 assert.match(engineSource, /function\s+realizeExteriorScaffold\(\{\s*physics,\s*transforms,\s*plan(?:\s*,|\s*\})/, 'canonical scaffold realizer must remain the geometry authority even when visual-family context is added');
 assert.ok(engineSource.includes('const scaffoldOpeningByKey = new Map();'), 'scaffold apertures must be planned before wall publication');
-assert.ok(engineSource.includes("supportKind: 'scaffold-rail'"), 'guard rails must derive from accepted route landings');
+assert.ok(engineSource.includes("'scaffold-rail'"), 'ordinary scaffold guard rails must still derive from accepted route landings');
+assert.ok(engineSource.includes("'district-thoroughfare-rail'"), 'public thoroughfare landings must publish their heavier guard authority');
 assert.ok(!engineSource.includes('function addExteriorScaffold({'), 'legacy geometry-first scaffold author must be gone');
 assert.ok(!engineSource.includes("stableKey: `scaffold:${seed}:flight:${level}`"), 'old compressed-run scaffold flight path must be gone');
 
@@ -77,12 +78,12 @@ for (const [x, z] of sampledChunks) {
     const physics = payload.physics;
     const routes = physics.scaffoldCirculationRoutes ?? [];
     const routeById = new Map(routes.map(route => [route.id, route]));
-    const scaffoldConnectors = (physics.semanticConnectors ?? []).filter(connector => connector.source === 'exterior-scaffold');
-    const scaffoldRamps = (physics.ramps ?? []).filter(ramp => ramp.supportKind === 'scaffold');
-    const scaffoldRails = (physics.mazeWalls ?? []).filter(wall => wall.supportKind === 'scaffold-rail');
+    const scaffoldConnectors = (physics.semanticConnectors ?? []).filter(connector => ['exterior-scaffold', 'district-thoroughfare-stair'].includes(connector.source));
+    const scaffoldRamps = (physics.ramps ?? []).filter(ramp => ['scaffold', 'district-thoroughfare-stair'].includes(ramp.supportKind));
+    const scaffoldRails = (physics.mazeWalls ?? []).filter(wall => ['scaffold-rail', 'district-thoroughfare-rail'].includes(wall.supportKind));
     const guardSpans = physics.guardSpans ?? [];
-    const scaffoldFlightGuards = guardSpans.filter(span => span.supportKind === 'scaffold-flight-guard');
-    const scaffoldPlatforms = (physics.platforms ?? []).filter(platform => platform.supportKind === 'scaffold');
+    const scaffoldFlightGuards = guardSpans.filter(span => ['scaffold-flight-guard', 'district-thoroughfare-flight-guard'].includes(span.supportKind));
+    const scaffoldPlatforms = (physics.platforms ?? []).filter(platform => ['scaffold', 'district-thoroughfare-landing'].includes(platform.supportKind));
     const stairShafts = (physics.circulationReservations ?? []).filter(reservation => reservation.kind === 'stair-shaft');
 
     // Exterior circulation must never consume the keep-clear volume of the
@@ -105,6 +106,11 @@ for (const [x, z] of sampledChunks) {
 
     for (const route of routes) {
       routesSeen++;
+      const thoroughfare = route.routeClass === 'thoroughfare';
+      const expectedRailKind = thoroughfare ? 'district-thoroughfare-rail' : 'scaffold-rail';
+      const expectedRampKind = thoroughfare ? 'district-thoroughfare-stair' : 'scaffold';
+      const expectedFlightGuardKind = thoroughfare ? 'district-thoroughfare-flight-guard' : 'scaffold-flight-guard';
+      const expectedGuardFamily = thoroughfare ? 'municipal-concrete' : 'fire-escape-pipe';
       assert.equal(route.fitStatus, 'fits-resolved-truth', `${c.key}:${route.id}`);
       assert.equal(scaffoldRouteIsContinuous(route), true, `${c.key}:${route.id} must connect ground to top`);
       assert.ok(route.flights.length > 0);
@@ -125,11 +131,11 @@ for (const [x, z] of sampledChunks) {
         }
       }
       for (const landing of route.landings) {
-        const landingRails = scaffoldRails.filter(rail => rail.routeId === route.id && rail.landingId === landing.id);
+        const landingRails = scaffoldRails.filter(rail => rail.routeId === route.id && rail.landingId === landing.id && rail.supportKind === expectedRailKind);
         assert.ok(landingRails.length >= 2,
-          `${c.key}:${landing.id} must own street-edge + dead-end fire-escape guard spans`);
-        assert.ok(landingRails.every(rail => rail.guardFamily === 'fire-escape-pipe'),
-          `${c.key}:${landing.id} landing guard must stay in the skinny fire-escape family`);
+          `${c.key}:${landing.id} must own street-edge + dead-end route guard spans`);
+        assert.ok(landingRails.every(rail => rail.guardFamily === expectedGuardFamily),
+          `${c.key}:${landing.id} landing guard must match the route class`);
       }
       for (const flight of route.flights) {
         flightsSeen++;
@@ -137,11 +143,11 @@ for (const [x, z] of sampledChunks) {
         assert.equal(flight.stairFlight.fitClassification, 'fits-resolved-truth', `${c.key}:${flight.id}`);
         assert.ok(nodeIds.has(flight.fromNodeId), `${c.key}:${flight.id} missing source node`);
         assert.ok(nodeIds.has(flight.toNodeId), `${c.key}:${flight.id} missing target node`);
-        const ramp = scaffoldRamps.find(item => item.routeId === route.id && item.flightId === flight.id);
+        const ramp = scaffoldRamps.find(item => item.routeId === route.id && item.flightId === flight.id && item.supportKind === expectedRampKind);
         assert.ok(ramp, `${c.key}:${flight.id} must own exactly one physics ramp`);
-        const sideGuards = scaffoldFlightGuards.filter(span => span.routeId === route.id && span.flightId === flight.id);
-        assert.equal(sideGuards.length, 2, `${c.key}:${flight.id} needs one skinny guard on each stair side`);
-        assert.ok(sideGuards.every(span => span.family === 'fire-escape-pipe' && span.role === 'flight-side'));
+        const sideGuards = scaffoldFlightGuards.filter(span => span.routeId === route.id && span.flightId === flight.id && span.supportKind === expectedFlightGuardKind);
+        assert.equal(sideGuards.length, 2, `${c.key}:${flight.id} needs one guard on each stair side`);
+        assert.ok(sideGuards.every(span => span.family === expectedGuardFamily && span.role === 'flight-side'));
         assert.ok(sideGuards.every(span => span.visualPrimitiveCount >= 4),
           `${c.key}:${flight.id} flight guard must contain rails plus posts, not one solid blocker`);
       }
@@ -152,7 +158,7 @@ for (const [x, z] of sampledChunks) {
       const route = routeById.get(connector.routeId);
       assert.ok(route, `${c.key}:${connector.id} must reference an accepted route`);
       assert.notEqual(connector.metadata?.fitClassification, 'geometry-fit-outside-truth', `${c.key}:${connector.id}`);
-      if (connector.kind === 'fire-escape') {
+      if (connector.kind === 'fire-escape' || connector.kind === 'stair') {
         assert.ok(connector.fromNodeId && connector.toNodeId, `${c.key}:${connector.id} requires route adjacency`);
         const flight = route.flights.find(item => item.id === connector.flightId);
         assert.ok(flight, `${c.key}:${connector.id} must reference a real route flight`);

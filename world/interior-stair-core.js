@@ -54,7 +54,7 @@ function exposedPerimeterGuardEdges({ axis, rect, mouthSide = 'low' }) {
   ]);
 }
 
-function candidateForAxis({ axis, rect, floorH, truth, playerRadius, stableKey, tier, flightCount }) {
+function candidateForAxis({ axis, rect, floorH, truth, playerRadius, stableKey, tier, flightCount, clearWidthOverride = null }) {
   const alongHalf = axis === 'x' ? finite(rect.halfX) : finite(rect.halfZ);
   const crossHalf = axis === 'x' ? finite(rect.halfZ) : finite(rect.halfX);
   const alongCenter = axis === 'x' ? finite(rect.cx) : finite(rect.cz);
@@ -63,7 +63,10 @@ function candidateForAxis({ axis, rect, floorH, truth, playerRadius, stableKey, 
   // Landing depth, flight width, tread/riser truth and capsule clearances remain
   // unchanged; 8cm is only the non-walkable shell gap outside that authority.
   const wallMargin = tier === 'generous' ? 0.24 : 0.08;
-  const clearWidth = Math.max(0.78, finite(truth?.stair?.widthSI, 0.91));
+  const requestedClearWidth = Number(clearWidthOverride);
+  const clearWidth = Math.max(0.78, Number.isFinite(requestedClearWidth) && requestedClearWidth > 0
+    ? requestedClearWidth
+    : finite(truth?.stair?.widthSI, 0.91));
   const sourceLanding = Math.max(0.90, finite(truth?.stair?.landingDepthSI, clearWidth));
   const laneGap = Math.max(0.30, playerRadius * 1.35);
 
@@ -211,6 +214,7 @@ export function planInteriorSwitchbackStairCore({
   physicalTruth,
   traversalEnvelope = null,
   stableKey = 'interior-switchback',
+  clearWidthOverride = null,
 } = {}) {
   if (!rect || !physicalTruth?.stair || !(finite(floorH) > 0)) return null;
   if (![rect.cx, rect.cz, rect.halfX, rect.halfZ].every(value => Number.isFinite(Number(value)))) return null;
@@ -229,7 +233,7 @@ export function planInteriorSwitchbackStairCore({
       const candidates = axes
         .map(axis => candidateForAxis({
           axis, rect, floorH: Number(floorH), truth: physicalTruth, playerRadius,
-          stableKey, tier, flightCount,
+          stableKey, tier, flightCount, clearWidthOverride,
         }))
         .filter(Boolean)
         .sort((a, b) => {
@@ -253,6 +257,7 @@ export function planInteriorStairCoreStructuralFeasibility({
   traversalEnvelope = null,
   stableKey = 'interior-switchback',
   maxConsumedModules = Infinity,
+  clearWidthOverride = null,
 } = {}) {
   return planStructuralFeasibility({
     modulePlans,
@@ -262,7 +267,7 @@ export function planInteriorStairCoreStructuralFeasibility({
     traversalEnvelope,
     stableKey,
     maxConsumedModules,
-    planStairCore: planInteriorSwitchbackStairCore,
+    planStairCore: args => planInteriorSwitchbackStairCore({ ...args, clearWidthOverride }),
   });
 }
 

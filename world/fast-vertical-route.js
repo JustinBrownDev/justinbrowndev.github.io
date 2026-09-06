@@ -88,6 +88,12 @@ export function assertFastVerticalRoute(route) {
   if (!Array.isArray(route.endpointLandings) || route.endpointLandings.length !== 2) throw new Error(`${route.id}: lower and upper endpoint landing semantics are required`);
   if (route.requiresLandingThroats !== false) throw new Error(`${route.id}: landing-routed stairs must never carve landings`);
   if (route.flightHeadroomClearances?.length !== route.flights.length) throw new Error(`${route.id}: every flight requires an independent headroom reservation`);
+  if (route.routeClass === 'thoroughfare') {
+    if (route.majorRoadConnector !== true) throw new Error(`${route.id}: thoroughfare stair must bind a major-road interchange`);
+    if (!(Number(route.clearWidth) >= 1.40)) throw new Error(`${route.id}: thoroughfare stair clear width fell back to local-service scale`);
+    if (!route.districtRouteId && !route.horizontalRouteId) throw new Error(`${route.id}: thoroughfare stair requires horizontal route identity`);
+    if ((route.streetLayers?.length ?? 0) !== Number(route.targetFloor)) throw new Error(`${route.id}: thoroughfare stair must connect every neighboring vertical layer`);
+  }
 
   const allLandings = route.landings ?? [];
   const nodeIds = new Set((route.nodes ?? []).map(node => node.id));
@@ -125,16 +131,23 @@ export function assertFastVerticalRoute(route) {
 export function planExteriorStreetLayerTrunk({
   routeId,
   family = 'exterior-street-layer-trunk',
+  routeClass = 'local',
   fp,
   siteId = null,
   moduleKey = null,
   dirKey = null,
+  districtRouteId = null,
+  districtArterial = false,
+  networkKey = null,
+  majorRoadConnector = false,
+  horizontalRouteId = null,
   side,
   floorH,
   physicalTruth,
   layerStops = [],
   stableKey = routeId,
   maxRun = Infinity,
+  clearWidthOverride = null,
 } = {}) {
   if (!routeId || !physicalTruth?.stair || !fp || !(Number(floorH) > 0)) return null;
   const geometry = faceGeometry(fp, side);
@@ -159,7 +172,7 @@ export function planExteriorStreetLayerTrunk({
   const topFloor = Number(layers[layers.length - 1].floor);
   const stair = planAlternatingFacadeStair({
     routeId: `${routeId}:geometry`, fp, side, floors: topFloor, floorH, physicalTruth,
-    stableKey, maxRun, preferredLandingTangents,
+    stableKey, maxRun, preferredLandingTangents, clearWidthOverride,
   });
   if (!stair) return null;
 
@@ -313,6 +326,7 @@ export function planExteriorStreetLayerTrunk({
     intentTag: STAIR_WALKABILITY_INTENT,
     id: routeId,
     family,
+    routeClass,
     shape: 'landing-routed-street-layer-trunk',
     graphAuthority: 'landing-before-flight',
     geometryAuthority: FACADE_STAIR_AUTHORITY_SCHEMA,
@@ -320,6 +334,16 @@ export function planExteriorStreetLayerTrunk({
     siteId,
     moduleKey,
     dirKey,
+    districtRouteId,
+    districtArterial: districtArterial === true,
+    // networkKey means already-physical route continuity. Keep it local to this
+    // stair unless the caller has an equally physical authority to substitute;
+    // districtRouteId is descriptive grouping and must not teleport-union decks.
+    networkKey: networkKey ?? routeId,
+    majorRoadConnector: majorRoadConnector === true,
+    horizontalRouteId,
+    clearWidth: stair.clearWidth,
+    halfWidth: stair.halfWidth,
     side,
     targetFloor: topFloor,
     floorH: Number(floorH),

@@ -47,11 +47,11 @@ ceiling.root.traverse(object=>{
   if(!(sources instanceof Map))return;
   identityMeshes++;
   identityEntries+=sources.size;
-  assert.equal(object.userData.visualProbeInstanceAuthority,'circulation-instance-ownership-v1');
+  assert.equal(object.userData.visualProbeInstanceAuthority,'exact-structural-instance-ownership-v2');
   assert.equal(Object.prototype.propertyIsEnumerable.call(object.userData,'visualProbeInstanceSources'),false,'sparse source map must stay out of ordinary userData serialization');
   for(const [index,source] of sources){
     assert.ok(Number.isInteger(index)&&index>=0&&index<object.count,'source identity index must address a live instance');
-    assert.ok(source.stairOwnerId!=null||source.surfaceId!=null||source.bridgeId!=null||source.routeId!=null||source.guardSpanId!=null||source.endpointId!=null||source.thresholdAuthority!=null||source.bridgeArchitecture===true,'only strong circulation identities should be retained');
+    assert.ok(source.stairOwnerId!=null||source.surfaceId!=null||source.bridgeId!=null||source.routeId!=null||source.guardSpanId!=null||source.endpointId!=null||source.thresholdAuthority!=null||source.bridgeArchitecture===true||source.shellOwnerId!=null||source.shellPieceId!=null,'only strong structural identities should be retained');
     for(const value of Object.values(source)) assert.ok(['string','number','boolean'].includes(typeof value),'identity records must stay primitive-only');
   }
 });
@@ -63,7 +63,7 @@ const stair=searchTargetCatalog(catalog,{kind:'stair-assembly'},{limit:1})[0];
 assert.ok(stair,'hanging chunk needs a stair assembly target');
 const stairFragments=visualFragmentsForBounds(THREE,[ceiling.root],expandBounds(stair.bounds,0.55),{includeInvisible:true});
 assert.ok(stairFragments.length>0,'stair ownership must resolve exact render instances without AABB fallback');
-assert.ok(stairFragments.every(fragment=>fragment.selectionAuthority==='circulation-instance-ownership-v1'));
+assert.ok(stairFragments.every(fragment=>fragment.selectionAuthority==='exact-structural-instance-ownership-v2'));
 for(const fragment of stairFragments){
   const sources=fragment.object.userData.visualProbeInstanceSources;
   for(const index of fragment.instanceIndices) assert.equal(String(sources.get(index)?.stairOwnerId??''),stair.id,'selected stair visual instance must belong to requested stair root');
@@ -101,10 +101,10 @@ for(const [sampleX,sampleZ] of [[-9,4],[10,-7]]){
 // Ownership selectors ride non-enumerably on catalog bounds, through union/expand,
 // so existing runtime captureTarget() automatically takes exact ownership first
 // and falls back to geometric neighborhood only when no owner mapping exists.
-assert.ok(stairFragments.every(fragment=>fragment.selectionAuthority==='circulation-instance-ownership-v1'),'runtime bounds selection must become strict visual ownership for stairs');
-assert.ok(stairConnectorFragments.every(fragment=>fragment.selectionAuthority==='circulation-instance-ownership-v1'),'semantic stair selection must become strict visual ownership');
-assert.ok(bridgeConnectorFragments.every(fragment=>fragment.selectionAuthority==='circulation-instance-ownership-v1'),'semantic bridge selection must become strict visual ownership');
-assert.ok(bridgeFragments.every(fragment=>fragment.selectionAuthority==='circulation-instance-ownership-v1'),'transport surface selection must become strict visual ownership');
+assert.ok(stairFragments.every(fragment=>fragment.selectionAuthority==='exact-structural-instance-ownership-v2'),'runtime bounds selection must become strict visual ownership for stairs');
+assert.ok(stairConnectorFragments.every(fragment=>fragment.selectionAuthority==='exact-structural-instance-ownership-v2'),'semantic stair selection must become strict visual ownership');
+assert.ok(bridgeConnectorFragments.every(fragment=>fragment.selectionAuthority==='exact-structural-instance-ownership-v2'),'semantic bridge selection must become strict visual ownership');
+assert.ok(bridgeFragments.every(fragment=>fragment.selectionAuthority==='exact-structural-instance-ownership-v2'),'transport surface selection must become strict visual ownership');
 
 engine.disposeShared?.();
 console.log('[geometry-r2b-live-visual-selftest] PASS',{

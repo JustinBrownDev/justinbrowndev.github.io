@@ -35,6 +35,7 @@ function ownershipSelectorsFromItem(item) {
   const stairPartId=value('stairPartId'), stairOwnerId=value('stairOwnerId')??value('stairId');
   const endpointId=value('endpointId'), surfaceId=value('surfaceId'), bridgeId=value('bridgeId');
   const guardSpanId=value('guardSpanId'), routeId=value('routeId');
+  const shellPieceId=value('shellPieceId'), shellOwnerId=value('shellOwnerId');
   if (stairPartId!=null) selectors.push({stairPartId});
   if (stairOwnerId!=null) selectors.push({stairOwnerId});
   if (endpointId!=null) selectors.push({endpointId});
@@ -43,6 +44,8 @@ function ownershipSelectorsFromItem(item) {
   if (bridgeId!=null) selectors.push({bridgeId});
   if (guardSpanId!=null) selectors.push({guardSpanId});
   if (routeId!=null) selectors.push({routeId});
+  if (shellPieceId!=null) selectors.push({shellPieceId});
+  else if (shellOwnerId!=null) selectors.push({shellOwnerId});
   const seen=new Set();
   return selectors.filter(selector=>{const key=JSON.stringify(selector);if(seen.has(key))return false;seen.add(key);return true;});
 }
@@ -174,6 +177,9 @@ export function boundsFromPhysicsItem(item, kind = '') {
   if (kind==='semantic-connector' || item.schema==='jweb.semantic-connector.v1') return boundsFromSemanticConnector(item);
   const explicit=explicitAabb(item); if (explicit) return explicit;
   if (finite(n(item.x)) && finite(n(item.z)) && finite(n(item.hx ?? item.halfX)) && finite(n(item.hz ?? item.halfZ)) && finite(n(item.y))) return rectAabb(item);
+  if (finite(n(item.x)) && finite(n(item.z)) && finite(n(item.width)) && finite(n(item.depth)) && finite(n(item.y))) {
+    return rectAabb({ ...item, halfX: Math.abs(n(item.width)) * 0.5, halfZ: Math.abs(n(item.depth)) * 0.5 });
+  }
   if (finite(n(item.x1)) && finite(n(item.z1)) && finite(n(item.x2)) && finite(n(item.z2))) return segmentAabb(item);
   if (['x','z'].includes(String(item.axis ?? '')) && finite(n(item.from)) && finite(n(item.to)) && finite(n(item.fixedCoord))) {
     const a=axisRunAabb(item, /guard/i.test(kind) ? 1.2 : 0.12);
@@ -194,7 +200,7 @@ function payloadPhysicsTargets(entry, payloadIndex) {
     if (!boundsValid(bounds)) return;
     const id=String(item?.id ?? item?.stairPartId ?? item?.stairId ?? item?.guardSpanId ?? item?.surfaceId ?? item?.routeId ?? `${arrayName}:${index}`);
     const metadata=item?.metadata??{};
-    const labels=[targetKind,arrayName,id,item?.kind,item?.source,item?.supportKind,item?.visualRole,item?.stairOwnerId,item?.stairPartId,item?.stairPartParentId,item?.stairPartKind,item?.stairId,item?.flightId,item?.moduleKey,item?.surfaceId,item?.bridgeId,item?.endpointId,item?.routeId,item?.networkKey,metadata?.stairOwnerId,metadata?.stairPartId,metadata?.stairPartKind,metadata?.stairId,metadata?.flightId,metadata?.moduleKey,metadata?.surfaceId,metadata?.bridgeId,metadata?.endpointId,metadata?.routeId,metadata?.networkKey].filter(v=>v!=null).map(String);
+    const labels=[targetKind,arrayName,id,item?.kind,item?.source,item?.supportKind,item?.visualRole,item?.stairOwnerId,item?.stairPartId,item?.stairPartParentId,item?.stairPartKind,item?.stairId,item?.flightId,item?.moduleKey,item?.surfaceId,item?.bridgeId,item?.endpointId,item?.routeId,item?.networkKey,item?.shellOwnerId,item?.shellPieceId,item?.shellPieceKind,item?.closureForOffset,metadata?.stairOwnerId,metadata?.stairPartId,metadata?.stairPartKind,metadata?.stairId,metadata?.flightId,metadata?.moduleKey,metadata?.surfaceId,metadata?.bridgeId,metadata?.endpointId,metadata?.routeId,metadata?.networkKey,metadata?.shellOwnerId,metadata?.shellPieceId,metadata?.shellPieceKind,metadata?.closureForOffset].filter(v=>v!=null).map(String);
     attachBoundsOwnership(bounds,ownershipSelectorsFromItem(item));
     out.push({ schema:JWEB_VISUAL_PROBE_SCHEMA, targetKind, arrayName, index, id, ownerId, chunkKey, bounds, labels, raw:item });
   };
@@ -208,6 +214,8 @@ function payloadPhysicsTargets(entry, payloadIndex) {
   for (const [i,item] of (ph.mazeWalls ?? []).entries()) push('collider-wall',item,i,'mazeWalls');
   for (const [i,item] of (ph.props ?? []).entries()) push('collider-prop',item,i,'props');
   for (const [i,item] of (ph.ceilings ?? []).entries()) push('collider-ceiling',item,i,'ceilings');
+  for (const [i,item] of (ph.structuralShellClosures ?? []).entries()) push('shell-closure',item,i,'structuralShellClosures');
+  for (const [i,item] of (ph.structuralSurfaceClaims ?? []).entries()) push('structural-surface',item,i,'structuralSurfaceClaims');
   for (const [i,item] of (ph.visualProbeTargets ?? []).entries()) {
     const bounds=item?.bounds;
     if (!boundsValid(bounds)) continue;
@@ -364,7 +372,7 @@ export function visualFragmentsForSourceOwnership(THREE, roots, selectors, { inc
         object.getMatrixAt(index,instanceMatrix);worldMatrix.multiplyMatrices(object.matrixWorld,instanceMatrix);
         const bounds=threeBoxToBounds(localBox.clone().applyMatrix4(worldMatrix));indices.push(index);merged=unionBounds(merged,bounds);
       }
-      if(indices.length)fragments.push({object,instanceIndices:indices,bounds:merged,rootName:root.name||'',objectName:object.name||'',triangleCount:Math.floor((object.geometry.index?.count??object.geometry.attributes?.position?.count??0)/3)*indices.length,selectionAuthority:'circulation-instance-ownership-v1'});
+      if(indices.length)fragments.push({object,instanceIndices:indices,bounds:merged,rootName:root.name||'',objectName:object.name||'',triangleCount:Math.floor((object.geometry.index?.count??object.geometry.attributes?.position?.count??0)/3)*indices.length,selectionAuthority:'exact-structural-instance-ownership-v2'});
     });
   }
   return fragments;

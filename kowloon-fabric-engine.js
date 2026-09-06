@@ -567,6 +567,7 @@ export function createKowloonFabricEngine({
         'id', 'stairOwnerId', 'stairPartId', 'stairPartParentId', 'stairPartKind', 'stairId', 'flightId', 'landingId',
         'surfaceId', 'bridgeId', 'endpointId', 'guardSpanId', 'routeId', 'networkKey', 'visualRole', 'architectureRole',
         'structuralRole', 'supportKind', 'thresholdAuthority', 'bridgeArchitecture', 'architectureFamily', 'bridgeVariant',
+        'shellOwnerId', 'shellPieceId', 'shellPieceKind', 'closureForOffset', 'moduleKey', 'localFloor', 'globalFloor', 'side',
     ]);
     function visualProbeInstanceIdentity(transform) {
         // Keep exact visual ownership cheap: ordinary facade/road/window instances get
@@ -574,7 +575,8 @@ export function createKowloonFabricEngine({
         // identity record, never the full transform object.
         const strongIdentity = transform?.stairOwnerId != null || transform?.surfaceId != null || transform?.bridgeId != null
             || transform?.routeId != null || transform?.guardSpanId != null || transform?.endpointId != null
-            || transform?.thresholdAuthority != null || transform?.bridgeArchitecture === true;
+            || transform?.thresholdAuthority != null || transform?.bridgeArchitecture === true
+            || transform?.shellOwnerId != null || transform?.shellPieceId != null;
         if (!strongIdentity) return null;
         const identity = {};
         for (const key of visualProbeIdentityKeys) {
@@ -611,7 +613,7 @@ export function createKowloonFabricEngine({
             }
         }
         if (visualProbeInstanceSources?.size) {
-            mesh.userData.visualProbeInstanceAuthority = 'circulation-instance-ownership-v1';
+            mesh.userData.visualProbeInstanceAuthority = 'exact-structural-instance-ownership-v2';
             // Non-enumerable keeps ordinary userData cloning/serialization small.
             Object.defineProperty(mesh.userData, 'visualProbeInstanceSources', {
                 value: visualProbeInstanceSources, enumerable: false, configurable: false, writable: false,
@@ -2171,6 +2173,7 @@ export function createKowloonFabricEngine({
     function addCompoundSideWall({ physics, wallList, rect, floorH, floor, side, opening = 0, floorBase = 0, metadata = null }) {
         const storyY0 = (Number(floorBase) + Number(floor)) * floorH;
         const wallT = KOWLOON_EXTERIOR_WALL_THICKNESS;
+        const slabT = BUILDING_SLAB_THICKNESS;
         const ceilingLocalY = storyCeilingLocalY(floorH);
         const horizontal = side === 'north' || side === 'south';
         const fixed = horizontal
@@ -2179,6 +2182,9 @@ export function createKowloonFabricEngine({
         const lo = horizontal ? rect.cx - rect.halfX : rect.cz - rect.halfZ;
         const hi = horizontal ? rect.cx + rect.halfX : rect.cz + rect.halfZ;
         const span = hi - lo;
+        const baseMeta = { ...(metadata || {}), side };
+        const shellOwnerId = String(baseMeta.shellOwnerId ?? `${baseMeta.moduleKey ?? 'module'}:shell`);
+        const globalFloor = Number.isFinite(Number(baseMeta.globalFloor)) ? Number(baseMeta.globalFloor) : Number(floorBase) + Number(floor);
         const rawOpenings = Array.isArray(opening) ? opening : [opening];
         const apertures = rawOpenings.map(raw => {
             const spec = raw && typeof raw === 'object' ? raw : null;
@@ -2203,6 +2209,7 @@ export function createKowloonFabricEngine({
                 : null;
         }).filter(Boolean);
 
+        let wallSerial = 0;
         const addSegment = (a, b, localY0 = 0, localY1 = floorH) => {
             localY1 = Math.min(localY1, ceilingLocalY);
             if (b - a <= 0.04 || localY1 - localY0 <= 0.04) return;
@@ -2211,14 +2218,61 @@ export function createKowloonFabricEngine({
             const yMax = storyY0 + localY1;
             const wallY = (yMin + yMax) * 0.5;
             const wallH = yMax - yMin;
+            const shellPieceId = `${shellOwnerId}:floor:${globalFloor}:side:${side}:wall:${wallSerial++}`;
+            const shellMeta = { ...baseMeta, shellOwnerId, shellPieceId, shellPieceKind: 'exterior-wall-segment' };
+            // Keep exact retained render-instance identity concentrated on the
+            // seam/closure pieces. Ordinary wall mass remains searchable through
+            // physics metadata without multiplying per-instance JS objects.
+            const visualMeta = {
+                moduleKey: baseMeta.moduleKey, localFloor: baseMeta.localFloor, globalFloor: baseMeta.globalFloor,
+                side, shellPieceKind: 'exterior-wall-segment',
+            };
             if (horizontal) {
-                wallTransform(wallList, mid, wallY, fixed, b - a, wallH, wallT);
-                physics.mazeWalls.push({ x1: a, z1: fixed, x2: b, z2: fixed, yMin, yMax, thickness: wallT });
+                wallTransform(wallList, mid, wallY, fixed, b - a, wallH, wallT, visualMeta);
+                physics.mazeWalls.push({ x1: a, z1: fixed, x2: b, z2: fixed, yMin, yMax, thickness: wallT, ...shellMeta });
             } else {
-                wallTransform(wallList, fixed, wallY, mid, wallT, wallH, b - a);
-                physics.mazeWalls.push({ x1: fixed, z1: a, x2: fixed, z2: b, yMin, yMax, thickness: wallT });
+                wallTransform(wallList, fixed, wallY, mid, wallT, wallH, b - a, visualMeta);
+                physics.mazeWalls.push({ x1: fixed, z1: a, x2: fixed, z2: b, yMin, yMax, thickness: wallT, ...shellMeta });
             }
         };
+
+        // Every story above the first begins on a structural slab. The slab is
+        // intentionally inset to the wall's inner face, so a raw wall/slab butt
+        // joint leaves the slab-height band open to the exterior. Close that band
+        // explicitly instead of extending the wall through the slab (which creates
+        // the old z-fighting/through-floor condition). Door/portal throats carve the
+        // closure so bridge thresholds remain the sole geometry across openings.
+        if (globalFloor > 0 && storyY0 > slabT * 0.5) {
+            const floorGaps = apertures.filter(item => item.bottom <= 0.04).map(item => [item.lo, item.hi]).sort((a, b) => a[0] - b[0]);
+            let cursor = lo;
+            let closureSerial = 0;
+            const emitClosure = (a, b) => {
+                if (!(b > a + 0.04)) return;
+                const mid = (a + b) * 0.5;
+                const shellPieceId = `${shellOwnerId}:floor:${globalFloor}:side:${side}:interstory-closure:${closureSerial++}`;
+                const shellMeta = {
+                    ...baseMeta, shellOwnerId, shellPieceId, shellPieceKind: 'interstory-closure',
+                    closureForOffset: 'slab-inner-face', closureGapCount: floorGaps.length,
+                };
+                if (horizontal) wallTransform(wallList, mid, storyY0 - slabT * 0.5, fixed, b - a, slabT, wallT, shellMeta);
+                else wallTransform(wallList, fixed, storyY0 - slabT * 0.5, mid, wallT, slabT, b - a, shellMeta);
+                physics.structuralShellClosures.push({
+                    schema: 'jweb.structural-shell-closure.v1', id: shellPieceId,
+                    x1: horizontal ? a : fixed, z1: horizontal ? fixed : a,
+                    x2: horizontal ? b : fixed, z2: horizontal ? fixed : b,
+                    yMin: storyY0 - slabT, yMax: storyY0, thickness: wallT,
+                    ...shellMeta,
+                });
+            };
+            for (const gap of floorGaps) {
+                const gapLo = Math.max(lo, gap[0]), gapHi = Math.min(hi, gap[1]);
+                if (gapHi <= cursor) continue;
+                emitClosure(cursor, gapLo);
+                cursor = Math.max(cursor, gapHi);
+            }
+            emitClosure(cursor, hi);
+        }
+
         if (!apertures.length) {
             addSegment(lo, hi);
             return;
@@ -2246,8 +2300,7 @@ export function createKowloonFabricEngine({
         }
     }
 
-    function addCompoundRoofParapetSide({ physics, transforms, wallList, rect, roofY, side, surfaceId = null, opening = null, physicalUse = null }) {
-        void wallList;
+    function addCompoundRoofParapetSide({ physics, transforms, wallList, rect, roofY, side, surfaceId = null, opening = null, physicalUse = null, metadata = null }) {
         const horizontal = side === 'north' || side === 'south';
         const fixed = horizontal
             ? rect.cz + (side === 'north' ? -rect.halfZ : rect.halfZ)
@@ -2258,6 +2311,32 @@ export function createKowloonFabricEngine({
         const center = Number.isFinite(opening?.center) ? clamp(Number(opening.center), lo, hi) : (lo + hi) * 0.5;
         const gap0 = Math.max(lo, center - requestedWidth * 0.5);
         const gap1 = Math.min(hi, center + requestedWidth * 0.5);
+        const shellOwnerId = String(metadata?.shellOwnerId ?? `${metadata?.moduleKey ?? 'module'}:shell`);
+        const slabT = BUILDING_SLAB_THICKNESS;
+        let closureSerial = 0;
+        const emitRoofClosure = (a, b) => {
+            if (!(b > a + 0.04)) return;
+            const mid = (a + b) * 0.5;
+            const shellPieceId = `${shellOwnerId}:roof:side:${side}:closure:${closureSerial++}`;
+            const shellMeta = {
+                ...(metadata || {}), side, shellOwnerId, shellPieceId,
+                shellPieceKind: 'roof-edge-closure', closureForOffset: 'slab-inner-face',
+            };
+            if (horizontal) wallTransform(wallList, mid, roofY - slabT * 0.5, fixed, b - a, slabT, KOWLOON_EXTERIOR_WALL_THICKNESS, shellMeta);
+            else wallTransform(wallList, fixed, roofY - slabT * 0.5, mid, KOWLOON_EXTERIOR_WALL_THICKNESS, slabT, b - a, shellMeta);
+            physics.structuralShellClosures.push({
+                schema: 'jweb.structural-shell-closure.v1', id: shellPieceId,
+                x1: horizontal ? a : fixed, z1: horizontal ? fixed : a,
+                x2: horizontal ? b : fixed, z2: horizontal ? fixed : b,
+                yMin: roofY - slabT, yMax: roofY, thickness: KOWLOON_EXTERIOR_WALL_THICKNESS,
+                ...shellMeta,
+            });
+        };
+        if (requestedWidth > 0 && gap1 > gap0 + 0.04) {
+            emitRoofClosure(lo, gap0);
+            emitRoofClosure(gap1, hi);
+        } else emitRoofClosure(lo, hi);
+
         // A roof that participates in the transport graph gets a low concrete
         // parapet that the actual controller can vault/step. Non-transport roofs
         // keep the full municipal guard profile. Selected links still carve a
@@ -3125,7 +3204,7 @@ export function createKowloonFabricEngine({
                     }
                     addCompoundSideWall({
                         physics, wallList, rect: module.rect, floorH, floor, side: dir.side, opening: openings,
-                        floorBase: moduleFloorBase(module), metadata: { moduleKey: module.key, localFloor: floor, globalFloor },
+                        floorBase: moduleFloorBase(module), metadata: { moduleKey: module.key, localFloor: floor, globalFloor, shellOwnerId: `${chunk.key}:${siteSignature}:${module.key}:shell` },
                     });
                 }
 
@@ -3310,6 +3389,7 @@ export function createKowloonFabricEngine({
                     surfaceId: roofSurface?.id ?? null,
                     opening: localRoofAccess.find(access => access.dirKey === dir.key) ?? null,
                     physicalUse: servicePhysicalTruth?.physicalUse ?? null,
+                    metadata: { moduleKey: module.key, globalFloor: moduleFloorBase(module) + module.floors, shellOwnerId: `${chunk.key}:${siteSignature}:${module.key}:shell` },
                 });
             }
             yield {
@@ -4342,7 +4422,7 @@ export function createKowloonFabricEngine({
                         opening = connectorOpeningWidth(entranceConnectorByKey.get(`${module.key}:${dir.key}:${floor}`), physicalTruth.door.clearWidth.realizedSI);
                     }
                     else if (floor === 0 && kind === 'courtyard' && rng() < 0.44) opening = servicePhysicalTruth.door.clearWidth.realizedSI;
-                    addCompoundSideWall({ physics, wallList, rect: module.rect, floorH, floor, side: dir.side, opening });
+                    addCompoundSideWall({ physics, wallList, rect: module.rect, floorH, floor, side: dir.side, opening, metadata: { moduleKey: module.key, localFloor: floor, globalFloor: floor, shellOwnerId: `${chunk.key}:${siteSignature}:${module.key}:shell` } });
                     if (kind === 'street' || kind === 'courtyard') facades.push({
                         moduleKey: module.key, side: dir.side, exposure: kind, x: module.rect.cx, z: module.rect.cz,
                         halfX: module.rect.halfX, halfZ: module.rect.halfZ,
@@ -4437,7 +4517,7 @@ export function createKowloonFabricEngine({
                     const neighbor = moduleByKey.get(kowloonCellKey(module.cell.col + dir.dc, module.cell.row + dir.dr));
                     exposed = !neighbor || neighbor.floors < module.floors;
                 }
-                if (exposed) addCompoundRoofParapetSide({ physics, transforms, wallList, rect: module.rect, roofY, side: dir.side });
+                if (exposed) addCompoundRoofParapetSide({ physics, transforms, wallList, rect: module.rect, roofY, side: dir.side, metadata: { moduleKey: module.key, globalFloor: module.floors, shellOwnerId: `${chunk.key}:${siteSignature}:${module.key}:shell` } });
             }
             yield { phase: 'compound-module-shell', moduleKey: module.key, current: modulePlans.indexOf(module) + 1, total: modulePlans.length };
         }
@@ -4536,31 +4616,105 @@ export function createKowloonFabricEngine({
             const z = horizontal ? rect.cz + (side === 'north' ? -rect.halfZ - depth * 0.5 : rect.halfZ + depth * 0.5) : rect.cz;
             const sx = horizontal ? width : depth;
             const sz = horizontal ? depth : width;
+            const slabT = BUILDING_SLAB_THICKNESS;
+            const roofY = baseY + roomH;
+            const shellOwnerId = `${chunk.key}:${siteSignature}:${face.module.key}:cantilever:${level}:${side}:${cantileverRooms}`;
 
-            transforms.slabs.push({ x, y: baseY - 0.06, z, sx, sy: 0.12, sz });
+            transforms.slabs.push({ x, y: baseY - slabT * 0.5, z, sx, sy: slabT, sz });
             addRectPlatform(physics.platforms, x, z, sx, sz, baseY, 'cantilever-room');
-            transforms.slabs.push({ x, y: baseY + roomH - 0.06, z, sx, sy: 0.12, sz });
-            addRectPlatform(physics.platforms, x, z, sx, sz, baseY + roomH, 'cantilever-roof');
+            transforms.slabs.push({ x, y: roofY - slabT * 0.5, z, sx, sy: slabT, sz });
+            addRectPlatform(physics.platforms, x, z, sx, sz, roofY, 'cantilever-roof');
 
             const wallList = transforms.wallGroups[materialIndex];
             const t = 0.12;
+            const wallH = Math.max(0.04, roomH - slabT);
+            const wallY = baseY + wallH * 0.5;
+            let wallSerial = 0;
+            let closureSerial = 0;
+            const wallMeta = role => ({
+                shellOwnerId,
+                shellPieceId: `${shellOwnerId}:wall:${wallSerial++}`,
+                shellPieceKind: 'facade-jut-wall',
+                closureForOffset: 'cantilever-room',
+                moduleKey: face.module.key, localFloor: level, side, architectureRole: role,
+            });
+            const addClosureRecord = ({ x1, z1, x2, z2, yMin, yMax, thickness, transform, role }) => {
+                const shellPieceId = `${shellOwnerId}:closure:${closureSerial++}`;
+                const shellMeta = {
+                    shellOwnerId, shellPieceId, shellPieceKind: 'facade-offset-return',
+                    closureForOffset: 'cantilever-room', moduleKey: face.module.key, localFloor: level, side,
+                    architectureRole: role,
+                };
+                wallTransform(wallList, transform.x, transform.y, transform.z, transform.sx, transform.sy, transform.sz, shellMeta);
+                physics.structuralShellClosures.push({
+                    schema: 'jweb.structural-shell-closure.v1', id: shellPieceId,
+                    x1, z1, x2, z2, yMin, yMax, thickness, ...shellMeta,
+                });
+            };
+            const addHorizontalBandReturns = (bandY, bandRole, outerZ) => {
+                const outwardZ = side === 'north' ? -1 : 1;
+                addClosureRecord({
+                    x1: x - sx * 0.5, z1: outerZ + outwardZ * t * 0.25,
+                    x2: x + sx * 0.5, z2: outerZ + outwardZ * t * 0.25,
+                    yMin: bandY - slabT, yMax: bandY, thickness: t * 0.5,
+                    transform: { x, y: bandY - slabT * 0.5, z: outerZ + outwardZ * t * 0.25, sx, sy: slabT, sz: t * 0.5 },
+                    role: `${bandRole}-outer-return`,
+                });
+                for (const [sideX, outwardX] of [[x - sx * 0.5, -1], [x + sx * 0.5, 1]]) {
+                    addClosureRecord({
+                        x1: sideX + outwardX * t * 0.25, z1: z - sz * 0.5,
+                        x2: sideX + outwardX * t * 0.25, z2: z + sz * 0.5,
+                        yMin: bandY - slabT, yMax: bandY, thickness: t * 0.5,
+                        transform: { x: sideX + outwardX * t * 0.25, y: bandY - slabT * 0.5, z, sx: t * 0.5, sy: slabT, sz },
+                        role: `${bandRole}-side-return`,
+                    });
+                }
+            };
+            const addVerticalBandReturns = (bandY, bandRole, outerX) => {
+                const outwardX = side === 'west' ? -1 : 1;
+                addClosureRecord({
+                    x1: outerX + outwardX * t * 0.25, z1: z - sz * 0.5,
+                    x2: outerX + outwardX * t * 0.25, z2: z + sz * 0.5,
+                    yMin: bandY - slabT, yMax: bandY, thickness: t * 0.5,
+                    transform: { x: outerX + outwardX * t * 0.25, y: bandY - slabT * 0.5, z, sx: t * 0.5, sy: slabT, sz },
+                    role: `${bandRole}-outer-return`,
+                });
+                for (const [sideZ, outwardZ] of [[z - sz * 0.5, -1], [z + sz * 0.5, 1]]) {
+                    addClosureRecord({
+                        x1: x - sx * 0.5, z1: sideZ + outwardZ * t * 0.25,
+                        x2: x + sx * 0.5, z2: sideZ + outwardZ * t * 0.25,
+                        yMin: bandY - slabT, yMax: bandY, thickness: t * 0.5,
+                        transform: { x, y: bandY - slabT * 0.5, z: sideZ + outwardZ * t * 0.25, sx, sy: slabT, sz: t * 0.5 },
+                        role: `${bandRole}-side-return`,
+                    });
+                }
+            };
+
             if (horizontal) {
                 const outerZ = z + (side === 'north' ? -depth * 0.5 : depth * 0.5);
-                wallTransform(wallList, x, baseY + roomH * 0.5, outerZ, sx, roomH, t);
-                physics.mazeWalls.push({ x1: x - sx * 0.5, z1: outerZ, x2: x + sx * 0.5, z2: outerZ, yMin: baseY, yMax: baseY + roomH });
+                const outerMeta = wallMeta('cantilever-outer-wall');
+                wallTransform(wallList, x, wallY, outerZ, sx, wallH, t, { moduleKey: face.module.key, localFloor: level, side, shellPieceKind: 'facade-jut-wall', architectureRole: 'cantilever-outer-wall' });
+                physics.mazeWalls.push({ x1: x - sx * 0.5, z1: outerZ, x2: x + sx * 0.5, z2: outerZ, yMin: baseY, yMax: baseY + wallH, thickness: t, ...outerMeta });
                 for (const sideX of [x - sx * 0.5, x + sx * 0.5]) {
-                    wallTransform(wallList, sideX, baseY + roomH * 0.5, z, t, roomH, sz);
-                    physics.mazeWalls.push({ x1: sideX, z1: z - sz * 0.5, x2: sideX, z2: z + sz * 0.5, yMin: baseY, yMax: baseY + roomH });
+                    const sideMeta = wallMeta('cantilever-side-wall');
+                    wallTransform(wallList, sideX, wallY, z, t, wallH, sz, { moduleKey: face.module.key, localFloor: level, side, shellPieceKind: 'facade-jut-wall', architectureRole: 'cantilever-side-wall' });
+                    physics.mazeWalls.push({ x1: sideX, z1: z - sz * 0.5, x2: sideX, z2: z + sz * 0.5, yMin: baseY, yMax: baseY + wallH, thickness: t, ...sideMeta });
                 }
+                addHorizontalBandReturns(baseY, 'cantilever-floor-edge', outerZ);
+                addHorizontalBandReturns(roofY, 'cantilever-roof-edge', outerZ);
                 transforms.windows.push({ x, y: baseY + roomH * 0.56, z: outerZ + (side === 'north' ? -0.02 : 0.02), sx: Math.min(1.35, sx * 0.44), sy: Math.min(0.8, roomH * 0.34), sz: 0.04 });
             } else {
                 const outerX = x + (side === 'west' ? -depth * 0.5 : depth * 0.5);
-                wallTransform(wallList, outerX, baseY + roomH * 0.5, z, t, roomH, sz);
-                physics.mazeWalls.push({ x1: outerX, z1: z - sz * 0.5, x2: outerX, z2: z + sz * 0.5, yMin: baseY, yMax: baseY + roomH });
+                const outerMeta = wallMeta('cantilever-outer-wall');
+                wallTransform(wallList, outerX, wallY, z, t, wallH, sz, { moduleKey: face.module.key, localFloor: level, side, shellPieceKind: 'facade-jut-wall', architectureRole: 'cantilever-outer-wall' });
+                physics.mazeWalls.push({ x1: outerX, z1: z - sz * 0.5, x2: outerX, z2: z + sz * 0.5, yMin: baseY, yMax: baseY + wallH, thickness: t, ...outerMeta });
                 for (const sideZ of [z - sz * 0.5, z + sz * 0.5]) {
-                    wallTransform(wallList, x, baseY + roomH * 0.5, sideZ, sx, roomH, t);
-                    physics.mazeWalls.push({ x1: x - sx * 0.5, z1: sideZ, x2: x + sx * 0.5, z2: sideZ, yMin: baseY, yMax: baseY + roomH });
+                    const sideMeta = wallMeta('cantilever-side-wall');
+                    wallTransform(wallList, x, wallY, sideZ, sx, wallH, t, { moduleKey: face.module.key, localFloor: level, side, shellPieceKind: 'facade-jut-wall', architectureRole: 'cantilever-side-wall' });
+                    physics.mazeWalls.push({ x1: x - sx * 0.5, z1: sideZ, x2: x + sx * 0.5, z2: sideZ, yMin: baseY, yMax: baseY + wallH, thickness: t, ...sideMeta });
                 }
+                addVerticalBandReturns(baseY, 'cantilever-floor-edge', outerX);
+                addVerticalBandReturns(roofY, 'cantilever-roof-edge', outerX);
                 transforms.windows.push({ x: outerX + (side === 'west' ? -0.02 : 0.02), y: baseY + roomH * 0.56, z, sx: 0.04, sy: Math.min(0.8, roomH * 0.34), sz: Math.min(1.35, sz * 0.44) });
             }
             cantileverRooms++;
@@ -5485,7 +5639,7 @@ export function createKowloonFabricEngine({
     function createFabricBuffers() {
         return {
             transforms: { wallGroups: wallMats.map(() => []), slabs: [], steps: [], props: [], guardMetal: [], guardConcrete: [], roads: [], windows: [], doors: [], interiorPaint: [] },
-            physics: { mazeWalls: [], platforms: [], ramps: [], ceilings: [], props: [], guardSpans: [], circulationReservations: [], semanticConnectors: [], structuralSurfaceClaims: [] },
+            physics: { mazeWalls: [], platforms: [], ramps: [], ceilings: [], props: [], guardSpans: [], circulationReservations: [], semanticConnectors: [], structuralSurfaceClaims: [], structuralShellClosures: [] },
         };
     }
 
@@ -5674,7 +5828,7 @@ export function createKowloonFabricEngine({
             if (Number.isFinite(item?.yMax)) item.yMax += dy;
         }
         const seen = new WeakSet();
-        for (const list of [physics.guardSpans, physics.circulationReservations, physics.semanticConnectors]) {
+        for (const list of [physics.guardSpans, physics.circulationReservations, physics.semanticConnectors, physics.structuralShellClosures]) {
             translateSemanticY(list, dy, seen);
         }
         // Transport surfaces and scaffold route plans are frozen authority records.

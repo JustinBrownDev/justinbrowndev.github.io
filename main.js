@@ -3330,7 +3330,7 @@ function maybeReleaseBackgroundEnrichment() {
      
      
      
-    if (!worldStats.localPrefetchRing.complete || !_spawnDistrictStructuresComplete) return false;
+    if (!(worldStats.localPrefetchRing.complete || worldStats.localPrefetchRing.terminalSettled) || !_spawnDistrictStructuresComplete) return false;
     backgroundEnrichmentReleased = true;
     authoredAssetLaneOpened = true;
     adornmentLoadQueue.setConcurrency(CONFIG.streaming.adornmentConcurrency);
@@ -3548,9 +3548,12 @@ function maybeLogWorldDiagnostics(now) {
 let worldStreamingGear = 'bootstrap';
 function worldStreamingGearFor(stats = worldChunkStreamer?.stats()) {
     return choosePlayerCenteredStreamingGear({
-        renderComplete: !!stats?.localRenderRing.complete,
-        visibleFirstPassComplete: !!stats?.localRenderRefinement?.floorComplete,
-        prefetchComplete: !!stats?.localPrefetchRing.complete,
+        // Strict `complete` remains the actual geometry/physics truth. Presentation
+        // gears may also advance when every missing slot is terminally FAILED, so a
+        // local generation error cannot deadlock global color/quality forever.
+        renderComplete: !!(stats?.localRenderRing.complete || stats?.localRenderRing.terminalSettled),
+        visibleFirstPassComplete: !!(stats?.localRenderRefinement?.floorComplete || stats?.localRenderRefinement?.terminalFloorSettled),
+        prefetchComplete: !!(stats?.localPrefetchRing.complete || stats?.localPrefetchRing.terminalSettled),
     });
 }
 
@@ -3986,8 +3989,21 @@ void (async function continuePostHandoffWorldRefinement() {
         dynamicMaterials: animatedMaterials,
     });
     console.log(`[perf] background static-world refinement ${(performance.now() - staticOptimizeStart).toFixed(QP[5426])}ms wall-clock:`, staticWorldStats);
-    while (!worldChunkStreamer.stats().localRenderRing.complete) {
-        testStatus('warming playable chunk ring', worldChunkStreamer.stats().localRenderRing.ready, worldChunkStreamer.stats().localRenderRing.total);
+    while (true) {
+        const materialGateStats = worldChunkStreamer.stats();
+        const materialRing = materialGateStats.localRenderRing;
+        if (materialRing.complete || materialRing.terminalSettled) {
+            if (!materialRing.complete) {
+                console.warn('[perf] material refinement proceeding around terminal failed visible chunks', {
+                    published: materialRing.published,
+                    physicsAuthoritative: materialRing.physicsAuthoritative,
+                    failed: materialRing.failed,
+                    total: materialRing.total,
+                });
+            }
+            break;
+        }
+        testStatus('warming playable chunk ring', materialRing.ready, materialRing.total);
         await testNextPaint();
     }
     const materialRefinementStart = materialRefinementController.prepare();
@@ -3997,7 +4013,7 @@ void (async function continuePostHandoffWorldRefinement() {
         _testRefinementActive = false;
         restoreFinalRenderQuality();
     }
-    console.log('[perf] playable 5x5 chunk ring warm · staged authored material refinement started', materialRefinementStart);
+    console.log('[perf] playable chunk ring settled · staged authored material refinement started', materialRefinementStart);
     console.log(`[perf] spawn refinement complete at ${bootElapsed()} since page start; live world remained authoritative throughout`);
     scheduleTraversalValidation();
 })().catch(error => {

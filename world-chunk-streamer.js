@@ -1091,15 +1091,26 @@ export function createWorldChunkStreamer({
     function readyWithinRadius(radius = renderRadiusChunks) {
         const center = playerChunkCoords();
         let ready = 0;
+        let failed = 0;
         let total = 0;
         for (let dz = -radius; dz <= radius; dz++) {
             for (let dx = -radius; dx <= radius; dx++) {
                 if (Math.max(Math.abs(dx), Math.abs(dz)) > radius) continue;
                 total++;
-                if (isChunkReady(center.x + dx, center.z + dz)) ready++;
+                const chunk = chunks.get(keyOf(center.x + dx, center.z + dz));
+                if (chunk?.state === CHUNK_STATE.READY) ready++;
+                else if (chunk?.state === CHUNK_STATE.FAILED) failed++;
             }
         }
-        return { ready, total, complete: ready === total };
+        return {
+            ready,
+            failed,
+            total,
+            complete: ready === total,
+            // Scheduler/presentation liveness may advance once every slot is either
+            // genuinely READY or terminally FAILED. Strict complete remains readiness truth.
+            terminalSettled: ready + failed === total,
+        };
     }
 
     function publicationWithinRadius(radius = renderRadiusChunks) {
@@ -1108,13 +1119,19 @@ export function createWorldChunkStreamer({
         let requested = 0;
         let published = 0;
         let physicsAuthoritative = 0;
+        let failed = 0;
         let total = 0;
         for (let dz = -radius; dz <= radius; dz++) {
             for (let dx = -radius; dx <= radius; dx++) {
                 if (Math.max(Math.abs(dx), Math.abs(dz)) > radius) continue;
                 total++;
                 const chunk = chunks.get(keyOf(center.x + dx, center.z + dz));
-                if (!chunk || chunk.state !== CHUNK_STATE.READY || !chunk.payload) continue;
+                if (!chunk) continue;
+                if (chunk.state === CHUNK_STATE.FAILED) {
+                    failed++;
+                    continue;
+                }
+                if (chunk.state !== CHUNK_STATE.READY || !chunk.payload) continue;
                 structuralReady++;
                 syncChunkPublication(chunk);
                 if (chunk.renderRequested) requested++;
@@ -1131,13 +1148,20 @@ export function createWorldChunkStreamer({
             requested,
             published,
             physicsAuthoritative,
+            failed,
             complete: published === total && physicsAuthoritative === total,
+            // Do not fake render/physics readiness for failed geometry. This is a
+            // separate liveness signal for visual/scheduler gates that must not wait
+            // forever on a chunk which has already reached terminal FAILED state.
+            terminalSettled: published + failed === total
+                && physicsAuthoritative + failed === total,
         };
     }
 
     function refinementWithinRadius(radius = renderRadiusChunks) {
         const center = playerChunkCoords();
         let ready = 0;
+        let failed = 0;
         let total = 0;
         let pendingChunks = 0;
         let floorPendingChunks = 0;
@@ -1146,7 +1170,12 @@ export function createWorldChunkStreamer({
                 if (Math.max(Math.abs(dx), Math.abs(dz)) > radius) continue;
                 total++;
                 const chunk = chunks.get(keyOf(center.x + dx, center.z + dz));
-                if (!chunk || chunk.state !== CHUNK_STATE.READY || !chunk.payload) continue;
+                if (!chunk) continue;
+                if (chunk.state === CHUNK_STATE.FAILED) {
+                    failed++;
+                    continue;
+                }
+                if (chunk.state !== CHUNK_STATE.READY || !chunk.payload) continue;
                 syncChunkPublication(chunk);
                 if (!chunk.renderPublished || !chunk.physicsAuthoritative) continue;
                 ready++;
@@ -1156,9 +1185,11 @@ export function createWorldChunkStreamer({
             }
         }
         return {
-            ready, total, pendingChunks, floorPendingChunks,
+            ready, failed, total, pendingChunks, floorPendingChunks,
             floorComplete: ready === total && floorPendingChunks === 0,
             complete: ready === total && pendingChunks === 0,
+            terminalFloorSettled: ready + failed === total && floorPendingChunks === 0,
+            terminalSettled: ready + failed === total && pendingChunks === 0,
         };
     }
 

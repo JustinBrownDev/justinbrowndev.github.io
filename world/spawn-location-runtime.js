@@ -107,16 +107,16 @@ export const SPAWN_FLAVOR_ALIASES = Object.freeze({
 const SPAWN_PROFILE_BY_ID = new Map(START_SCENE_PROFILES.map(profile => [profile.id, profile]));
 
 const SPAWN_MEDIA_POOLS = Object.freeze({
-    'small-tv-roof': Object.freeze([['live-news.al-jazeera-english', 0.66], ['linear-cartoons.blender-open-movies', 0.34]]),
-    'normal-tv-roof': Object.freeze([['live-news.al-jazeera-english', 0.56], ['linear-cartoons.blender-open-movies', 0.44]]),
-    'big-tv-roof': Object.freeze([['live-news.al-jazeera-english', 0.46], ['linear-cartoons.blender-open-movies', 0.54]]),
-    'super-big-tv-roof': Object.freeze([['live-news.al-jazeera-english', 0.34], ['linear-cartoons.blender-open-movies', 0.66]]),
-    'radio-roof': Object.freeze([['live-news.al-jazeera-english', 0.74], ['linear-cartoons.blender-open-movies', 0.26]]),
-    'super-big-shelter': Object.freeze([['live-news.al-jazeera-english', 0.42], ['linear-cartoons.blender-open-movies', 0.58]]),
-    'mega-big-shelter': Object.freeze([['live-news.al-jazeera-english', 0.30], ['linear-cartoons.blender-open-movies', 0.70]]),
-    'radio-under-shelter': Object.freeze([['live-news.al-jazeera-english', 0.68], ['linear-cartoons.blender-open-movies', 0.32]]),
-    'giga-shopfront': Object.freeze([['live-news.al-jazeera-english', 0.18], ['linear-cartoons.blender-open-movies', 0.82]]),
-    'terra-backroom': Object.freeze([['live-news.al-jazeera-english', 0.54], ['linear-cartoons.blender-open-movies', 0.46]]),
+    'small-tv-roof': Object.freeze([['live-news.al-jazeera-english', 0.66], ['linear-cartoons.blender-open-movies', 0.34], ['live-public-affairs.dvids', 0.10]]),
+    'normal-tv-roof': Object.freeze([['live-news.al-jazeera-english', 0.56], ['linear-cartoons.blender-open-movies', 0.44], ['live-public-affairs.dvids', 0.12]]),
+    'big-tv-roof': Object.freeze([['live-news.al-jazeera-english', 0.46], ['linear-cartoons.blender-open-movies', 0.54], ['live-public-affairs.dvids', 0.12]]),
+    'super-big-tv-roof': Object.freeze([['live-news.al-jazeera-english', 0.34], ['linear-cartoons.blender-open-movies', 0.66], ['live-public-affairs.dvids', 0.12]]),
+    'radio-roof': Object.freeze([['live-news.al-jazeera-english', 0.74], ['linear-cartoons.blender-open-movies', 0.26], ['live-public-affairs.dvids', 0.18]]),
+    'super-big-shelter': Object.freeze([['live-news.al-jazeera-english', 0.42], ['linear-cartoons.blender-open-movies', 0.58], ['live-public-affairs.dvids', 0.12]]),
+    'mega-big-shelter': Object.freeze([['live-news.al-jazeera-english', 0.30], ['linear-cartoons.blender-open-movies', 0.70], ['live-public-affairs.dvids', 0.12]]),
+    'radio-under-shelter': Object.freeze([['live-news.al-jazeera-english', 0.68], ['linear-cartoons.blender-open-movies', 0.32], ['live-public-affairs.dvids', 0.18]]),
+    'giga-shopfront': Object.freeze([['live-news.al-jazeera-english', 0.18], ['linear-cartoons.blender-open-movies', 0.82], ['live-public-affairs.dvids', 0.10]]),
+    'terra-backroom': Object.freeze([['live-news.al-jazeera-english', 0.54], ['linear-cartoons.blender-open-movies', 0.46], ['live-public-affairs.dvids', 0.14]]),
 });
 
 const SPAWN_MEDIA_ALIASES = Object.freeze({

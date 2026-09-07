@@ -1,0 +1,63 @@
+name: Refresh DVIDS live bridge
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/refresh-dvids-live.yml'
+      - 'tools/media/refresh-dvids-live.mjs'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: jweb-dvids-live-bridge
+  cancel-in-progress: true
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build credential-free DVIDS runtime bridge
+        env:
+          DVIDS_API_KEY: ${{ secrets.DVIDS_API_KEY }}
+        run: node tools/media/refresh-dvids-live.mjs --out "$RUNNER_TEMP/dvids-runtime"
+
+      - name: Publish runtime files to isolated branch
+        shell: bash
+        env:
+          RUNTIME_OUT: ${{ runner.temp }}/dvids-runtime
+        run: |
+          set -euo pipefail
+          test -s "$RUNTIME_OUT/dvids-live.json"
+
+          git config user.name "jweb-media-runtime"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if git ls-remote --exit-code --heads origin jweb-media-runtime >/dev/null 2>&1; then
+            git fetch --depth 1 origin jweb-media-runtime
+            git checkout -B jweb-media-runtime FETCH_HEAD
+          else
+            git checkout --orphan jweb-media-runtime
+            git rm -rf --ignore-unmatch . >/dev/null 2>&1 || true
+          fi
+
+          cp "$RUNTIME_OUT/dvids-live.json" dvids-live.json
+          git add -- dvids-live.json
+
+          if git diff --cached --quiet; then
+            echo "[dvids-live-bridge] no runtime change"
+            exit 0
+          fi
+
+          git commit -m "Refresh DVIDS live bridge"
+          git push origin HEAD:jweb-media-runtime

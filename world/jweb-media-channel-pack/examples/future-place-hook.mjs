@@ -1,7 +1,7 @@
 // Example only: a future authored place can use this without knowing providers.
 import { createMediaIntent, resolveJwebMediaChannel } from '../index.mjs';
 
-export async function planPlaceTelevision({ placeSeed, genre, baseResolver, dvidsApiKey, fetchImpl = fetch }) {
+export async function planPlaceTelevision({ placeSeed, genre, baseResolver, fetchImpl = fetch }) {
     const mediaIntent = createMediaIntent({
         seed: placeSeed,
         salt: 'main-room-tv',
@@ -11,12 +11,11 @@ export async function planPlaceTelevision({ placeSeed, genre, baseResolver, dvid
     if (!mediaIntent) return null;
     return resolveJwebMediaChannel(mediaIntent, {
         baseResolver,
-        dvidsApiKey,
         fetchImpl,
     });
 }
 
-export async function planPlaceRadio({ placeSeed, baseResolver, dvidsApiKey, fetchImpl = fetch }) {
+export async function planPlaceRadio({ placeSeed, baseResolver, fetchImpl = fetch }) {
     const mediaIntent = createMediaIntent({
         seed: placeSeed,
         salt: 'counter-radio',
@@ -26,7 +25,6 @@ export async function planPlaceRadio({ placeSeed, baseResolver, dvidsApiKey, fet
     if (!mediaIntent) return null;
     return resolveJwebMediaChannel(mediaIntent, {
         baseResolver,
-        dvidsApiKey,
         fetchImpl,
     });
 }

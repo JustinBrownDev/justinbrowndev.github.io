@@ -26,7 +26,7 @@ Immediately resolvable:
 
 - Al Jazeera English through JWEB's existing resolver.
 - JWEB Cartoons through Blender's official PeerTube API. The runtime discovers allowlisted Open Movies, picks the same program for everybody by wall clock, and resolves an HLS or MP4 source.
-- DVIDS Live through the official DVIDS Live API when `dvidsApiKey` is supplied. The API can return the live event HLS master URL.
+- DVIDS Live through JWEB's credential-free runtime bridge. GitHub Actions discovers the current DVIDS event with repository secret `DVIDS_API_KEY`; browser/spawn code receives only sanitized metadata and the validated DVIDS HLS URL.
 
 Structurally ready but intentionally gated:
 
@@ -57,7 +57,6 @@ const intent = createMediaIntent({
 const source = await resolveJwebMediaChannel(intent, {
   fetchImpl: fetch,
   baseResolver: resolveMediaSource, // current JWEB resolver, needed for Al Jazeera
-  dvidsApiKey: optionalKey,
 });
 ```
 

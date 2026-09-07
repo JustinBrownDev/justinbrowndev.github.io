@@ -44,19 +44,13 @@ assert.equal(getLinearProgramAt(programs, epoch + 5000, epoch).program.title, 'A
 assert.equal(getLinearProgramAt(programs, epoch + 15000, epoch).program.title, 'B');
 assert.equal(getLinearProgramAt(programs, epoch + 35000, epoch).program.title, 'A');
 
-const dvidsFetch = async (url) => {
-    if (url.includes('/live/list')) {
-        return { ok: true, json: async () => ({ results: [{ id: '7', title: 'Ceremony', begin: '2026-09-06T00:00:00Z', end: '2026-09-08T00:00:00Z' }] }) };
-    }
-    return { ok: true, json: async () => ({ results: { id: '7', title: 'Ceremony', begin: '2026-09-06T00:00:00Z', end: '2026-09-08T00:00:00Z', hls_url: 'https://example.invalid/dvids.m3u8', url: 'https://www.dvidshub.net/webcast/7' } }) };
-};
-const dvids = await resolveJwebMediaChannel({ sourceKey: 'live-public-affairs.dvids' }, {
-    fetchImpl: dvidsFetch,
-    dvidsApiKey: 'key-test',
-    nowMs: Date.parse('2026-09-06T12:00:00Z'),
-});
+const dvids = await resolveJwebMediaChannel({ sourceKey: 'live-public-affairs.dvids' });
 assert.equal(dvids.kind, 'hls');
-assert.equal(dvids.streams[0].url, 'https://example.invalid/dvids.m3u8');
+assert.equal(dvids.streams[0].resolver, 'json-hls');
+assert.equal(dvids.streams[0].manifestUrl, 'https://raw.githubusercontent.com/JustinBrownDev/justinbrowndev.github.io/jweb-media-runtime/dvids-live.json');
+assert.ok(dvids.streams[0].allowedHlsRules.some((rule) => rule.host === 'api.dvidshub.net'));
+assert.ok(dvids.streams[0].allowedHlsRules.some((rule) => rule.hostSuffix === '.cloudfront.net'));
+assert.equal(JSON.stringify(dvids).includes('api_key'), false, 'browser DVIDS source must carry no API credential');
 
 const peerList = {
     data: [

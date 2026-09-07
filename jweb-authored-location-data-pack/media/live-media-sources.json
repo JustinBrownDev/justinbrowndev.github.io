@@ -18,6 +18,25 @@
         "fallback": "physical TV remains; dark glass, subtle static, or NO SIGNAL; no retry storm"
       },
       "determinism": "World stores semantic source key only. Live pixels/audio are intentionally nondeterministic."
+    },
+    {
+      "key": "live-public-affairs.dvids",
+      "label": "DVIDS live roulette",
+      "intent": "Credential-free rotating DVIDS live webcast source for televisions and radio-audio spawn media.",
+      "resolutionPolicy": "Browser loads only the sanitized jweb-media-runtime bridge. GitHub Actions alone reads the DVIDS API using repository secret DVIDS_API_KEY; never commit or send that credential to a browser.",
+      "renderingPolicy": "Resolve as ordinary HLS through the shared screen/audio media runtime. DVIDS is a semantic source key, so any spawn composition may select it without DVIDS-specific geometry.",
+      "activation": {
+        "default": "proximity after first player interaction; inaudible at distance",
+        "instantiate": "only when containing chunk is active and viewer is near/potentially sees or hears the device",
+        "globalBudgetHint": 1,
+        "destroyOrSuspendWhenFar": true
+      },
+      "failure": {
+        "fatal": false,
+        "fallback": "physical TV/radio remains; NO SIGNAL or silence while no DVIDS event is playable; retry without affecting world generation"
+      },
+      "attribution": "DVIDS",
+      "determinism": "World stores semantic source key only. The rotating live event is intentionally wall-clock/network dependent."
     }
   ]
 }

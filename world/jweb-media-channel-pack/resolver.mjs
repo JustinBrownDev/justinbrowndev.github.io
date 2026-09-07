@@ -51,7 +51,7 @@ export async function resolveJwebMediaChannel(mediaIntent, options = {}) {
     if (strategy === 'delegate-existing-resolver') {
         if (typeof options.baseResolver !== 'function') return catalogOnly(channel, { requires: 'baseResolver' });
         source = await options.baseResolver(intent);
-    } else if (strategy === 'dvids-live-api') {
+    } else if (strategy === 'dvids-live-bridge') {
         source = await resolveDvidsLive(channel, options);
     } else if (strategy === 'blender-peertube-linear') {
         source = await resolveBlenderOpenMovies(channel, options);

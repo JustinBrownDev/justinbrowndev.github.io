@@ -116,10 +116,10 @@ const channels = [
         radioEligible: true,
         selectable: true,
         weight: 1.25,
-        readiness: 'resolver-ready-needs-api-key',
+        readiness: 'live-bridge-ready',
         transportPolicy: { youtube: false, rawRestream: true },
-        officialPageUrl: 'https://www.dvidshub.net/webcasts',
-        playback: { strategy: 'dvids-live-api', configKey: 'dvidsApiKey' },
+        officialPageUrl: 'https://www.dvidshub.net/webcast/',
+        playback: { strategy: 'dvids-live-bridge', metadataUrl: 'https://raw.githubusercontent.com/JustinBrownDev/justinbrowndev.github.io/jweb-media-runtime/dvids-live.json' },
         rights: {
             status: 'api-commercial-use',
             evidenceUrl: 'https://api.dvidshub.net/docs/tos',

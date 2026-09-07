@@ -105,6 +105,50 @@ function safeCall(fn) {
     catch (_) { return undefined; }
 }
 
+function valueAtPath(root, pathParts) {
+    let value = root;
+    for (const part of pathParts ?? []) {
+        if (value == null || typeof value !== 'object') return null;
+        value = value[part];
+    }
+    return value;
+}
+
+async function resolveStreamUrl(stream, windowRef) {
+    if (typeof stream?.url === 'string' && stream.url) return stream.url;
+    if (stream?.resolver !== 'json-hls' || !stream?.manifestUrl) return null;
+    const fetchImpl = windowRef?.fetch ?? globalThis.fetch;
+    if (typeof fetchImpl !== 'function') return null;
+    const response = await fetchImpl(stream.manifestUrl, { cache: 'no-cache', credentials: 'omit', mode: 'cors' });
+    if (!response?.ok) throw new Error(`[screen-media] live bridge HTTP ${response?.status ?? 'error'}`);
+    const manifest = await response.json();
+    if (stream.manifestSchema && manifest?.schema !== stream.manifestSchema) {
+        throw new Error('[screen-media] live bridge schema mismatch');
+    }
+    const rawUrl = valueAtPath(manifest, stream.urlPath ?? ['streamUrl']);
+    if (typeof rawUrl !== 'string' || !rawUrl) return null;
+    let url;
+    try { url = new URL(rawUrl); }
+    catch { throw new Error('[screen-media] live bridge returned an invalid HLS URL'); }
+    if (url.protocol !== 'https:') throw new Error('[screen-media] live bridge requires HTTPS HLS');
+    const rules = Array.isArray(stream.allowedHlsRules) ? stream.allowedHlsRules : [];
+    const allowed = !rules.length || rules.some((rule) => {
+        if (rule?.host && url.hostname !== rule.host) return false;
+        if (rule?.hostPrefix && !url.hostname.startsWith(rule.hostPrefix)) return false;
+        if (rule?.hostSuffix && !url.hostname.endsWith(rule.hostSuffix)) return false;
+        if (rule?.pathPrefix && !url.pathname.startsWith(rule.pathPrefix)) return false;
+        if (rule?.pathContains && !url.pathname.includes(rule.pathContains)) return false;
+        if (rule?.pathSuffix) {
+            const actualPath = url.pathname.endsWith('/') ? url.pathname.slice(0, -1) : url.pathname;
+            const expectedSuffix = rule.pathSuffix.endsWith('/') ? rule.pathSuffix.slice(0, -1) : rule.pathSuffix;
+            if (!actualPath.endsWith(expectedSuffix)) return false;
+        }
+        return true;
+    });
+    if (!allowed) throw new Error('[screen-media] live bridge returned a disallowed HLS target');
+    return url.toString();
+}
+
 function attachDeferredChannelPackMedia(options = {}) {
     const {
         mediaIntent,
@@ -121,12 +165,10 @@ function attachDeferredChannelPackMedia(options = {}) {
         active: false,
         lastError: null,
     };
-    const config = windowRef?.__jwebMediaConfig ?? {};
     const ready = Promise.resolve().then(async () => {
         const resolved = await resolveJwebMediaChannel(mediaIntent, {
             fetchImpl: globalThis.fetch,
             baseResolver: resolveMediaSource,
-            dvidsApiKey: config.dvidsApiKey,
         });
         if (disposed) return null;
         if (!resolved?.streams?.length) {
@@ -372,15 +414,28 @@ export function attachScreenMedia({
         state.status = 'connecting';
         const stream = source.streams[streamIndex];
         const media = ensureVideo();
-        if (!media || !stream?.url) {
+        if (!media) {
             showFallback('unavailable');
             return;
         }
 
-        const isHls = stream.transport === 'hls' || /\.m3u8(?:$|[?#])/i.test(stream.url);
+        let streamUrl = null;
+        try {
+            streamUrl = await resolveStreamUrl(stream, windowRef);
+        } catch (error) {
+            handleStreamFailure(error);
+            return;
+        }
+        if (!streamUrl) {
+            showFallback('unavailable');
+            scheduleRetry();
+            return;
+        }
+
+        const isHls = stream.transport === 'hls' || /\.m3u8(?:$|[?#])/i.test(streamUrl);
         if (!isHls) {
             destroyHls();
-            media.src = stream.url;
+            media.src = streamUrl;
             media.load?.();
             await playVideo();
             return;
@@ -389,7 +444,7 @@ export function attachScreenMedia({
         const nativeHls = !!media.canPlayType?.('application/vnd.apple.mpegurl');
         if (nativeHls) {
             destroyHls();
-            media.src = stream.url;
+            media.src = streamUrl;
             media.load?.();
             await playVideo();
             return;
@@ -407,7 +462,7 @@ export function attachScreenMedia({
         if (disposed || !state.active) return;
         if (!Hls?.isSupported?.()) {
             if (nativeHls) {
-                media.src = stream.url;
+                media.src = streamUrl;
                 media.load?.();
                 await playVideo();
                 return;
@@ -435,7 +490,7 @@ export function attachScreenMedia({
             }
             handleStreamFailure(new Error(`[screen-media] HLS fatal ${data?.type ?? 'error'} ${data?.details ?? ''}`.trim()));
         });
-        hls.loadSource?.(stream.url);
+        hls.loadSource?.(streamUrl);
         hls.attachMedia?.(media);
     }
 

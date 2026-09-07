@@ -39,7 +39,10 @@ const a = createSpawnComposition(runtime, 'same-key', host);
 const b = createSpawnComposition(runtime, 'same-key', host);
 assert.equal(a.startProfile.id, b.startProfile.id);
 assert.equal(a.media.sourceKey, b.media.sourceKey, 'media mapping must be deterministic for the same place');
-assert.ok(['live-news.al-jazeera-english','linear-cartoons.blender-open-movies'].includes(a.media.sourceKey));
+assert.ok(['live-news.al-jazeera-english','linear-cartoons.blender-open-movies','live-public-affairs.dvids'].includes(a.media.sourceKey));
+
+const spawnSource = fs.readFileSync(new URL('../world/spawn-location-runtime.js', import.meta.url), 'utf8');
+assert.match(spawnSource, /SPAWN_MEDIA_POOLS[\s\S]*live-public-affairs\.dvids/, 'DVIDS must be present in spawn RNG pools');
 
 const screenSource = fs.readFileSync(new URL('../world/screen-media-runtime.js', import.meta.url), 'utf8');
 assert.match(screenSource, /resolveJwebMediaChannel/);

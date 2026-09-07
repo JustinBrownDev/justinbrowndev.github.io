@@ -1,4 +1,5 @@
 import { attachScreenMedia, attachAudioMedia } from './screen-media-runtime.js';
+import { detailSpawnLocation } from './spawn-location-art-detail.js';
 
 function iterablePayloadEntries(input) {
     if (!input) return [];
@@ -341,6 +342,12 @@ export function realizeSpawnLocation({
         } else {
             addDetailProxy(THREE, root, unitBox, detailMaterial, accentMaterial, placement);
         }
+    }
+
+    try {
+        detailSpawnLocation({ THREE, root, plan, resources });
+    } catch (error) {
+        console.warn?.('[spawn-detail-art-r1] detail pass failed; keeping base spawn geometry', error);
     }
 
     scene.add(root);

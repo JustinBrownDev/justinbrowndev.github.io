@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { resolveMediaSource, listMediaSourceKeys } from '../world/media-source-resolver.js';
-import { attachScreenMedia } from '../world/screen-media-runtime.js';
+import { attachScreenMedia, attachAudioMedia } from '../world/screen-media-runtime.js';
 
 const resolved = resolveMediaSource({
     sourceKey: 'live-news.al-jazeera-english',
@@ -39,9 +39,10 @@ class VideoTexture {
 }
 const THREE = { CanvasTexture, VideoTexture, SRGBColorSpace: 'srgb', LinearFilter: 'linear' };
 
-function makeVideo() {
+function makeVideo(kind = 'video') {
     const listeners = new Map();
     return {
+        kind,
         style: {},
         paused: true,
         muted: true,
@@ -76,7 +77,7 @@ const documentRef = {
                 };
             },
         };
-        if (kind === 'video') return makeVideo();
+        if (kind === 'video' || kind === 'audio') return makeVideo(kind);
         return { style: {} };
     },
 };
@@ -167,4 +168,37 @@ assert.equal(controller.getState().status, 'disposed');
 console.log('[screen-media-runtime-selftest] PASS', {
     sourceKey: resolved.sourceKey,
     stream: resolved.streams[0].url,
+});
+
+
+FakeHls.instances.length = 0;
+const radioCamera = { position: { x: 1, y: 1, z: 0 } };
+const radioSocket = { id: 'radio-audio-1', role: 'radio-audio', center: { x: 0, y: 1, z: 0 } };
+const radioController = attachAudioMedia({
+    THREE,
+    camera: radioCamera,
+    sockets: [radioSocket],
+    mediaIntent: { sourceKey: 'live-news.al-jazeera-english', defaultAudio: 'proximity' },
+    documentRef,
+    windowRef: {},
+    loadHlsClass: async () => FakeHls,
+    autoSchedule: false,
+});
+assert.ok(radioController, 'radio must create an audio-only media controller without a mesh');
+assert.equal(radioController.mode, 'audio-only');
+assert.equal(radioController.sockets[0].mesh, undefined, 'radio audio socket must not fabricate a video surface');
+await radioController.sync();
+assert.equal(FakeHls.instances.length, 1, 'near radio starts the same live HLS source');
+assert.equal(FakeHls.instances[0].video.kind, 'audio', 'radio must attach HLS to an audio element, not a video element');
+assert.equal(radioController.getState().status, 'playing');
+assert.equal(radioController.getState().audioAudible, false, 'browser-safe radio begins silent until user gesture');
+assert.equal(radioController.unlockAudio(), true);
+await radioController.sync();
+assert.equal(radioController.getState().audioAudible, true, 'unlocked nearby radio plays live audio');
+assert.ok(FakeHls.instances[0].video.volume > 0.5);
+radioController.dispose();
+assert.equal(FakeHls.instances[0].destroyed, true);
+console.log('[screen-media-runtime-selftest] RADIO AUDIO PASS', {
+    mode: radioController.mode,
+    sourceKey: radioController.source.sourceKey,
 });

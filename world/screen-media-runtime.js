@@ -111,15 +111,16 @@ export function attachScreenMedia({
     windowRef = typeof window === 'undefined' ? null : window,
     loadHlsClass = null,
     autoSchedule = true,
+    audioOnly = false,
 } = {}) {
     const source = resolveMediaSource(mediaIntent);
-    const usableSockets = (sockets ?? []).filter(socket => socket?.mesh);
+    const usableSockets = (sockets ?? []).filter(socket => audioOnly ? socket?.center : socket?.mesh);
     if (!source || !usableSockets.length) return null;
 
     let disposed = false;
     let video = null;
     let videoTexture = null;
-    let fallbackTexture = createFallbackTexture(THREE, documentRef);
+    let fallbackTexture = audioOnly ? null : createFallbackTexture(THREE, documentRef);
     let hls = null;
     let scheduler = null;
     let retryTimer = null;
@@ -128,7 +129,8 @@ export function attachScreenMedia({
     let audioUnlocked = source.audioMode === 'audible';
     const audioUnlockTargets = [];
     const state = {
-        schema: 'jweb.screen-media-state.v1',
+        schema: audioOnly ? 'jweb.audio-media-state.v1' : 'jweb.screen-media-state.v1',
+        mode: audioOnly ? 'audio-only' : 'screen',
         sourceKey: source.sourceKey,
         status: 'fallback',
         active: false,
@@ -142,12 +144,12 @@ export function attachScreenMedia({
         distanceM: null,
     };
 
-    applyTexture(usableSockets, fallbackTexture);
+    if (!audioOnly) applyTexture(usableSockets, fallbackTexture);
 
     const browserCapable = !!(
-        THREE?.VideoTexture
-        && documentRef?.createElement
+        documentRef?.createElement
         && source.streams?.length
+        && (audioOnly || THREE?.VideoTexture)
     );
 
     function clearRetry() {
@@ -218,7 +220,7 @@ export function attachScreenMedia({
 
     function ensureVideo() {
         if (video || !browserCapable) return video;
-        video = documentRef.createElement('video');
+        video = documentRef.createElement(audioOnly ? 'audio' : 'video');
         // Always establish the live picture silently. Proximity audio is unlocked
         // by the first real player gesture, then distance controls volume.
         video.muted = true;
@@ -239,8 +241,10 @@ export function attachScreenMedia({
         }
         video.addEventListener?.('playing', () => {
             if (disposed) return;
-            if (!videoTexture) videoTexture = configureTexture(THREE, new THREE.VideoTexture(video));
-            applyTexture(usableSockets, videoTexture);
+            if (!audioOnly) {
+                if (!videoTexture) videoTexture = configureTexture(THREE, new THREE.VideoTexture(video));
+                applyTexture(usableSockets, videoTexture);
+            }
             state.status = 'playing';
             state.lastError = null;
         });
@@ -253,7 +257,7 @@ export function attachScreenMedia({
     }
 
     function showFallback(status = 'fallback', error = null) {
-        if (fallbackTexture) applyTexture(usableSockets, fallbackTexture);
+        if (!audioOnly && fallbackTexture) applyTexture(usableSockets, fallbackTexture);
         state.status = status;
         state.lastError = error ? String(error?.message ?? error) : null;
     }
@@ -429,7 +433,8 @@ export function attachScreenMedia({
     }
 
     const controller = {
-        schema: 'jweb.screen-media-controller.v1',
+        schema: audioOnly ? 'jweb.audio-media-controller.v1' : 'jweb.screen-media-controller.v1',
+        mode: audioOnly ? 'audio-only' : 'screen',
         source,
         sockets: usableSockets,
         sync,
@@ -446,4 +451,8 @@ export function attachScreenMedia({
     }
 
     return controller;
+}
+
+export function attachAudioMedia(options = {}) {
+    return attachScreenMedia({ ...options, audioOnly: true });
 }

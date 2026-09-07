@@ -82,7 +82,7 @@ radioPlacement.dimensionsM = [0.42, 0.2, 0.28];
 const radioBoundLocation = {
     ...boundLocation,
     spatialPlan: radioPlan,
-    composition: { media: null },
+    composition: { media: { sourceKey: 'live-news.al-jazeera-english', defaultAudio: 'proximity' } },
 };
 const radioPayload = { entity: { id: 'entity-test' }, physics: { circulationReservations: [] } };
 const radioFabricPayloads = new Map([['site-test', radioPayload]]);
@@ -93,7 +93,10 @@ assert.ok(radioResult);
 assert.equal(radioResult.mediaKind, 'radio');
 assert.equal(radioResult.startProfile, 'radio-night');
 assert.equal(radioResult.screenSockets.length, 0, 'radio-only start must not fabricate a television screen socket');
-assert.equal(radioResult.mediaController, null, 'radio-only start must not start screen-media runtime');
+assert.equal(radioResult.audioSockets.length, 1, 'radio-only start must publish one positional audio socket');
+assert.equal(radioResult.audioSockets[0].role, 'radio-audio');
+assert.ok(radioResult.mediaController, 'radio-only start must own a live audio controller');
+assert.equal(radioResult.mediaController.mode, 'audio-only', 'radio controller must not create video output');
 assert.equal(radioScene.children.length, 1);
 assert.ok(radioResult.root.children.length >= 5, 'radio hangout should still contain support, seats, lamp, and media geometry');
 radioResult.dispose();

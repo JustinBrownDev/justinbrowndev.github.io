@@ -1,6 +1,79 @@
-import { LIVE_SPAWN_LOCATION_RUNTIME, bindSpawnLocationRuntime } from './spawn-location-runtime.js';
+import { LIVE_SPAWN_LOCATION_RUNTIME, bindSpawnLocationRuntime, hashString32 } from './spawn-location-runtime.js';
 
 const TAU = Math.PI * 2;
+
+
+export const SPAWN_HOST_ARCHETYPES = Object.freeze({
+    'deep-backroom': Object.freeze({ id: 'deep-backroom', probability: 0.012 }),
+    'hanging-storefront': Object.freeze({ id: 'hanging-storefront', probability: 0.058 }),
+    'sheltered-roof': Object.freeze({ id: 'sheltered-roof', probability: 0.18 }),
+    'exposed-roof': Object.freeze({ id: 'exposed-roof', probability: 0.75 }),
+});
+
+export function chooseSpawnHostArchetype(selectionKey) {
+    const roll = hashString32(`spawn-host-archetype:${String(selectionKey ?? 'spawn')}`) / 4294967296;
+    if (roll < 0.012) return 'deep-backroom';
+    if (roll < 0.070) return 'hanging-storefront';
+    if (roll < 0.250) return 'sheltered-roof';
+    return 'exposed-roof';
+}
+
+function patchArea(patch) {
+    const p = patchBounds(patch);
+    return p ? p.halfX * 2 * p.halfZ * 2 : 0;
+}
+
+function rectContainsPoint(rect, x, z, inset = 0) {
+    const r = patchBounds(rect) ?? reservationBounds(rect);
+    if (!r) return false;
+    return x >= r.minX + inset && x <= r.maxX - inset && z >= r.minZ + inset && z <= r.maxZ - inset;
+}
+
+function segmentLength(wall) {
+    return Math.hypot(finite(wall?.x2) - finite(wall?.x1), finite(wall?.z2) - finite(wall?.z1));
+}
+
+function pointSegmentDistanceAndVector(x, z, wall) {
+    const x1 = finite(wall?.x1), z1 = finite(wall?.z1), x2 = finite(wall?.x2), z2 = finite(wall?.z2);
+    const dx = x2 - x1, dz = z2 - z1;
+    const denom = dx * dx + dz * dz;
+    const t = denom > 1e-9 ? Math.max(0, Math.min(1, ((x - x1) * dx + (z - z1) * dz) / denom)) : 0;
+    const px = x1 + dx * t, pz = z1 + dz * t;
+    return { distance: Math.hypot(px - x, pz - z), dx: px - x, dz: pz - z };
+}
+
+function wallDirectionCountAt(space, x, z, radius = 4.8) {
+    const bins = new Set();
+    for (const wall of space?.nearbyWalls ?? []) {
+        const hit = pointSegmentDistanceAndVector(x, z, wall);
+        if (!(hit.distance <= radius) || hit.distance < 0.05) continue;
+        let angle = Math.atan2(hit.dz, hit.dx);
+        if (angle < 0) angle += TAU;
+        bins.add(Math.floor((angle / TAU) * 8) % 8);
+    }
+    return bins.size;
+}
+
+function programArchitectureId(entity) {
+    return entity?.buildingPlan?.programArchitecture?.id
+        ?? entity?.programMacroArchitecture?.programArchitectureId
+        ?? entity?.buildingConstructionEngine?.programArchitectureId
+        ?? null;
+}
+
+function retailLikeEntity(entity) {
+    const family = String(entity?.physicalUse?.family ?? entity?.physicalUse ?? '');
+    const program = String(programArchitectureId(entity) ?? '');
+    return family === 'mercantile-public'
+        || ['retail-service', 'workshop-retail', 'bar-restaurant', 'food-service'].includes(program)
+        || /retail|shop|bar|convenience|market|diner/.test(program);
+}
+
+function spaceSelectionKey(locationRuntime, spaces) {
+    const seed = spaces.map(space => Number(space?.chunkSeed)).find(Number.isFinite);
+    const identity = locationRuntime?.location?.id ?? 'spawn';
+    return `${identity}:${Number.isFinite(seed) ? seed : (spaces[0]?.payloadKey ?? 'local')}`;
+}
 
 function finite(value, fallback = 0) {
     return Number.isFinite(value) ? value : fallback;
@@ -155,78 +228,127 @@ export function collectSpawnFabricSpaces(fabricPayloads) {
     for (const [payloadKey, payload] of iterablePayloadEntries(fabricPayloads)) {
         const physics = payload.physics ?? {};
         const platforms = physics.platforms ?? [];
+        const ceilings = physics.ceilings ?? [];
         const connectors = physics.semanticConnectors ?? [];
         const circulationReservations = physics.circulationReservations ?? [];
         const detailReservations = payload.detailReservations ?? [];
-        // Spawn used to be fed one special authored-site payload at a time. The
-        // actual runtime now spawns inside an ordinary streamed chunk, whose
-        // structural authority is the normal `entities[]` array. Accept both
-        // shapes so spawn selection follows the same city data as every other
-        // player-visible chunk instead of requiring an authored origin adapter.
         const entities = payload?.entity
             ? [payload.entity]
             : (payload?.entities ?? []).filter(entity => entity?.kind === 'building');
         for (const entity of entities) {
             const floorH = Number(entity?.floorH);
             if (!entity || !Number.isFinite(floorH) || !(floorH > 0)) continue;
+            const retailLike = retailLikeEntity(entity);
+            const programId = programArchitectureId(entity);
+            const ceilingRooted = entity.ceilingRooted === true || entity.floorAlignment === 'ceiling';
             for (const module of entity.footprintModules ?? []) {
                 const rect = moduleRect(module);
                 const floors = Math.floor(Number(module?.floors) || 0);
                 if (!rect || floors < 1) continue;
-                const surfaceY = floors * floorH;
-                const bounds = moduleBounds(rect, surfaceY);
-                const supportPatches = platforms
-                    .filter(platform => platform?.supportKind === 'roof' && Math.abs(finite(platform.y) - surfaceY) <= 0.16)
-                    .map(patchBounds)
-                    .filter(Boolean)
-                    .filter(patch => patch.x >= bounds.minX - 0.05 && patch.x <= bounds.maxX + 0.05
-                        && patch.z >= bounds.minZ - 0.05 && patch.z <= bounds.maxZ + 0.05);
-                if (!supportPatches.length) continue;
+                const moduleBaseY = finite(Number(module?.baseY), finite(Number(entity?.baseY), 0));
+                const roofY = finite(Number(module?.roofY), moduleBaseY + floors * floorH);
+                const boundsForY = surfaceY => moduleBounds(rect, surfaceY);
 
-                const attachedConnectors = connectors.filter(connector =>
-                    (connector.endpoints ?? []).some(endpoint =>
-                        pointNearModule(endpoint, rect) && Math.abs(finite(endpoint.y) - surfaceY) <= 0.35));
-                const connectorIds = attachedConnectors.map(connector => connector.id).filter(Boolean);
-                const connectorReservationIds = new Set(attachedConnectors.flatMap(connector =>
-                    (connector.reservations ?? []).map(reservation => reservation?.id).filter(Boolean)));
-                const reservations = circulationReservations
-                    .filter(reservation => connectorReservationIds.has(reservation?.id) || relevantReservation(reservation, bounds, surfaceY))
-                    .map(reservationBounds)
-                    .filter(Boolean);
-                const existingDetailReservations = detailReservations
-                    .filter(reservation => relevantReservation(reservation, bounds, surfaceY))
-                    .map(reservationBounds)
-                    .filter(Boolean);
-                const nearbyWalls = (physics.mazeWalls ?? []).filter(wall => {
-                    const yMin = finite(wall?.yMin, 0), yMax = finite(wall?.yMax, surfaceY + 2.2);
-                    if (yMin > surfaceY + 1.5 || yMax < surfaceY - 0.05) return false;
-                    const wallBounds = {
-                        minX: Math.min(finite(wall?.x1), finite(wall?.x2)),
-                        maxX: Math.max(finite(wall?.x1), finite(wall?.x2)),
-                        minZ: Math.min(finite(wall?.z1), finite(wall?.z2)),
-                        maxZ: Math.max(finite(wall?.z1), finite(wall?.z2)),
-                    };
-                    return boundsOverlap(wallBounds, bounds, 0.35);
-                });
-                const siteId = entity.semanticSiteKey ?? entity.siteId ?? String(payloadKey);
-                const entityId = entity.id ?? payload.ownerId ?? String(payloadKey);
-                spaces.push({
-                    schema: 'jweb.fabric-roof-space.v1',
-                    spaceId: `${entityId}:${module.key}:roof`,
-                    payloadKey: String(payloadKey),
-                    siteId,
-                    entityId,
-                    moduleKey: module.key,
-                    surfaceClass: 'roof',
-                    exposure: 'exterior',
-                    surfaceY,
-                    bounds,
-                    supportPatches,
-                    connectorIds,
-                    reservations,
-                    existingDetailReservations,
-                    nearbyWalls,
-                });
+                const surfaces = [{ surfaceClass: 'roof', floorIndex: floors, surfaceY: roofY }];
+                // Interior sampling is intentionally sparse: enough to target real
+                // backrooms/storefronts without turning boot into a full building
+                // survey. Hanging towers include their bottom occupied plate; upright
+                // towers begin at floor 1 because ground-level spawn is not the goal.
+                const floorIndices = new Set();
+                if (ceilingRooted) floorIndices.add(0);
+                if (floors > 1) floorIndices.add(1);
+                if (floors > 2) floorIndices.add(Math.floor((floors - 1) * 0.5));
+                if (floors > 2) floorIndices.add(floors - 1);
+                for (const floorIndex of floorIndices) {
+                    if (floorIndex < 0 || floorIndex >= floors) continue;
+                    surfaces.push({ surfaceClass: 'interior-floor', floorIndex, surfaceY: moduleBaseY + floorIndex * floorH });
+                }
+
+                for (const surface of surfaces) {
+                    const surfaceY = surface.surfaceY;
+                    const bounds = boundsForY(surfaceY);
+                    const supportKinds = surface.surfaceClass === 'roof'
+                        ? new Set(['roof'])
+                        : new Set(['floor', 'mezzanine', 'ceiling-building-tip']);
+                    const supportPatches = platforms
+                        .filter(platform => supportKinds.has(platform?.supportKind) && Math.abs(finite(platform.y) - surfaceY) <= 0.16)
+                        .map(patchBounds)
+                        .filter(Boolean)
+                        .filter(patch => boundsOverlap(patch, bounds, 0.08));
+                    if (!supportPatches.length) continue;
+
+                    const overheadPatches = [
+                        ...platforms.map(patchBounds).filter(Boolean),
+                        ...ceilings.map(patchBounds).filter(Boolean),
+                    ].filter(patch => patch.yMin >= surfaceY + 2.05 && patch.yMin <= surfaceY + 6.8 && boundsOverlap(patch, bounds, 0.15));
+
+                    const attachedConnectors = connectors.filter(connector =>
+                        (connector.endpoints ?? []).some(endpoint =>
+                            pointNearModule(endpoint, rect) && Math.abs(finite(endpoint.y) - surfaceY) <= 0.48));
+                    const connectorIds = attachedConnectors.map(connector => connector.id).filter(Boolean);
+                    const connectorReservationIds = new Set(attachedConnectors.flatMap(connector =>
+                        (connector.reservations ?? []).map(reservation => reservation?.id).filter(Boolean)));
+                    const reservations = circulationReservations
+                        .filter(reservation => connectorReservationIds.has(reservation?.id) || relevantReservation(reservation, bounds, surfaceY))
+                        .map(reservationBounds)
+                        .filter(Boolean);
+                    const existingDetailReservations = detailReservations
+                        .filter(reservation => relevantReservation(reservation, bounds, surfaceY))
+                        .map(reservationBounds)
+                        .filter(Boolean);
+                    const nearbyWalls = (physics.mazeWalls ?? []).filter(wall => {
+                        const yMin = finite(wall?.yMin, 0), yMax = finite(wall?.yMax, surfaceY + 2.2);
+                        if (yMin > surfaceY + 2.15 || yMax < surfaceY + 0.05) return false;
+                        const wallBounds = {
+                            minX: Math.min(finite(wall?.x1), finite(wall?.x2)),
+                            maxX: Math.max(finite(wall?.x1), finite(wall?.x2)),
+                            minZ: Math.min(finite(wall?.z1), finite(wall?.z2)),
+                            maxZ: Math.max(finite(wall?.z1), finite(wall?.z2)),
+                        };
+                        return boundsOverlap(wallBounds, bounds, 0.45);
+                    });
+                    const relevantFacades = (entity.facades ?? []).filter(facade =>
+                        String(facade?.moduleKey) === String(module.key)
+                        && finite(facade?.yMin, -Infinity) <= surfaceY + 1.4
+                        && finite(facade?.yMax, Infinity) >= surfaceY + 0.2);
+                    const siteId = entity.semanticSiteKey ?? entity.siteId ?? String(payloadKey);
+                    const entityId = entity.id ?? payload.ownerId ?? String(payloadKey);
+                    const supportAreaM2 = supportPatches.reduce((sum, patch) => sum + patchArea(patch), 0);
+                    const largestSupportPatchAreaM2 = supportPatches.reduce((best, patch) => Math.max(best, patchArea(patch)), 0);
+                    const storefrontLike = retailLike && surface.floorIndex === 0 && relevantFacades.length > 0;
+                    const maxSupportSpanM = supportPatches.reduce((best, patch) => Math.max(best, patch.halfX * 2, patch.halfZ * 2), 0);
+                    const maxWallSpanM = nearbyWalls.reduce((best, wall) => Math.max(best, segmentLength(wall)), 0);
+                    spaces.push({
+                        schema: 'jweb.fabric-habitable-space.v2',
+                        spaceId: surface.surfaceClass === 'roof' ? `${entityId}:${module.key}:roof` : `${entityId}:${module.key}:floor:${surface.floorIndex}`,
+                        payloadKey: String(payloadKey),
+                        siteId,
+                        entityId,
+                        moduleKey: module.key,
+                        floorIndex: surface.floorIndex,
+                        surfaceClass: surface.surfaceClass,
+                        exposure: surface.surfaceClass === 'roof' ? 'exterior' : 'interior',
+                        surfaceY,
+                        bounds,
+                        supportPatches,
+                        overheadPatches,
+                        connectorIds,
+                        reservations,
+                        existingDetailReservations,
+                        nearbyWalls,
+                        facadeCount: relevantFacades.length,
+                        supportAreaM2,
+                        largestSupportPatchAreaM2,
+                        maxSupportSpanM,
+                        maxWallSpanM,
+                        ceilingRooted,
+                        physicalUseFamily: String(entity?.physicalUse?.family ?? entity?.physicalUse ?? ''),
+                        programArchitectureId: programId,
+                        retailLike,
+                        storefrontLike,
+                        chunkSeed: payload?.chunk?.seed ?? null,
+                    });
+                }
             }
         }
     }
@@ -260,7 +382,10 @@ function fabricSpaceSamples(playerPhysics, origin, policy, spaces) {
                 if (seen.has(key)) continue;
                 seen.add(key);
                 if (Math.hypot(x - origin.x, z - origin.z) > policy.searchRadiusM + 1e-9) continue;
-                const feetY = playerPhysics.supportHeightAt(x, z, highProbe);
+                // Probe from the intended floor, not from above the whole tower.
+                // This is what makes real interior-floor hosts selectable instead
+                // of always snapping to the roof above them.
+                const feetY = playerPhysics.supportHeightAt(x, z, space.surfaceY + 0.08);
                 if (!Number.isFinite(feetY) || Math.abs(feetY - space.surfaceY) > tolerance) continue;
                 if (!playerPhysics.poseIsValid(x, z, space.surfaceY)) continue;
 
@@ -269,7 +394,7 @@ function fabricSpaceSamples(playerPhysics, origin, policy, spaces) {
                     const angle = (i / policy.edgeProbeDirections) * TAU;
                     const sx = x + Math.cos(angle) * policy.edgeProbeRadiusM;
                     const sz = z + Math.sin(angle) * policy.edgeProbeRadiusM;
-                    const sy = playerPhysics.supportHeightAt(sx, sz, highProbe);
+                    const sy = playerPhysics.supportHeightAt(sx, sz, space.surfaceY + 0.12);
                     if (Number.isFinite(sy) && sy >= space.surfaceY - policy.edgeDropToleranceM) edgeSupportedDirections++;
                 }
                 if (edgeSupportedDirections < policy.minEdgeSupportedDirections) continue;
@@ -278,11 +403,12 @@ function fabricSpaceSamples(playerPhysics, origin, policy, spaces) {
                 let sameOrHigherContextDirections = 0;
                 let deepDropDirections = 0;
                 const contextHeights = [];
+                const contextProbeY = space.surfaceClass === 'roof' ? highProbe : space.surfaceY + 0.4;
                 for (let i = 0; i < policy.contextProbeDirections; i++) {
                     const angle = (i / policy.contextProbeDirections) * TAU;
                     const sx = x + Math.cos(angle) * policy.contextProbeRadiusM;
                     const sz = z + Math.sin(angle) * policy.contextProbeRadiusM;
-                    const sy = playerPhysics.supportHeightAt(sx, sz, highProbe);
+                    const sy = playerPhysics.supportHeightAt(sx, sz, contextProbeY);
                     contextHeights.push(sy);
                     if (!Number.isFinite(sy)) continue;
                     if (sy >= space.surfaceY + policy.higherContextDeltaM) higherContextDirections++;
@@ -290,27 +416,35 @@ function fabricSpaceSamples(playerPhysics, origin, policy, spaces) {
                     if (sy <= space.surfaceY - policy.higherContextDeltaM) deepDropDirections++;
                 }
 
+                const overhead = (space.overheadPatches ?? [])
+                    .filter(overheadPatch => rectContainsPoint(overheadPatch, x, z, 0.16))
+                    .sort((a, b) => a.yMin - b.yMin)[0] ?? null;
+                const overheadClearanceM = overhead ? overhead.yMin - space.surfaceY : null;
+                const overheadCovered = Number.isFinite(overheadClearanceM) && overheadClearanceM >= 2.05 && overheadClearanceM <= 6.8;
+                const edgeDepthM = Math.max(0, Math.min(
+                    x - space.bounds.minX, space.bounds.maxX - x,
+                    z - space.bounds.minZ, space.bounds.maxZ - z,
+                ));
+                const wallProbeRadius = Math.max(4.8, Math.min(8.0, finite(space?.maxSupportSpanM, 0) * 0.65));
+                const wallDirectionCount = wallDirectionCountAt(space, x, z, wallProbeRadius);
                 const elevation = space.surfaceY - origin.feetY;
                 const distance = Math.hypot(x - origin.x, z - origin.z);
-                const nearbyWallCount = Math.min(6, space.nearbyWalls?.length ?? 0);
+                const nearbyWallCount = Math.min(12, space.nearbyWalls?.length ?? 0);
                 const connectorCount = space.connectorIds?.length ?? 0;
-                const peakLike = higherContextDirections === 0
+                const peakLike = space.surfaceClass === 'roof' && higherContextDirections === 0
                     && deepDropDirections >= Math.ceil(policy.contextProbeDirections * 0.55);
-                // Prefer a tucked-in roof pocket: nearby walls/masses read as cover,
-                // while one or two connector identities keep it connected without
-                // turning the spawn into a busy interchange. This is a preference,
-                // never a hard admission rule.
-                const shelterScore = nearbyWallCount * 1.6 + Math.min(4, higherContextDirections) * 0.8;
+                const shelterScore = wallDirectionCount * 1.6 + (overheadCovered ? 5 : 0) + Math.min(4, higherContextDirections) * 0.8;
                 const enclaveConnectorScore = connectorCount === 1 ? 3.5 : connectorCount === 2 ? 2 : connectorCount > 2 ? -Math.min(3, connectorCount - 2) : 0;
-                let score = edgeSupportedDirections * 1.5
-                    + higherContextDirections * 4
-                    + sameOrHigherContextDirections * 0.7
+                let score = edgeSupportedDirections * 1.25
+                    + higherContextDirections * 2.5
+                    + sameOrHigherContextDirections * 0.55
                     + shelterScore
                     + enclaveConnectorScore
-                    - Math.abs(elevation - policy.preferredElevationAboveOriginM) * 0.22
+                    + (space.surfaceClass === 'roof' ? 5 : -1.5)
+                    - Math.abs(elevation - policy.preferredElevationAboveOriginM) * 0.18
                     - distance * 0.035;
                 if (peakLike) score -= policy.localPeakPenalty;
-                if (higherContextDirections >= policy.preferredHigherContextDirections) score += 6;
+                if (space.surfaceClass === 'roof' && higherContextDirections >= policy.preferredHigherContextDirections) score += 4;
                 candidates.push({
                     x, z, feetY: space.surfaceY,
                     ring: Math.max(0, Math.round(distance / Math.max(0.1, policy.radialStepM))),
@@ -322,8 +456,12 @@ function fabricSpaceSamples(playerPhysics, origin, policy, spaces) {
                     sameOrHigherContextDirections,
                     deepDropDirections,
                     nearbyWallCount,
+                    wallDirectionCount,
                     connectorCount,
                     shelterScore,
+                    overheadCovered,
+                    overheadClearanceM,
+                    edgeDepthM,
                     peakLike,
                     contextHeights,
                     space,
@@ -333,6 +471,40 @@ function fabricSpaceSamples(playerPhysics, origin, policy, spaces) {
     }
     return candidates.sort((a, b) => b.score - a.score || a.radius - b.radius || a.space.spaceId.localeCompare(b.space.spaceId));
 }
+
+function archetypeFitScore(candidate, archetype) {
+    const space = candidate.space;
+    const area = finite(space?.supportAreaM2, 0);
+    const maxSpan = finite(space?.maxSupportSpanM, 0);
+    const wallSpan = finite(space?.maxWallSpanM, 0);
+    const contiguousArea = finite(space?.largestSupportPatchAreaM2, 0);
+    const interior = space?.surfaceClass === 'interior-floor';
+    const roof = space?.surfaceClass === 'roof';
+    if (archetype === 'deep-backroom') {
+        if (!interior || space?.retailLike || !candidate.overheadCovered || area < 110 || contiguousArea < 96 || maxSpan < 10.0 || wallSpan < 9.2 || candidate.wallDirectionCount < 3 || candidate.edgeDepthM < 3.0) return -Infinity;
+        return candidate.score + area * 0.08 + candidate.wallDirectionCount * 4 + candidate.edgeDepthM * 2.2 - Math.abs((candidate.overheadClearanceM ?? 3.1) - 3.0) * 1.5;
+    }
+    if (archetype === 'hanging-storefront') {
+        if (!interior || !candidate.overheadCovered || !space?.storefrontLike || area < 30 || contiguousArea < 24 || maxSpan < 4.2 || wallSpan < 3.8 || candidate.wallDirectionCount < 2) return -Infinity;
+        return candidate.score + area * 0.05 + candidate.wallDirectionCount * 2.2 + (space.ceilingRooted ? 12 : 0) + Math.min(4, space.facadeCount ?? 0) * 2.4;
+    }
+    if (archetype === 'sheltered-roof') {
+        if (!roof || !candidate.overheadCovered || area < 14 || maxSpan < 3.5) return -Infinity;
+        return candidate.score + area * 0.04 + candidate.wallDirectionCount * 1.7 + 8;
+    }
+    if (archetype === 'exposed-roof') {
+        if (!roof || candidate.overheadCovered || area < 7) return -Infinity;
+        return candidate.score + area * 0.025 + Math.max(0, 3 - candidate.wallDirectionCount) * 1.2;
+    }
+    return candidate.score;
+}
+
+const HOST_FALLBACK_ORDER = Object.freeze({
+    'deep-backroom': ['deep-backroom', 'hanging-storefront', 'sheltered-roof', 'exposed-roof'],
+    'hanging-storefront': ['hanging-storefront', 'sheltered-roof', 'exposed-roof'],
+    'sheltered-roof': ['sheltered-roof', 'exposed-roof'],
+    'exposed-roof': ['exposed-roof', 'sheltered-roof'],
+});
 
 function navigationAudit(playerPhysics, candidate, policy, { moveSpeed, stepSeconds }) {
     const successful = [];
@@ -385,23 +557,52 @@ export function selectSpawnEnclaveCandidate({
 } = {}) {
     if (!playerPhysics || !origin || !locationRuntime?.selectionPolicy || !fabricSpaces?.length) return null;
     const policy = locationRuntime.selectionPolicy;
-    const structural = fabricSpaceSamples(playerPhysics, origin, policy, fabricSpaces)
-        .slice(0, Math.max(1, policy.maxNavigationCandidates));
-    let best = null;
-    for (const candidate of structural) {
+    const desiredHostArchetype = chooseSpawnHostArchetype(spaceSelectionKey(locationRuntime, fabricSpaces));
+    const structural = fabricSpaceSamples(playerPhysics, origin, policy, fabricSpaces);
+    const order = HOST_FALLBACK_ORDER[desiredHostArchetype] ?? ['exposed-roof'];
+
+    for (const hostArchetype of order) {
+        const pool = structural
+            .map(candidate => ({ candidate, fit: archetypeFitScore(candidate, hostArchetype) }))
+            .filter(item => Number.isFinite(item.fit))
+            .sort((a, b) => b.fit - a.fit || a.candidate.radius - b.candidate.radius)
+            .slice(0, Math.max(1, policy.maxNavigationCandidates));
+        let best = null;
+        for (const item of pool) {
+            const candidate = item.candidate;
+            const nav = navigationAudit(playerPhysics, candidate, policy, { moveSpeed, stepSeconds });
+            if (nav.successful.length < policy.minNavigableHeadings) continue;
+            const branchingBonus = nav.successful.length >= 3 && nav.successful.length <= 6 ? 4 : 0;
+            const verticalChoiceBonus = nav.upRoutes > 0 && nav.downRoutes > 0 ? 9 : 0;
+            const seclusionBonus = hostArchetype === 'deep-backroom'
+                ? (nav.successful.length <= 5 ? 7 : -Math.max(0, nav.successful.length - 5) * 3)
+                : 0;
+            const finalScore = item.fit
+                + nav.successful.length * 2.2
+                + nav.verticalRoutes * 3.0
+                + verticalChoiceBonus
+                + branchingBonus
+                + seclusionBonus;
+            const result = { ...candidate, navigation: nav, finalScore, desiredHostArchetype, hostArchetype };
+            if (!best || result.finalScore > best.finalScore) best = result;
+        }
+        if (best) return best;
+    }
+
+    // Last-resort fabric candidate: preserve the old safety contract rather than
+    // failing the page because this particular chunk lacked the rolled archetype.
+    for (const candidate of structural.slice(0, Math.max(1, policy.maxNavigationCandidates))) {
         const nav = navigationAudit(playerPhysics, candidate, policy, { moveSpeed, stepSeconds });
         if (nav.successful.length < policy.minNavigableHeadings) continue;
-        const branchingBonus = nav.successful.length >= 3 && nav.successful.length <= 6 ? 4 : 0;
-        const verticalChoiceBonus = nav.upRoutes > 0 && nav.downRoutes > 0 ? 9 : 0;
-        const finalScore = candidate.score
-            + nav.successful.length * 2.2
-            + nav.verticalRoutes * 3.0
-            + verticalChoiceBonus
-            + branchingBonus;
-        const result = { ...candidate, navigation: nav, finalScore };
-        if (!best || result.finalScore > best.finalScore) best = result;
+        return {
+            ...candidate,
+            navigation: nav,
+            finalScore: candidate.score + nav.successful.length * 2.2 + nav.verticalRoutes * 3,
+            desiredHostArchetype,
+            hostArchetype: candidate.space?.surfaceClass === 'roof' ? 'exposed-roof' : 'interior-fallback',
+        };
     }
-    return best;
+    return null;
 }
 
 function relaxedFabricRuntime(locationRuntime) {
@@ -411,7 +612,7 @@ function relaxedFabricRuntime(locationRuntime) {
         ...locationRuntime,
         selectionPolicy: {
             ...policy,
-            // The TV/refuge identity is required; the old authored district's
+            // The hangout identity is optional; the old authored district's
             // very specific rooftop fingerprint is not. Prefer the full policy,
             // then accept any ordinary streamed roof that is safely navigable.
             requireFabricConnector: false,
@@ -489,6 +690,22 @@ export function provePlayableSpawn({
                 reservations: enclave.space.reservations,
                 existingDetailReservations: enclave.space.existingDetailReservations,
                 nearbyWalls: enclave.space.nearbyWalls,
+                overheadPatches: enclave.space.overheadPatches,
+                supportAreaM2: enclave.space.supportAreaM2,
+                largestSupportPatchAreaM2: enclave.space.largestSupportPatchAreaM2,
+                maxSupportSpanM: enclave.space.maxSupportSpanM,
+                maxWallSpanM: enclave.space.maxWallSpanM,
+                overheadCovered: enclave.overheadCovered,
+                overheadClearanceM: enclave.overheadClearanceM,
+                wallDirectionCount: enclave.wallDirectionCount,
+                edgeDepthM: enclave.edgeDepthM,
+                ceilingRooted: enclave.space.ceilingRooted,
+                retailLike: enclave.space.retailLike,
+                storefrontLike: enclave.space.storefrontLike,
+                physicalUseFamily: enclave.space.physicalUseFamily,
+                programArchitectureId: enclave.space.programArchitectureId,
+                hostArchetype: enclave.hostArchetype,
+                desiredHostArchetype: enclave.desiredHostArchetype,
             };
             const routeFan = enclave.navigation.successful;
             const proof = {
@@ -505,6 +722,15 @@ export function provePlayableSpawn({
                 locationSelection: {
                     mode: preferredEnclave ? 'fabric-space:elevated-roof-enclave' : 'fabric-space:ordinary-roof-fallback',
                     score: enclave.finalScore,
+                    desiredHostArchetype: enclave.desiredHostArchetype,
+                    hostArchetype: enclave.hostArchetype,
+                    surfaceClass: enclave.space.surfaceClass,
+                    supportAreaM2: enclave.space.supportAreaM2,
+                    largestSupportPatchAreaM2: enclave.space.largestSupportPatchAreaM2,
+                    overheadCovered: enclave.overheadCovered,
+                    overheadClearanceM: enclave.overheadClearanceM,
+                    wallDirectionCount: enclave.wallDirectionCount,
+                    edgeDepthM: enclave.edgeDepthM,
                     elevationAboveRequestedM: enclave.elevation,
                     edgeSupportedDirections: enclave.edgeSupportedDirections,
                     higherContextDirections: enclave.higherContextDirections,
@@ -524,6 +750,8 @@ export function provePlayableSpawn({
                         moduleKey: hostSpace.moduleKey,
                         surfaceClass: hostSpace.surfaceClass,
                         exposure: hostSpace.exposure,
+                        hostArchetype: hostSpace.hostArchetype,
+                        desiredHostArchetype: hostSpace.desiredHostArchetype,
                         connectorIds: [...hostSpace.connectorIds],
                     },
                 },

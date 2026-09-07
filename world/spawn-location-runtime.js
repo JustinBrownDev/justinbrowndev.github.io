@@ -56,21 +56,96 @@ function clonePlain(value) {
     return value == null ? value : JSON.parse(JSON.stringify(value));
 }
 
+function finite(value, fallback = 0) {
+    return Number.isFinite(value) ? value : fallback;
+}
+
 export const START_SCENE_PROFILES = Object.freeze([
-    Object.freeze({ id: 'big-tv-den', weight: 1.05, mediaFamily: 'spawn.media.television', mediaScale: 1.25, seatRange: [3, 4], detailBudget: 6 }),
-    Object.freeze({ id: 'small-tv-break', weight: 1.15, mediaFamily: 'spawn.media.television', mediaScale: 0.78, seatRange: [2, 3], detailBudget: 4 }),
-    Object.freeze({ id: 'workbench-tv', weight: 1.0, mediaFamily: 'spawn.media.television', mediaScale: 0.98, seatRange: [2, 3], detailBudget: 6 }),
-    Object.freeze({ id: 'radio-night', weight: 1.0, mediaFamily: 'spawn.media.radio', mediaScale: 1.0, seatRange: [2, 3], detailBudget: 5 }),
-    Object.freeze({ id: 'small-radio-lookout', weight: 0.8, mediaFamily: 'spawn.media.radio', mediaScale: 0.82, seatRange: [2, 2], detailBudget: 3 }),
+    // Exposed roofs stay human-scale most of the time, with a rare oversized
+    // object that still reads as something dragged outside rather than a facade.
+    Object.freeze({ id: 'small-tv-roof', hostArchetypes: ['exposed-roof'], weight: 1.15, mediaFamily: 'spawn.media.television', mediaScale: 0.78, supportScale: 1.0, seatRange: [2, 3], detailBudget: 3, seatRadiiM: [1.25, 1.55, 1.85], vocabularyTags: ['portable', 'patio', 'cheap', 'folding', 'improvised', 'weather'] }),
+    Object.freeze({ id: 'normal-tv-roof', hostArchetypes: ['exposed-roof'], weight: 1.35, mediaFamily: 'spawn.media.television', mediaScale: 1.0, supportScale: 1.0, seatRange: [2, 3], detailBudget: 4, seatRadiiM: [1.3, 1.65, 1.95], vocabularyTags: ['patio', 'cheap', 'improvised', 'rooftop', 'portable'] }),
+    Object.freeze({ id: 'big-tv-roof', hostArchetypes: ['exposed-roof'], weight: 0.9, mediaFamily: 'spawn.media.television', mediaScale: 1.25, supportScale: 1.05, seatRange: [2, 3], detailBudget: 4, seatRadiiM: [1.45, 1.8, 2.15], minHostAreaM2: 9, vocabularyTags: ['industrial', 'salvaged', 'improvised', 'patio'] }),
+    Object.freeze({ id: 'super-big-tv-roof', hostArchetypes: ['exposed-roof'], weight: 0.34, mediaFamily: 'spawn.media.television', mediaScale: 1.75, supportScale: 1.18, seatRange: [2, 4], detailBudget: 5, seatRadiiM: [1.75, 2.15, 2.55], minHostAreaM2: 14, vocabularyTags: ['industrial', 'salvaged', 'construction', 'bench'] }),
+    Object.freeze({ id: 'radio-roof', hostArchetypes: ['exposed-roof'], weight: 0.92, mediaFamily: 'spawn.media.radio', mediaScale: 0.9, supportScale: 1.0, seatRange: [2, 3], detailBudget: 4, seatRadiiM: [1.2, 1.5, 1.8], vocabularyTags: ['portable', 'cheap', 'folding', 'patio', 'communications'] }),
+
+    // An actual overhead slab/mass earns the next scale family.
+    Object.freeze({ id: 'super-big-shelter', hostArchetypes: ['sheltered-roof'], weight: 0.75, mediaFamily: 'spawn.media.television', mediaScale: 1.75, supportScale: 1.15, seatRange: [2, 4], detailBudget: 5, seatRadiiM: [1.7, 2.1, 2.5], minHostAreaM2: 14, requireOverhead: true, vocabularyTags: ['workshop', 'industrial', 'folding', 'repurposed', 'warm', 'tarp'] }),
+    Object.freeze({ id: 'mega-big-shelter', hostArchetypes: ['sheltered-roof'], weight: 1.55, mediaFamily: 'spawn.media.television', mediaScale: [2.45, 2.1, 1.8], supportScale: 1.25, seatRange: [3, 4], detailBudget: 6, seatRadiiM: [2.0, 2.55, 3.1], minHostAreaM2: 20, minContiguousAreaM2: 18, requireOverhead: true, mediaRecipes: ['flat-screen'], vocabularyTags: ['workshop', 'industrial', 'repurposed', 'bench', 'warm', 'repair'] }),
+    Object.freeze({ id: 'radio-under-shelter', hostArchetypes: ['sheltered-roof'], weight: 0.42, mediaFamily: 'spawn.media.radio', mediaScale: 1.05, supportScale: 1.0, seatRange: [2, 4], detailBudget: 5, seatRadiiM: [1.25, 1.6, 2.0], minHostAreaM2: 10, requireOverhead: true, vocabularyTags: ['workshop', 'industrial', 'office', 'repair', 'communications'] }),
+
+    // GIGA belongs to a real retail/frontage room, preferably in hanging fabric.
+    Object.freeze({ id: 'giga-shopfront', hostArchetypes: ['hanging-storefront'], weight: 1.0, mediaFamily: 'spawn.media.television', mediaScale: [4.0, 3.2, 2.2], supportScale: 1.15, seatRange: [3, 4], detailBudget: 6, seatRadiiM: [2.6, 3.25, 4.0], minHostAreaM2: 30, minContiguousAreaM2: 24, minWallSpanM: 3.8, requireOverhead: true, mediaVariantIds: ['tv.flat.wall-salvage'], vocabularyTags: ['retail', 'diner', 'chrome', 'office', 'repurposed', 'takeout', 'reading'] }),
+
+    // TERRA is deliberately extreme and only exists in a large, enclosed,
+    // overhead-covered interior host. The host-selection roll targets this class
+    // only ~1.2% of worlds; failed eligibility steps down rather than forcing it.
+    Object.freeze({ id: 'terra-backroom', hostArchetypes: ['deep-backroom'], weight: 1.0, mediaFamily: 'spawn.media.television', mediaScale: [10.0, 4.9, 3.0], supportScale: 1.25, seatRange: [4, 4], detailBudget: 6, seatRadiiM: [3.6, 4.4, 5.2], minHostAreaM2: 110, minContiguousAreaM2: 96, minHostSpanM: 10.0, minWallSpanM: 9.2, requireOverhead: true, mediaVariantIds: ['tv.flat.wall-salvage'], vocabularyTags: ['office', 'institutional', 'workshop', 'industrial', 'repair', 'fluorescent', 'bench'] }),
 ]);
 
-function pickStartProfile(rootSeed) {
-    return weightedPick(mulberry32(rootSeed ^ 0x6a09e667), START_SCENE_PROFILES) ?? START_SCENE_PROFILES[0];
+function profileFitsHost(profile, hostSpace) {
+    if (!profile || !hostSpace) return true;
+    const archetype = hostSpace.hostArchetype ?? 'exposed-roof';
+    if (profile.hostArchetypes?.length && !profile.hostArchetypes.includes(archetype)) return false;
+    if (profile.requireOverhead && hostSpace.overheadCovered !== true) return false;
+    if (Number.isFinite(profile.minHostAreaM2) && finite(Number(hostSpace.supportAreaM2), 0) + 1e-6 < profile.minHostAreaM2) return false;
+    if (Number.isFinite(profile.minContiguousAreaM2) && finite(Number(hostSpace.largestSupportPatchAreaM2), 0) + 1e-6 < profile.minContiguousAreaM2) return false;
+    if (Number.isFinite(profile.minHostSpanM) && finite(Number(hostSpace.maxSupportSpanM), 0) + 1e-6 < profile.minHostSpanM) return false;
+    if (Number.isFinite(profile.minWallSpanM) && finite(Number(hostSpace.maxWallSpanM), 0) + 1e-6 < profile.minWallSpanM) return false;
+    return true;
+}
+
+function pickStartProfile(rootSeed, hostSpace = null) {
+    // No host means we do not know that any oversized scene can physically fit.
+    // Keep unknown/fallback composition conservative; production binding passes
+    // the selected host and unlocks larger place-conditioned tiers there.
+    const evaluatedHost = hostSpace ?? {
+        hostArchetype: 'exposed-roof', supportAreaM2: 0, largestSupportPatchAreaM2: 0,
+        maxWallSpanM: 0, overheadCovered: false, nearbyWalls: [],
+    };
+    const matching = START_SCENE_PROFILES.filter(profile => profileFitsHost(profile, evaluatedHost));
+    const pool = matching.length ? matching : START_SCENE_PROFILES.filter(profile => profile.id === 'normal-tv-roof' || profile.id === 'radio-roof');
+    return weightedPick(mulberry32(rootSeed ^ 0x6a09e667), pool) ?? START_SCENE_PROFILES[0];
 }
 
 function scaledDimensions(dimensions, scale) {
-    const factor = Math.max(0.55, Math.min(1.5, Number(scale) || 1));
-    return dimensions.map(value => Number((value * factor).toFixed(4)));
+    const factors = Array.isArray(scale)
+        ? [0, 1, 2].map(index => Math.max(0.45, Math.min(16.0, Number(scale[index]) || 1)))
+        : Array(3).fill(Math.max(0.45, Math.min(16.0, Number(scale) || 1)));
+    return dimensions.map((value, index) => Number((value * factors[index]).toFixed(4)));
+}
+
+function pickVariantForProfile(rng, variants, profile, { media = false, hostSpace = null } = {}) {
+    let pool = [...variants];
+    if (media && hostSpace) {
+        const compatible = pool.filter(variant => {
+            if (variant?.placement?.mount !== 'wall') return true;
+            const width = scaledDimensions(variant.dimensionsM, profile?.mediaScale ?? 1)[0];
+            return (hostSpace.nearbyWalls ?? []).some(wall => {
+                const dx = Number(wall?.x2) - Number(wall?.x1);
+                const dz = Number(wall?.z2) - Number(wall?.z1);
+                return Number.isFinite(dx) && Number.isFinite(dz) && Math.hypot(dx, dz) >= width + 0.18;
+            });
+        });
+        if (compatible.length) pool = compatible;
+    }
+    if (media && profile?.mediaVariantIds?.length) {
+        const ids = new Set(profile.mediaVariantIds);
+        const filtered = pool.filter(variant => ids.has(variant.id));
+        if (filtered.length) pool = filtered;
+    }
+    if (media && profile?.mediaRecipes?.length) {
+        const recipes = new Set(profile.mediaRecipes);
+        const filtered = pool.filter(variant => recipes.has(variant.constructionRecipe));
+        if (filtered.length) pool = filtered;
+    }
+    const preferred = new Set(profile?.vocabularyTags ?? []);
+    if (!preferred.size) return weightedPick(rng, pool);
+    const biased = pool.map(variant => {
+        const matches = (variant.tags ?? []).reduce((sum, tag) => sum + (preferred.has(tag) ? 1 : 0), 0);
+        return { ...variant, weight: (Math.max(0.05, Number(variant.weight) || 1)) * (1 + matches * 1.35) };
+    });
+    return weightedPick(rng, biased);
 }
 
 export function compileSpawnLocationRuntime({ location, assets } = {}) {
@@ -140,11 +215,11 @@ export function compileSpawnLocationRuntime({ location, assets } = {}) {
     });
 }
 
-export function createSpawnComposition(runtime, stableKey) {
+export function createSpawnComposition(runtime, stableKey, hostSpace = null) {
     if (!runtime) return null;
     const location = runtime.location;
     const rootSeed = hashString32(`${location.id}:${stableKey}`);
-    const startProfile = pickStartProfile(rootSeed);
+    const startProfile = pickStartProfile(rootSeed, hostSpace);
     const microstories = location.microstories ?? [];
     const story = weightedPick(mulberry32(rootSeed ^ 0x4d3c2b1a), microstories);
     const selected = [];
@@ -169,12 +244,12 @@ export function createSpawnComposition(runtime, stableKey) {
             }
             const family = runtime.familyById.get(familyId);
             const unused = family.variants.filter(variant => !usedVariants.has(variant.id));
-            const variant = weightedPick(rng, unused.length ? unused : family.variants);
+            const variant = pickVariantForProfile(rng, unused.length ? unused : family.variants, startProfile, { media: slot.slot === 'primary-tv', hostSpace });
             usedVariants.add(variant.id);
             const baseDimensions = [...variant.dimensionsM];
             const dimensionsM = slot.slot === 'primary-tv'
                 ? scaledDimensions(baseDimensions, startProfile.mediaScale)
-                : baseDimensions;
+                : (slot.slot === 'tv-support' ? scaledDimensions(baseDimensions, startProfile.supportScale ?? 1) : baseDimensions);
             picks.push({
                 familyId,
                 variantId: variant.id,
@@ -198,6 +273,7 @@ export function createSpawnComposition(runtime, stableKey) {
         locationId: location.id,
         stableKey: String(stableKey),
         story: story ? { id: story.id, story: story.story, bias: [...(story.bias ?? [])] } : null,
+        hostArchetype: hostSpace?.hostArchetype ?? 'exposed-roof',
         startProfile: Object.freeze({ ...startProfile }),
         hardInvariantBeats: (location.hardInvariants ?? []).map(item => item.beat),
         slots: selected,
@@ -212,7 +288,7 @@ export function bindSpawnLocationRuntime(runtime, proof) {
     const hostSpace = clonePlain(proof.fabricSpace ?? proof.locationSelection?.hostSpace ?? null);
     const routeFan = clonePlain(proof.routeFan ?? []);
     const stableKey = `${hostSpace?.spaceId ?? 'local'}:${pose.x.toFixed(3)},${pose.feetY.toFixed(3)},${pose.z.toFixed(3)}`;
-    const composition = createSpawnComposition(runtime, stableKey);
+    const composition = createSpawnComposition(runtime, stableKey, hostSpace);
     const spatialPlan = hostSpace ? compileSpawnSpatialPlan({
         locationId: runtime.location.id,
         pose,

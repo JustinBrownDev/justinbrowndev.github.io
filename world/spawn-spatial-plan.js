@@ -122,8 +122,38 @@ function candidateCenters(hostSpace, halfX, halfZ) {
     return candidates;
 }
 
+function fitsHostHeadroom(hostSpace, box, margin = 0.08) {
+    if (!hostSpace?.overheadCovered || !Number.isFinite(hostSpace?.overheadClearanceM)) return true;
+    const b = normalizedBox(box);
+    return !!b && b.yMax <= hostSpace.surfaceY + hostSpace.overheadClearanceM - margin;
+}
+
 function candidateClear(box, blockers, hostSpace) {
-    return supportedByHost(hostSpace, box) && !blockers.some(other => boxesOverlap(box, other, 0.04));
+    return supportedByHost(hostSpace, box)
+        && fitsHostHeadroom(hostSpace, box)
+        && !blockers.some(other => boxesOverlap(box, other, 0.04));
+}
+
+function wallBlockers(hostSpace) {
+    return (hostSpace?.nearbyWalls ?? []).map((wall, index) => {
+        const thickness = Math.max(0.08, finite(Number(wall?.thickness), 0.14));
+        const x1 = finite(Number(wall?.x1)), x2 = finite(Number(wall?.x2));
+        const z1 = finite(Number(wall?.z1)), z2 = finite(Number(wall?.z2));
+        const minX = Math.min(x1, x2) - thickness * 0.5;
+        const maxX = Math.max(x1, x2) + thickness * 0.5;
+        const minZ = Math.min(z1, z2) - thickness * 0.5;
+        const maxZ = Math.max(z1, z2) + thickness * 0.5;
+        return normalizedBox({
+            id: `host-wall:${index}`,
+            kind: 'host-structural-wall',
+            x: (minX + maxX) * 0.5,
+            z: (minZ + maxZ) * 0.5,
+            halfX: (maxX - minX) * 0.5,
+            halfZ: (maxZ - minZ) * 0.5,
+            yMin: finite(Number(wall?.yMin), hostSpace.surfaceY),
+            yMax: finite(Number(wall?.yMax), hostSpace.surfaceY + 3),
+        });
+    }).filter(Boolean);
 }
 
 function facingRotation(from, target) {
@@ -154,11 +184,14 @@ function wallMountedPose(hostSpace, pose, pick, dims, blockers) {
     const candidates = [];
     const width = dims[0], height = dims[1], depth = dims[2];
     const wallOffset = Math.max(0.01, finite(Number(pick?.placement?.wallOffsetM), 0.03));
-    const centerHeight = Math.max(height * 0.5 + 0.25, finite(Number(pick?.placement?.centerHeightAboveSurfaceM), 1.35));
+    const centerHeight = Math.max(height * 0.5 + 0.18, finite(Number(pick?.placement?.centerHeightAboveSurfaceM), 1.35));
     const hostCenter = { x: finite(hostSpace?.bounds?.x, pose.x), z: finite(hostSpace?.bounds?.z, pose.z) };
     for (const wall of hostSpace?.nearbyWalls ?? []) {
         const x1 = Number(wall?.x1), z1 = Number(wall?.z1), x2 = Number(wall?.x2), z2 = Number(wall?.z2);
         if (![x1, z1, x2, z2].every(Number.isFinite)) continue;
+        const wallYMin = finite(Number(wall?.yMin), hostSpace.surfaceY);
+        const wallYMax = finite(Number(wall?.yMax), hostSpace.surfaceY + 3.15);
+        if (wallYMin > hostSpace.surfaceY + 0.2 || wallYMax < hostSpace.surfaceY + Math.min(height + 0.15, 2.2)) continue;
         const dx = x2 - x1, dz = z2 - z1;
         const length = Math.hypot(dx, dz);
         if (length < width + 0.18) continue;
@@ -176,13 +209,22 @@ function wallMountedPose(hostSpace, pose, pick, dims, blockers) {
             yMin: y - height * 0.5,
             yMax: y + height * 0.5,
         });
+        if (!fitsHostHeadroom(hostSpace, box, 0.10)) continue;
+        if (box.yMax > wallYMax + 0.08) continue;
         if (blockers.some(other => boxesOverlap(box, other, 0.04))) continue;
-        candidates.push({ x, y, z, rotY: facingRotation({ x, z }, { x: x + nx, z: z + nz }), box, score: Math.hypot(x - pose.x, z - pose.z) });
+        const centerBias = -Math.hypot(x - hostCenter.x, z - hostCenter.z) * 0.08;
+        const spanBonus = Math.min(8, length - width);
+        candidates.push({
+            x, y, z,
+            rotY: facingRotation({ x, z }, { x: x + nx, z: z + nz }),
+            box,
+            score: Math.hypot(x - pose.x, z - pose.z) + centerBias + spanBonus,
+        });
     }
     return candidates.sort((a, b) => b.score - a.score || a.x - b.x || a.z - b.z)[0] ?? null;
 }
 
-function chooseSupportPlacement({ locationId, pose, hostSpace, blockers, composition }) {
+function chooseSupportPlacement({ locationId, pose, hostSpace, blockers, wallMountBlockers = blockers, composition }) {
     const supportPick = slotPick(composition, 'tv-support');
     const tvPick = slotPick(composition, 'primary-tv');
     if (!supportPick || !tvPick) return null;
@@ -199,7 +241,7 @@ function chooseSupportPlacement({ locationId, pose, hostSpace, blockers, composi
                 yMax: hostSpace.surfaceY + supportDims[1] + (wallMounted ? 0 : tvDims[1]),
             });
             const distanceFromSpawn = Math.hypot(point.x - pose.x, point.z - pose.z);
-            return { ...point, box, score: distanceFromSpawn };
+            return { ...point, box, score: wallMounted ? -distanceFromSpawn : distanceFromSpawn };
         })
         .filter(candidate => candidateClear(candidate.box, blockers, hostSpace))
         .sort((a, b) => b.score - a.score || a.x - b.x || a.z - b.z);
@@ -213,7 +255,8 @@ function chooseSupportPlacement({ locationId, pose, hostSpace, blockers, composi
     });
 
     if (wallMounted) {
-        const wallPose = wallMountedPose(hostSpace, pose, tvPick, tvDims, blockers);
+        const supportEnvelope = normalizedBox({ ...chosen.box, id: `${locationId}:support-temp-envelope` });
+        const wallPose = wallMountedPose(hostSpace, pose, tvPick, tvDims, [...wallMountBlockers, supportEnvelope]);
         if (!wallPose) return null;
         const tv = makePlacement({
             locationId, slot: 'primary-tv', pick: tvPick, index: 0,
@@ -240,9 +283,11 @@ function chooseSeats({ locationId, pose, hostSpace, blockers, composition, tvPla
     const picks = slot?.picks ?? [];
     if (!picks.length || !tvPlacement) return [];
     const seats = [];
-    const radii = [1.25, 1.55, 1.85];
+    const radii = Array.isArray(composition?.startProfile?.seatRadiiM)
+        ? composition.startProfile.seatRadiiM.map(value => Math.max(0.9, finite(Number(value), 1.55)))
+        : [1.25, 1.55, 1.85];
     const angles = Array.from({ length: 12 }, (_, i) => (i / 12) * Math.PI * 2);
-    for (let index = 0; index < Math.min(3, picks.length); index++) {
+    for (let index = 0; index < Math.min(4, picks.length); index++) {
         const pick = picks[index];
         const dims = dimsOf(pick, [0.56, 0.86, 0.58]);
         const candidates = [];
@@ -257,7 +302,8 @@ function chooseSeats({ locationId, pose, hostSpace, blockers, composition, tvPla
                 if (!candidateClear(box, [...blockers, ...seats.map(item => placementEnvelope(`${item.instanceId}:test`, item))], hostSpace)) continue;
                 const spawnDistance = Math.hypot(x - pose.x, z - pose.z);
                 const tvDistance = Math.hypot(x - tvPlacement.transform.x, z - tvPlacement.transform.z);
-                candidates.push({ x, z, box, score: spawnDistance * 0.2 - Math.abs(tvDistance - 1.55) });
+                const desiredRadius = radii[Math.min(index, radii.length - 1)] ?? 1.55;
+                candidates.push({ x, z, box, score: spawnDistance * 0.12 - Math.abs(tvDistance - desiredRadius) });
             }
         }
         candidates.sort((a, b) => b.score - a.score || a.x - b.x || a.z - b.z);
@@ -421,10 +467,17 @@ export function compileSpawnSpatialPlan({
         ...(hostSpace.existingDetailReservations ?? []).map(normalizedBox).filter(Boolean),
         ...reservations,
     ];
+    const hostWallBlockers = wallBlockers(hostSpace);
+    const furnitureBlockers = [...structuralBlockers, ...hostWallBlockers];
     const placements = [];
     const unresolved = [];
 
-    const tvCluster = chooseSupportPlacement({ locationId, pose, hostSpace, blockers: structuralBlockers, composition });
+    const tvCluster = chooseSupportPlacement({
+        locationId, pose, hostSpace,
+        blockers: furnitureBlockers,
+        wallMountBlockers: structuralBlockers,
+        composition,
+    });
     if (tvCluster) {
         placements.push(tvCluster.support, tvCluster.tv);
         const clusterReservation = normalizedBox({
@@ -436,6 +489,7 @@ export function compileSpawnSpatialPlan({
         });
         reservations.push(clusterReservation);
         structuralBlockers.push(clusterReservation);
+        furnitureBlockers.push(clusterReservation);
         if (tvCluster.tvFootprint) {
             const tvReservation = normalizedBox({
                 ...tvCluster.tvFootprint,
@@ -446,6 +500,7 @@ export function compileSpawnSpatialPlan({
             });
             reservations.push(tvReservation);
             structuralBlockers.push(tvReservation);
+            furnitureBlockers.push(tvReservation);
         }
     } else {
         unresolved.push('primary-tv', 'tv-support');
@@ -453,21 +508,23 @@ export function compileSpawnSpatialPlan({
 
     const tvPlacement = placements.find(item => item.slot === 'primary-tv') ?? null;
     const supportPlacement = placements.find(item => item.slot === 'tv-support') ?? null;
-    const seats = chooseSeats({ locationId, pose, hostSpace, blockers: structuralBlockers, composition, tvPlacement });
+    const seats = chooseSeats({ locationId, pose, hostSpace, blockers: furnitureBlockers, composition, tvPlacement });
     for (const seat of seats) {
         placements.push(seat);
         const envelope = placementEnvelope(`${seat.instanceId}:envelope`, seat);
         reservations.push(envelope);
         structuralBlockers.push(envelope);
+        furnitureBlockers.push(envelope);
     }
     if (seats.length < 2) unresolved.push('seating');
 
-    const light = chooseLight({ locationId, hostSpace, blockers: structuralBlockers, composition, tvPlacement });
+    const light = chooseLight({ locationId, hostSpace, blockers: furnitureBlockers, composition, tvPlacement });
     if (light) {
         placements.push(light);
         const envelope = placementEnvelope(`${light.instanceId}:envelope`, light);
         reservations.push(envelope);
         structuralBlockers.push(envelope);
+        furnitureBlockers.push(envelope);
     } else unresolved.push('warm-practical');
 
     // Keep boot detail deliberately bounded. The corpus can select many authored
@@ -481,7 +538,7 @@ export function compileSpawnSpatialPlan({
         locationId,
         pose,
         hostSpace,
-        blockers: structuralBlockers,
+        blockers: furnitureBlockers,
         composition,
         mediaPlacement: tvPlacement,
         budget: Math.max(0, detailBudget - tabletop.length),
@@ -491,6 +548,7 @@ export function compileSpawnSpatialPlan({
         const envelope = placementEnvelope(`${detail.instanceId}:detail-envelope`, detail, 'spawn-detail-envelope');
         reservations.push(envelope);
         structuralBlockers.push(envelope);
+        furnitureBlockers.push(envelope);
     }
 
     const realizedSlots = [...new Set(placements.map(item => item.slot))];
@@ -499,14 +557,19 @@ export function compileSpawnSpatialPlan({
     // Hangout realization is useful, but never spawn authority. `ready` says the
     // selected media + support cluster fit; main.js may still enter the world when
     // it is false and simply skip this optional authored dressing.
+    const profileId = composition?.startProfile?.id ?? '';
+    const minimumReadySeats = profileId === 'terra-backroom' ? 4 : (profileId === 'giga-shopfront' ? 3 : 0);
+    if (minimumReadySeats && seats.length < minimumReadySeats) unresolved.push('large-hangout-floor-area');
     const mediaReady =
         realizedSlots.includes('primary-tv') &&
-        realizedSlots.includes('tv-support');
+        realizedSlots.includes('tv-support') &&
+        seats.length >= minimumReadySeats;
 
     return Object.freeze({
         schema: 'jweb.spawn-spatial-plan.v2',
         locationId,
         hostSpaceId: hostSpace.spaceId,
+        hostArchetype: hostSpace.hostArchetype ?? composition?.hostArchetype ?? null,
         startProfile: composition?.startProfile ? { ...composition.startProfile } : null,
         mediaKind,
         ready: mediaReady,

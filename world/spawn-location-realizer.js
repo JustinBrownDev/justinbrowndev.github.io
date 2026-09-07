@@ -1,4 +1,4 @@
-import { attachScreenMedia } from './screen-media-runtime.js';
+import { attachScreenMedia, attachAudioMedia } from './screen-media-runtime.js';
 
 function iterablePayloadEntries(input) {
     if (!input) return [];
@@ -196,7 +196,16 @@ function addRadioProxy(THREE, parent, unitBox, bodyMaterial, detailMaterial, pla
     addPart(THREE, group, unitBox, detailMaterial, [w * 0.27, h * 0.18, Math.max(0.016, d * 0.05)], [w * 0.23, h * 0.14, d * 0.515]);
     addPart(THREE, group, unitBox, detailMaterial, [Math.max(0.018, w * 0.05), Math.max(0.025, h * 0.16), Math.max(0.018, d * 0.08)], [w * 0.31, -h * 0.20, d * 0.53]);
     addPart(THREE, group, unitBox, detailMaterial, [Math.max(0.012, w * 0.025), Math.max(0.12, h * 1.3), Math.max(0.012, d * 0.04)], [w * 0.36, h * 0.88, -d * 0.1]);
-    return group;
+    return {
+        group,
+        socket: {
+            schema: 'jweb.audio-socket.v1',
+            id: `${placement.instanceId}:audio`,
+            instanceId: placement.instanceId,
+            role: 'radio-audio',
+            center: { x: placement.transform.x, y: placement.transform.y + h * 0.15, z: placement.transform.z },
+        },
+    };
 }
 
 function addLightProxy(THREE, parent, unitBox, material, placement) {
@@ -281,6 +290,7 @@ export function realizeSpawnLocation({
         spawnSpatialPlanSchema: plan.schema,
         spawnStartProfile: plan.startProfile?.id ?? null,
         spawnMediaKind: plan.mediaKind ?? null,
+        spawnHostArchetype: plan.hostArchetype ?? hostSpace.hostArchetype ?? null,
     };
 
     const unitBox = new THREE.BoxGeometry(1, 1, 1);
@@ -297,6 +307,7 @@ export function realizeSpawnLocation({
         materials: [supportMaterial, mediaMaterial, screenMaterial, seatMaterial, lightMaterial, detailMaterial, accentMaterial, greenMaterial],
     };
     const screenSockets = [];
+    const audioSockets = [];
     const colliders = [];
 
     for (const placement of plan.placements) {
@@ -305,7 +316,8 @@ export function realizeSpawnLocation({
             colliders.push(colliderFromPlacement(placement, hostSpace.surfaceY));
         } else if (placement.slot === 'primary-tv') {
             if (placement.familyId === 'spawn.media.radio') {
-                addRadioProxy(THREE, root, unitBox, mediaMaterial, accentMaterial, placement);
+                const radio = addRadioProxy(THREE, root, unitBox, mediaMaterial, accentMaterial, placement);
+                audioSockets.push(radio.socket);
             } else {
                 const tv = addTvProxy(THREE, root, unitBox, mediaMaterial, screenMaterial, accentMaterial, placement, resources);
                 screenSockets.push(tv.socket);
@@ -338,6 +350,17 @@ export function realizeSpawnLocation({
         } catch (error) {
             console.warn?.('[spawn-location] screen media attachment failed; keeping physical hangout with fallback screen', error);
         }
+    } else if (audioSockets.length) {
+        try {
+            mediaController = attachAudioMedia({
+                THREE,
+                camera,
+                sockets: audioSockets,
+                mediaIntent: boundLocation?.composition?.media ?? null,
+            });
+        } catch (error) {
+            console.warn?.('[spawn-location] radio audio attachment failed; keeping physical radio silent', error);
+        }
     }
 
     let disposed = false;
@@ -345,10 +368,12 @@ export function realizeSpawnLocation({
         schema: 'jweb.spawn-location-realization.v2',
         locationId: boundLocation.locationId,
         hostSpaceId: hostSpace.spaceId,
+        hostArchetype: plan.hostArchetype ?? hostSpace.hostArchetype ?? null,
         startProfile: plan.startProfile?.id ?? null,
-        mediaKind: plan.mediaKind ?? (screenSockets.length ? 'television' : 'radio'),
+        mediaKind: plan.mediaKind ?? (screenSockets.length ? 'television' : (audioSockets.length ? 'radio' : 'none')),
         root,
         screenSockets,
+        audioSockets,
         mediaController,
         reservationsInstalled,
         colliders,

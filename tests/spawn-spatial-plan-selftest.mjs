@@ -44,3 +44,56 @@ console.log('[spawn-spatial-plan-selftest] PASS', {
     keepClears: keepClears.length,
     furnitureEnvelopes: furniture.length,
 });
+
+function enclosedHost(archetype, halfX, halfZ) {
+    const y = 6;
+    const area = halfX * 2 * halfZ * 2;
+    return {
+        spaceId: `test:${archetype}`, surfaceY: y, hostArchetype: archetype,
+        supportAreaM2: area, largestSupportPatchAreaM2: area,
+        maxSupportSpanM: Math.max(halfX, halfZ) * 2,
+        maxWallSpanM: Math.max(halfX, halfZ) * 2,
+        overheadCovered: true, overheadClearanceM: 3.1,
+        bounds: { x: 0, z: 0, halfX, halfZ, minX: -halfX, maxX: halfX, minZ: -halfZ, maxZ: halfZ, yMin: y, yMax: y + 3.1 },
+        supportPatches: [{ x: 0, z: 0, halfX, halfZ, minX: -halfX, maxX: halfX, minZ: -halfZ, maxZ: halfZ, yMin: y, yMax: y + 0.12 }],
+        nearbyWalls: [
+            { x1: -halfX, z1: -halfZ, x2: halfX, z2: -halfZ, yMin: y, yMax: y + 3.1 },
+            { x1: halfX, z1: -halfZ, x2: halfX, z2: halfZ, yMin: y, yMax: y + 3.1 },
+            { x1: halfX, z1: halfZ, x2: -halfX, z2: halfZ, yMin: y, yMax: y + 3.1 },
+            { x1: -halfX, z1: halfZ, x2: -halfX, z2: -halfZ, yMin: y, yMax: y + 3.1 },
+        ],
+        reservations: [], existingDetailReservations: [],
+    };
+}
+
+const terraHost = enclosedHost('deep-backroom', 6.0, 5.0);
+const terraComposition = createSpawnComposition(runtime, 'terra-spatial-plan', terraHost);
+assert.equal(terraComposition.startProfile.id, 'terra-backroom');
+const terraPlan = compileSpawnSpatialPlan({
+    locationId: location.id,
+    pose: { x: 0, z: 0, feetY: 6 },
+    hostSpace: terraHost,
+    routeFan: [],
+    composition: terraComposition,
+});
+assert.ok(terraPlan.ready, `TERRA room should fit a real hangout: ${terraPlan.unresolved.join(', ')}`);
+assert.equal(terraPlan.placements.filter(item => item.slot === 'seating').length, 4, 'TERRA requires four realized seats');
+assert.ok(terraPlan.placements.find(item => item.slot === 'primary-tv')?.dimensionsM?.[0] >= 8.0, 'TERRA screen must remain at least eight meters wide after spatial planning');
+
+const gigaHost = enclosedHost('hanging-storefront', 4.2, 3.7);
+const gigaComposition = createSpawnComposition(runtime, 'giga-spatial-plan', gigaHost);
+assert.equal(gigaComposition.startProfile.id, 'giga-shopfront');
+const gigaPlan = compileSpawnSpatialPlan({
+    locationId: location.id,
+    pose: { x: 0, z: 0, feetY: 6 },
+    hostSpace: gigaHost,
+    routeFan: [],
+    composition: gigaComposition,
+});
+assert.ok(gigaPlan.ready, `GIGA storefront should fit its furniture cluster: ${gigaPlan.unresolved.join(', ')}`);
+assert.ok(gigaPlan.placements.filter(item => item.slot === 'seating').length >= 3, 'GIGA needs a real shop hangout, not only a facade-scale screen');
+
+console.log('[spawn-spatial-plan-selftest] LARGE TIERS PASS', {
+    gigaSeats: gigaPlan.placements.filter(item => item.slot === 'seating').length,
+    terraSeats: terraPlan.placements.filter(item => item.slot === 'seating').length,
+});

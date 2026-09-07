@@ -1,5 +1,6 @@
 import { attachScreenMedia, attachAudioMedia } from './screen-media-runtime.js';
 import { detailSpawnLocation } from './spawn-location-art-detail.js';
+import { attachSpawnTodoDisplay } from './spawn-todo-display.js';
 
 function iterablePayloadEntries(input) {
     if (!input) return [];
@@ -373,6 +374,8 @@ export function realizeSpawnLocation({
         console.warn?.('[spawn-detail-art-r1] detail pass failed; keeping base spawn geometry', error);
     }
 
+    const todoController = attachSpawnTodoDisplay({ THREE, root, plan, hostSpace });
+
     const initialView = orientCameraToSpawnMedia(camera, plan);
 
     scene.add(root);
@@ -416,6 +419,7 @@ export function realizeSpawnLocation({
         screenSockets,
         audioSockets,
         mediaController,
+        todoController,
         initialView,
         reservationsInstalled,
         colliders,
@@ -424,6 +428,7 @@ export function realizeSpawnLocation({
         dispose() {
             if (disposed) return;
             disposed = true;
+            todoController?.dispose?.();
             mediaController?.dispose?.();
             if (Array.isArray(propColliders)) {
                 for (const collider of colliders) {

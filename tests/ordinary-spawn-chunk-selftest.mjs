@@ -18,9 +18,13 @@ assert.doesNotMatch(mainSource, /buildAuthoredCeilingOverlay\s*\(/,
 assert.match(mainSource, /const initialSpawnChunk = await worldChunkStreamer\.buildSpawnChunk\(\);/,
   'player placement must wait only for the first ordinary streamed chunk');
 assert.match(mainSource, /new Map\(\[\[initialSpawnChunk\.key, initialSpawnChunk\.payload\]\]\)/,
-  'spawn proof and TV realization must bind directly to the committed ordinary chunk payload');
-assert.match(mainSource, /const spawnRealization = spawnProof\.location\?\.spatialPlan\?\.ready[\s\S]*?realizeSpawnLocation\(/,
-  'TV refuge must realize on the fast spawn path immediately after roof selection');
+  'spawn proof and optional hangout realization must bind directly to the committed ordinary chunk payload');
+assert.match(mainSource, /const spawnSpatialPlan = spawnProof\.location\?\.spatialPlan[\s\S]*?if \(spawnSpatialPlan\?\.ready\)[\s\S]*?realizeSpawnLocation\(/,
+  'optional hangout must realize on the fast spawn path when its roof plan fits');
+assert.doesNotMatch(mainSource, /required TV refuge could not be realized/,
+  'optional hangout failure must never be a page-fatal startup error');
+assert.match(mainSource, /optional hangout violated arrival capsule; rolling it back and continuing/,
+  'optional hangout collision regressions must roll back instead of aborting boot');
 
 assert.doesNotMatch(fabricSource, /edgeKey === 'H:0:0'|edgeKey === 'H:0:1'|edgeKey === 'V:0:0'|edgeKey === 'V:1:0'/,
   'origin road seams must not receive a bespoke center-lane override');

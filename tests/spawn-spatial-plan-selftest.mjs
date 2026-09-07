@@ -26,11 +26,14 @@ assert.deepEqual(plan1, plan2, 'spatial plan must be deterministic');
 assert.ok(plan1.ready, `plan unresolved: ${plan1.unresolved.join(', ')}`);
 assert.equal(plan1.placements.filter(item => item.slot === 'primary-tv').length, 1);
 assert.equal(plan1.placements.filter(item => item.slot === 'tv-support').length, 1);
-assert.equal(plan1.placements.filter(item => item.slot === 'seating').length, 2);
+assert.ok(['television', 'radio'].includes(plan1.mediaKind), `unexpected media kind ${plan1.mediaKind}`);
+assert.ok(plan1.placements.filter(item => item.slot === 'seating').length >= 2);
+assert.ok(plan1.placements.filter(item => item.slot === 'seating').length <= 3);
 assert.equal(plan1.placements.filter(item => item.slot === 'warm-practical').length, 1);
+assert.ok(plan1.placements.length >= 6, 'bounded first-look detail should add a few authored props');
 
 const keepClears = plan1.reservations.filter(item => item.kind === 'spawn-arrival-keep-clear' || item.kind === 'spawn-route-fan-keep-clear');
-const furniture = plan1.reservations.filter(item => item.kind === 'spawn-furniture-envelope');
+const furniture = plan1.reservations.filter(item => item.kind === 'spawn-furniture-envelope' || item.kind === 'spawn-detail-envelope');
 for (const envelope of furniture) {
     for (const keepClear of keepClears) {
         assert.equal(spawnSpatialPlanOverlaps(envelope, keepClear), false, `${envelope.id} overlaps ${keepClear.id}`);

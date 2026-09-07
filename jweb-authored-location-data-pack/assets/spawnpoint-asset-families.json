@@ -349,6 +349,157 @@
       ]
     },
     {
+      "id": "spawn.media.radio",
+      "label": "Radios and tabletop receivers",
+      "semanticRoles": [
+        "audio-focus",
+        "social-focus",
+        "support-consumer"
+      ],
+      "rules": [
+        "Radio variants replace the television rather than accompany it as a second primary focus.",
+        "Keep the silhouette ordinary, cheap, portable, and repairable.",
+        "Radio geometry may remain visually authored even when no live audio source is attached."
+      ],
+      "variants": [
+        {
+          "id": "radio.vhf-workshop",
+          "label": "Old VHF tabletop radio",
+          "dimensionsM": [
+            0.42,
+            0.2,
+            0.28
+          ],
+          "constructionRecipe": "small-electronic",
+          "tags": [
+            "radio",
+            "communications",
+            "old",
+            "tabletop"
+          ],
+          "materials": [
+            "painted-steel",
+            "black-plastic"
+          ],
+          "weight": 1.1,
+          "placement": {
+            "mount": "surface",
+            "canSupportProps": false,
+            "requiresSupportSurface": true,
+            "supportSocket": "topSurface"
+          }
+        },
+        {
+          "id": "radio.am-fm-woodgrain",
+          "label": "Woodgrain AM/FM receiver",
+          "dimensionsM": [
+            0.54,
+            0.23,
+            0.22
+          ],
+          "constructionRecipe": "small-electronic",
+          "tags": [
+            "radio",
+            "domestic",
+            "woodgrain",
+            "tabletop"
+          ],
+          "materials": [
+            "woodgrain-laminate",
+            "dark-plastic"
+          ],
+          "weight": 1.0,
+          "placement": {
+            "mount": "surface",
+            "canSupportProps": false,
+            "requiresSupportSurface": true,
+            "supportSocket": "topSurface"
+          }
+        },
+        {
+          "id": "radio.portable-black",
+          "label": "Black portable radio",
+          "dimensionsM": [
+            0.31,
+            0.2,
+            0.13
+          ],
+          "constructionRecipe": "small-electronic",
+          "tags": [
+            "radio",
+            "portable",
+            "cheap",
+            "tabletop"
+          ],
+          "materials": [
+            "black-plastic",
+            "metal-grille"
+          ],
+          "weight": 1.0,
+          "placement": {
+            "mount": "surface",
+            "canSupportProps": false,
+            "requiresSupportSurface": true,
+            "supportSocket": "topSurface"
+          }
+        },
+        {
+          "id": "radio.scanner-stack",
+          "label": "Scanner receiver stack",
+          "dimensionsM": [
+            0.36,
+            0.18,
+            0.3
+          ],
+          "constructionRecipe": "small-electronic",
+          "tags": [
+            "radio",
+            "scanner",
+            "communications",
+            "tabletop"
+          ],
+          "materials": [
+            "gray-plastic",
+            "painted-steel"
+          ],
+          "weight": 0.85,
+          "placement": {
+            "mount": "surface",
+            "canSupportProps": false,
+            "requiresSupportSurface": true,
+            "supportSocket": "topSurface"
+          }
+        },
+        {
+          "id": "radio.boombox-small",
+          "label": "Small battered boombox",
+          "dimensionsM": [
+            0.48,
+            0.24,
+            0.18
+          ],
+          "constructionRecipe": "small-electronic",
+          "tags": [
+            "radio",
+            "portable",
+            "cassette",
+            "tabletop"
+          ],
+          "materials": [
+            "gray-plastic",
+            "metal-grille"
+          ],
+          "weight": 0.8,
+          "placement": {
+            "mount": "surface",
+            "canSupportProps": false,
+            "requiresSupportSurface": true,
+            "supportSocket": "topSurface"
+          }
+        }
+      ]
+    },
+    {
       "id": "spawn.support.tv",
       "label": "TV support / refuge shared surfaces",
       "semanticRoles": [

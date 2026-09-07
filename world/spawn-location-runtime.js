@@ -56,6 +56,23 @@ function clonePlain(value) {
     return value == null ? value : JSON.parse(JSON.stringify(value));
 }
 
+export const START_SCENE_PROFILES = Object.freeze([
+    Object.freeze({ id: 'big-tv-den', weight: 1.05, mediaFamily: 'spawn.media.television', mediaScale: 1.25, seatRange: [3, 4], detailBudget: 6 }),
+    Object.freeze({ id: 'small-tv-break', weight: 1.15, mediaFamily: 'spawn.media.television', mediaScale: 0.78, seatRange: [2, 3], detailBudget: 4 }),
+    Object.freeze({ id: 'workbench-tv', weight: 1.0, mediaFamily: 'spawn.media.television', mediaScale: 0.98, seatRange: [2, 3], detailBudget: 6 }),
+    Object.freeze({ id: 'radio-night', weight: 1.0, mediaFamily: 'spawn.media.radio', mediaScale: 1.0, seatRange: [2, 3], detailBudget: 5 }),
+    Object.freeze({ id: 'small-radio-lookout', weight: 0.8, mediaFamily: 'spawn.media.radio', mediaScale: 0.82, seatRange: [2, 2], detailBudget: 3 }),
+]);
+
+function pickStartProfile(rootSeed) {
+    return weightedPick(mulberry32(rootSeed ^ 0x6a09e667), START_SCENE_PROFILES) ?? START_SCENE_PROFILES[0];
+}
+
+function scaledDimensions(dimensions, scale) {
+    const factor = Math.max(0.55, Math.min(1.5, Number(scale) || 1));
+    return dimensions.map(value => Number((value * factor).toFixed(4)));
+}
+
 export function compileSpawnLocationRuntime({ location, assets } = {}) {
     if (!location || !assets) throw new Error('[spawn-location] location and asset corpus are required');
     assertString(location.id, 'location.id');
@@ -127,6 +144,7 @@ export function createSpawnComposition(runtime, stableKey) {
     if (!runtime) return null;
     const location = runtime.location;
     const rootSeed = hashString32(`${location.id}:${stableKey}`);
+    const startProfile = pickStartProfile(rootSeed);
     const microstories = location.microstories ?? [];
     const story = weightedPick(mulberry32(rootSeed ^ 0x4d3c2b1a), microstories);
     const selected = [];
@@ -135,20 +153,33 @@ export function createSpawnComposition(runtime, stableKey) {
     for (let slotIndex = 0; slotIndex < runtime.slots.length; slotIndex++) {
         const slot = runtime.slots[slotIndex];
         const rng = mulberry32(rootSeed ^ hashString32(`${slot.slot}:${slotIndex}`));
-        const [lo, hi] = slot.count;
+        let [lo, hi] = slot.count;
+        if (slot.slot === 'seating' && Array.isArray(startProfile.seatRange)) {
+            lo = Math.max(lo, startProfile.seatRange[0]);
+            hi = Math.min(hi, Math.max(lo, startProfile.seatRange[1]));
+        }
         const count = lo + Math.floor(rng() * (hi - lo + 1));
         const picks = [];
         for (let i = 0; i < count; i++) {
-            const familyId = slot.families[Math.floor(rng() * slot.families.length) % slot.families.length];
+            let familyId;
+            if (slot.slot === 'primary-tv' && slot.families.includes(startProfile.mediaFamily)) {
+                familyId = startProfile.mediaFamily;
+            } else {
+                familyId = slot.families[Math.floor(rng() * slot.families.length) % slot.families.length];
+            }
             const family = runtime.familyById.get(familyId);
             const unused = family.variants.filter(variant => !usedVariants.has(variant.id));
             const variant = weightedPick(rng, unused.length ? unused : family.variants);
             usedVariants.add(variant.id);
+            const baseDimensions = [...variant.dimensionsM];
+            const dimensionsM = slot.slot === 'primary-tv'
+                ? scaledDimensions(baseDimensions, startProfile.mediaScale)
+                : baseDimensions;
             picks.push({
                 familyId,
                 variantId: variant.id,
                 label: variant.label,
-                dimensionsM: [...variant.dimensionsM],
+                dimensionsM,
                 constructionRecipe: variant.constructionRecipe,
                 tags: [...(variant.tags ?? [])],
                 placement: clonePlain(variant.placement ?? null),
@@ -163,10 +194,11 @@ export function createSpawnComposition(runtime, stableKey) {
     }
 
     return Object.freeze({
-        schema: 'jweb.spawn-composition.v1',
+        schema: 'jweb.spawn-composition.v2',
         locationId: location.id,
         stableKey: String(stableKey),
         story: story ? { id: story.id, story: story.story, bias: [...(story.bias ?? [])] } : null,
+        startProfile: Object.freeze({ ...startProfile }),
         hardInvariantBeats: (location.hardInvariants ?? []).map(item => item.beat),
         slots: selected,
         media: clonePlain(location.mediaIntent ?? null),

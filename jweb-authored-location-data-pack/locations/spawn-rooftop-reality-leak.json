@@ -35,7 +35,7 @@
     },
     {
       "beat": "social-media-focus",
-      "rule": "One real-broadcast-capable television or monitor is the social focus, supported plausibly and visible from multiple seats."
+      "rule": "One television/monitor or one radio/receiver is the social media focus; never require both."
     },
     {
       "beat": "human-refuge",
@@ -47,7 +47,7 @@
     },
     {
       "beat": "warm-cool-split",
-      "rule": "Cool moving screen light and at least one warmer practical light overlap without flattening the roof into uniform illumination."
+      "rule": "A warmer practical light anchors the refuge; screen glow joins it when the selected primary media is a television."
     },
     {
       "beat": "skyline-electronics-icon",
@@ -88,7 +88,7 @@
       "role": "spawn threshold",
       "rules": [
         "clear capsule",
-        "first glance sees either TV glow or vacuum-tube silhouette",
+        "first glance sees either the selected media focus or vacuum-tube silhouette",
         "never spawn inside furniture"
       ]
     },
@@ -106,7 +106,7 @@
       "id": "refuge",
       "role": "social cluster",
       "rules": [
-        "TV + support + seats + shared surface",
+        "media focus + shared support/table + seats",
         "slightly asymmetric",
         "tight enough to feel intentional"
       ]
@@ -147,8 +147,10 @@
         1
       ],
       "families": [
-        "spawn.media.television"
-      ]
+        "spawn.media.television",
+        "spawn.media.radio"
+      ],
+      "relationship": "single primary media focus; television or radio selected by deterministic start-scene profile"
     },
     {
       "slot": "tv-support",
@@ -160,7 +162,7 @@
       "families": [
         "spawn.support.tv"
       ],
-      "relationship": "supports primary-tv when that variant requires a surface; otherwise acts as the refuge shared surface"
+      "relationship": "supports the selected primary media when it needs a surface; otherwise acts as the refuge shared surface"
     },
     {
       "slot": "seating",
@@ -378,7 +380,7 @@
       "id": "memory-silhouette",
       "mustExistBeforeFirstStableLook": true,
       "contents": [
-        "TV/support mass",
+        "primary media/support mass",
         "minimum two seats",
         "one practical light proxy",
         "vacuum-tube skyline silhouette",
@@ -410,7 +412,7 @@
       "phase": 4,
       "id": "live-reality",
       "contents": [
-        "official live media embed if available",
+        "official live screen media when a television is selected",
         "muted autoplay",
         "distance-aware activation",
         "nonfatal fallback screen"
@@ -444,8 +446,8 @@
     "local-peak rejection and nested-city context scoring",
     "external media lifecycle separate from world identity"
   ],
-  "successTest": "Across seeds, the player should wake in visibly different elevated enclaves that still read as the same remembered refuge. The spawn must feel embedded in the city, not displayed on its summit: nearby mass, protected footing, television/refuge identity, and several meaningful navigation choices survive even when exact host roof, furniture, utilities, and routes change.",
-  "identity": "A singular player-spawn location: a lived-in elevated roof-level enclave embedded inside the city mass, not perched on the city's highest exposed roof. It is a private late-night refuge with television glow, recent human presence, improvised comfort, working roof infrastructure, and several legible ways to move laterally, vertically, and down into the maze.",
+  "successTest": "Across seeds, the player should wake in visibly different elevated enclaves that still read as the same remembered refuge. The spawn must feel embedded in the city, not displayed on its summit: nearby mass, protected footing, a television or radio hangout focus, and several meaningful navigation choices survive even when exact host roof, furniture, utilities, media scale, and routes change.",
+  "identity": "A singular player-spawn location: a lived-in elevated roof-level enclave embedded inside the city mass, not perched on the city's highest exposed roof. It is a private late-night refuge with a changing television-or-radio focus, recent human presence, improvised comfort, working roof infrastructure, and several legible ways to move laterally and, when the fabric provides them, vertically through the maze.",
   "locationClass": "elevated-roof-enclave",
   "placementGuarantee": {
     "occurrence": "exactly-one-per-world",

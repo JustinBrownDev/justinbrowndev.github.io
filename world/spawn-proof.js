@@ -292,11 +292,21 @@ function fabricSpaceSamples(playerPhysics, origin, policy, spaces) {
 
                 const elevation = space.surfaceY - origin.feetY;
                 const distance = Math.hypot(x - origin.x, z - origin.z);
+                const nearbyWallCount = Math.min(6, space.nearbyWalls?.length ?? 0);
+                const connectorCount = space.connectorIds?.length ?? 0;
                 const peakLike = higherContextDirections === 0
                     && deepDropDirections >= Math.ceil(policy.contextProbeDirections * 0.55);
+                // Prefer a tucked-in roof pocket: nearby walls/masses read as cover,
+                // while one or two connector identities keep it connected without
+                // turning the spawn into a busy interchange. This is a preference,
+                // never a hard admission rule.
+                const shelterScore = nearbyWallCount * 1.6 + Math.min(4, higherContextDirections) * 0.8;
+                const enclaveConnectorScore = connectorCount === 1 ? 3.5 : connectorCount === 2 ? 2 : connectorCount > 2 ? -Math.min(3, connectorCount - 2) : 0;
                 let score = edgeSupportedDirections * 1.5
                     + higherContextDirections * 4
                     + sameOrHigherContextDirections * 0.7
+                    + shelterScore
+                    + enclaveConnectorScore
                     - Math.abs(elevation - policy.preferredElevationAboveOriginM) * 0.22
                     - distance * 0.035;
                 if (peakLike) score -= policy.localPeakPenalty;
@@ -311,6 +321,9 @@ function fabricSpaceSamples(playerPhysics, origin, policy, spaces) {
                     higherContextDirections,
                     sameOrHigherContextDirections,
                     deepDropDirections,
+                    nearbyWallCount,
+                    connectorCount,
+                    shelterScore,
                     peakLike,
                     contextHeights,
                     space,
@@ -324,6 +337,8 @@ function fabricSpaceSamples(playerPhysics, origin, policy, spaces) {
 function navigationAudit(playerPhysics, candidate, policy, { moveSpeed, stepSeconds }) {
     const successful = [];
     let verticalRoutes = 0;
+    let upRoutes = 0;
+    let downRoutes = 0;
     let bestDistance = 0;
     for (let i = 0; i < policy.navigationDirections; i++) {
         const heading = (i / policy.navigationDirections) * TAU;
@@ -340,7 +355,11 @@ function navigationAudit(playerPhysics, candidate, policy, { moveSpeed, stepSeco
         if (!result.validStart || !result.validEnd || result.distance < policy.navigationDistanceM) continue;
         if (result.end?.grounded === false) continue;
         const deltaY = (result.end?.feetY ?? candidate.feetY) - candidate.feetY;
-        if (Math.abs(deltaY) >= policy.verticalRouteDeltaM) verticalRoutes++;
+        if (Math.abs(deltaY) >= policy.verticalRouteDeltaM) {
+            verticalRoutes++;
+            if (deltaY > 0) upRoutes++;
+            else downRoutes++;
+        }
         successful.push({
             heading,
             distance: result.distance,
@@ -353,7 +372,7 @@ function navigationAudit(playerPhysics, candidate, policy, { moveSpeed, stepSeco
             } : null,
         });
     }
-    return { successful, verticalRoutes, bestDistance };
+    return { successful, verticalRoutes, upRoutes, downRoutes, bestDistance };
 }
 
 export function selectSpawnEnclaveCandidate({
@@ -372,7 +391,13 @@ export function selectSpawnEnclaveCandidate({
     for (const candidate of structural) {
         const nav = navigationAudit(playerPhysics, candidate, policy, { moveSpeed, stepSeconds });
         if (nav.successful.length < policy.minNavigableHeadings) continue;
-        const finalScore = candidate.score + nav.successful.length * 3 + nav.verticalRoutes * 2.5;
+        const branchingBonus = nav.successful.length >= 3 && nav.successful.length <= 6 ? 4 : 0;
+        const verticalChoiceBonus = nav.upRoutes > 0 && nav.downRoutes > 0 ? 9 : 0;
+        const finalScore = candidate.score
+            + nav.successful.length * 2.2
+            + nav.verticalRoutes * 3.0
+            + verticalChoiceBonus
+            + branchingBonus;
         const result = { ...candidate, navigation: nav, finalScore };
         if (!best || result.finalScore > best.finalScore) best = result;
     }
@@ -463,6 +488,7 @@ export function provePlayableSpawn({
                 connectorIds: enclave.space.connectorIds,
                 reservations: enclave.space.reservations,
                 existingDetailReservations: enclave.space.existingDetailReservations,
+                nearbyWalls: enclave.space.nearbyWalls,
             };
             const routeFan = enclave.navigation.successful;
             const proof = {
@@ -484,9 +510,13 @@ export function provePlayableSpawn({
                     higherContextDirections: enclave.higherContextDirections,
                     sameOrHigherContextDirections: enclave.sameOrHigherContextDirections,
                     deepDropDirections: enclave.deepDropDirections,
+                    nearbyWallCount: enclave.nearbyWallCount,
+                    shelterScore: enclave.shelterScore,
                     peakLike: enclave.peakLike,
                     navigableHeadings: routeFan.length,
                     verticalRoutes: enclave.navigation.verticalRoutes,
+                    upRoutes: enclave.navigation.upRoutes,
+                    downRoutes: enclave.navigation.downRoutes,
                     hostSpace: {
                         spaceId: hostSpace.spaceId,
                         siteId: hostSpace.siteId,

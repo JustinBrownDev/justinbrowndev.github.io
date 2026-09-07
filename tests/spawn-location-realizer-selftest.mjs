@@ -69,3 +69,34 @@ console.log('[spawn-location-realizer-selftest] PASS', {
     colliders: result.colliderCount,
     reservationsInstalled: result.reservationsInstalled,
 });
+
+const radioPlan = structuredClone(plan);
+radioPlan.schema = 'jweb.spawn-spatial-plan.v2';
+radioPlan.mediaKind = 'radio';
+radioPlan.startProfile = { id: 'radio-night' };
+const radioPlacement = radioPlan.placements.find(item => item.slot === 'primary-tv');
+radioPlacement.familyId = 'spawn.media.radio';
+radioPlacement.variantId = 'radio.vhf-workshop';
+radioPlacement.tags = ['radio', 'communications', 'old'];
+radioPlacement.dimensionsM = [0.42, 0.2, 0.28];
+const radioBoundLocation = {
+    ...boundLocation,
+    spatialPlan: radioPlan,
+    composition: { media: null },
+};
+const radioPayload = { entity: { id: 'entity-test' }, physics: { circulationReservations: [] } };
+const radioFabricPayloads = new Map([['site-test', radioPayload]]);
+const radioScene = { children: [], add(node) { this.children.push(node); }, remove(node) { const i = this.children.indexOf(node); if (i >= 0) this.children.splice(i, 1); } };
+const radioColliders = [];
+const radioResult = realizeSpawnLocation({ THREE, scene: radioScene, boundLocation: radioBoundLocation, fabricPayloads: radioFabricPayloads, propColliders: radioColliders });
+assert.ok(radioResult);
+assert.equal(radioResult.mediaKind, 'radio');
+assert.equal(radioResult.startProfile, 'radio-night');
+assert.equal(radioResult.screenSockets.length, 0, 'radio-only start must not fabricate a television screen socket');
+assert.equal(radioResult.mediaController, null, 'radio-only start must not start screen-media runtime');
+assert.equal(radioScene.children.length, 1);
+assert.ok(radioResult.root.children.length >= 5, 'radio hangout should still contain support, seats, lamp, and media geometry');
+radioResult.dispose();
+assert.equal(radioScene.children.length, 0, 'dispose must remove optional hangout geometry');
+assert.equal(radioColliders.length, 0, 'dispose must remove optional hangout colliders');
+console.log('[spawn-location-realizer-selftest] RADIO PASS', { mediaKind: radioResult.mediaKind });

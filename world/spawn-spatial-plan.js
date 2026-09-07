@@ -140,6 +140,7 @@ function makePlacement({ locationId, slot, pick, index, x, y, z, rotY = 0, relat
         variantId: pick?.variantId ?? null,
         label: pick?.label ?? slot,
         constructionRecipe: pick?.constructionRecipe ?? null,
+        tags: [...(pick?.tags ?? [])],
         dimensionsM,
         placement: pick?.placement ?? null,
         mount: pick?.placement?.mount ?? null,
@@ -241,7 +242,7 @@ function chooseSeats({ locationId, pose, hostSpace, blockers, composition, tvPla
     const seats = [];
     const radii = [1.25, 1.55, 1.85];
     const angles = Array.from({ length: 12 }, (_, i) => (i / 12) * Math.PI * 2);
-    for (let index = 0; index < Math.min(2, picks.length); index++) {
+    for (let index = 0; index < Math.min(3, picks.length); index++) {
         const pick = picks[index];
         const dims = dimsOf(pick, [0.56, 0.86, 0.58]);
         const candidates = [];
@@ -299,6 +300,98 @@ function chooseLight({ locationId, hostSpace, blockers, composition, tvPlacement
         relationTo: tvPlacement.instanceId,
         fallbackDims: dims,
     });
+}
+
+
+function slotPicks(composition, slot) {
+    return composition?.slots?.find(item => item.slot === slot)?.picks ?? [];
+}
+
+function rotateOffset(rotY, x, z) {
+    const sin = Math.sin(rotY || 0), cos = Math.cos(rotY || 0);
+    return { x: x * cos + z * sin, z: z * cos - x * sin };
+}
+
+function chooseTabletopDetails({ locationId, composition, supportPlacement, budget = 3 }) {
+    if (!supportPlacement || budget <= 0) return [];
+    const [supportW, supportH, supportD] = supportPlacement.dimensionsM;
+    const topY = supportPlacement.transform.y + supportH * 0.5;
+    const offsets = [
+        [-0.24, -0.14], [0.22, 0.12], [0.0, 0.2], [0.28, -0.16], [-0.3, 0.17],
+    ];
+    const queue = [
+        ...slotPicks(composition, 'drink-evidence').slice(0, 2),
+        ...slotPicks(composition, 'personal-evidence').slice(0, 2),
+        ...slotPicks(composition, 'power-explanation').slice(0, 1),
+    ];
+    const placements = [];
+    for (const pick of queue) {
+        if (placements.length >= budget) break;
+        const dims = dimsOf(pick, [0.12, 0.12, 0.12]);
+        if (dims[0] > supportW * 0.5 || dims[2] > supportD * 0.6 || dims[1] > 0.55) continue;
+        const [oxN, ozN] = offsets[placements.length % offsets.length];
+        const localX = oxN * Math.max(0.25, supportW);
+        const localZ = ozN * Math.max(0.22, supportD);
+        const offset = rotateOffset(supportPlacement.transform.rotY, localX, localZ);
+        placements.push(makePlacement({
+            locationId,
+            slot: pick.familyId === 'spawn.power-and-cables' ? 'power-explanation' :
+                (pick.familyId === 'spawn.drink-and-table-clutter' ? 'drink-evidence' : 'personal-evidence'),
+            pick,
+            index: placements.length,
+            x: supportPlacement.transform.x + offset.x,
+            y: topY + dims[1] * 0.5 + 0.012,
+            z: supportPlacement.transform.z + offset.z,
+            rotY: supportPlacement.transform.rotY + ((placements.length % 2) ? 0.16 : -0.12),
+            relationTo: supportPlacement.instanceId,
+            fallbackDims: dims,
+        }));
+    }
+    return placements;
+}
+
+function chooseFloorDetails({ locationId, pose, hostSpace, blockers, composition, mediaPlacement, budget = 2 }) {
+    if (!mediaPlacement || budget <= 0) return [];
+    const source = [
+        ['softening', slotPicks(composition, 'softening')],
+        ['plant-softener', slotPicks(composition, 'plant-softener')],
+        ['roof-credibility', slotPicks(composition, 'roof-credibility')],
+    ];
+    const placements = [];
+    const localBlockers = [...blockers];
+    for (const [slot, picks] of source) {
+        for (const pick of picks) {
+            if (placements.length >= budget) return placements;
+            const dims = dimsOf(pick, [0.3, 0.3, 0.3]);
+            if (dims[0] > 1.15 || dims[2] > 1.15 || dims[1] > 1.45) continue;
+            const halfX = dims[0] * 0.5 + 0.07, halfZ = dims[2] * 0.5 + 0.07;
+            const candidates = candidateCenters(hostSpace, halfX, halfZ)
+                .map(point => {
+                    const box = normalizedBox({
+                        x: point.x, z: point.z, halfX, halfZ,
+                        yMin: hostSpace.surfaceY, yMax: hostSpace.surfaceY + dims[1],
+                    });
+                    const mediaDistance = Math.hypot(point.x - mediaPlacement.transform.x, point.z - mediaPlacement.transform.z);
+                    const spawnDistance = Math.hypot(point.x - pose.x, point.z - pose.z);
+                    return { ...point, box, score: -Math.abs(mediaDistance - 2.1) + spawnDistance * 0.05 };
+                })
+                .filter(candidate => candidateClear(candidate.box, localBlockers, hostSpace))
+                .sort((a, b) => b.score - a.score || a.x - b.x || a.z - b.z);
+            const chosen = candidates[0];
+            if (!chosen) continue;
+            const placement = makePlacement({
+                locationId, slot, pick, index: placements.length,
+                x: chosen.x, y: hostSpace.surfaceY + dims[1] * 0.5, z: chosen.z,
+                rotY: facingRotation(chosen, mediaPlacement.transform),
+                relationTo: mediaPlacement.instanceId,
+                fallbackDims: dims,
+            });
+            placements.push(placement);
+            localBlockers.push(normalizedBox({ ...chosen.box, id: `${placement.instanceId}:detail-envelope` }));
+            break;
+        }
+    }
+    return placements;
 }
 
 export function compileSpawnSpatialPlan({
@@ -359,6 +452,7 @@ export function compileSpawnSpatialPlan({
     }
 
     const tvPlacement = placements.find(item => item.slot === 'primary-tv') ?? null;
+    const supportPlacement = placements.find(item => item.slot === 'tv-support') ?? null;
     const seats = chooseSeats({ locationId, pose, hostSpace, blockers: structuralBlockers, composition, tvPlacement });
     for (const seat of seats) {
         placements.push(seat);
@@ -373,33 +467,56 @@ export function compileSpawnSpatialPlan({
         placements.push(light);
         const envelope = placementEnvelope(`${light.instanceId}:envelope`, light);
         reservations.push(envelope);
+        structuralBlockers.push(envelope);
     } else unresolved.push('warm-practical');
 
-    const realizedSlots = [...new Set(placements.map(item => item.slot))];
+    // Keep boot detail deliberately bounded. The corpus can select many authored
+    // props; the first stable look only realizes a small deterministic sample.
+    const detailBudget = Math.max(0, Math.min(6, Math.floor(composition?.startProfile?.detailBudget ?? 4)));
+    const tabletop = chooseTabletopDetails({
+        locationId, composition, supportPlacement, budget: Math.min(3, detailBudget),
+    });
+    placements.push(...tabletop);
+    const floorDetails = chooseFloorDetails({
+        locationId,
+        pose,
+        hostSpace,
+        blockers: structuralBlockers,
+        composition,
+        mediaPlacement: tvPlacement,
+        budget: Math.max(0, detailBudget - tabletop.length),
+    });
+    for (const detail of floorDetails) {
+        placements.push(detail);
+        const envelope = placementEnvelope(`${detail.instanceId}:detail-envelope`, detail, 'spawn-detail-envelope');
+        reservations.push(envelope);
+        structuralBlockers.push(envelope);
+    }
 
-    // Boot authority is deliberately smaller than refuge completeness.
-    // The player only waits for the TV cluster. Seats/light are best-effort
-    // dressing and must never make an otherwise playable ordinary chunk fatal.
-    const tvReady =
+    const realizedSlots = [...new Set(placements.map(item => item.slot))];
+    const mediaKind = tvPlacement?.familyId === 'spawn.media.radio' ? 'radio' : (tvPlacement ? 'television' : 'none');
+
+    // Hangout realization is useful, but never spawn authority. `ready` says the
+    // selected media + support cluster fit; main.js may still enter the world when
+    // it is false and simply skip this optional authored dressing.
+    const mediaReady =
         realizedSlots.includes('primary-tv') &&
         realizedSlots.includes('tv-support');
 
     return Object.freeze({
-        schema: 'jweb.spawn-spatial-plan.v1',
+        schema: 'jweb.spawn-spatial-plan.v2',
         locationId,
         hostSpaceId: hostSpace.spaceId,
-
-        // Safe ordinary roof + TV/support is enough to enter the world.
-        ready: tvReady,
-
-        // Diagnostics/refinement can still tell whether the whole refuge fit.
+        startProfile: composition?.startProfile ? { ...composition.startProfile } : null,
+        mediaKind,
+        ready: mediaReady,
         complete: unresolved.length === 0,
-
         unresolved: [...new Set(unresolved)],
         reservations,
         placements,
         realizedSlots,
     });
+
 }
 
 export function spawnSpatialPlanOverlaps(a, b, pad = 0) {

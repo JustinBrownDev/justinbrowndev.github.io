@@ -33,13 +33,16 @@ const physics = {
         const heading = Math.atan2(dz, dx);
         // Keep a broad but non-omnidirectional route fan so the refuge side remains usable.
         const valid = Math.cos(heading) > -0.55 || Math.sin(heading) > 0.55;
+        let endFeetY = start.feetY;
+        if (valid && Math.cos(heading) > 0.75) endFeetY += 0.9;
+        else if (valid && Math.sin(heading) > 0.75) endFeetY -= 0.9;
         return {
             validStart: true,
             validEnd: valid,
             distance: valid ? distance : Math.min(0.6, distance),
             maxDistance: valid ? distance : Math.min(0.6, distance),
             completedSteps: steps.length,
-            end: { x: start.x + dx, z: start.z + dz, feetY: start.feetY, grounded: true },
+            end: { x: start.x + dx, z: start.z + dz, feetY: endFeetY, grounded: true },
         };
     },
 };
@@ -82,6 +85,8 @@ assert.equal(selected.space.spaceId, 'entity-east:8,0:roof');
 assert.equal(selected.peakLike, false);
 assert.ok(selected.higherContextDirections >= 2);
 assert.ok(selected.navigation.successful.length >= 3);
+assert.ok(selected.navigation.upRoutes > 0, 'selection should recognize an available upward continuation');
+assert.ok(selected.navigation.downRoutes > 0, 'selection should recognize an available downward continuation');
 
 const proof = provePlayableSpawn({ playerPhysics: physics, origin, locationRuntime: runtime, fabricPayloads });
 assert.equal(proof.ok, true);
@@ -90,6 +95,7 @@ assert.equal(proof.locationSelection.mode, 'fabric-space:elevated-roof-enclave')
 assert.equal(proof.locationSelection.hostSpace.spaceId, 'entity-east:8,0:roof');
 assert.equal(proof.location.hostSpace.entityId, 'entity-east');
 assert.ok(proof.location.routeFan.length >= 3, 'bound location must retain successful controller routes');
+assert.ok(proof.locationSelection.upRoutes > 0 && proof.locationSelection.downRoutes > 0, 'spawn selection should prefer existing up/down continuation when available');
 assert.ok(proof.location.spatialPlan?.ready, `spawn spatial plan unresolved: ${proof.location.spatialPlan?.unresolved?.join(', ')}`);
 assert.ok(proof.location.spatialPlan.placements.some(item => item.slot === 'primary-tv'));
 assert.ok(proof.location.spatialPlan.placements.filter(item => item.slot === 'seating').length >= 2);

@@ -1999,26 +1999,43 @@ playerPhysics.syncFromPosition({ forceAirborne: false, resetVelocity: false, all
 if (!playerPhysics.poseIsValid(camera.position.x, camera.position.z, playerPhysics.getState().feetY)) {
     throw new Error('[spawn-proof] proven ordinary-chunk pose became invalid during authoritative startup sync');
 }
-const spawnRealization = spawnProof.location?.spatialPlan?.ready
-    ? realizeSpawnLocation({
-        THREE,
-        scene,
-        camera,
-        boundLocation: spawnProof.location,
-        fabricPayloads: initialSpawnFabricPayloads,
-        propColliders,
-    })
-    : null;
-if (!spawnRealization) {
-    throw new Error('[spawn-location] ordinary spawn chunk was playable but the required TV refuge could not be realized on its fabric');
+const spawnSpatialPlan = spawnProof.location?.spatialPlan ?? null;
+let spawnRealization = null;
+if (spawnSpatialPlan?.ready) {
+    try {
+        spawnRealization = realizeSpawnLocation({
+            THREE,
+            scene,
+            camera,
+            boundLocation: spawnProof.location,
+            fabricPayloads: initialSpawnFabricPayloads,
+            propColliders,
+        });
+    } catch (error) {
+        console.warn('[spawn-location] optional hangout realization failed; continuing with playable ordinary spawn', error);
+    }
+} else if (spawnSpatialPlan) {
+    console.warn('[spawn-location] optional hangout did not fit this roof; continuing without it', spawnSpatialPlan.unresolved ?? []);
 }
-if (spawnRealization.colliderCount) {
+if (spawnRealization?.colliderCount) {
     playerPhysics.syncDynamicWorld();
     if (!playerPhysics.poseIsValid(camera.position.x, camera.position.z, playerPhysics.getState().feetY)) {
-        throw new Error('[spawn-location] TV refuge realization violated the proven arrival capsule');
+        console.warn('[spawn-location] optional hangout violated arrival capsule; rolling it back and continuing');
+        try { spawnRealization.dispose?.(); }
+        catch (error) { console.warn('[spawn-location] hangout rollback cleanup warning', error); }
+        spawnRealization = null;
+        playerPhysics.syncDynamicWorld();
+        camera.position.set(spawnProof.pose.x, spawnProof.pose.feetY + CONFIG.camera.eyeHeight, spawnProof.pose.z);
+        playerPhysics.syncFromPosition({ forceAirborne: false, resetVelocity: false, allowLastSafeFallback: false });
     }
 }
-console.log(`[spawn-proof] PASS ordinary chunk=${initialSpawnChunk.key} · route=${spawnProof.routeKind} · TV=ready · escape=${spawnProof.escapeDistance.toFixed(2)}m · probes=${spawnProof.probes}`);
+const spawnHangoutLabel = spawnRealization
+    ? `${spawnRealization.startProfile ?? 'mixed'}:${spawnRealization.mediaKind ?? 'media'}`
+    : 'none';
+const spawnVerticalLabel = spawnProof.locationSelection
+    ? `${spawnProof.locationSelection.upRoutes ?? 0}up/${spawnProof.locationSelection.downRoutes ?? 0}down`
+    : 'n/a';
+console.log(`[spawn-proof] PASS ordinary chunk=${initialSpawnChunk.key} · route=${spawnProof.routeKind} · hangout=${spawnHangoutLabel} · vertical=${spawnVerticalLabel} · escape=${spawnProof.escapeDistance.toFixed(2)}m · probes=${spawnProof.probes}`);
 _spawnDistrictStructuresComplete = true;
 
 // The finite authored origin district is retired. Keep these empty compatibility

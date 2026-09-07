@@ -146,6 +146,10 @@ export function assertInteriorStairCoreWalkability(plan) {
       fail(id, `flight ${i} elevation fractions drifted`);
     }
     const outbound = i % 2 === 0;
+    const expectedLane = plan.returnHandedness === 'positive-cross-first' ? 1 - (i % 2) : i % 2;
+    if (flight.laneIndex !== expectedLane || !near(flight.fixedCoord, plan.laneCoords?.[expectedLane])) {
+      fail(id, `flight ${i} left deterministic switchback lane order`);
+    }
     if (!near(flight.from, outbound ? plan.lowMouth : plan.highMouth)
         || !near(flight.to, outbound ? plan.highMouth : plan.lowMouth)) {
       fail(id, `flight ${i} does not terminate at explicit landing mouths`);

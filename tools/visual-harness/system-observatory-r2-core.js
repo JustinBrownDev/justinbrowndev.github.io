@@ -212,6 +212,11 @@ function analyzeStairRhythm(payload) {
   const sortedTopologies = Object.entries(topologyCounts).sort((a, b) => b[1] - a[1]);
   const dominantTopology = sortedTopologies[0]?.[0] ?? null;
   const dominantCount = sortedTopologies[0]?.[1] ?? 0;
+  const explicitTopologyVariant = ownership.filter(item => item?.stairTopologyVariant != null && String(item.stairTopologyVariant).length);
+  const topologyVariantCounts = countBy(explicitTopologyVariant, item => item?.stairTopologyVariant);
+  const sortedTopologyVariants = Object.entries(topologyVariantCounts).sort((a, b) => b[1] - a[1]);
+  const dominantTopologyVariant = sortedTopologyVariants[0]?.[0] ?? null;
+  const dominantTopologyVariantCount = sortedTopologyVariants[0]?.[1] ?? 0;
   const floors = ownership.map(item => Math.max(0, finite(item?.floors, 0))).filter(Boolean);
   const ownedStories = floors.reduce((sum, value) => sum + value, 0);
   const guards = [
@@ -228,9 +233,14 @@ function analyzeStairRhythm(payload) {
     missingTopologyMetadata,
     compoundOwnersWithoutTopology,
     topologyCounts,
+    topologyVariantCounts,
     layerCounts: countBy(ownership, 'layer'),
     dominantTopology,
     dominantTopologyShare: explicitTopology.length ? dominantCount / explicitTopology.length : 0,
+    explicitTopologyVariantCount: explicitTopologyVariant.length,
+    dominantTopologyVariant,
+    dominantTopologyVariantShare: explicitTopologyVariant.length ? dominantTopologyVariantCount / explicitTopologyVariant.length : 0,
+    handednessCounts: countBy(ownership.filter(item => item?.returnHandedness), item => item?.returnHandedness),
     floorMedian: quantile(floors, 0.5),
     floorP90: quantile(floors, 0.9),
     floorCounts: countBy(ownership, item => String(Math.max(0, finite(item?.floors, 0)))),
@@ -247,7 +257,7 @@ function analyzeStairRhythm(payload) {
     architectureExpressionCount: expressions.length,
     architectureFamilies: countBy(expressions, item => item?.family ?? '(none)'),
     expressionCoverage: ownership.length ? Math.min(1, expressions.length / ownership.length) : 0,
-    ownership: ownership.map(item => ({ id: item?.id ?? null, layer: item.layer, topology: item?.stairTopology ?? '(metadata missing)', floors: finite(item?.floors, 0), buildingPlanId: item?.buildingPlanId ?? null, routeClass: item?.routeClass ?? 'local', clearWidth: finite(item?.clearWidth, 0), districtRouteId: item?.districtRouteId ?? null })),
+    ownership: ownership.map(item => ({ id: item?.id ?? null, layer: item.layer, topology: item?.stairTopology ?? '(metadata missing)', topologyVariant: item?.stairTopologyVariant ?? null, returnHandedness: item?.returnHandedness ?? null, stairAxis: item?.stairAxis ?? null, floors: finite(item?.floors, 0), buildingPlanId: item?.buildingPlanId ?? null, routeClass: item?.routeClass ?? 'local', clearWidth: finite(item?.clearWidth, 0), districtRouteId: item?.districtRouteId ?? null })),
     expressions: expressions.map(item => ({ id: item?.id ?? null, layer: item.layer, family: item?.family ?? '(none)', programArchitectureId: item?.programArchitectureId ?? null, parts: finite(item?.parts, 0) })),
   };
 }
@@ -287,13 +297,16 @@ function analyzeShellAuthority(payload) {
 
 function lensEvidence(summary) {
   const macro = summary.macro, bridge = summary.bridgeGrammar, stair = summary.stairRhythm;
+  const stairExpressionCount = stair.explicitTopologyVariantCount >= 3 ? stair.explicitTopologyVariantCount : stair.explicitTopologyCount;
+  const stairExpression = stair.explicitTopologyVariantCount >= 3 ? stair.dominantTopologyVariant : stair.dominantTopology;
+  const stairExpressionShare = stair.explicitTopologyVariantCount >= 3 ? stair.dominantTopologyVariantShare : stair.dominantTopologyShare;
   return {
     F01: { value: summary.transfers.demands, compact: `${summary.transfers.demands} demands`, label: `${summary.transfers.demands} transfer demands`, level: summary.buildFailure?.code === 'JWEB_TOWER_TRANSFER_UNREALIZED' ? 3 : 0 },
     F02: { value: macro.interlockShareOfShared, compact: `${pct(macro.interlockShareOfShared)} interlock`, label: `${macro.interlockCells}/${macro.sharedCells} shared plan cells vertically interlock`, level: macro.sharedCells && macro.interlockShareOfShared < 0.25 ? 2 : macro.sharedCells && macro.interlockShareOfShared < 0.55 ? 1 : 0 },
     F03: { value: macro.unionOccupancy, compact: `${pct(macro.unionOccupancy)} occupied`, label: `${pct(macro.unionOccupancy)} module union occupancy`, level: macro.unionOccupancy >= 0.78 ? 2 : macro.unionOccupancy >= 0.65 ? 1 : 0 },
     F04: { value: bridge.suspensionOverlayConflicts, compact: `${bridge.suspensionOverlayConflicts} conflicts`, label: `${bridge.suspensionOverlayConflicts} non-suspension families carrying suspension grammar`, level: bridge.suspensionOverlayConflicts ? 2 : 0 },
     F05: { value: bridge.stackedLargeSystems, compact: `${bridge.stackedLargeSystems} triple`, label: `${bridge.stackedLargeSystems} bridges with 3 large grammar layers`, level: bridge.stackedLargeSystems ? 2 : 0 },
-    F06: { value: stair.dominantTopologyShare, compact: `${pct(stair.dominantTopologyShare)} ${stair.dominantTopology === 'two-flight-switchback' ? '2F' : 'dominant'}`, label: `${pct(stair.dominantTopologyShare)} of ${stair.explicitTopologyCount} topology-tagged stairs use ${stair.dominantTopology ?? 'no topology'}`, level: stair.explicitTopologyCount >= 3 && stair.dominantTopologyShare >= 0.90 ? 1 : 0 },
+    F06: { value: stairExpressionShare, compact: `${pct(stairExpressionShare)} dominant`, label: `${pct(stairExpressionShare)} of ${stairExpressionCount} physical stair expressions use ${stairExpression ?? 'no topology expression'}`, level: stairExpressionCount >= 3 && stairExpressionShare >= 0.90 ? 1 : 0 },
     F07: { value: stair.guardPrimitivesPerOwnedStory, compact: `${stair.guardPrimitivesPerOwnedStory.toFixed(1)} guard prim/story`, label: `${stair.stairGuardPrimitiveCount} stair guard primitives across ${stair.ownedStories} owned stories (${stair.guardPrimitivesPerOwnedStory.toFixed(1)}/story; heuristic visual-frequency signal)`, level: stair.ownedStories >= 4 && stair.guardPrimitivesPerOwnedStory >= 18 ? 1 : 0 },
   };
 }
@@ -333,11 +346,13 @@ export function classifyBuildFailure(error, chunk = {}) {
 export function buildSweepAnalysisR2(chunks, failures = []) {
   const base = buildSweepAnalysis(chunks);
   const list = arr(chunks);
-  const bridgeFamilies = {}, bridgeGrammars = {}, stairTopologies = {}, stairFamilies = {}, runtimeCounts = {};
+  const bridgeFamilies = {}, bridgeGrammars = {}, stairTopologies = {}, stairTopologyVariants = {}, stairHandedness = {}, stairFamilies = {}, runtimeCounts = {};
   for (const item of list) {
     mergeCounts(bridgeFamilies, item.bridgeGrammar?.families);
     mergeCounts(bridgeGrammars, item.bridgeGrammar?.grammars);
     mergeCounts(stairTopologies, item.stairRhythm?.topologyCounts);
+    mergeCounts(stairTopologyVariants, item.stairRhythm?.topologyVariantCounts);
+    mergeCounts(stairHandedness, item.stairRhythm?.handednessCounts);
     mergeCounts(stairFamilies, item.stairRhythm?.architectureFamilies);
     mergeCounts(runtimeCounts, item.counts);
   }
@@ -379,6 +394,8 @@ export function buildSweepAnalysisR2(chunks, failures = []) {
       missingTopologyMetadata: list.reduce((sum, item) => sum + item.stairRhythm.missingTopologyMetadata, 0),
       compoundOwnersWithoutTopology: list.reduce((sum, item) => sum + item.stairRhythm.compoundOwnersWithoutTopology, 0),
       topologies: stairTopologies,
+      topologyVariants: stairTopologyVariants,
+      handedness: stairHandedness,
       architectureFamilies: stairFamilies,
       expressionCount: list.reduce((sum, item) => sum + item.stairRhythm.architectureExpressionCount, 0),
       ownedStories: list.reduce((sum, item) => sum + item.stairRhythm.ownedStories, 0),
@@ -493,12 +510,13 @@ export function renderStairRhythmSvg(summary, { width = 1500, height = 620 } = {
   const summaryRows = [
     `stair ownership records: ${s.count} (${s.explicitTopologyCount} topology-tagged; ${s.missingTopologyMetadata} missing)`,
     `dominant explicit topology: ${s.dominantTopology ?? 'none'}`,
-    `dominant tagged share: ${pct(s.dominantTopologyShare)}`,
+    `dominant physical expression: ${s.dominantTopologyVariant ?? s.dominantTopology ?? 'none'} (${pct(s.explicitTopologyVariantCount >= 3 ? s.dominantTopologyVariantShare : s.dominantTopologyShare)})`,
+    `return handedness: ${Object.entries(s.handednessCounts ?? {}).map(([k,v]) => `${k}×${v}`).join(', ') || 'unpublished'}`,
     `compound owners missing topology metadata: ${s.compoundOwnersWithoutTopology}`,
     `stair guard detail: ${s.stairGuardPrimitiveCount} primitives / ${s.ownedStories} stories = ${s.guardPrimitivesPerOwnedStory.toFixed(1)}/story`,
     `architecture expressions: ${s.architectureExpressionCount}; families: ${Object.entries(s.architectureFamilies).map(([k,v]) => `${k}×${v}`).join(', ') || 'none'}`,
   ];
-  summaryRows.forEach((text, i) => parts.push(`<text x="1035" y="${165 + i * 28}" class="small ${i === 2 && s.count >= 3 && s.dominantTopologyShare >= .9 ? 'p1' : ''}">${esc(text)}</text>`));
+  summaryRows.forEach((text, i) => parts.push(`<text x="1035" y="${165 + i * 28}" class="small ${i === 2 && s.count >= 3 && (s.explicitTopologyVariantCount >= 3 ? s.dominantTopologyVariantShare : s.dominantTopologyShare) >= .9 ? 'p1' : ''}">${esc(text)}</text>`));
   parts.push(`<text x="60" y="545" class="small muted">Same-height color means only ground/hanging field. The point is to expose repeated topology, not imply each stair should differ arbitrarily.</text>`, '</svg>');
   return parts.join('\n');
 }
@@ -564,9 +582,9 @@ export function renderModuleAtlasSvg(sweep, { width = 1600 } = {}) {
 export function renderStairContractMatrixSvg(sweep, { width = 1500 } = {}) {
   const chunks=arr(sweep?.chunks), rowH=29, height=130+chunks.length*rowH;
   const parts=svgStart(width,height,'Stair contract matrix across chunks','This separates topology sameness from metadata completeness and rail/detail frequency. The missing-topology column is a contract observation, not an inferred stair type.');
-  const headers=[['chunk',36],['owners',235],['tagged topology',345],['missing topology',555],['dominant tagged topology',755],['guard primitives / story',1110]];
+  const headers=[['chunk',36],['owners',235],['physical expression',345],['missing topology',555],['dominant expression',755],['guard primitives / story',1110]];
   headers.forEach(([t,x])=>parts.push(`<text x="${x}" y="100" class="tiny muted">${t}</text>`));
-  chunks.forEach((s,i)=>{const y=116+i*rowH, st=s.stairRhythm; const missing=st.missingTopologyMetadata??0; const gp=finite(st.guardPrimitivesPerOwnedStory,0); parts.push(`<text x="36" y="${y+18}" class="small">${esc(s.chunk.key)}</text>`,`<text x="235" y="${y+18}" class="small">${st.count}</text>`,`<text x="345" y="${y+18}" class="small ${st.explicitTopologyCount>=3&&st.dominantTopologyShare>=.9?'p1':''}">${st.explicitTopologyCount} · ${pct(st.dominantTopologyShare)}</text>`,`<rect x="545" y="${y+3}" width="175" height="21" rx="4" fill="${missing?'#3a2445':'#111925'}" stroke="#354257"/>`,`<text x="555" y="${y+18}" class="small ${missing?'p2':''}">${missing} (${st.compoundOwnersWithoutTopology??0} compound)</text>`,`<text x="755" y="${y+18}" class="small">${esc(st.dominantTopology??'none')}</text>`,`<text x="1110" y="${y+18}" class="small ${gp>=18?'p1':''}">${gp.toFixed(1)}</text>`);});
+  chunks.forEach((s,i)=>{const y=116+i*rowH, st=s.stairRhythm; const missing=st.missingTopologyMetadata??0; const gp=finite(st.guardPrimitivesPerOwnedStory,0); const expressionCount=st.explicitTopologyVariantCount>=3?st.explicitTopologyVariantCount:st.explicitTopologyCount; const expressionShare=st.explicitTopologyVariantCount>=3?st.dominantTopologyVariantShare:st.dominantTopologyShare; const expression=st.explicitTopologyVariantCount>=3?st.dominantTopologyVariant:st.dominantTopology; parts.push(`<text x="36" y="${y+18}" class="small">${esc(s.chunk.key)}</text>`,`<text x="235" y="${y+18}" class="small">${st.count}</text>`,`<text x="345" y="${y+18}" class="small ${expressionCount>=3&&expressionShare>=.9?'p1':''}">${expressionCount} · ${pct(expressionShare)}</text>`,`<rect x="545" y="${y+3}" width="175" height="21" rx="4" fill="${missing?'#3a2445':'#111925'}" stroke="#354257"/>`,`<text x="555" y="${y+18}" class="small ${missing?'p2':''}">${missing} (${st.compoundOwnersWithoutTopology??0} compound)</text>`,`<text x="755" y="${y+18}" class="small">${esc(expression??'none')}</text>`,`<text x="1110" y="${y+18}" class="small ${gp>=18?'p1':''}">${gp.toFixed(1)}</text>`);});
   parts.push('</svg>'); return parts.join('\n');
 }
 
@@ -596,7 +614,7 @@ export function buildTriageTargets(sweep, limit = 8) {
     F03: top(chunks,s=>finite(s.macro?.unionOccupancy,0),s=>`${pct(s.macro.unionOccupancy)} module occupancy`),
     F04: top(chunks,s=>finite(s.bridgeGrammar?.suspensionOverlayConflicts,0),s=>`${s.bridgeGrammar.suspensionOverlayConflicts} family/grammar conflicts`),
     F05: top(chunks,s=>finite(s.bridgeGrammar?.stackedLargeSystems,0),s=>`${s.bridgeGrammar.stackedLargeSystems} triple grammar stacks`),
-    F06: top(chunks,s=>finite(s.stairRhythm?.explicitTopologyCount,0)*finite(s.stairRhythm?.dominantTopologyShare,0),s=>`${s.stairRhythm.explicitTopologyCount} tagged · ${pct(s.stairRhythm.dominantTopologyShare)} ${s.stairRhythm.dominantTopology??'dominant'}`),
+    F06: top(chunks,s=>{const st=s.stairRhythm??{}; const count=finite(st.explicitTopologyVariantCount,0)>=3?finite(st.explicitTopologyVariantCount,0):finite(st.explicitTopologyCount,0); const share=finite(st.explicitTopologyVariantCount,0)>=3?finite(st.dominantTopologyVariantShare,0):finite(st.dominantTopologyShare,0); return count*share;},s=>{const st=s.stairRhythm??{}; const useVariant=finite(st.explicitTopologyVariantCount,0)>=3; const count=useVariant?st.explicitTopologyVariantCount:st.explicitTopologyCount; const share=useVariant?st.dominantTopologyVariantShare:st.dominantTopologyShare; const expression=useVariant?st.dominantTopologyVariant:st.dominantTopology; return `${count} expressions · ${pct(share)} ${expression??'dominant'}`;}),
     F07: top(chunks,s=>finite(s.stairRhythm?.guardPrimitivesPerOwnedStory,0),s=>`${finite(s.stairRhythm.guardPrimitivesPerOwnedStory,0).toFixed(1)} guard primitives/story`),
   };
 }

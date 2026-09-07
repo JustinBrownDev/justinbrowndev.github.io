@@ -16,6 +16,15 @@ function finite(value, fallback = 0) {
   return Number.isFinite(Number(value)) ? Number(value) : fallback;
 }
 
+function stableHash(text) {
+  let h = 2166136261 >>> 0;
+  for (const ch of String(text ?? '')) {
+    h ^= ch.charCodeAt(0);
+    h = Math.imul(h, 16777619) >>> 0;
+  }
+  return h >>> 0;
+}
+
 function orientedRect(axis, alongCenter, crossCenter, alongSize, crossSize) {
   return axis === 'x'
     ? Object.freeze({ x: alongCenter, z: crossCenter, sx: alongSize, sz: crossSize, hx: alongSize * 0.5, hz: crossSize * 0.5 })
@@ -110,6 +119,12 @@ function candidateForAxis({ axis, rect, floorH, truth, playerRadius, stableKey, 
   const highMouth = lowMouth + run;
   const lane0 = crossCenter - laneCenterOffset;
   const lane1 = crossCenter + laneCenterOffset;
+  // Mirroring the lane order is a free geometric degree of freedom: the core
+  // envelope, rise/run truth, landing sizes and headroom are identical, but the
+  // switchback no longer has one universal chirality across the whole city.
+  // Keep the choice stable per stair identity so streaming/rebuilds agree.
+  const positiveCrossFirst = (stableHash(`${stableKey}:return-handedness`) & 1) === 1;
+  const returnHandedness = positiveCrossFirst ? 'positive-cross-first' : 'negative-cross-first';
   const floorLanding = orientedRect(axis, openingLow + floorLandingDepth * 0.5, crossCenter, floorLandingDepth, landingCross);
   const turnLanding = orientedRect(axis, highMouth + turnLandingDepth * 0.5, crossCenter, turnLandingDepth, landingCross);
   const opening = orientedRect(axis, alongCenter, crossCenter, openingAlong, openingCross);
@@ -129,7 +144,7 @@ function candidateForAxis({ axis, rect, floorH, truth, playerRadius, stableKey, 
   const intermediateLandings = [];
   for (let i = 0; i < flightCount; i++) {
     const outbound = i % 2 === 0;
-    const laneIndex = i % 2;
+    const laneIndex = positiveCrossFirst ? 1 - (i % 2) : i % 2;
     flights.push(Object.freeze({
       id: `flight-${i + 1}`,
       laneIndex,
@@ -164,6 +179,8 @@ function candidateForAxis({ axis, rect, floorH, truth, playerRadius, stableKey, 
     stableKey,
     id: `${stableKey}:${axis}:${tier}:${flightCount}`,
     topology: flightCount === 2 ? 'two-flight-switchback' : 'four-flight-switchback',
+    topologyVariant: `${flightCount === 2 ? 'two-flight-switchback' : 'four-flight-switchback'}:${returnHandedness}`,
+    returnHandedness,
     fitTier: tier,
     flightCount,
     storyHeight: floorH,

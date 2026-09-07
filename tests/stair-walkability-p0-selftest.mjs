@@ -81,7 +81,7 @@ function point(along, cross) {
   return core.axis === 'x' ? { x: along, z: cross } : { x: cross, z: along };
 }
 
-const lane0 = core.laneCoords[0], lane1 = core.laneCoords[1];
+const lane0 = core.flights[0].fixedCoord, lane1 = core.flights[1].fixedCoord;
 const lowInside = core.lowMouth - 0.28;
 const highInside = core.highMouth + 0.28;
 const low0 = point(lowInside, lane0);

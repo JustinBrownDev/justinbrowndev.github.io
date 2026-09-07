@@ -1279,9 +1279,37 @@ export function createKowloonFabricEngine({
             surfaceId,
             ...(metadata || {}),
         };
+        let visualPrimitiveCount = 0;
         for (const primitive of plan.visual ?? []) {
             const bucket = primitive.material === 'concrete' ? transforms.guardConcrete : transforms.guardMetal;
+
+            // A three-sided stair landing/opening is intentionally authored as
+            // three independent guard spans so each edge keeps its own collision
+            // and semantic identity. Open-bar authority, however, gives every
+            // span endpoint a post. Adjacent edges therefore used to publish two
+            // metal posts at the exact same corner, producing unnecessary visual
+            // density and coincident geometry/z-fighting. Deduplicate only the
+            // rendered post, and only within the same owned stair part; collision
+            // spans and all non-stair guards remain untouched.
+            if (primitive.role === 'post' && shared.stairPartParentId) {
+                let duplicate = false;
+                for (let index = bucket.length - 1; index >= 0; index--) {
+                    const existing = bucket[index];
+                    if (existing?.stairPartParentId !== shared.stairPartParentId
+                        || existing?.stairOwnerId !== shared.stairOwnerId) break;
+                    if (existing.role === 'post'
+                        && existing.guardFamily === shared.guardFamily
+                        && Math.abs(Number(existing.x) - Number(primitive.x)) <= 1e-7
+                        && Math.abs(Number(existing.y) - Number(primitive.y)) <= 1e-7
+                        && Math.abs(Number(existing.z) - Number(primitive.z)) <= 1e-7) {
+                        duplicate = true;
+                        break;
+                    }
+                }
+                if (duplicate) continue;
+            }
             bucket.push({ ...primitive, ...shared });
+            visualPrimitiveCount++;
         }
         physics.mazeWalls.push({ ...plan.collision, ...shared, transportRailId: surfaceId ? plan.id : null });
         guardSpanRegistry(physics).push({
@@ -1295,7 +1323,7 @@ export function createKowloonFabricEngine({
             fixedCoord: plan.fixedCoord,
             y0: plan.y0,
             y1: plan.y1,
-            visualPrimitiveCount: plan.visual?.length ?? 0,
+            visualPrimitiveCount,
             ...shared,
         });
         return plan.id;
@@ -2659,6 +2687,9 @@ export function createKowloonFabricEngine({
             clearWidth: primaryActualStairClearWidth,
             stairTopology: primaryStairCore.topology,
             topology: primaryStairCore.topology,
+            stairTopologyVariant: primaryStairCore.topologyVariant,
+            returnHandedness: primaryStairCore.returnHandedness,
+            stairAxis: primaryStairCore.axis,
             flightIds: Object.freeze(primaryStairCore.flights.map(flight => flight.id)),
             landingIds: Object.freeze(primaryStairCore.intermediateLandings.map(landing => landing.id)),
             ownershipAuthority: 'stair-core-owns-opening-and-children-v1',
@@ -4588,6 +4619,9 @@ export function createKowloonFabricEngine({
             horizontalRouteId: primaryStairArchitecture.horizontalRouteId ?? null,
             clearWidth: primaryActualStairClearWidth,
             flightIds: (primaryStairCore.flights ?? []).map(flight => flight.id),
+            stairTopologyVariant: primaryStairCore.topologyVariant,
+            returnHandedness: primaryStairCore.returnHandedness,
+            stairAxis: primaryStairCore.axis,
             landingIds: (primaryStairCore.landings ?? []).map(landing => landing.id ?? landing.sideRole).filter(Boolean),
             ownershipAuthority: 'stair-core-owns-opening-and-children-v1',
         }));
@@ -5627,7 +5661,6 @@ export function createKowloonFabricEngine({
                 y, metadata: { bridgeId: bridge.id, visualRole: bridge.variant || 'skybridge' },
             });
         }
-        for (const overlap of published.overlaps) smoothTransportUnion({ physics, transforms, a: surface, b: overlap });
         const aMaterialFamily = aEntity?.programMacroArchitecture?.family ?? null;
         const bMaterialFamily = bEntity?.programMacroArchitecture?.family ?? null;
         const bridgeMaterialFamily = aMaterialFamily && aMaterialFamily === bMaterialFamily ? aMaterialFamily : null;
@@ -5643,6 +5676,12 @@ export function createKowloonFabricEngine({
         });
         transforms.guardMetal.push(...bridgeArchitecture.metal);
         transforms.guardConcrete.push(...bridgeArchitecture.concrete);
+        // Architecture must exist before the union carve.  The old ordering cut
+        // the canonical rails, then appended bridge posts/hangers/braces after
+        // the opening had already been made, allowing yieldable structure to
+        // survive directly through a crossing.  One union pass now owns both
+        // traversal rails and every junction-yielding architectural layer.
+        for (const overlap of published.overlaps) smoothTransportUnion({ physics, transforms, a: surface, b: overlap });
         const architectureRegistry = physics.bridgeArchitecture ?? (physics.bridgeArchitecture = []);
         architectureRegistry.push(Object.freeze({
             schema: bridgeArchitecture.schema, bridgeId: bridge.id,

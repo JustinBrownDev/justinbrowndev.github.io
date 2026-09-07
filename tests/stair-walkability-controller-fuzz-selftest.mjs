@@ -77,13 +77,13 @@ function walkCase(index, rng) {
     propColliders: [], elevatedPlatforms: platforms, rampRuns: ramps, overheadCeilings: [], playerRadius,
   });
   const point = (along, cross) => core.axis === 'x' ? { x: along, z: cross } : { x: cross, z: along };
-  const lane0 = core.laneCoords[0], lane1 = core.laneCoords[1];
+  const firstLane = core.flights[0].fixedCoord, returnLane = core.flights[1].fixedCoord;
   const lowInside = core.lowMouth - Math.max(0.28, core.endpointSupportOverlap * 0.6);
   const highInside = core.highMouth + Math.max(0.28, core.endpointSupportOverlap * 0.6);
-  const low0 = point(lowInside, lane0);
-  const high0 = point(highInside, lane0);
-  const high1 = point(highInside, lane1);
-  const low1 = point(lowInside, lane1);
+  const low0 = point(lowInside, firstLane);
+  const high0 = point(highInside, firstLane);
+  const high1 = point(highInside, returnLane);
+  const low1 = point(lowInside, returnLane);
   const pathCommands = points => {
     const commands = [];
     for (let i = 1; i < points.length; i++) commands.push(...commandSegment({

@@ -149,7 +149,8 @@ assert.equal(facadePlan.render.windows.some(item => item.facadeRole === 'storefr
 assert.equal(facadePlan.metrics.newPortalCount, 0, 'empty storefront hole still does not fabricate circulation semantics');
 
 const engine = fs.readFileSync(path.join(repo, 'kowloon-fabric-engine.js'), 'utf8');
-assert.match(engine, /planInteriorStairCoreWithArchitectureReplan/);
+assert.match(engine, /planInteriorStairCoreStructuralFeasibility/,
+  'runtime stair realization must pass through the current structural-feasibility authority');
 assert.match(engine, /blocksFromBelow:\s*false/, 'stair landings must support feet without becoming invisible ceilings from below');
 assert.match(engine, /core\.intermediateLandings/, 'physical stair emission must realize every intermediate turn landing');
 assert.match(engine, /core\.segmentFlight/, 'physical stair emission must use the selected ordinary segment truth');

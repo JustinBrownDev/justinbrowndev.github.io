@@ -42,6 +42,7 @@ export function planSkybridgeArchitecture({
   const w = Math.max(0.75, finite(width, 1));
   if (!(span > 0.25)) return Object.freeze({ schema: SKYBRIDGE_ARCHITECTURE_SCHEMA, family, metal: Object.freeze([]), concrete: Object.freeze([]), parts: 0 });
   const bridgeVariant = String(variant || 'skybridge');
+  const hangingVariant = bridgeVariant === 'hanging-bridge';
   const hash = stableHash(`${stableKey ?? id}:${family}:${axis}${bridgeVariant === 'hanging-bridge' ? ':hanging-bridge' : ''}`);
   const metal = [], concrete = [];
   const metadata = { bridgeId: id, surfaceId, bridgeArchitecture: true, architectureFamily: family, bridgeVariant, widthClass };
@@ -148,25 +149,31 @@ export function planSkybridgeArchitecture({
     const bays = Math.max(2, Math.ceil(Math.max(stationSpan, span) / 4.4));
     for (let i = 0; i <= bays; i++) crossBeam(stationLo + stationSpan * (i / bays), y - boxH * 0.55, beamT * 1.3, w + 0.12, { architectureRole: 'box-diaphragm' });
   } else if (family === 'suspension-hanger') {
+    // When the semantic variant is itself a hanging bridge, the variant-owned
+    // catenary below is the one suspension system. Do not also build the old
+    // family-level tower/hanger kit underneath it. That duplicated hangers and
+    // produced two different structural stories on the same span.
     sideBeam(edgeA, y - 0.16);
     sideBeam(edgeB, y - 0.16);
-    const towerInset = Math.min(1.35, Math.max(stationSpan, span) * 0.12);
-    const towerY = y + (widthClass === 'sky-street' ? 3.4 : 2.8);
-    for (const along of [stationLo + towerInset, stationHi - towerInset]) {
-      for (const fixed of [edgeA, edgeB]) {
-        if (axis === 'x') pushBox(metal, { x: along, y: (y + towerY) * 0.5, z: fixed, sx: beamT * 1.5, sy: towerY - y, sz: beamT * 1.5 }, { ...metadata, architectureRole: 'hanger-tower', junctionYield: true });
-        else pushBox(metal, { x: fixed, y: (y + towerY) * 0.5, z: along, sx: beamT * 1.5, sy: towerY - y, sz: beamT * 1.5 }, { ...metadata, architectureRole: 'hanger-tower', junctionYield: true });
+    if (!hangingVariant) {
+      const towerInset = Math.min(1.35, Math.max(stationSpan, span) * 0.12);
+      const towerY = y + (widthClass === 'sky-street' ? 3.4 : 2.8);
+      for (const along of [stationLo + towerInset, stationHi - towerInset]) {
+        for (const fixed of [edgeA, edgeB]) {
+          if (axis === 'x') pushBox(metal, { x: along, y: (y + towerY) * 0.5, z: fixed, sx: beamT * 1.5, sy: towerY - y, sz: beamT * 1.5 }, { ...metadata, architectureRole: 'hanger-tower', junctionYield: true });
+          else pushBox(metal, { x: fixed, y: (y + towerY) * 0.5, z: along, sx: beamT * 1.5, sy: towerY - y, sz: beamT * 1.5 }, { ...metadata, architectureRole: 'hanger-tower', junctionYield: true });
+        }
       }
-    }
-    const bays = Math.max(4, Math.ceil(Math.max(stationSpan, span) / 3.2));
-    for (let i = 1; i < bays; i++) {
-      const along = stationLo + stationSpan * (i / bays);
-      const t = i / bays;
-      const cableY = towerY - Math.sin(Math.PI * t) * (towerY - y) * 0.58;
-      const h = Math.max(0.18, cableY - y);
-      for (const fixed of [edgeA, edgeB]) {
-        if (axis === 'x') pushBox(metal, { x: along, y: y + h * 0.5, z: fixed, sx: beamT * 0.55, sy: h, sz: beamT * 0.55 }, { ...metadata, architectureRole: 'vertical-hanger', junctionYield: true });
-        else pushBox(metal, { x: fixed, y: y + h * 0.5, z: along, sx: beamT * 0.55, sy: h, sz: beamT * 0.55 }, { ...metadata, architectureRole: 'vertical-hanger', junctionYield: true });
+      const bays = Math.max(4, Math.ceil(Math.max(stationSpan, span) / 3.2));
+      for (let i = 1; i < bays; i++) {
+        const along = stationLo + stationSpan * (i / bays);
+        const t = i / bays;
+        const cableY = towerY - Math.sin(Math.PI * t) * (towerY - y) * 0.58;
+        const h = Math.max(0.18, cableY - y);
+        for (const fixed of [edgeA, edgeB]) {
+          if (axis === 'x') pushBox(metal, { x: along, y: y + h * 0.5, z: fixed, sx: beamT * 0.55, sy: h, sz: beamT * 0.55 }, { ...metadata, architectureRole: 'vertical-hanger', junctionYield: true });
+          else pushBox(metal, { x: fixed, y: y + h * 0.5, z: along, sx: beamT * 0.55, sy: h, sz: beamT * 0.55 }, { ...metadata, architectureRole: 'vertical-hanger', junctionYield: true });
+        }
       }
     }
   } else if (family === 'ramshackle-brace') {
@@ -208,7 +215,7 @@ export function planSkybridgeArchitecture({
 
   let variantParts = 0;
   let structuralGrammar = 'family-native-v1';
-  if (bridgeVariant === 'hanging-bridge' && stationSpan > Math.max(0.8, w * 0.45)) {
+  if (hangingVariant && stationSpan > Math.max(0.8, w * 0.45)) {
     // Hanging bridges are not a generic guarded deck with decorative posts. The
     // semantic variant owns a real visual tension system: high exterior seats,
     // sagging side cables, and hangers that terminate at the deck-side edge beam.
@@ -253,7 +260,11 @@ export function planSkybridgeArchitecture({
 
   let supportMode = null;
   let supportParts = 0;
-  if ((widthClass === 'collector' || widthClass === 'sky-street') && span > 2.6) {
+  // The catenary/hanger system already resolves a hanging bridge back to its
+  // facade seats. A second generic pair of diagonal facade braces is redundant
+  // and was the third large grammar layer on wide hanging spans. Keep those
+  // braces for rigid catwalk/sky-street families only.
+  if (!hangingVariant && (widthClass === 'collector' || widthClass === 'sky-street') && span > 2.6) {
     supportMode = supportModeHint === 'hung-from-above' || supportModeHint === 'braced-from-below'
       ? supportModeHint
       : (unit(hash ^ 0xa24baed4, 5) < 0.48 ? 'hung-from-above' : 'braced-from-below');

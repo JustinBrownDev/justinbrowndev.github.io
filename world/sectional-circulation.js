@@ -217,7 +217,19 @@ export function assignBridgeSectionBands({
         : midpointScore > 0.70
           ? ROUTE_CHARACTER.EXTERIOR_HEAVY
           : (unit(hash ^ 0x7feb352d, 7) < 0.20 ? ROUTE_CHARACTER.SCENIC : ROUTE_CHARACTER.DIRECT);
-    const architectureFamily = familyFor({ widthClass, hash });
+    // A hanging bridge is already a structural grammar, not a decorative skin
+    // that can be laid over any other large bridge family.  Let its semantic
+    // variant own the suspension system outright.  Previously a random family
+    // (pony truss, utility frame, box girder, heavy beam...) was emitted first
+    // and then a second catenary/hanger system was laid over it; collectors could
+    // receive a third generic facade-brace system as well.  The result was the
+    // visually implausible triple-structure pileups the system observatory calls
+    // F04/F05.  Guarded catwalks retain the broad family population; a true
+    // hanging-bridge uses the suspension-hanger family and varies through span,
+    // width, material handwriting and deterministic cable geometry instead.
+    const architectureFamily = plan.variant === 'hanging-bridge'
+      ? 'suspension-hanger'
+      : familyFor({ widthClass, hash });
 
     Object.assign(plan, {
       enabled: true,

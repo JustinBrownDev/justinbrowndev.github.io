@@ -376,35 +376,165 @@ function chooseSupportPlacement({ locationId, pose, hostSpace, blockers, wallMou
     return { support, tv, footprint: chosen.box };
 }
 
+// The viewing-side coordinate frame a focal object (the TV) defines: origin at
+// its position, forward pointing into the room it faces, right perpendicular
+// to that. Every seating decision below is made in this frame so "on the
+// viewing side" and "how far back / how far to the side" are simple
+// dot-product checks instead of raw world-space angle math.
+function focalFrame(tvPlacement) {
+    const rotY = finite(tvPlacement?.transform?.rotY, 0);
+    return {
+        x: finite(tvPlacement?.transform?.x),
+        z: finite(tvPlacement?.transform?.z),
+        forward: { x: Math.sin(rotY), z: Math.cos(rotY) },
+        right: { x: Math.cos(rotY), z: -Math.sin(rotY) },
+    };
+}
+
+function framePoint(frame, forwardM, lateralM) {
+    return {
+        x: frame.x + frame.forward.x * forwardM + frame.right.x * lateralM,
+        z: frame.z + frame.forward.z * forwardM + frame.right.z * lateralM,
+    };
+}
+
+// dot((seat - focal), forward): positive means the seat is on the focal
+// object's front/viewing side, not behind its screen.
+function forwardOffset(frame, x, z) {
+    return (x - frame.x) * frame.forward.x + (z - frame.z) * frame.forward.z;
+}
+
+function segmentsIntersect(ax, az, bx, bz, cx, cz, dx, dz) {
+    const d1x = bx - ax, d1z = bz - az;
+    const d2x = dx - cx, d2z = dz - cz;
+    const denom = d1x * d2z - d1z * d2x;
+    if (Math.abs(denom) < 1e-9) return false;
+    const t = ((cx - ax) * d2z - (cz - az) * d2x) / denom;
+    const u = ((cx - ax) * d1z - (cz - az) * d1x) / denom;
+    return t > 1e-6 && t < 1 - 1e-6 && u > 1e-6 && u < 1 - 1e-6;
+}
+
+// A viewer whose straight line to the focal object passes through a solid
+// wall isn't really "watching" it, no matter how the angle math works out.
+function sightlineCrossesWall(from, to, hostSpace) {
+    const eyeY = hostSpace.surfaceY + 1.1;
+    for (const wall of hostSpace?.nearbyWalls ?? []) {
+        const x1 = finite(Number(wall?.x1)), z1 = finite(Number(wall?.z1));
+        const x2 = finite(Number(wall?.x2)), z2 = finite(Number(wall?.z2));
+        if (![x1, z1, x2, z2].every(Number.isFinite)) continue;
+        const wallYMin = finite(Number(wall?.yMin), hostSpace.surfaceY);
+        const wallYMax = finite(Number(wall?.yMax), hostSpace.surfaceY + 3);
+        if (wallYMin > eyeY || wallYMax < eyeY) continue;
+        if (segmentsIntersect(from.x, from.z, to.x, to.z, x1, z1, x2, z2)) return true;
+    }
+    return false;
+}
+
+function hashUnit(key) {
+    let h = 2166136261;
+    const text = String(key);
+    for (let i = 0; i < text.length; i++) {
+        h ^= text.charCodeAt(i);
+        h = Math.imul(h, 16777619);
+    }
+    return (h >>> 0) / 4294967296;
+}
+
+// A small set of relational seating compositions instead of independently
+// optimizing every chair around a ring. Each entry is {forwardRatio,
+// lateralRatio} per seat slot, scaled by the profile's own radius sense so
+// small-TV and Terra-scale rooms both get a proportioned layout. Picking
+// among a handful of recognizable arrangements (not a dense angle grid) is
+// what keeps a 4-chair hangout reading as "people sat down together" instead
+// of "chairs were placed by a satellite around a dish".
+const SEAT_COMPOSITIONS = [
+    // loose asymmetric hangout
+    [{ forwardRatio: 0.85, lateralRatio: -0.95 }, { forwardRatio: 1.05, lateralRatio: 0.55 },
+        { forwardRatio: 1.55, lateralRatio: -0.15 }, { forwardRatio: 1.5, lateralRatio: 1.15 }],
+    // symmetric front row with a staggered second rank
+    [{ forwardRatio: 1.0, lateralRatio: -0.8 }, { forwardRatio: 1.0, lateralRatio: 0.8 },
+        { forwardRatio: 1.5, lateralRatio: -0.35 }, { forwardRatio: 1.5, lateralRatio: 0.35 }],
+    // tight huddle with one spare chair further out
+    [{ forwardRatio: 0.85, lateralRatio: -0.5 }, { forwardRatio: 0.85, lateralRatio: 0.5 },
+        { forwardRatio: 1.35, lateralRatio: 0.0 }, { forwardRatio: 1.7, lateralRatio: 1.3 }],
+];
+
 function chooseSeats({ locationId, pose, hostSpace, blockers, composition, tvPlacement }) {
     const slot = composition?.slots?.find(item => item.slot === 'seating');
     const picks = slot?.picks ?? [];
     if (!picks.length || !tvPlacement) return [];
-    const seats = [];
     const radii = Array.isArray(composition?.startProfile?.seatRadiiM)
         ? composition.startProfile.seatRadiiM.map(value => Math.max(0.9, finite(Number(value), 1.55)))
         : [1.25, 1.55, 1.85];
-    const angles = Array.from({ length: 12 }, (_, i) => (i / 12) * Math.PI * 2);
+    const baseRadius = radii[Math.floor(radii.length / 2)] ?? 1.55;
+    const frame = focalFrame(tvPlacement);
+    const minForwardM = Math.max(0.3, baseRadius * 0.28);
+    const arrangement = SEAT_COMPOSITIONS[Math.floor(hashUnit(`${locationId}:seat-arrangement`) * SEAT_COMPOSITIONS.length)];
+    const jitter = index => (hashUnit(`${locationId}:seat-jitter:${index}`) - 0.5);
+
+    const seats = [];
+    const seatEnvelopes = () => seats.map(item => placementEnvelope(`${item.instanceId}:test`, item));
+
+    const tryCandidate = (pick, dims, x, z) => {
+        const forward = forwardOffset(frame, x, z);
+        if (forward < minForwardM) return null; // behind (or basically on top of) the screen
+        const box = normalizedBox({
+            x, z, halfX: dims[0] * 0.5 + 0.08, halfZ: dims[2] * 0.5 + 0.08,
+            yMin: hostSpace.surfaceY, yMax: hostSpace.surfaceY + dims[1],
+        });
+        if (!candidateClear(box, [...blockers, ...seatEnvelopes()], hostSpace)) return null;
+        if (sightlineCrossesWall({ x, z }, { x: frame.x, z: frame.z }, hostSpace)) return null;
+        return { x, z, box, forward };
+    };
+
     for (let index = 0; index < Math.min(4, picks.length); index++) {
         const pick = picks[index];
         const dims = dimsOf(pick, [0.56, 0.86, 0.58]);
+        const slotArrangement = arrangement[Math.min(index, arrangement.length - 1)];
         const candidates = [];
-        for (const radius of radii) {
-            for (const angle of angles) {
-                const x = tvPlacement.transform.x + Math.cos(angle) * radius;
-                const z = tvPlacement.transform.z + Math.sin(angle) * radius;
-                const box = normalizedBox({
-                    x, z, halfX: dims[0] * 0.5 + 0.08, halfZ: dims[2] * 0.5 + 0.08,
-                    yMin: hostSpace.surfaceY, yMax: hostSpace.surfaceY + dims[1],
-                });
-                if (!candidateClear(box, [...blockers, ...seats.map(item => placementEnvelope(`${item.instanceId}:test`, item))], hostSpace)) continue;
-                const spawnDistance = Math.hypot(x - pose.x, z - pose.z);
-                const tvDistance = Math.hypot(x - tvPlacement.transform.x, z - tvPlacement.transform.z);
-                const desiredRadius = radii[Math.min(index, radii.length - 1)] ?? 1.55;
-                candidates.push({ x, z, box, score: spawnDistance * 0.12 - Math.abs(tvDistance - desiredRadius) });
+
+        // Primary attempt: the chosen composition's seat, with a small amount
+        // of organic per-seat jitter so a room doesn't look mathematically
+        // identical every time it rolls the same arrangement.
+        for (const jForward of [0, jitter(index) * 0.18]) {
+            for (const jLateral of [0, jitter(index + 7) * 0.22]) {
+                const point = framePoint(
+                    frame,
+                    baseRadius * slotArrangement.forwardRatio + jForward,
+                    baseRadius * slotArrangement.lateralRatio + jLateral,
+                );
+                const candidate = tryCandidate(pick, dims, point.x, point.z);
+                if (candidate) candidates.push({ ...candidate, tier: 0 });
             }
         }
-        candidates.sort((a, b) => b.score - a.score || a.x - b.x || a.z - b.z);
+
+        // Fallback: the composition's slot didn't fit this particular room
+        // (an odd module shape, a tight platform, a wall in the way). Rather
+        // than dropping the chair, fan out world-space radii/angles around the
+        // TV exactly as densely as before - the only new restriction is
+        // discarding whatever lands behind the screen or across a wall, so a
+        // tight room still gets every viewing-side spot the old ring search
+        // would have found, just never the ones that put a chair at the TV's
+        // back.
+        if (!candidates.length) {
+            for (const radius of radii) {
+                for (let i = 0; i < 16; i++) {
+                    const angle = (i / 16) * Math.PI * 2;
+                    const x = frame.x + Math.cos(angle) * radius;
+                    const z = frame.z + Math.sin(angle) * radius;
+                    const candidate = tryCandidate(pick, dims, x, z);
+                    if (candidate) candidates.push({ ...candidate, tier: 1 });
+                }
+            }
+        }
+
+        candidates.sort((a, b) => {
+            if (a.tier !== b.tier) return a.tier - b.tier;
+            const desiredForward = baseRadius * slotArrangement.forwardRatio;
+            const aScore = -Math.abs(a.forward - desiredForward) + Math.hypot(a.x - pose.x, a.z - pose.z) * 0.05;
+            const bScore = -Math.abs(b.forward - desiredForward) + Math.hypot(b.x - pose.x, b.z - pose.z) * 0.05;
+            return bScore - aScore || a.x - b.x || a.z - b.z;
+        });
         const chosen = candidates[0];
         if (!chosen) continue;
         seats.push(makePlacement({

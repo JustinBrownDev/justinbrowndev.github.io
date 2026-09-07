@@ -375,15 +375,30 @@ export function compileSpawnSpatialPlan({
         reservations.push(envelope);
     } else unresolved.push('warm-practical');
 
+    const realizedSlots = [...new Set(placements.map(item => item.slot))];
+
+    // Boot authority is deliberately smaller than refuge completeness.
+    // The player only waits for the TV cluster. Seats/light are best-effort
+    // dressing and must never make an otherwise playable ordinary chunk fatal.
+    const tvReady =
+        realizedSlots.includes('primary-tv') &&
+        realizedSlots.includes('tv-support');
+
     return Object.freeze({
         schema: 'jweb.spawn-spatial-plan.v1',
         locationId,
         hostSpaceId: hostSpace.spaceId,
-        ready: unresolved.length === 0,
+
+        // Safe ordinary roof + TV/support is enough to enter the world.
+        ready: tvReady,
+
+        // Diagnostics/refinement can still tell whether the whole refuge fit.
+        complete: unresolved.length === 0,
+
         unresolved: [...new Set(unresolved)],
         reservations,
         placements,
-        realizedSlots: [...new Set(placements.map(item => item.slot))],
+        realizedSlots,
     });
 }
 

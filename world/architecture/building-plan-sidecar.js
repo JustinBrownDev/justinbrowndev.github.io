@@ -11,6 +11,7 @@ import { claimUnassignedRasterToEligibleSpaces, chooseHumanScaleProgramDrop, min
 import { stairWalkAroundClearance } from '../interior-geometry-policy.js';
 import { TRAVERSAL_PERMISSION } from '../sectional-circulation.js';
 import { programArchitectureFor, programMorphologyPool, programTemplatesForFloor } from './program-architecture.js';
+import { buildingSpeciesGrammar } from './building-species.js';
 
 const SCHEMA = 'jweb.building-plan-sidecar.v1';
 const EPS = 1e-9;
@@ -49,8 +50,10 @@ function stableIndex(key, length) {
   return length ? hashString32(key) % length : 0;
 }
 
-function chooseGrammar({ stableKey, family, programHint, authoredIntent }) {
+function chooseGrammar({ stableKey, family, programHint, authoredIntent, buildingSpecies = null }) {
   if (authoredIntent?.grammar && PLAN_GRAMMARS[authoredIntent.grammar]) return PLAN_GRAMMARS[authoredIntent.grammar];
+  const speciesGrammar = buildingSpeciesGrammar(buildingSpecies);
+  if (speciesGrammar && PLAN_GRAMMARS[speciesGrammar]) return PLAN_GRAMMARS[speciesGrammar];
   const programMorphologies = programMorphologyPool(programHint).filter(id => PLAN_GRAMMARS[id]);
   if (programMorphologies.length) {
     return PLAN_GRAMMARS[programMorphologies[stableIndex(`program-morphology:${stableKey}:${programHint}`, programMorphologies.length)]];
@@ -2573,6 +2576,7 @@ export function* planBuildingSidecarSteps({
   entityId = 'building',
   signatureType = null,
   programHint = null,
+  buildingSpecies = null,
   districtComposition = null,
   exteriorMacroPreference = null,
   physicalUse = null,
@@ -2603,7 +2607,7 @@ export function* planBuildingSidecarSteps({
   const programArchitecture = programArchitectureFor(semanticProgram);
   const stableKey = buildingSemanticTruth.stableKey;
   const profile = architecturalFieldProfile({ distanceChunks, weirdnessSampled, isSpawn });
-  const grammar = chooseGrammar({ stableKey, family, programHint: semanticProgram, authoredIntent });
+  const grammar = chooseGrammar({ stableKey, family, programHint: semanticProgram, authoredIntent, buildingSpecies });
   const floorH = clamp(floorHeight ?? physicalTruth?.floorHeight?.realizedSI ?? 3.15, 2.4, 5.8);
   const anchors = normalizeAccessAnchors(accessAnchors);
   const reservations = normalizeReservations(circulationReservations);
@@ -2673,6 +2677,7 @@ export function* planBuildingSidecarSteps({
       programDecision: buildingSemanticTruth.programDecision,
       physicalUseFamily: family,
       semanticProgram,
+      buildingSpecies: buildingSpecies ?? null,
       notes: grammar.notes,
     },
     programArchitecture: programArchitecture ? {
@@ -2696,6 +2701,7 @@ export function* planBuildingSidecarSteps({
     envelope: {
       moduleCount: normalized.length,
       floorCount: floors.length,
+      buildingSpecies: buildingSpecies ?? null,
       minGlobalFloor,
       maxGlobalFloorExclusive,
       modules: normalized,

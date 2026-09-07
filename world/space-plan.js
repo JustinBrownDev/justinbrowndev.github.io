@@ -1,9 +1,3 @@
-import {
-    spatialBoxGeometry,
-    spatialClaimFromCirculationReservation,
-    spatialGeometryIntersects,
-} from './spatial-claims.js';
-
 export const SPACE_PLAN_SCHEMA = 'jweb.space-plan.v1';
 
 function finiteOr(value, fallback) {
@@ -83,19 +77,39 @@ function platformSupports(platform, x, z, yBase, pad = 0.02) {
         && z >= platform.z - hz + pad && z <= platform.z + hz - pad;
 }
 
+function reservationBounds(reservation) {
+    if (!reservation) return null;
+    const x = Number(reservation.x);
+    const z = Number(reservation.z);
+    const halfX = Number.isFinite(reservation.halfX)
+        ? Number(reservation.halfX)
+        : Number(reservation.sx) * 0.5;
+    const halfZ = Number.isFinite(reservation.halfZ)
+        ? Number(reservation.halfZ)
+        : Number(reservation.sz) * 0.5;
+    const minX = Number.isFinite(reservation.minX) ? Number(reservation.minX) : x - halfX;
+    const maxX = Number.isFinite(reservation.maxX) ? Number(reservation.maxX) : x + halfX;
+    const minZ = Number.isFinite(reservation.minZ) ? Number(reservation.minZ) : z - halfZ;
+    const maxZ = Number.isFinite(reservation.maxZ) ? Number(reservation.maxZ) : z + halfZ;
+    const minY = Number(reservation.yMin);
+    const maxY = Number(reservation.yMax);
+    if (![minX, maxX, minY, maxY, minZ, maxZ].every(Number.isFinite)
+        || !(maxX > minX) || !(maxY > minY) || !(maxZ > minZ)) {
+        throw new Error('circulation reservation requires positive ordered box bounds');
+    }
+    return { minX, maxX, minY, maxY, minZ, maxZ };
+}
+
+function boundsIntersectBox(bounds, box) {
+    return bounds.minY < box.yMax && bounds.maxY > box.yMin
+        && bounds.minX < box.maxX && bounds.maxX > box.minX
+        && bounds.minZ < box.maxZ && bounds.maxZ > box.minZ;
+}
+
 function reservationIntersectsBox(reservation, box) {
     const normalized = normalizeBox(box);
     if (!normalized) return false;
-    const claim = spatialClaimFromCirculationReservation(reservation);
-    const query = spatialBoxGeometry({
-        minX: normalized.minX,
-        maxX: normalized.maxX,
-        minY: normalized.yMin,
-        maxY: normalized.yMax,
-        minZ: normalized.minZ,
-        maxZ: normalized.maxZ,
-    });
-    return spatialGeometryIntersects(claim.geometry, query, { epsilon: 0 });
+    return boundsIntersectBox(reservationBounds(reservation), normalized);
 }
 
 function moduleSpaceId(chunkKey, entity, module, floor) {
@@ -462,10 +476,13 @@ export function spacePlanTouchesPoint(plan, point, pad = 0.75) {
 
 export function spacePlanTouchesReservation(plan, reservation) {
     if (!plan || !reservation) return false;
-    if (!plan.regions?.length) return reservationIntersectsBox(reservation, plan.bounds);
-    return plan.regions.some(region => reservationIntersectsBox(reservation, {
+    const reservationBox = reservationBounds(reservation);
+    const planBounds = normalizeBox(plan.bounds);
+    if (!planBounds || !boundsIntersectBox(reservationBox, planBounds)) return false;
+    if (!plan.regions?.length) return true;
+    return plan.regions.some(region => boundsIntersectBox(reservationBox, {
         minX: region.minX, maxX: region.maxX,
         minZ: region.minZ, maxZ: region.maxZ,
-        yMin: plan.bounds.yMin, yMax: plan.bounds.yMax,
+        yMin: planBounds.yMin, yMax: planBounds.yMax,
     }));
 }

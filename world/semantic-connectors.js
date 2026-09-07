@@ -7,6 +7,7 @@ import { spacePlanTouchesPoint, spacePlanTouchesReservation } from './space-plan
 import { assertStairShaftContainsFlight } from './stair-volume-contract.js';
 import {
     accessPortalFromConnector,
+    compileAccessPortals,
     normalizeAccessPortalSet,
     portalCollisionOpeningWidth,
 } from './access-portals.js';
@@ -602,7 +603,7 @@ export function* ensureSemanticConnectorAuthoritySteps(physics, spacePlans = [])
     }
 
     yield { phase: 'access-portals', current: 0, total: 1 };
-    const portals = normalizeAccessPortalSet(connectors.map(connector => accessPortalFromConnector(connector, { spaces: spacePlans })));
+    const portals = compileAccessPortals({ connectors, spaces: spacePlans });
     physics.accessPortals = portals;
     const portalById = new Map(portals.map(portal => [portal.id, portal]));
     let portalOrdinal = 0;

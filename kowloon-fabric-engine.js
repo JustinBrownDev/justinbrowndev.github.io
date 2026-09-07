@@ -45,6 +45,7 @@ import { deriveStairFlight, gameplayTraversalEnvelope, resolvePhysicalTruth } fr
 import { BUILDING_SLAB_THICKNESS, storyCeilingLocalY } from './world/interior-geometry-policy.js';
 import { planInteriorStairCoreStructuralFeasibility } from './world/interior-stair-core.js';
 import { recoverCellFootprintForCirculation } from './world/architecture/circulation-footprint-recovery.js';
+import { applyBuildingSpeciesMassing, resolveBuildingHeightIntent } from './world/architecture/building-species.js';
 import { collapseSolidComponentsIntoSuperstructureSites, superstructureFallbackDecision } from './world/superstructure-fallback.js';
 import { planBuildingSidecarSteps } from './world/architecture/building-plan-sidecar.js';
 import { assertBuildingPlanAuthority, promoteBuildingPlanAuthority } from './world/architecture/building-plan-authority.js';
@@ -2555,6 +2556,7 @@ export function createKowloonFabricEngine({
     function* buildBroadStrokesCompoundSteps({
         chunk, site, siteIdOf, openSiteIds, topology, siteSignature, siteSeed, structureProfile,
         physics, transforms, materialIndex, modulePlans, moduleByKey, primaryModule, primaryStairArchitecture,
+        buildingHeightIntent, buildingMassingFeasibility,
         floorH, archetype, physicalUse, physicalTruth, servicePhysicalTruth, stairPhysicalTruth,
         districtBuildingPolicy, districtBuildingContext,
         floorConnectivityRepair, courtyard, courtyardSuppressedForConnectivity,
@@ -2849,6 +2851,7 @@ export function createKowloonFabricEngine({
             entityId: buildingPlanEntityId,
             signatureType: structureProfile?.signatureType ?? null,
             programHint: structureProfile?.semanticProgram ?? structureProfile?.programHint ?? districtBuildingPolicy.programHint ?? null,
+            buildingSpecies: buildingMassingFeasibility?.species ?? buildingHeightIntent.species ?? null,
             exteriorMacroPreference: structureProfile?.exteriorMacroPreference ?? null,
             districtCompositionId: districtBuildingPolicy.compositionId ?? null,
             districtComposition: districtBuildingContext ?? districtBuildingPolicy,
@@ -3869,6 +3872,9 @@ export function createKowloonFabricEngine({
             floorH,
             floors: Math.max(...floorCounts),
             archetype,
+            buildingSpecies: buildingMassingFeasibility?.species ?? buildingHeightIntent.species ?? null,
+            buildingHeightIntent,
+            buildingMassingFeasibility,
             physicalUse,
             physicalTruth,
             servicePhysicalTruth,
@@ -4071,26 +4077,28 @@ export function createKowloonFabricEngine({
             weirdness: weird,
             stableKey: `${chunk.key}:${siteSignature}:stair`,
         });
-        let primaryFloors = Math.min(HANGING_CITY_MAX_FLOORS, baseFloors + verticalBurst + (site.cells.length >= 4 && archetype !== 'workshop-warehouse' ? 1 : 0));
-        if (Number.isFinite(structureProfile?.primaryFloors)) primaryFloors = Math.max(1, Math.min(HANGING_CITY_MAX_FLOORS, Math.floor(structureProfile.primaryFloors)));
         const floorH = Number.isFinite(structureProfile?.floorHeight)
             ? Math.max(2.4, Math.min(5.8, structureProfile.floorHeight))
             : Math.max(2.4, Math.min(5.8, physicalTruth.floorHeight.realizedSI));
-        // Two parallel planes are now a hard world contract.  Lower-city towers
-        // reserve enough air for rooftop/circulation accretion instead of being
-        // allowed to grow through the white ceiling before the opposing field is
-        // even considered.
+        // Height follows a viable building species now. Ordinary fabric may still
+        // become a real skyscraper, but a leftover one-cell site can no longer win
+        // an independent near-span lottery and turn into a 30-storey stair stick.
         const cavernFloorCap = maximumCavernFloors(floorH);
-        if (!Number.isFinite(structureProfile?.primaryFloors) && archetype !== 'workshop-warehouse') {
-            primaryFloors = Math.min(HANGING_CITY_MAX_FLOORS, Math.max(primaryFloors, Math.round(primaryFloors * HANGING_CITY_MASSING_FLOOR_SCALE)));
-        }
-        primaryFloors = Math.min(primaryFloors, cavernFloorCap);
-        if (!Number.isFinite(structureProfile?.primaryFloors) && archetype !== 'workshop-warehouse') {
-            const spanRng = mulberry32(hashString32(`${worldSeed}:kowloon-near-span:${chunk.key}:${siteSignature}`));
-            if (spanRng() < 0.14 + weird * 0.10) {
-                primaryFloors = Math.max(primaryFloors, cavernFloorCap - (spanRng() < 0.32 ? 1 : 0));
-            }
-        }
+        const buildingHeightIntent = resolveBuildingHeightIntent({
+            baseFloors: baseFloors + verticalBurst + (site.cells.length >= 4 && archetype !== 'workshop-warehouse' ? 1 : 0),
+            ordinaryScale: archetype === 'workshop-warehouse' ? 1 : HANGING_CITY_MASSING_FLOOR_SCALE,
+            cavernFloorCap,
+            physicalUse,
+            programHint: structureProfile?.semanticProgram ?? structureProfile?.programHint ?? null,
+            archetype,
+            siteCellCount: site.cells.length,
+            weirdness: weird,
+            stableKey: `${worldSeed}:${chunk.key}:${siteSignature}`,
+            explicitPrimaryFloors: structureProfile?.primaryFloors,
+            explicitSpecies: structureProfile?.buildingSpecies ?? null,
+            explicitHeightAuthority: structureProfile?.heightAuthority === 'cavern-joint-synthesis' ? false : null,
+        });
+        let primaryFloors = buildingHeightIntent.desiredFloors;
         const modulePlans = [];
 
         for (const cell of activeCells) {
@@ -4137,6 +4145,20 @@ export function createKowloonFabricEngine({
         // the allocated primary cell, reclaim that cell envelope before portals,
         // apertures, collision or geometry become authoritative.
         let primaryModule = modulePlans.find(module => module.key === primaryKey) || modulePlans[0];
+        const hasPerCellHeightAuthority = !!structureProfile?.floorCountByCell || typeof structureProfile?.floorCountForCell === 'function';
+        const preservePerCellHeightAuthority = hasPerCellHeightAuthority
+            && structureProfile?.heightAuthority !== 'cavern-joint-synthesis';
+        const buildingMassingFeasibility = preservePerCellHeightAuthority ? null : applyBuildingSpeciesMassing({
+            modulePlans,
+            primaryModule,
+            heightIntent: buildingHeightIntent,
+            stableKey: `${worldSeed}:${chunk.key}:${siteSignature}`,
+            preserveExplicitHeight: buildingHeightIntent.explicitHeightAuthority === true,
+        });
+        if (buildingMassingFeasibility) {
+            primaryFloors = buildingMassingFeasibility.resolvedFloors;
+            primaryModule = modulePlans.find(module => module.key === primaryKey) || modulePlans[0];
+        }
         const coreRouteMassing = structureProfile?.routeDrivenMassing ?? null;
         const districtThoroughfareCore = coreRouteMassing?.districtArterial === true && !!coreRouteMassing?.districtRouteId;
         const compoundStairArchitectureBrief = deriveStairArchitectureBrief({
@@ -4344,6 +4366,7 @@ export function createKowloonFabricEngine({
             return yield* buildBroadStrokesCompoundSteps({
                 chunk, site, siteIdOf, openSiteIds, topology, siteSignature, siteSeed, structureProfile,
                 physics, transforms, materialIndex, modulePlans, moduleByKey, primaryModule, primaryStairArchitecture,
+                buildingHeightIntent, buildingMassingFeasibility,
                 floorH, archetype, physicalUse, physicalTruth, servicePhysicalTruth, stairPhysicalTruth,
                 districtBuildingPolicy, districtBuildingContext,
                 floorConnectivityRepair, courtyard, courtyardSuppressedForConnectivity,
@@ -4896,6 +4919,7 @@ export function createKowloonFabricEngine({
             entityId: buildingPlanEntityId,
             signatureType: structureProfile?.signatureType ?? null,
             programHint: structureProfile?.semanticProgram ?? structureProfile?.programHint ?? districtBuildingPolicy.programHint ?? null,
+            buildingSpecies: buildingMassingFeasibility?.species ?? buildingHeightIntent.species ?? null,
             exteriorMacroPreference: structureProfile?.exteriorMacroPreference ?? null,
             districtCompositionId: districtBuildingPolicy.compositionId ?? null,
             districtComposition: districtBuildingContext ?? districtBuildingPolicy,
@@ -5808,6 +5832,9 @@ export function createKowloonFabricEngine({
             floorH,
             floors: Math.max(...floorCounts),
             archetype,
+            buildingSpecies: buildingMassingFeasibility?.species ?? buildingHeightIntent.species ?? null,
+            buildingHeightIntent,
+            buildingMassingFeasibility,
             physicalUse,
             physicalTruth,
             servicePhysicalTruth,
@@ -7365,25 +7392,74 @@ export function createKowloonFabricEngine({
             weirdness: weird,
             stableKey: `${chunk.key}:${siteSignature}:primary`,
         });
-        let primaryFloors = Math.min(HANGING_CITY_MAX_FLOORS, baseFloors + verticalBurst + (site.cells.length >= 4 && archetype !== 'workshop-warehouse' ? 1 : 0));
-        if (Number.isFinite(structureProfile?.primaryFloors)) primaryFloors = Math.max(1, Math.min(HANGING_CITY_MAX_FLOORS, Math.floor(structureProfile.primaryFloors)));
         const floorHeight = Number.isFinite(structureProfile?.floorHeight)
             ? Math.max(2.4, Math.min(5.8, structureProfile.floorHeight))
             : Math.max(2.4, Math.min(5.8, physicalTruth.floorHeight.realizedSI));
         const cavernFloorCap = maximumCavernFloors(floorHeight);
-        if (!Number.isFinite(structureProfile?.primaryFloors) && archetype !== 'workshop-warehouse') {
-            primaryFloors = Math.min(HANGING_CITY_MAX_FLOORS, Math.max(primaryFloors, Math.round(primaryFloors * HANGING_CITY_MASSING_FLOOR_SCALE)));
-        }
-        primaryFloors = Math.min(primaryFloors, cavernFloorCap);
-        if (!Number.isFinite(structureProfile?.primaryFloors) && archetype !== 'workshop-warehouse') {
-            const spanRng = mulberry32(hashString32(`${worldSeed}:kowloon-near-span:${chunk.key}:${siteSignature}`));
-            if (spanRng() < 0.14 + weird * 0.10) {
-                primaryFloors = Math.max(primaryFloors, cavernFloorCap - (spanRng() < 0.32 ? 1 : 0));
-            }
-        }
-        return Object.freeze({ archetype, desiredFloors: primaryFloors, floorHeight, siteSignature });
+        const heightIntent = resolveBuildingHeightIntent({
+            baseFloors: baseFloors + verticalBurst + (site.cells.length >= 4 && archetype !== 'workshop-warehouse' ? 1 : 0),
+            ordinaryScale: archetype === 'workshop-warehouse' ? 1 : HANGING_CITY_MASSING_FLOOR_SCALE,
+            cavernFloorCap,
+            physicalUse,
+            programHint: structureProfile?.semanticProgram ?? structureProfile?.programHint ?? null,
+            archetype,
+            siteCellCount: site.cells.length,
+            weirdness: weird,
+            stableKey: `${worldSeed}:${chunk.key}:${siteSignature}`,
+            explicitPrimaryFloors: structureProfile?.primaryFloors,
+            explicitSpecies: structureProfile?.buildingSpecies ?? null,
+            explicitHeightAuthority: structureProfile?.heightAuthority === 'cavern-joint-synthesis' ? false : null,
+        });
+        return Object.freeze({ archetype, desiredFloors: heightIntent.desiredFloors, floorHeight, siteSignature, buildingHeightIntent: heightIntent });
     }
 
+
+    function estimateBridgeMassingCapacity({ site, mass, cellSize, targetFloors }) {
+        if (!site?.cells?.length || !mass?.buildingHeightIntent) return Math.max(1, Math.floor(Number(targetFloors) || 1));
+        const byKey = new Set(site.cells.map(cell => kowloonCellKey(cell.col, cell.row)));
+        const degreeOf = cell => KOWLOON_DIRS.reduce((sum, dir) =>
+            sum + (byKey.has(kowloonCellKey(cell.col + dir.dc, cell.row + dir.dr)) ? 1 : 0), 0);
+        let primary = site.cells[0];
+        let primaryDegree = -1;
+        for (const cell of site.cells) {
+            const degree = degreeOf(cell);
+            if (degree > primaryDegree) { primary = cell; primaryDegree = degree; }
+        }
+        const requestedCourtyard = selectKowloonCourtyardCell(site, degreeOf, primary, { minCells: 5, degree: 4 })
+            ?? selectKowloonCourtyardCell(site, degreeOf, primary, { minCells: 5, degree: 3 });
+        const courtyard = requestedCourtyard
+            && kowloonCellSetConnected(site.cells.filter(cell => cell !== requestedCourtyard))
+            ? requestedCourtyard : null;
+        const activeCells = site.cells.filter(cell => cell !== courtyard);
+        const moduleSpan = Math.max(2.4, Number(cellSize) * 0.90);
+        const modulePlans = activeCells.map(cell => ({
+            key: kowloonCellKey(cell.col, cell.row),
+            cell,
+            floors: Math.max(1, Math.floor(Number(targetFloors) || 1)),
+            rect: {
+                cx: Number(cell.col) * Number(cellSize),
+                cz: Number(cell.row) * Number(cellSize),
+                halfX: moduleSpan * 0.5,
+                halfZ: moduleSpan * 0.5,
+            },
+        }));
+        const primaryModule = modulePlans.find(module => module.key === kowloonCellKey(primary.col, primary.row)) ?? modulePlans[0];
+        if (!primaryModule) return 1;
+        const heightIntent = {
+            ...mass.buildingHeightIntent,
+            desiredFloors: Math.max(1, Math.floor(Number(targetFloors) || mass.desiredFloors || 1)),
+            explicitHeightAuthority: false,
+        };
+        const feasibility = applyBuildingSpeciesMassing({
+            modulePlans, primaryModule, heightIntent,
+            stableKey: `${mass.siteSignature}:bridge-capacity`,
+            preserveExplicitHeight: false,
+        });
+        return Math.max(1, Math.min(
+            Math.floor(Number(targetFloors) || 1),
+            Math.floor(Number(feasibility?.resolvedFloors) || 1),
+        ));
+    }
 
     function structuralPreflightForSite({ chunk, site, siteIdOf, roadPlan, cx0, cz0, half, cellSize, structureProfile = null }) {
         const mass = planCompoundMassIntent({ chunk, site, structureProfile });
@@ -7529,15 +7605,15 @@ export function createKowloonFabricEngine({
         return { source, weird, phaseChunk, cx0, cz0, half, cellSize, roadPlan, siteIdOf, sitePlans, openSiteIds, buildingSiteIds, bridgePlans, bridgePortalsBySite, structuralFallback };
     }
 
-    function desiredCeilingTowerFloors({ phaseChunk, signature, weirdness = 0 }) {
-        const heightRng = mulberry32(hashString32(`${worldSeed}:ceiling-height:${phaseChunk.key}:${signature}`));
-        const base = Math.min(HANGING_CITY_MAX_FLOORS, Math.round((4 + Math.floor(heightRng() * 5)) * HANGING_CITY_MASSING_FLOOR_SCALE));
-        const spanRng = mulberry32(hashString32(`${worldSeed}:ceiling-near-span:${phaseChunk.key}:${signature}`));
-        const cavernFloorCap = maximumCavernFloors(HANGING_CITY_FLOOR_HEIGHT);
-        if (spanRng() < 0.14 + Math.max(0, Math.min(1, weirdness)) * 0.10) {
-            return Math.max(base, cavernFloorCap - (spanRng() < 0.32 ? 1 : 0));
-        }
-        return base;
+    function ceilingTowerMassIntent({ phaseChunk, site }) {
+        // Hanging towers use the same building-species/footprint authority as
+        // upright towers. Polarity changes the local frame, not what counts as a
+        // viable skyscraper floorplate.
+        return planCompoundMassIntent({ chunk: phaseChunk, site });
+    }
+
+    function desiredCeilingTowerFloors({ phaseChunk, site }) {
+        return ceilingTowerMassIntent({ phaseChunk, site }).desiredFloors;
     }
 
     function prepareJointCavernSynthesis({
@@ -7616,11 +7692,12 @@ export function createKowloonFabricEngine({
                 ? Math.min(1, (Number(routeDemand.strength) || 0) * (routeDemand.role === 'transfer' ? 1 : 0.76)
                     + (routeDemand.absorbedInterveningTower ? 0.14 : 0))
                 : 0;
+            const maximumFloors = Math.max(minimumFloors, mass.buildingHeightIntent?.ordinaryCap ?? mass.desiredFloors);
             groundIntents.push({
                 id, siteId: plan.site.id,
                 bounds: ceilingSiteBounds(plan.site, cx0, cz0, half, cellSize),
                 claimBounds: ceilingSiteCellClaims(plan.site, cx0, cz0, half, cellSize),
-                desiredFloors, minimumFloors, floorHeight: circulationFloorHeight,
+                desiredFloors, minimumFloors, maximumFloors, floorHeight: circulationFloorHeight,
                 routeDemandScore,
                 routeRole: routeDemand?.role ?? null,
                 routePreferredBandNorm: routeDemand?.preferredBandNorm ?? null,
@@ -7636,9 +7713,12 @@ export function createKowloonFabricEngine({
         }
         const ceilingIntents = [];
         const ceilingIntentBySite = new Map();
+        const ceilingMassBySite = new Map();
         for (const plan of ceilingField.sitePlans) {
             if (plan.isPlaza) continue;
-            const desiredFloors = desiredCeilingTowerFloors({ phaseChunk: ceilingField.phaseChunk, signature: plan.signature, weirdness: weird });
+            const ceilingMass = ceilingTowerMassIntent({ phaseChunk: ceilingField.phaseChunk, site: plan.site });
+            ceilingMassBySite.set(plan.site.id, ceilingMass);
+            const desiredFloors = ceilingMass.desiredFloors;
             const id = worldEntityId(worldSeed, ceilingField.phaseChunk.x, ceilingField.phaseChunk.z, 'ceiling-building', plan.signature);
             const routeDemand = ceilingRouteDemandBySite.get(String(plan.site.id)) ?? null;
             const routeMinimumFloors = routeDemand ? (routeDemand.role === 'transfer' ? 3 : 2) : 1;
@@ -7655,7 +7735,9 @@ export function createKowloonFabricEngine({
                 id, siteId: plan.site.id,
                 bounds: ceilingSiteBounds(plan.site, ceilingField.cx0, ceilingField.cz0, ceilingField.half, ceilingField.cellSize),
                 claimBounds: ceilingSiteCellClaims(plan.site, ceilingField.cx0, ceilingField.cz0, ceilingField.half, ceilingField.cellSize),
-                desiredFloors: routeHeightTarget, minimumFloors, floorHeight: HANGING_CITY_FLOOR_HEIGHT,
+                desiredFloors: routeHeightTarget, minimumFloors,
+                maximumFloors: Math.max(minimumFloors, ceilingMass.buildingHeightIntent?.ordinaryCap ?? desiredFloors),
+                floorHeight: HANGING_CITY_FLOOR_HEIGHT,
                 routeDemandScore,
                 routeRole: routeDemand?.role ?? null,
                 routePreferredBandNorm: routeDemand?.preferredBandNorm ?? null,
@@ -7680,14 +7762,24 @@ export function createKowloonFabricEngine({
             claimMargin: HANGING_CITY_CLAIM_MARGIN,
             stableKey: `${worldSeed}:${chunk.key}:section-archetypes`,
         });
-        const groundCapacity = new Map(groundIntents.map(intent => [
-            intent.siteId,
-            resolution.ground.get(intent.id)?.floors ?? intent.desiredFloors,
-        ]));
-        const ceilingCapacity = new Map(ceilingIntents.map(intent => [
-            intent.siteId,
-            resolution.ceiling.get(intent.id)?.floors ?? intent.desiredFloors,
-        ]));
+        const groundPlanBySite = new Map(groundSitePlans.map(plan => [plan.site.id, plan]));
+        const ceilingPlanBySite = new Map(ceilingField.sitePlans.map(plan => [plan.site.id, plan]));
+        const groundCapacity = new Map(groundIntents.map(intent => {
+            const resolved = resolution.ground.get(intent.id)?.floors ?? intent.desiredFloors;
+            const plan = groundPlanBySite.get(intent.siteId);
+            const mass = groundMassBySite.get(intent.siteId);
+            return [intent.siteId, plan && mass
+                ? estimateBridgeMassingCapacity({ site: plan.site, mass, cellSize, targetFloors: resolved })
+                : resolved];
+        }));
+        const ceilingCapacity = new Map(ceilingIntents.map(intent => {
+            const resolved = resolution.ceiling.get(intent.id)?.floors ?? intent.desiredFloors;
+            const plan = ceilingPlanBySite.get(intent.siteId);
+            const mass = ceilingMassBySite.get(intent.siteId);
+            return [intent.siteId, plan && mass
+                ? estimateBridgeMassingCapacity({ site: plan.site, mass, cellSize: ceilingField.cellSize, targetFloors: resolved })
+                : resolved];
+        }));
         const groundSectionalCirculation = assignBridgeSectionBands({
             bridgePlans: groundBridgePlans,
             bridgePortalsBySite: groundBridgePortalsBySite,
@@ -7719,6 +7811,8 @@ export function createKowloonFabricEngine({
                 primaryFloors: decision?.floors ?? mass.desiredFloors,
                 floorHeight: decision?.floorHeight ?? mass.floorHeight,
                 cavernJointSynthesis: true,
+                heightAuthority: 'cavern-joint-synthesis',
+                buildingSpecies: mass.buildingHeightIntent?.species ?? null,
                 circulationFloorGrid: (groundBridgePortalsBySite?.get(intent.siteId) ?? []).length ? 'shared-3.15m-exchange-grid' : null,
                 routeDrivenMassing: intent.routeDemandScore > 0 ? Object.freeze({
                     routeId: intent.routeId,
@@ -7781,7 +7875,7 @@ export function createKowloonFabricEngine({
             finalCeilingGeometry.set(String(plan.site.id), { id: plan.site.id, bounds });
             const jointBudget = ceilingBudgets?.get(plan.site.id) ?? null;
             const desiredFloors = jointBudget?.desiredFloors
-                ?? desiredCeilingTowerFloors({ phaseChunk, signature: plan.signature, weirdness: weird });
+                ?? desiredCeilingTowerFloors({ phaseChunk, site: plan.site });
             const landmarkBudget = planCeilingBuildingHeight({
                 siteBounds: bounds,
                 groundEntities: groundEntities.filter(entity => entity?.kind === 'district-landmark'),
@@ -7834,7 +7928,7 @@ export function createKowloonFabricEngine({
             if (plan.isPlaza) { plazas++; continue; }
             const bounds = ceilingSiteBounds(site, cx0, cz0, half, cellSize);
             const jointBudget = ceilingBudgets?.get(site.id) ?? null;
-            const desiredFloors = jointBudget?.desiredFloors ?? desiredCeilingTowerFloors({ phaseChunk, signature, weirdness: weird });
+            const desiredFloors = jointBudget?.desiredFloors ?? desiredCeilingTowerFloors({ phaseChunk, site });
             const landmarkBudget = planCeilingBuildingHeight({
                 siteBounds: bounds,
                 groundEntities: groundEntities.filter(entity => entity?.kind === 'district-landmark'),
@@ -7871,6 +7965,7 @@ export function createKowloonFabricEngine({
                 structureProfile: {
                     primaryFloors: heightPlan.floors,
                     floorHeight: HANGING_CITY_FLOOR_HEIGHT,
+                    heightAuthority: 'cavern-joint-synthesis',
                     archetype: plan.superstructure ? 'vertical-stack' : undefined,
                     entityIdOverride: worldEntityId(worldSeed, phaseChunk.x, phaseChunk.z, 'ceiling-building-plan', signature),
                     singularRecipe: plan.superstructure ? 'ceiling-circulation-superstructure' : 'ceiling-stalactite-building',

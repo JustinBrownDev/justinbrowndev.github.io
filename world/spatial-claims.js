@@ -256,6 +256,9 @@ function primitiveIntersects(a, b, padding = 0, epsilon = EPS, verticalPadding =
 
 export function spatialGeometryIntersects(a, b, { padding = 0, epsilon = EPS, verticalPadding = padding } = {}) {
     if (!a || !b) return false;
+    if (a.kind !== 'compound' && b.kind !== 'compound') {
+        return primitiveIntersects(a, b, padding, epsilon, verticalPadding);
+    }
     const left = partsOf(a);
     const right = partsOf(b);
     for (const x of left) for (const y of right) if (primitiveIntersects(x, y, padding, epsilon, verticalPadding)) return true;
@@ -267,6 +270,60 @@ function policyBlocks(policy, other) {
     if (policy.compatible.includes(other.category)) return false;
     if (policy.mode === 'exclusive') return true;
     return policy.blocks.includes('*') || policy.blocks.includes(other.category);
+}
+
+function createConflictIndex(claims = []) {
+    const index = {
+        all: [],
+        byCategory: new Map(),
+        blockingByCategory: new Map(),
+        globalBlockers: [],
+    };
+    for (const claim of claims) indexAcceptedClaim(index, claim);
+    return index;
+}
+
+function pushConflictIndex(map, key, claim) {
+    const list = map.get(key) ?? [];
+    list.push(claim);
+    map.set(key, list);
+}
+
+function indexAcceptedClaim(index, claim) {
+    index.all.push(claim);
+    const policy = claim.conflictPolicy;
+    pushConflictIndex(index.byCategory, policy.category, claim);
+    if (policy.mode === 'advisory') return;
+    if (policy.mode === 'exclusive' || policy.blocks.includes('*')) {
+        index.globalBlockers.push(claim);
+        return;
+    }
+    for (const category of policy.blocks) {
+        if (policy.compatible.includes(category)) continue;
+        pushConflictIndex(index.blockingByCategory, category, claim);
+    }
+}
+
+function potentialConflictCandidates(index, claim) {
+    const candidates = new Set();
+    const policy = claim.conflictPolicy;
+    if (policy.mode !== 'advisory') {
+        if (policy.mode === 'exclusive' || policy.blocks.includes('*')) {
+            for (const existing of index.all) {
+                if (!policy.compatible.includes(existing.conflictPolicy.category)) candidates.add(existing);
+            }
+        } else {
+            for (const category of policy.blocks) {
+                if (policy.compatible.includes(category)) continue;
+                for (const existing of index.byCategory.get(category) ?? []) candidates.add(existing);
+            }
+        }
+    }
+    for (const existing of index.blockingByCategory.get(policy.category) ?? []) candidates.add(existing);
+    for (const existing of index.globalBlockers) {
+        if (!existing.conflictPolicy.compatible.includes(policy.category)) candidates.add(existing);
+    }
+    return [...candidates].sort(compareSpatialClaimAuthority);
 }
 
 export function compareSpatialClaimAuthority(a, b) {
@@ -309,10 +366,11 @@ export function resolveSpatialClaims(claims = []) {
     normalized.sort(compareSpatialClaimAuthority);
     const accepted = [];
     const rejected = [];
+    const conflictIndex = createConflictIndex();
     for (const claim of normalized) {
         let blocker = null;
         let decision = null;
-        for (const existing of accepted) {
+        for (const existing of potentialConflictCandidates(conflictIndex, claim)) {
             const pair = evaluateSpatialClaimPair(existing, claim);
             if (!pair.compatible && pair.winner === existing.id) {
                 blocker = existing;
@@ -321,7 +379,10 @@ export function resolveSpatialClaims(claims = []) {
             }
         }
         if (blocker) rejected.push({ claim, blocker, decision });
-        else accepted.push(claim);
+        else {
+            accepted.push(claim);
+            indexAcceptedClaim(conflictIndex, claim);
+        }
     }
     return { schema: SPATIAL_CLAIM_AUTHORITY_SCHEMA, accepted, rejected };
 }
@@ -330,12 +391,14 @@ export class SpatialClaimAuthority {
     constructor(claims = []) {
         this.schema = SPATIAL_CLAIM_AUTHORITY_SCHEMA;
         this._claims = new Map();
+        this._conflictIndex = createConflictIndex();
         if (claims.length) this.replace(claims);
     }
 
     replace(claims = []) {
         const resolved = resolveSpatialClaims(claims);
         this._claims = new Map(resolved.accepted.map(claim => [claim.id, claim]));
+        this._conflictIndex = createConflictIndex(resolved.accepted);
         return resolved;
     }
 
@@ -352,13 +415,10 @@ export class SpatialClaimAuthority {
     claimWithoutDisplacement(claim) {
         if (claim?.schema !== SPATIAL_CLAIM_SCHEMA) throw new Error('claimWithoutDisplacement requires a normalized spatial claim');
         if (this._claims.has(claim.id)) throw new Error(`duplicate spatial claim id: ${claim.id}`);
-        // _claims already contains a mutually compatible resolved set. For a caller
-        // that forbids displacement, resolving every existing pair again is wasted
-        // O(n^2) work: the new claim is admissible iff it is compatible with every
-        // incumbent. Preserve the old deterministic blocker semantics by scanning
-        // incumbents in authority order.
-        const incumbents = [...this._claims.values()].sort(compareSpatialClaimAuthority);
-        for (const existing of incumbents) {
+        // _claims already contains a mutually compatible resolved set. The conflict
+        // index narrows this to incumbents whose policies can actually block one
+        // another, while the final authority sort preserves deterministic blockers.
+        for (const existing of potentialConflictCandidates(this._conflictIndex, claim)) {
             const pair = evaluateSpatialClaimPair(existing, claim);
             if (pair.compatible) continue;
             const wouldDisplace = pair.winner === claim.id;
@@ -372,6 +432,7 @@ export class SpatialClaimAuthority {
             };
         }
         this._claims.set(claim.id, claim);
+        indexAcceptedClaim(this._conflictIndex, claim);
         return { accepted: true, displaced: [], wouldDisplace: false, rejected: null, blocker: null, decision: null };
     }
 
@@ -384,10 +445,15 @@ export class SpatialClaimAuthority {
         }
         const displaced = [...this._claims.keys()].filter(id => !acceptedIds.has(id));
         this._claims = new Map(resolved.accepted.map(item => [item.id, item]));
+        this._conflictIndex = createConflictIndex(resolved.accepted);
         return { accepted: true, displaced, rejected: null };
     }
 
-    remove(id) { return this._claims.delete(String(id)); }
+    remove(id) {
+        const removed = this._claims.delete(String(id));
+        if (removed) this._conflictIndex = createConflictIndex(this._claims.values());
+        return removed;
+    }
 
     releaseScope(scopeId) {
         const target = String(scopeId);
@@ -398,6 +464,7 @@ export class SpatialClaimAuthority {
                 removed++;
             }
         }
+        if (removed) this._conflictIndex = createConflictIndex(this._claims.values());
         return removed;
     }
 
@@ -410,6 +477,7 @@ export class SpatialClaimAuthority {
                 removed++;
             }
         }
+        if (removed) this._conflictIndex = createConflictIndex(this._claims.values());
         return removed;
     }
 

@@ -70,11 +70,17 @@ function regionBounds(region) {
     return { minX, maxX, minZ, maxZ };
 }
 
-function spaceRegions(space) {
+function spaceGeometry(space, cache = null) {
+    const cached = cache?.get(space);
+    if (cached) return cached;
     const regions = (space?.regions ?? []).map(regionBounds).filter(Boolean);
-    if (regions.length) return regions;
-    const bounds = space?.bounds;
-    return bounds ? [regionBounds(bounds)] : [];
+    const resolvedRegions = regions.length ? regions : (space?.bounds ? [regionBounds(space.bounds)] : []);
+    const bounds = space?.bounds ?? {};
+    const yMin = Number.isFinite(bounds.yMin) ? bounds.yMin : finite(space?.yBase);
+    const yMax = Number.isFinite(bounds.yMax) ? bounds.yMax : yMin + Math.max(0.1, finite(space?.floorH, 3.15));
+    const geometry = { regions: resolvedRegions, yMin, yMax };
+    cache?.set(space, geometry);
+    return geometry;
 }
 
 function distanceToRect(point, rect) {
@@ -83,16 +89,14 @@ function distanceToRect(point, rect) {
     return Math.hypot(dx, dz);
 }
 
-function distanceToSpace(point, space) {
+function distanceToSpace(point, space, cache = null) {
     let best = Infinity;
-    for (const region of spaceRegions(space)) best = Math.min(best, distanceToRect(point, region));
+    for (const region of spaceGeometry(space, cache).regions) best = Math.min(best, distanceToRect(point, region));
     return best;
 }
 
-function verticalDistance(y, space) {
-    const bounds = space?.bounds ?? {};
-    const yMin = Number.isFinite(bounds.yMin) ? bounds.yMin : finite(space?.yBase);
-    const yMax = Number.isFinite(bounds.yMax) ? bounds.yMax : yMin + Math.max(0.1, finite(space?.floorH, 3.15));
+function verticalDistance(y, space, cache = null) {
+    const { yMin, yMax } = spaceGeometry(space, cache);
     if (y >= yMin - EPS && y <= yMax + EPS) return 0;
     return y < yMin ? yMin - y : y - yMax;
 }
@@ -114,19 +118,19 @@ function modulePenalty(surface, space) {
     return 3;
 }
 
-function spaceScore(surface, point, space) {
-    const vertical = verticalDistance(point.y, space);
-    const distance = distanceToSpace(point, space);
+function spaceScore(surface, point, space, cache = null) {
+    const vertical = verticalDistance(point.y, space, cache);
+    const distance = distanceToSpace(point, space, cache);
     return vertical * 1000 + distance * 100 + modulePenalty(surface, space);
 }
 
-function selectSpaceForSurface(surface, point, spaces) {
+function selectSpaceForSurface(surface, point, spaces, cache = null) {
     if (!surface || !spaces?.length) return null;
     const inward = inwardPoint(surface, point);
     let best = null;
     let bestScore = Infinity;
     for (const space of spaces) {
-        const score = spaceScore(surface, inward, space);
+        const score = spaceScore(surface, inward, space, cache);
         if (score < bestScore || (score === bestScore && best && String(space.id).localeCompare(String(best.id)) < 0)) {
             best = space;
             bestScore = score;
@@ -258,7 +262,7 @@ function compactSpaceDescriptor(space, entity, destination) {
 
 function bindingForSurface({ surface, opportunity = null, entity, spaces, apertures, destinations, district, point = null, indexes = null }) {
     const sourcePoint = point ?? opportunity?.transform ?? surface;
-    const space = selectSpaceForSurface(surface, sourcePoint, spaces);
+    const space = selectSpaceForSurface(surface, sourcePoint, spaces, indexes?.spaceGeometryCache);
     const destination = destinationForSpace(destinations, space?.id, indexes?.destinationBySpace);
     const role = classifyFrontage(space, entity);
     const identity = buildingIdentity(entity);
@@ -331,8 +335,8 @@ function aggregateOpportunityBinding({ opportunity, entity, spaces, surfaces, ap
         let space = null;
         let bestScore = Infinity;
         for (const candidate of spaces) {
-            const score = verticalDistance(finite(point.y), candidate) * 1000
-                + distanceToSpace({ x: finite(point.x), z: finite(point.z) }, candidate) * 100;
+            const score = verticalDistance(finite(point.y), candidate, indexes?.spaceGeometryCache) * 1000
+                + distanceToSpace({ x: finite(point.x), z: finite(point.z) }, candidate, indexes?.spaceGeometryCache) * 100;
             if (score < bestScore || (score === bestScore && space && String(candidate.id).localeCompare(String(space.id)) < 0)) {
                 space = candidate;
                 bestScore = score;
@@ -440,7 +444,7 @@ export function* bindFrontageSemanticTruthSteps({
         list.push(aperture);
         aperturesBySurface.set(key, list);
     }
-    const indexes = { surfaceById, destinationBySpace, aperturesBySurface };
+    const indexes = { surfaceById, destinationBySpace, aperturesBySurface, spaceGeometryCache: new WeakMap() };
     const spacesByEntity = new Map();
     const getSpaces = entity => {
         const key = String(entity?.id ?? '');

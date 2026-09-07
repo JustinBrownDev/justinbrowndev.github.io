@@ -33,17 +33,38 @@ function connectorSpaceIds(connector) {
     ].filter(Boolean).map(String))];
 }
 
-function entityForConnector(connector, spacesById, entities = []) {
+function portalIndexes(spaces = [], entities = []) {
+    const spacesById = spaceMap(spaces);
+    const entitiesById = new Map();
+    const entitiesByModuleKey = new Map();
+    for (const entity of entities ?? []) {
+        if (entity?.id != null) entitiesById.set(String(entity.id), entity);
+        for (const module of entity?.footprintModules ?? []) {
+            if (module?.key != null && !entitiesByModuleKey.has(String(module.key))) {
+                entitiesByModuleKey.set(String(module.key), entity);
+            }
+        }
+    }
+    return { spacesById, entitiesById, entitiesByModuleKey };
+}
+
+function entityForConnector(connector, spacesById, entities = [], indexes = null) {
     const explicit = connector?.metadata?.entityId ?? connector?.metadata?.buildingId ?? null;
-    if (explicit) return entities.find(entity => String(entity?.id) === String(explicit)) ?? { id: explicit };
+    if (explicit) return indexes?.entitiesById?.get(String(explicit))
+        ?? entities.find(entity => String(entity?.id) === String(explicit))
+        ?? { id: explicit };
 
     for (const id of connectorSpaceIds(connector)) {
         const entityId = spacesById.get(id)?.entityId;
-        if (entityId) return entities.find(entity => String(entity?.id) === String(entityId)) ?? { id: entityId };
+        if (entityId) return indexes?.entitiesById?.get(String(entityId))
+            ?? entities.find(entity => String(entity?.id) === String(entityId))
+            ?? { id: entityId };
     }
 
     const moduleKey = connector?.metadata?.moduleKey;
     if (moduleKey) {
+        const indexed = indexes?.entitiesByModuleKey?.get(String(moduleKey));
+        if (indexed) return indexed;
         const match = entities.find(entity => entity?.footprintModules?.some(module => module?.key === moduleKey));
         if (match) return match;
     }
@@ -197,10 +218,10 @@ function apertureGeometry(connector, threshold) {
     };
 }
 
-export function accessPortalFromConnector(connector, { spaces = [], entities = [] } = {}) {
+export function accessPortalFromConnector(connector, { spaces = [], entities = [], indexes = null } = {}) {
     if (!connector?.id) throw new Error('access portal requires semantic connector id');
-    const spacesById = spaceMap(spaces);
-    const entity = entityForConnector(connector, spacesById, entities);
+    const spacesById = indexes?.spacesById ?? spaceMap(spaces);
+    const entity = entityForConnector(connector, spacesById, entities, indexes);
     const endpointViews = (connector.endpoints ?? []).map((endpoint, index) => endpointView(endpoint, index, connector, spacesById));
     const threshold = doorThreshold(connector, endpointViews);
     const pair = text(connector.kind) === 'door' ? doorEndpointPair(threshold, connector, spacesById) : { outsideEndpoint: null, insideEndpoint: null };
@@ -302,7 +323,8 @@ export function normalizeAccessPortalSet(portals = []) {
 
 export function compileAccessPortals({ physics = null, connectors = null, spaces = [], entities = [] } = {}) {
     const source = connectors ?? physics?.semanticConnectors ?? [];
-    return normalizeAccessPortalSet(source.map(connector => accessPortalFromConnector(connector, { spaces, entities })));
+    const indexes = portalIndexes(spaces, entities);
+    return normalizeAccessPortalSet(source.map(connector => accessPortalFromConnector(connector, { spaces, entities, indexes })));
 }
 
 export function publishAccessPortals(physics, { spaces = [], entities = [] } = {}) {

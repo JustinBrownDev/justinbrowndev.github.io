@@ -1,6 +1,6 @@
 import { HANGING_CITY_CEILING_Y } from './hanging-city-topology.js';
 
-export const CAVERN_JOINT_SYNTHESIS_SCHEMA = 'jweb.cavern-joint-synthesis.v4';
+export const CAVERN_JOINT_SYNTHESIS_SCHEMA = 'jweb.cavern-joint-synthesis.v5';
 
 function finite(value, fallback = 0) {
   const n = Number(value);
@@ -44,24 +44,35 @@ function claimsOverlap(a, b) {
 
 function planFloors(plan) {
   const floorHeight = Math.max(0.1, finite(plan?.floorHeight, 3.15));
-  const desiredFloors = Math.max(1, Math.floor(finite(plan?.desiredFloors, 1)));
-  const minimumFloors = Math.max(1, Math.min(desiredFloors, Math.floor(finite(plan?.minimumFloors, 1))));
-  return { floorHeight, desiredFloors, minimumFloors };
+  const rawMinimumFloors = Math.max(1, Math.floor(finite(plan?.minimumFloors, 1)));
+  const rawMaximumFloors = Number.isFinite(Number(plan?.maximumFloors))
+    ? Math.max(rawMinimumFloors, Math.floor(Number(plan.maximumFloors)))
+    : Number.MAX_SAFE_INTEGER;
+  const desiredFloors = Math.min(
+    rawMaximumFloors,
+    Math.max(rawMinimumFloors, Math.floor(finite(plan?.desiredFloors, rawMinimumFloors))),
+  );
+  const minimumFloors = Math.min(desiredFloors, rawMinimumFloors);
+  return { floorHeight, desiredFloors, minimumFloors, maximumFloors: rawMaximumFloors };
 }
 
 function freezeDecision(plan, floors, blockers, horizontal, sectionArchetypes = []) {
-  const { floorHeight, desiredFloors, minimumFloors } = planFloors(plan);
-  // v4: a section archetype is allowed to promote a tower above its ordinary
-  // random massing request. The old v3 clamp to desiredFloors made labels such
-  // as "upright collector" and "midsection braid" descriptive metadata only:
-  // they could trim a tower but could never make it reach into the enlarged
-  // cavern. Safety is enforced pairwise before this decision is frozen.
-  const acceptedFloors = Math.max(minimumFloors, Math.floor(finite(floors, desiredFloors)));
+  const { floorHeight, desiredFloors, minimumFloors, maximumFloors } = planFloors(plan);
+  // Section archetypes may promote a viable building above its ordinary request,
+  // but never above the floor-count capacity supplied by architectural massing.
+  // This keeps collectors and braids while preventing a one-cell leftover site
+  // from being stretched into a cavern-height circulation stick.
+  const acceptedFloors = Math.min(
+    maximumFloors,
+    Math.max(minimumFloors, Math.floor(finite(floors, desiredFloors))),
+  );
   return Object.freeze({
     id: String(plan.id),
     desiredFloors,
     minimumFloors,
+    maximumFloors: Number.isSafeInteger(maximumFloors) ? maximumFloors : null,
     floors: acceptedFloors,
+    capacityLimitedPromotion: Number.isFinite(Number(plan?.maximumFloors)) && acceptedFloors >= maximumFloors,
     promotedFloors: Math.max(0, acceptedFloors - desiredFloors),
     floorHeight,
     desiredHeight: desiredFloors * floorHeight,
@@ -128,9 +139,13 @@ function collectorPairFloorTargets(ground, ceiling, availableHeight, dominant = 
     minorStats.minimumFloors,
     Math.floor((minorHeightBudget + 1e-8) / minorStats.floorHeight),
   );
-  let dominantFloors = Math.max(
-    dominantStats.minimumFloors,
-    Math.floor((availableHeight - minorFloors * minorStats.floorHeight + 1e-8) / dominantStats.floorHeight),
+  minorFloors = Math.min(minorStats.maximumFloors, minorFloors);
+  let dominantFloors = Math.min(
+    dominantStats.maximumFloors,
+    Math.max(
+      dominantStats.minimumFloors,
+      Math.floor((availableHeight - minorFloors * minorStats.floorHeight + 1e-8) / dominantStats.floorHeight),
+    ),
   );
   while (dominantFloors * dominantStats.floorHeight + minorFloors * minorStats.floorHeight > availableHeight + 1e-8
       && minorFloors > minorStats.minimumFloors) minorFloors--;
@@ -146,8 +161,8 @@ function braidPairFloorTargets(ground, ceiling, availableHeight, stableKey = nul
   const c = planFloors(ceiling);
   const h = stableHash(`${stableKey ?? 'section'}:${ground.id}:${ceiling.id}:braid-balance`);
   const ratio = 0.46 + (h / 0xffffffff) * 0.08;
-  let gfloors = Math.max(g.minimumFloors, Math.floor((availableHeight * ratio + 1e-8) / g.floorHeight));
-  let cfloors = Math.max(c.minimumFloors, Math.floor((availableHeight - gfloors * g.floorHeight + 1e-8) / c.floorHeight));
+  let gfloors = Math.min(g.maximumFloors, Math.max(g.minimumFloors, Math.floor((availableHeight * ratio + 1e-8) / g.floorHeight)));
+  let cfloors = Math.min(c.maximumFloors, Math.max(c.minimumFloors, Math.floor((availableHeight - gfloors * g.floorHeight + 1e-8) / c.floorHeight)));
   while (gfloors * g.floorHeight + cfloors * c.floorHeight > availableHeight + 1e-8) {
     const gFlex = gfloors - g.minimumFloors;
     const cFlex = cfloors - c.minimumFloors;
@@ -208,8 +223,8 @@ function pairFloorTargets(ground, ceiling, availableHeight, archetype, stableKey
 function trimPairToHeight(ground, ceiling, groundFloors, ceilingFloors, heightLimit, archetype) {
   const g = planFloors(ground);
   const c = planFloors(ceiling);
-  let gfloors = Math.max(g.minimumFloors, Math.floor(finite(groundFloors, g.desiredFloors)));
-  let cfloors = Math.max(c.minimumFloors, Math.floor(finite(ceilingFloors, c.desiredFloors)));
+  let gfloors = Math.min(g.maximumFloors, Math.max(g.minimumFloors, Math.floor(finite(groundFloors, g.desiredFloors))));
+  let cfloors = Math.min(c.maximumFloors, Math.max(c.minimumFloors, Math.floor(finite(ceilingFloors, c.desiredFloors))));
   const occupied = () => gfloors * g.floorHeight + cfloors * c.floorHeight;
   const trimSide = side => {
     if (side === 'ground' && gfloors > g.minimumFloors) { gfloors--; return true; }
@@ -278,8 +293,10 @@ export function reconcileCavernFloorBudgets({
         gFloors.set(gId, Math.min(gFloors.get(gId), targets.ground));
         cFloors.set(cId, Math.min(cFloors.get(cId), targets.ceiling));
       } else {
-        gFloors.set(gId, Math.max(gFloors.get(gId), targets.ground));
-        cFloors.set(cId, Math.max(cFloors.get(cId), targets.ceiling));
+        const gMaximum = planFloors(g).maximumFloors;
+        const cMaximum = planFloors(c).maximumFloors;
+        gFloors.set(gId, Math.min(gMaximum, Math.max(gFloors.get(gId), targets.ground)));
+        cFloors.set(cId, Math.min(cMaximum, Math.max(cFloors.get(cId), targets.ceiling)));
       }
       gBlockers.get(gId).add(cId);
       cBlockers.get(cId).add(gId);

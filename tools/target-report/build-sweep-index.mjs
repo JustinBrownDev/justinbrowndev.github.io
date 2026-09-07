@@ -75,6 +75,28 @@ function renderObjectSection([query, runs]) {
 </section>`;
 }
 
+// Structural/circulation dossier (tools/target-report/chunk-dossier.mjs) is
+// optional and orthogonal to the pixel sweep - deterministic Node-only
+// analyses (no browser), run once per chunk rather than per checkpoint.
+// Fold it in as a section at the top if present.
+const dossierPath = path.join(SWEEP_DIR, 'chunk-dossier', 'dossier.json');
+const dossier = fs.existsSync(dossierPath) ? JSON.parse(fs.readFileSync(dossierPath, 'utf8')) : null;
+
+function renderDossierTask(t) {
+    const artifactLinks = (t.artifacts ?? []).filter(a => fs.existsSync(path.join(SWEEP_DIR, 'chunk-dossier', a.file)))
+        .map(a => `<a href="chunk-dossier/${esc(a.file)}">${esc(a.label)}</a>`).join(' · ');
+    if (t.status !== 'ok') {
+        return `<div class="dtask failed"><h4>${esc(t.title)}</h4><p class="miss-reason">FAILED<br>${esc((t.error ?? '').slice(0, 200))}</p></div>`;
+    }
+    return `<div class="dtask ok"><h4>${esc(t.title)}</h4><pre class="dsummary">${esc(JSON.stringify(t.summary, null, 2)).slice(0, 600)}</pre>${artifactLinks ? `<p class="dlinks">${artifactLinks}</p>` : ''}</div>`;
+}
+
+const dossierSection = dossier ? `<section id="structural-dossier">
+  <h2>Structural / circulation dossier — chunk ${esc(dossier.chunk)} (seed ${esc(dossier.seed)})</h2>
+  <p class="meta">Every Node-only (no browser) diagnostic tool under tools/, run once against this chunk — deterministic engine.build() analyses, not tied to live-refinement time like the pixel sweep below. Generated ${esc(dossier.generatedAt)}.</p>
+  <div class="dossier-grid">${dossier.tasks.map(renderDossierTask).join('\n')}</div>
+</section>` : '';
+
 const toc = runInfo.corpus.map(q => {
     const runs = byQuery.get(q);
     const hitCount = runs.filter(r => r.status === 'hit').length;
@@ -111,6 +133,14 @@ h2 { font-size: 1.05rem; margin: 0 0 0.5rem; }
 .thumbs img { max-width: 130px; max-height: 110px; background: #000; border-radius: 3px; }
 .thumbs figcaption { font-size: 0.62rem; opacity: 0.65; }
 .manifest-link { font-size: 0.68rem; display: inline-block; margin-top: 0.3rem; }
+#structural-dossier { border: 1px solid color-mix(in srgb, currentColor 20%, transparent); border-radius: 8px; padding: 1rem; margin-bottom: 1.5rem; }
+.dossier-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 0.75rem; }
+.dtask { border: 1px solid color-mix(in srgb, currentColor 15%, transparent); border-radius: 6px; padding: 0.6rem; }
+.dtask.failed { background: color-mix(in srgb, #660000 10%, transparent); }
+.dtask h4 { margin: 0 0 0.4rem; font-size: 0.82rem; }
+.dsummary { font-size: 0.68rem; max-height: 140px; overflow: auto; margin: 0 0 0.4rem; }
+.dlinks { font-size: 0.72rem; }
+.dlinks a { margin-right: 0.5rem; }
 </style>
 </head>
 <body>
@@ -123,6 +153,7 @@ h2 { font-size: 1.05rem; margin: 0 0 0.5rem; }
   checkpoints run so far: ${checkpoints.map(c => c.dir).join(', ') || '(none yet)'}
 </div>
 <p class="meta">Regenerate any time (including mid-sweep) with <code>node tools/target-report/build-sweep-index.mjs</code>. Green = hit every checkpoint, amber = hit sometimes, red = never hit.</p>
+${dossierSection}
 <div class="toc">${toc}</div>
 ${everHit.map(renderObjectSection).join('\n')}
 ${neverHit.length ? `<h2>Never hit in any checkpoint (${neverHit.length})</h2>${neverHit.map(renderObjectSection).join('\n')}` : ''}

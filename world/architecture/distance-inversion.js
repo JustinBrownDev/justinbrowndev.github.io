@@ -27,26 +27,7 @@ export function architecturalFieldProfile({
 } = {}) {
   const d = Math.max(0, Number(distanceChunks) || 0);
   const weird = clamp01(weirdnessSampled);
-
-  if (isSpawn || d < 0.001) {
-    return Object.freeze({
-      schema: 'jweb.architectural-field.v1',
-      distanceChunks: d,
-      fidelity: 1,
-      inversion: 0,
-      entropy: 0.015,
-      uncannyCoherence: 1,
-      phase: 'forensic-spawn',
-      rules: Object.freeze({
-        preserveConventionalHierarchy: true,
-        invertExteriorPreference: false,
-        serviceThresholdFirst: false,
-        echoDominantSpaces: false,
-        driftVerticalStacks: false,
-        facadeCausality: 'space-outward',
-      }),
-    });
-  }
+  void isSpawn; // retained for authored helper callers; streamed origin has no special phase.
 
   // Fidelity falls much faster than jweb's global weirdness rises.  This lets a
   // few rings around spawn feel meticulously organized before the reversal is

@@ -8,7 +8,7 @@
       "resolutionPolicy": "Resolve through an official embed-capable Al Jazeera/YouTube surface at integration/runtime. Do not scrape, proxy, or rebroadcast raw HLS merely because the stream is free to watch.",
       "renderingPolicy": "Cross-origin embed is an external-media layer aligned to the physical TV screen; it is not topology and need not be a WebGL VideoTexture.",
       "activation": {
-        "default": "muted",
+        "default": "proximity after first player interaction; inaudible at distance",
         "instantiate": "only when containing chunk is active and viewer is near/potentially sees screen",
         "globalBudgetHint": 1,
         "destroyOrSuspendWhenFar": true

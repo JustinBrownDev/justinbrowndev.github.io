@@ -6,6 +6,10 @@ function finite(value, fallback = 0) {
     return Number.isFinite(value) ? value : fallback;
 }
 
+function clamp01(value) {
+    return Math.max(0, Math.min(1, finite(value)));
+}
+
 function nearestSocketDistance(camera, sockets) {
     const position = camera?.position;
     if (!position || !sockets?.length) return 0;
@@ -121,6 +125,8 @@ export function attachScreenMedia({
     let retryTimer = null;
     let streamIndex = 0;
     let startPromise = null;
+    let audioUnlocked = source.audioMode === 'audible';
+    const audioUnlockTargets = [];
     const state = {
         schema: 'jweb.screen-media-state.v1',
         sourceKey: source.sourceKey,
@@ -129,6 +135,11 @@ export function attachScreenMedia({
         attempt: 0,
         streamIndex: 0,
         lastError: null,
+        audioMode: source.audioMode ?? 'muted',
+        audioUnlocked,
+        audioAudible: false,
+        audioVolume: 0,
+        distanceM: null,
     };
 
     applyTexture(usableSockets, fallbackTexture);
@@ -152,11 +163,67 @@ export function attachScreenMedia({
         hls = null;
     }
 
+    function proximityVolume(distance) {
+        if (source.audioMode !== 'proximity') return source.audioMode === 'audible' ? clamp01(source.audioMaxVolume ?? 1) : 0;
+        const near = Math.max(0, finite(source.audioNearDistanceM, 3.5));
+        const far = Math.max(near + 0.01, finite(source.audioFarDistanceM, 20));
+        const maxVolume = clamp01(source.audioMaxVolume ?? 0.72);
+        if (distance <= near) return maxVolume;
+        if (distance >= far) return 0;
+        const t = 1 - ((distance - near) / (far - near));
+        return maxVolume * Math.pow(clamp01(t), Math.max(0.1, finite(source.audioCurve, 1.45)));
+    }
+
+    function syncAudio(distance) {
+        const volume = audioUnlocked ? proximityVolume(distance) : 0;
+        const audible = audioUnlocked && state.active && volume > 0.001 && source.audioMode !== 'muted';
+        state.audioUnlocked = audioUnlocked;
+        state.audioVolume = audible ? volume : 0;
+        state.audioAudible = audible;
+        state.distanceM = distance;
+        if (!video) return;
+        video.volume = audible ? volume : 0;
+        video.muted = !audible;
+    }
+
+    function removeAudioUnlockListeners() {
+        for (const { target, type, handler } of audioUnlockTargets.splice(0)) {
+            safeCall(() => target.removeEventListener?.(type, handler));
+        }
+    }
+
+    function unlockAudio() {
+        if (disposed || source.audioMode === 'muted') return false;
+        if (!audioUnlocked) audioUnlocked = true;
+        removeAudioUnlockListeners();
+        const distance = nearestSocketDistance(camera, usableSockets);
+        syncAudio(distance);
+        // Keep this play attempt inside the user-gesture call stack when unlock is
+        // triggered by pointer/key/touch. Browsers may reject later asynchronous
+        // unmute attempts even though the muted picture was already playing.
+        if (state.active && video) safeCall(() => video.play?.());
+        return true;
+    }
+
+    function installAudioUnlockListeners() {
+        if (source.audioMode === 'muted' || audioUnlocked) return;
+        const target = windowRef?.addEventListener ? windowRef : documentRef;
+        if (!target?.addEventListener) return;
+        const handler = () => { unlockAudio(); };
+        for (const type of ['pointerdown', 'keydown', 'touchstart']) {
+            target.addEventListener(type, handler, { passive: true });
+            audioUnlockTargets.push({ target, type, handler });
+        }
+    }
+
     function ensureVideo() {
         if (video || !browserCapable) return video;
         video = documentRef.createElement('video');
-        video.muted = source.muted !== false;
-        video.defaultMuted = video.muted;
+        // Always establish the live picture silently. Proximity audio is unlocked
+        // by the first real player gesture, then distance controls volume.
+        video.muted = true;
+        video.defaultMuted = true;
+        video.volume = 0;
         video.autoplay = true;
         video.playsInline = true;
         video.preload = 'none';
@@ -181,6 +248,7 @@ export function attachScreenMedia({
             if (!disposed && state.active && !hls) handleStreamFailure(new Error('[screen-media] native media error'));
         });
         documentRef.body?.appendChild?.(video);
+        syncAudio(nearestSocketDistance(camera, usableSockets));
         return video;
     }
 
@@ -309,6 +377,9 @@ export function attachScreenMedia({
         clearRetry();
         safeCall(() => video?.pause?.());
         safeCall(() => hls?.stopLoad?.());
+        state.audioAudible = false;
+        state.audioVolume = 0;
+        if (video) { video.muted = true; video.volume = 0; }
         if (!disposed) state.status = 'sleeping';
     }
 
@@ -321,12 +392,16 @@ export function attachScreenMedia({
         const shouldBeActive = !camera || distance <= threshold;
         if (shouldBeActive && !state.active) {
             state.active = true;
+            syncAudio(distance);
             await startPlayback();
         } else if (!shouldBeActive && state.active) {
             state.active = false;
             stopPlayback();
+        } else {
+            syncAudio(distance);
         }
-        return { ...state, distanceM: distance };
+        state.distanceM = distance;
+        return { ...state };
     }
 
     function dispose() {
@@ -334,7 +409,10 @@ export function attachScreenMedia({
         disposed = true;
         state.active = false;
         state.status = 'disposed';
+        state.audioAudible = false;
+        state.audioVolume = 0;
         clearRetry();
+        removeAudioUnlockListeners();
         if (scheduler != null) safeCall(() => (windowRef?.clearInterval ?? clearInterval)(scheduler));
         destroyHls();
         safeCall(() => video?.pause?.());
@@ -355,10 +433,12 @@ export function attachScreenMedia({
         source,
         sockets: usableSockets,
         sync,
+        unlockAudio,
         dispose,
         getState: () => ({ ...state }),
     };
 
+    installAudioUnlockListeners();
     if (autoSchedule && browserCapable) {
         void sync();
         const setIntervalFn = windowRef?.setInterval ?? setInterval;

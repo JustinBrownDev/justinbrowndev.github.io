@@ -20,6 +20,10 @@ const MEDIA_SOURCES = Object.freeze({
         crossOrigin: 'anonymous',
         activationDistanceM: 30,
         sleepDistanceM: 42,
+        audioNearDistanceM: 3.5,
+        audioFarDistanceM: 20,
+        audioMaxVolume: 0.72,
+        audioCurve: 1.45,
         retryDelayMs: 15000,
     }),
 });
@@ -36,9 +40,25 @@ export function resolveMediaSource(mediaIntent) {
     const source = MEDIA_SOURCES[sourceKey];
     if (!source) return null;
     const resolved = clonePlain(source);
-    resolved.muted = mediaIntent?.defaultAudio === 'muted'
-        ? true
-        : source.defaultMuted !== false;
+    const requestedAudio = mediaIntent?.defaultAudio;
+    resolved.audioMode = requestedAudio === 'proximity'
+        ? 'proximity'
+        : (requestedAudio === 'audible' ? 'audible' : 'muted');
+    // Video always begins muted when proximity audio is requested so autoplay can
+    // establish the live picture before the browser grants audio after a gesture.
+    resolved.muted = resolved.audioMode !== 'audible' || source.defaultMuted !== false;
+    resolved.audioNearDistanceM = Number.isFinite(mediaIntent?.audioNearDistanceM)
+        ? mediaIntent.audioNearDistanceM
+        : source.audioNearDistanceM;
+    resolved.audioFarDistanceM = Number.isFinite(mediaIntent?.audioFarDistanceM)
+        ? mediaIntent.audioFarDistanceM
+        : source.audioFarDistanceM;
+    resolved.audioMaxVolume = Number.isFinite(mediaIntent?.audioMaxVolume)
+        ? mediaIntent.audioMaxVolume
+        : source.audioMaxVolume;
+    resolved.audioCurve = Number.isFinite(mediaIntent?.audioCurve)
+        ? mediaIntent.audioCurve
+        : source.audioCurve;
     resolved.networkFailureIsFatal = mediaIntent?.networkFailureIsFatal === true;
     resolved.fallback = mediaIntent?.fallback ?? 'dark glass / subtle static / NO SIGNAL';
     return Object.freeze(resolved);

@@ -15,7 +15,7 @@ import { createWorldChunkStreamer } from './world-chunk-streamer.js';
 import { createKowloonFabricEngine } from './kowloon-fabric-engine.js';
 import { createNoiseRemixer } from './systems/noise-remix.js';
 import { createOrganicGeometryTools } from './systems/geometry-utils.js';
-import { createSpawnSingularManifest, worldWeirdnessAt } from './world-contract.js';
+import { worldWeirdnessAt } from './world-contract.js';
 import { WANTED_TAGLINES } from './content/wanted-content.js';
 import { BASE_GRAFFITI_TAGS } from './content/graffiti-content.js';
 import { MYTHOLOGY_FRAGMENTS, INFRA_LORE_FRAGMENTS, UNDERCITY_LORE_FRAGMENTS } from './content/lore-fragments.js';
@@ -29,7 +29,7 @@ import { createAuthoredContentHelpers } from './world/authored-content-helpers.j
 import { createSpawnMazePlan, createSpawnBuildingSitePlan } from './world/spawn-district-plan.js';
 import { provePlayableSpawn } from './world/spawn-proof.js';
 import { realizeSpawnLocation } from './world/spawn-location-realizer.js';
-import { WORLD_STREAMING_GEAR, choosePlayerCenteredStreamingGear, createPrefetchPressureGate, pointNearRegion, shouldRunAuthoredLocalWork } from './world/player-centered-streaming.js';
+import { WORLD_STREAMING_GEAR, choosePlayerCenteredStreamingGear, createPrefetchPressureGate } from './world/player-centered-streaming.js';
 import { createDynamicLightPool } from './systems/dynamic-light-pool.js';
 import { createRuntimeLatencyTelemetry } from './systems/runtime-latency.js';
 import { createCooperativeBuildYield } from './systems/cooperative-build-yield.js';
@@ -828,7 +828,7 @@ async function runBootstrapCompilePump() {
 }
 
 function scheduleBootstrapCompilePump() {
-    if (!_backgroundCompileSchedulingEnabled || _worldStreamPriorityLock || !playerNearAuthoredSpawn()) return null;
+    if (!_backgroundCompileSchedulingEnabled || _worldStreamPriorityLock) return null;
     if (!_bootstrapCompileQueue.length || _bootstrapCompilePumpPromise) return _bootstrapCompilePumpPromise;
     _bootstrapCompilePumpPromise = runBootstrapCompilePump().finally(() => {
         _bootstrapCompilePumpPromise = null;
@@ -1563,7 +1563,8 @@ const ground = new THREE.Mesh(
     new THREE.MeshStandardMaterial({ map: groundTex, roughness: QP[713] })
 );
 ground.rotation.x = -Math.PI / QP[714];
-scene.add(ground);
+// Retired authored-origin ground. Kept as an unmounted texture/material donor
+// for legacy helper code only; the visible origin surface comes from chunk 0,0.
 
  
  
@@ -1925,12 +1926,12 @@ if (typeof window !== 'undefined') {
 }
 console.log(`[generation-profile] runtime=${GENERATION_PROFILE_NAME} broad=${GENERATION_LANES.broadStrokesOnly ? 'ON' : 'OFF'} budget=${WORLD_BUILD_BUDGET_MS.toFixed(1)}ms`);
 
-// ONE CITY-FABRIC ENGINE.  Ordinary authored spawn sites and streamed chunks
-// now use the same Kowloon compound renderer + physics publisher. Singular
-// landmarks are content recipes over this engine; the historical authored
-// geometry builder is not imported by the runtime.
+// ONE CITY-FABRIC ENGINE. Chunk 0,0 is intentionally not a spawn species: it is
+// built, committed, enriched, hidden/shown, and unloaded by the same path as any
+// other streamed coordinate. "Spawn" is only a player-placement + TV-refuge step
+// after the ordinary chunk exists.
 cityFabricEngine = createKowloonFabricEngine({
-    THREE, scene, playerPhysics, directSceneAdd: _origSceneAdd, chunkSize: STREAM_CHUNK_SIZE, worldSeed: SEED, spawnChunkKey: '0,0',
+    THREE, scene, playerPhysics, directSceneAdd: _origSceneAdd, chunkSize: STREAM_CHUNK_SIZE, worldSeed: SEED,
     landmarkSpacingChunks: CONFIG.streaming.landmarkSpacingChunks,
     yieldControl: cooperativeFabricBuildYield,
     gameplayTraversalProfile: {
@@ -1943,9 +1944,12 @@ cityFabricEngine = createKowloonFabricEngine({
         sprintMultiplier: CONFIG.movement.sprintMultiplier,
     },
 });
-const spawnSingularManifest = createSpawnSingularManifest(SEED, signatureInstances);
-const authoredOriginChunkPayload = cityFabricEngine.buildAuthoredOriginChunk({ singulars: spawnSingularManifest });
 const _worldStreamHeading = new THREE.Vector3();
+// Keep the player capsule well clear while the first ordinary chunk publishes.
+// This avoids staging the chunk merely because the pre-spawn camera happened to
+// overlap deterministic geometry at 0,0. Spawn proof below uses ground-relative
+// feetY=0 and immediately moves the player to a real supported pose.
+if (!_testBootstrapHasMoved) camera.position.set(0, 512 + CONFIG.camera.eyeHeight, 0);
 worldChunkStreamer = createWorldChunkStreamer({
     chunkSize: STREAM_CHUNK_SIZE,
     worldSeed: SEED,
@@ -1954,9 +1958,9 @@ worldChunkStreamer = createWorldChunkStreamer({
     renderRadiusChunks: CONFIG.streaming.renderRadiusChunks,
     prefetchRadiusChunks: CONFIG.streaming.prefetchRadiusChunks,
     retentionRadiusChunks: CONFIG.streaming.retentionRadiusChunks,
-    pinnedChunkKeys: ['0,0'],
+    pinnedChunkKeys: [],
     weirdness: { startRadius: 1.5, fullRadius: 36, curve: 1.3 },
-    buildChunk: chunk => chunk.key === '0,0' ? authoredOriginChunkPayload : cityFabricEngine.build(chunk),
+    buildChunk: chunk => cityFabricEngine.build(chunk),
     commitChunk: (chunk, payload) => cityFabricEngine.commit(chunk, payload),
     setChunkVisibility: (chunk, payload, visible) => cityFabricEngine.setVisible(chunk, payload, visible),
     verifyChunkReady: (chunk, payload, visible) => cityFabricEngine.verifyReady(chunk, payload, visible),
@@ -1974,14 +1978,54 @@ worldChunkStreamer = createWorldChunkStreamer({
         }
     },
 });
-await worldChunkStreamer.buildSpawnChunk();
+const initialSpawnChunk = await worldChunkStreamer.buildSpawnChunk();
 worldChunkStreamer.ensureNeighborhood();
-const authoredFabricRelationshipPlan = cityFabricEngine.planAuthoredBridgeNetwork({
-    sites: buildingSites, siteIdOf, grid,
-    weirdness: Math.max(CONFIG.maze.loopChance, CONFIG.narrative.darkWeb.signChance),
-    maxBridges: 18,
+playerPhysics.syncDynamicWorld();
+const initialSpawnFabricPayloads = new Map([[initialSpawnChunk.key, initialSpawnChunk.payload]]);
+const requestedSpawnPose = { x: 0, z: 0, feetY: 0 };
+const spawnProof = provePlayableSpawn({
+    playerPhysics,
+    origin: requestedSpawnPose,
+    fabricPayloads: initialSpawnFabricPayloads,
+    // Ordinary chunks are large enough that a safe roof need not sit right on the
+    // chunk center. Search broadly, but only inside already-committed physics.
+    searchRadius: Math.min(28, STREAM_CHUNK_SIZE * 0.42),
 });
-console.log(`[kowloon] shared origin relationship plan: ${authoredFabricRelationshipPlan.bridgePlans.length} upper-level links reserved before shell publication`);
+if (!spawnProof.ok) {
+    throw new Error(`[spawn-proof] refused unplayable ordinary-chunk spawn: ${spawnProof.reason}; candidates=${spawnProof.searchedCandidates}; probes=${spawnProof.probes}; best=${spawnProof.bestDistance?.toFixed?.(2) ?? 'n/a'}m`);
+}
+camera.position.set(spawnProof.pose.x, spawnProof.pose.feetY + CONFIG.camera.eyeHeight, spawnProof.pose.z);
+playerPhysics.syncFromPosition({ forceAirborne: false, resetVelocity: false, allowLastSafeFallback: false });
+if (!playerPhysics.poseIsValid(camera.position.x, camera.position.z, playerPhysics.getState().feetY)) {
+    throw new Error('[spawn-proof] proven ordinary-chunk pose became invalid during authoritative startup sync');
+}
+const spawnRealization = spawnProof.location?.spatialPlan?.ready
+    ? realizeSpawnLocation({
+        THREE,
+        scene,
+        camera,
+        boundLocation: spawnProof.location,
+        fabricPayloads: initialSpawnFabricPayloads,
+        propColliders,
+    })
+    : null;
+if (!spawnRealization) {
+    throw new Error('[spawn-location] ordinary spawn chunk was playable but the required TV refuge could not be realized on its fabric');
+}
+if (spawnRealization.colliderCount) {
+    playerPhysics.syncDynamicWorld();
+    if (!playerPhysics.poseIsValid(camera.position.x, camera.position.z, playerPhysics.getState().feetY)) {
+        throw new Error('[spawn-location] TV refuge realization violated the proven arrival capsule');
+    }
+}
+console.log(`[spawn-proof] PASS ordinary chunk=${initialSpawnChunk.key} · route=${spawnProof.routeKind} · TV=ready · escape=${spawnProof.escapeDistance.toFixed(2)}m · probes=${spawnProof.probes}`);
+_spawnDistrictStructuresComplete = true;
+
+// The finite authored origin district is retired. Keep these empty compatibility
+// collections only for old diagnostics/dev tools that still inspect them; no
+// authored shell, bridge plan, ceiling overlay, plaza admission, or ground patch
+// participates in runtime generation anymore.
+const authoredFabricRelationshipPlan = Object.freeze({ bridgePlans: [], bridgePortalsBySite: new Map() });
 
 const unifiedSpawnFabricPayloads = new Map();
 const unifiedSpawnRelationshipPayloads = [];
@@ -2226,54 +2270,19 @@ function buildingSiteDistanceSqToPlayer(site) {
 }
 
 const authoredBuildStart = performance.now();
-_testGenerationTotal = buildingSites.length;
+_testGenerationTotal = QP[1015];
 _testGenerationDone = QP[1015];
-const authoredBuildingJobs = buildingSites.map(site => {
-    const iteratorFactory = site.signatureType
-        ? () => buildSignatureSiteSteps(site)
-        : () => buildUnifiedKowloonSiteSteps(site);
-    return {
-        site,
-        stepper: createStableStreamingRngStepper(`building:${site.id}`, iteratorFactory),
-        turns: QP[1015],
-        structuralReady: false,
-        completed: false,
-        startedAt: QP[1015],
-        lastPhase: 'pending',
-    };
-});
+const authoredBuildingJobs = [];
 authoredCompletedSiteIds = new Set();
 authoredStructuralReadySiteIds = new Set();
 const authoredFailedSiteIds = new Set();
 let authoredSchedulerTurns = QP[1015];
 let authoredStructuralSyncs = QP[1015];
-let authoredBuildingsResolve;
-const authoredBuildingsCompletePromise = new Promise(resolve => { authoredBuildingsResolve = resolve; });
-let authoredBuildingsResolved = false;
-let authoredCeilingOverlayComplete = false;
+const authoredBuildingsResolve = () => {};
+const authoredBuildingsCompletePromise = Promise.resolve();
+let authoredBuildingsResolved = true;
+let authoredCeilingOverlayComplete = true;
 let authoredCeilingOverlayPayload = null;
-authoredBuildingsCompletePromise.then(async () => {
-    try {
-        const groundEntities = [...unifiedSpawnFabricPayloads.values()]
-            .map(payload => payload?.entity)
-            .filter(entity => entity?.kind === 'building');
-        authoredCeilingOverlayPayload = await cityFabricEngine.buildAuthoredCeilingOverlay({
-            groundEntities,
-            ownerId: `spawn-ceiling:${SEED}`,
-        });
-        if (authoredCeilingOverlayPayload) {
-            await cityFabricEngine.commit(authoredCeilingOverlayPayload.chunk ?? { key: '0,0' }, authoredCeilingOverlayPayload);
-            if (cityFabricEngine.hasPendingRefinement(authoredCeilingOverlayPayload.chunk ?? { key: '0,0' }, authoredCeilingOverlayPayload)) {
-                unifiedSpawnFabricRefinementQueue.push(authoredCeilingOverlayPayload);
-            }
-        }
-        console.log(`[ceiling-city] authored origin phase overlay ready · groundClaims=${groundEntities.length}`);
-    } catch (error) {
-        console.error('[ceiling-city] authored origin phase overlay failed locally; lower city remains live', error);
-    } finally {
-        authoredCeilingOverlayComplete = true;
-    }
-});
 
 function collectMinimumSafeAuthoredSiteIds() {
     const wanted = new Set();
@@ -2457,28 +2466,15 @@ function pumpAuthoredBuildingJobs({ maxSteps = QP[0], maxMillis = QP[1], onlySit
     return { steps, completed, pending: authoredBuildingJobs.length, ms: performance.now() - started };
 }
 
-const minimumSafeAuthoredSiteIds = collectMinimumSafeAuthoredSiteIds();
-await testYieldNow('building minimum-safe authored structural shells', authoredStructuralReadySiteIds.size, minimumSafeAuthoredSiteIds.size);
-while ([...minimumSafeAuthoredSiteIds].some(id => !authoredStructuralReadySiteIds.has(id) && !authoredFailedSiteIds.has(id))) {
-    pumpAuthoredBuildingJobs({
-        maxSteps: QP[0], maxMillis: TEST_FRAME_BUDGET_MS,
-        onlySiteIds: minimumSafeAuthoredSiteIds, structuralOnly: true,
-    });
-    await testPublishAndYieldNow(
-        'building minimum-safe authored structural shells',
-        [...minimumSafeAuthoredSiteIds].filter(id => authoredStructuralReadySiteIds.has(id) || authoredFailedSiteIds.has(id)).length,
-        minimumSafeAuthoredSiteIds.size
-    );
-}
-const minimumSafeFailedCount = [...minimumSafeAuthoredSiteIds].filter(id => authoredFailedSiteIds.has(id)).length;
-console.log(`[stream-perf] minimum-safe authored neighborhood settled: ${minimumSafeAuthoredSiteIds.size - minimumSafeFailedCount} collision-ready, ${minimumSafeFailedCount} locally skipped; ${authoredBuildingJobs.length}/${buildingSites.length} authored content jobs continue in live background`);
+const minimumSafeAuthoredSiteIds = new Set();
+console.log('[stream-perf] authored spawn district retired; ordinary streamed chunk + TV refuge is the complete spawn contract');
 
 let rooftopCatwalkCount = QP[1015];
 let hangingBridgeCount = QP[1015];
-let authoredPostStructureStarted = false;
-let authoredPostStructureFinished = false;
-let authoredPostStructureResolve;
-const authoredPostStructureCompletePromise = new Promise(resolve => { authoredPostStructureResolve = resolve; });
+let authoredPostStructureStarted = true;
+let authoredPostStructureFinished = true;
+const authoredPostStructureResolve = () => {};
+const authoredPostStructureCompletePromise = Promise.resolve();
 const authoredPostStructureJobs = [];
 
 function* buildUnifiedAuthoredRelationshipSteps() {
@@ -2560,8 +2556,8 @@ function pumpAuthoredPostStructurePipeline({ maxSteps = QP[1024], maxMillis = QP
     return { steps, pendingJobs: authoredPostStructureJobs.length, ms: performance.now() - started };
 }
 
-await testYieldNow('minimum-safe authored structure ready · preparing progressive spawn ground');
-bootStatus(`minimum-safe spawn ready; ${authoredBuildingJobs.length} authored sites remain -- starting live chunk systems…`);
+await testYieldNow('ordinary spawn chunk + TV ready · starting live chunk systems');
+bootStatus('ordinary spawn chunk + TV ready -- starting live chunk systems…');
 
  
  
@@ -2591,7 +2587,7 @@ const { isStreetCell, roadOpenMask, prepareOpenCellSurfaces, pumpOpenCellSurface
 // Spawn plazas are now thin adapters into the universal chunk enrichment path.
 // Admission waits for each plaza's real ground patch, then common fabric owns
 // rendering, progressive refinement, reservations, and late collision.
-const authoredSpawnPlazaAdmissions = plazaCells.map(([c, r]) => ({ c, r, key: `plaza:${c},${r}` }));
+const authoredSpawnPlazaAdmissions = [];
 const authoredSpawnPlazaTotal = authoredSpawnPlazaAdmissions.length;
 let authoredSpawnPlazasAdmitted = 0;
 function sortAuthoredSpawnPlazaAdmissionsNearPlayer() {
@@ -2627,18 +2623,11 @@ function pumpAuthoredSpawnPlazaAdmissions({ maxPlazas = 1 } = {}) {
     }
     return { admitted, pending: authoredSpawnPlazaAdmissions.length };
 }
-console.log(`[kowloon] ${authoredSpawnPlazaTotal} authored spawn plazas reserved for common-engine progressive admission`);
+console.log('[kowloon] authored spawn plaza admission retired; ordinary chunk plazas own the origin');
 
 
 function maybeMarkSpawnDistrictStructuresComplete() {
-    if (_spawnDistrictStructuresComplete) return true;
-    if (authoredBuildingJobs.length) return false;
-    if (!authoredPostStructureFinished) return false;
-    if (!authoredCeilingOverlayComplete) return false;
-    if (groundSurfaceSystem.stats().pendingChunks) return false;
     _spawnDistrictStructuresComplete = true;
-    const groundStats = groundSurfaceSystem.stats();
-    console.log(`[stream-perf] authored spawn district structurally complete in live runtime · ground=${groundStats.readyChunks}/${groundStats.totalChunks}; common plazas admitted=${authoredSpawnPlazasAdmitted}/${authoredSpawnPlazaTotal}`);
     return true;
 }
 
@@ -2695,11 +2684,7 @@ function laneOffset(spread, axis) {
 }
 
 flushHorizontalPlaneBatches(); // unified fabric owns all building plates
-prepareOpenCellSurfaces();
-const minimumSafeGroundCenter = cellToWorld(spawnCol, spawnRow);
-const minimumSafeGround = await ensureOpenCellSurfaceNeighborhood(minimumSafeGroundCenter.x, minimumSafeGroundCenter.z, QP[1024]);
-console.log(`[stream-perf] minimum-safe ground ready ${minimumSafeGround.ready}/${minimumSafeGround.total}; ${groundSurfaceSystem.stats().pendingChunks} spawn-ground chunks remain for live streaming`);
-await testYieldNow('minimum-safe ground ready · deferring remaining streets/alleys to live runtime');
+await testYieldNow('ordinary spawn fabric + TV collision-ready · releasing construction safety gate');
 
  
  
@@ -2731,71 +2716,10 @@ const _moveRightWorld = new THREE.Vector3();
  
 
 
-const spawn = cellToWorld(spawnCol, spawnRow);
-if (!_testBootstrapHasMoved) camera.position.set(spawn.x, CONFIG.camera.eyeHeight, spawn.z);
-else camera.position.y = CONFIG.camera.eyeHeight;
-
- 
- 
- 
- 
- 
 if (urlLandmark) {
-    const landmarkInstance = signatureInstances.find(s => s.type === urlLandmark);
-    if (landmarkInstance) {
-        const e = landmarkInstance.mainEntrance;
-        camera.position.set(e.outsideX, CONFIG.camera.eyeHeight, e.outsideZ);
-        camera.rotation.set(QP[5318], e.facingRotY, QP[5319]);
-        console.log(`[signature] ?landmark=${urlLandmark} -- spawning outside site ${landmarkInstance.id}'s main entrance instead of a random cell`);
-    } else {
-        console.warn(`[signature] ?landmark=${urlLandmark} requested, but no such signature was reserved this seed (disabled this load, or not a real key: ${SIGNATURE_TYPES.join(', ')})`);
-    }
+    console.warn(`[signature] ?landmark=${urlLandmark} no longer redirects the player into the retired authored origin; normal streamed spawn remains authoritative`);
 }
 
-// SPAWN / SANITY HANDOFF: the physics object existed before the final spawn was
-// selected, so its historical lastSafe is not proof that this requested spawn is
-// playable. Index every current collider first, then prove a nearby capsule pose
-// has a real controller-driven escape route before releasing the safety gate.
-playerPhysics.syncDynamicWorld();
-const requestedSpawnPose = {
-    x: camera.position.x,
-    z: camera.position.z,
-    feetY: camera.position.y - CONFIG.camera.eyeHeight,
-};
-const spawnProof = provePlayableSpawn({
-    playerPhysics,
-    origin: requestedSpawnPose,
-    fabricPayloads: unifiedSpawnFabricPayloads,
-});
-if (!spawnProof.ok) {
-    throw new Error(`[spawn-proof] refused unplayable spawn: ${spawnProof.reason}; candidates=${spawnProof.searchedCandidates}; probes=${spawnProof.probes}; best=${spawnProof.bestDistance?.toFixed?.(2) ?? 'n/a'}m`);
-}
-camera.position.set(spawnProof.pose.x, spawnProof.pose.feetY + CONFIG.camera.eyeHeight, spawnProof.pose.z);
-playerPhysics.syncFromPosition({ forceAirborne: false, resetVelocity: false, allowLastSafeFallback: false });
-if (!playerPhysics.poseIsValid(camera.position.x, camera.position.z, playerPhysics.getState().feetY)) {
-    throw new Error('[spawn-proof] proven pose became invalid during authoritative startup sync');
-}
-const spawnRealization = spawnProof.location?.spatialPlan?.ready
-    ? realizeSpawnLocation({
-        THREE,
-        scene,
-        camera,
-        boundLocation: spawnProof.location,
-        fabricPayloads: unifiedSpawnFabricPayloads,
-        propColliders,
-    })
-    : null;
-if (spawnProof.routeKind === 'authored-elevated-enclave' && !spawnRealization) {
-    console.warn('[spawn-location] authoritative enclave bound, but representative memory-silhouette realization was unavailable; structural spawn remains authoritative');
-}
-if (spawnRealization?.colliderCount) {
-    playerPhysics.syncDynamicWorld();
-    if (!playerPhysics.poseIsValid(camera.position.x, camera.position.z, playerPhysics.getState().feetY)) {
-        throw new Error('[spawn-location] representative realization violated the proven arrival capsule');
-    }
-}
-console.log(`[spawn-proof] PASS · candidate=${spawnProof.candidateIndex} ring=${spawnProof.candidateRing} · route=${spawnProof.routeKind} · escape=${spawnProof.escapeDistance.toFixed(2)}m · probes=${spawnProof.probes}`);
-await testYieldNow('minimum-safe authored district collision-ready + spawn escape proven · releasing construction safety gate');
 
  
  
@@ -2993,10 +2917,7 @@ let progressiveEnrichmentRequests = 0;
 let progressiveEnrichmentPayloads = 0;
 
 function playerNearAuthoredSpawn() {
-    return pointNearRegion(camera.position, {
-        centerX: 0, centerZ: 0, halfX: GRID_W * 0.5, halfZ: GRID_H * 0.5,
-        margin: STREAM_CHUNK_SIZE * 0.75,
-    });
+    return false;
 }
 
 function diagnosticErrorText(error) {
@@ -3035,18 +2956,17 @@ function maybeOpenAuthoredAssetLane(nearSpawn = playerNearAuthoredSpawn()) {
 
 function maybeReleaseBackgroundEnrichment() {
     if (backgroundEnrichmentReleased || !worldChunkStreamer) return false;
-    if (!playerNearAuthoredSpawn()) return false;
     const worldStats = worldChunkStreamer.stats();
      
      
      
-    if (!(worldStats.localPrefetchRing.settled) || !_spawnDistrictStructuresComplete) return false;
+    if (!(worldStats.localPrefetchRing.settled)) return false;
     backgroundEnrichmentReleased = true;
     authoredAssetLaneOpened = true;
     adornmentLoadQueue.setConcurrency(CONFIG.streaming.adornmentConcurrency);
     adornmentLoadQueue.resume();
     authoredBackgroundQueueNear = true;
-    console.log('[asset-event] widen-after-prefetch-and-authored-structure | ' + formatAdornmentQueueStats());
+    console.log('[asset-event] widen-after-prefetch | ' + formatAdornmentQueueStats());
     return true;
 }
 
@@ -3064,7 +2984,7 @@ function requestProgressivePayload(chunk, payload, { authored = false } = {}) {
     return requested;
 }
 
-function maybeRequestProgressiveEnrichment(now, worldStats, nearAuthoredSpawn) {
+function maybeRequestProgressiveEnrichment(now, worldStats) {
     // Full profile already planned all enrichment during the initial pass. 21N is
     // only the additive skeleton -> rich path, and it starts after the playable
     // render ring exists so first control / structure never waits on micro detail.
@@ -3088,28 +3008,6 @@ function maybeRequestProgressiveEnrichment(now, worldStats, nearAuthoredSpawn) {
     for (const chunk of streamed) {
         requested += requestProgressivePayload(chunk, chunk.payload);
         if (requested) break;
-    }
-
-    if (!requested && nearAuthoredSpawn && _spawnDistrictStructuresComplete) {
-        const authored = [...unifiedSpawnFabricPayloads.values()]
-            .filter(payload => payload?.entity)
-            .sort((a, b) => {
-                const ae = a.entity, be = b.entity;
-                const adx = (ae.x ?? 0) - camera.position.x, adz = (ae.z ?? 0) - camera.position.z;
-                const bdx = (be.x ?? 0) - camera.position.x, bdz = (be.z ?? 0) - camera.position.z;
-                return adx * adx + adz * adz - (bdx * bdx + bdz * bdz);
-            });
-        for (const payload of authored) {
-            requested += requestProgressivePayload(payload.chunk ?? { key: '0,0' }, payload, { authored: true });
-            if (requested) break;
-        }
-        if (!requested && authoredCeilingOverlayPayload) {
-            requested += requestProgressivePayload(
-                authoredCeilingOverlayPayload.chunk ?? { key: '0,0' },
-                authoredCeilingOverlayPayload,
-                { authored: true },
-            );
-        }
     }
 
     progressiveEnrichmentNextAt = now + (desktop ? 90 : 180);
@@ -3386,58 +3284,12 @@ function animate(now = performance.now()) {
     const liveWorldStats = worldChunkStreamer?.stats();
     maybeLogWorldDiagnostics(now);
 
-    const streamingGear = updateWorldStreamingGear(liveWorldStats);
+    updateWorldStreamingGear(liveWorldStats);
     pumpWorldChunksAggressively();
-    const playerNearSpawn = playerNearAuthoredSpawn();
-    maybeOpenAuthoredAssetLane(playerNearSpawn);
-    const spawnLocalWorkAllowed = shouldRunAuthoredLocalWork({
-        gear: streamingGear,
-        playerNearAuthoredRegion: playerNearSpawn,
-    });
-    const authoredDeepLane = streamingGear === WORLD_STREAMING_GEAR.LOCAL_DEEPEN;
-    syncAuthoredBackgroundQueueLocality(playerNearSpawn);
-    const progressiveRequested = maybeRequestProgressiveEnrichment(now, liveWorldStats, playerNearSpawn);
+    const progressiveRequested = maybeRequestProgressiveEnrichment(now, liveWorldStats);
     if (progressiveRequested) runtimeLatency.record('progressive-enrichment.request', 0, {
         requested: progressiveRequested, totalRequests: progressiveEnrichmentRequests, payloads: progressiveEnrichmentPayloads,
     });
-
-    // The finite authored district is a bounded locality lane, not a global gate.
-    // Streaming gear controls how much time it gets; physical proximity controls
-    // whether it may progress at all.
-    if (spawnLocalWorkAllowed) {
-        const groundPump = pumpOpenCellSurfaces({ maxChunks: QP[1024], maxMillis: QP[1024] });
-        if (groundPump.chunks) runtimeLatency.record('spawn-ground.pump', groundPump.ms, { ...groundPump, ...groundSurfaceSystem.stats() });
-        const plazaAdmission = pumpAuthoredSpawnPlazaAdmissions({ maxPlazas: authoredDeepLane ? 2 : 1 });
-        if (plazaAdmission.admitted) runtimeLatency.record('spawn-plaza.common-admission', 0, plazaAdmission);
-
-        if (authoredBuildingJobs.length) {
-            const structuralOnly = authoredStructuralReadySiteIds.size < buildingSites.length;
-            const authoredBuildingBudget = authoredDeepLane && QUALITY === CONFIG.quality.desktop ? 2 : 1;
-            const authoredPump = pumpAuthoredBuildingJobs({
-                maxSteps: authoredBuildingBudget,
-                maxMillis: authoredBuildingBudget,
-                structuralOnly,
-            });
-            if (authoredPump.steps) runtimeLatency.record(structuralOnly ? 'authored-local-shell.pump' : 'authored-local-content.pump', authoredPump.ms, authoredPump);
-        }
-
-        // Authored fabric payloads enter this queue only after common-engine commit,
-        // so their own structural authority is the prerequisite -- never 25/25.
-        if (unifiedSpawnFabricRefinementQueue.length) {
-            const fabricDetailPump = pumpUnifiedSpawnFabricRefinement({ maxSteps: QP[1024], maxMillis: QP[1024] });
-            if (fabricDetailPump.steps) runtimeLatency.record('spawn-fabric.local-detail-pump', fabricDetailPump.ms, fabricDetailPump);
-        }
-
-        if (!authoredBuildingJobs.length) {
-            maybeStartAuthoredPostStructurePipeline();
-            const authoredPostPump = pumpAuthoredPostStructurePipeline({ maxSteps: QP[1024], maxMillis: QP[1024] });
-            if (authoredPostPump.steps) runtimeLatency.record('authored-post.local-pump', authoredPostPump.ms, authoredPostPump);
-        }
-
-    }
-
-    maybeMarkSpawnDistrictStructuresComplete();
-    if (spawnLocalWorkAllowed) pumpAuthoredOptimizer(now);
     maybeReleaseBackgroundEnrichment();
 
     for (const f of flickerLights) {

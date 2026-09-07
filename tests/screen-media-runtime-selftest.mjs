@@ -4,12 +4,14 @@ import { attachScreenMedia } from '../world/screen-media-runtime.js';
 
 const resolved = resolveMediaSource({
     sourceKey: 'live-news.al-jazeera-english',
-    defaultAudio: 'muted',
+    defaultAudio: 'proximity',
     networkFailureIsFatal: false,
 });
 assert.ok(resolved);
 assert.equal(resolved.kind, 'hls');
-assert.equal(resolved.muted, true);
+assert.equal(resolved.muted, true, 'proximity media must start muted so picture autoplay is browser-safe');
+assert.equal(resolved.audioMode, 'proximity');
+assert.ok(resolved.audioNearDistanceM < resolved.audioFarDistanceM);
 assert.match(resolved.streams[0].url, /^https:\/\/live-hls-apps-aje-fa\.getaj\.net\/AJE\/index\.m3u8$/);
 assert.ok(listMediaSourceKeys().includes('live-news.al-jazeera-english'));
 assert.equal(resolveMediaSource({ sourceKey: 'unknown.source' }), null);
@@ -42,6 +44,9 @@ function makeVideo() {
     return {
         style: {},
         paused: true,
+        muted: true,
+        defaultMuted: true,
+        volume: 0,
         canPlayType: () => '',
         setAttribute() {},
         removeAttribute() {},
@@ -105,7 +110,7 @@ const controller = attachScreenMedia({
     THREE,
     camera,
     sockets: [socket],
-    mediaIntent: { sourceKey: 'live-news.al-jazeera-english', defaultAudio: 'muted' },
+    mediaIntent: { sourceKey: 'live-news.al-jazeera-english', defaultAudio: 'proximity' },
     documentRef,
     windowRef: {},
     loadHlsClass: async () => FakeHls,
@@ -122,6 +127,28 @@ assert.equal(FakeHls.instances.length, 1, 'near screen starts one HLS pipeline')
 assert.equal(FakeHls.instances[0].url, resolved.streams[0].url);
 assert.equal(material.map.kind, 'video', 'playing media replaces fallback texture');
 assert.equal(controller.getState().status, 'playing');
+assert.equal(FakeHls.instances[0].video.muted, true, 'live picture stays silent until a real interaction unlocks audio');
+assert.equal(controller.getState().audioUnlocked, false);
+
+assert.equal(controller.unlockAudio(), true);
+await controller.sync();
+assert.equal(controller.getState().audioUnlocked, true);
+assert.equal(controller.getState().audioAudible, true, 'nearby unlocked TV must become audible');
+assert.equal(FakeHls.instances[0].video.muted, false);
+const nearVolume = FakeHls.instances[0].video.volume;
+assert.ok(nearVolume > 0.5 && nearVolume <= 1, `near TV volume should be substantial, got ${nearVolume}`);
+
+camera.position.x = 12;
+await controller.sync();
+const middleVolume = FakeHls.instances[0].video.volume;
+assert.ok(middleVolume > 0 && middleVolume < nearVolume, 'TV volume must attenuate continuously with distance');
+
+camera.position.x = 24;
+await controller.sync();
+assert.equal(controller.getState().active, true, 'picture may remain active outside the audio radius');
+assert.equal(controller.getState().audioAudible, false, 'audio must be local even while the picture is still streaming');
+assert.equal(FakeHls.instances[0].video.muted, true);
+assert.equal(FakeHls.instances[0].video.volume, 0);
 
 camera.position.x = 100;
 await controller.sync();
@@ -131,6 +158,8 @@ assert.equal(controller.getState().status, 'sleeping');
 camera.position.x = 1;
 await controller.sync();
 assert.equal(FakeHls.instances[0].restarted, true, 'returning near the screen resumes the same HLS pipeline');
+assert.equal(FakeHls.instances[0].video.muted, false, 'audio unlock survives a distance sleep/wake cycle');
+assert.ok(FakeHls.instances[0].video.volume > middleVolume);
 
 controller.dispose();
 assert.equal(FakeHls.instances[0].destroyed, true);

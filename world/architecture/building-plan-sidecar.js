@@ -2569,7 +2569,7 @@ export function* planBuildingSidecarSteps({
   chunkZ = 0,
   distanceChunks = Math.hypot(Number(chunkX) || 0, Number(chunkZ) || 0),
   weirdnessSampled = 0,
-  isSpawn = chunkKey === '0,0' || (Number(chunkX) === 0 && Number(chunkZ) === 0),
+  isSpawn = false,
   entityId = 'building',
   signatureType = null,
   programHint = null,

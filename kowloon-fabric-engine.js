@@ -437,7 +437,6 @@ export function createKowloonFabricEngine({
     directSceneAdd = null,
     chunkSize = 64,
     worldSeed = 0,
-    spawnChunkKey = '0,0',
     microCells = 9,
     landmarkSpacingChunks = 4,
     yieldControl = null,
@@ -461,7 +460,6 @@ export function createKowloonFabricEngine({
     const committedChunkPayloads = new Map();
     const crossChunkTransportPairs = new Map();
     const buildingPlanCache = createSemanticPlanCache({ maxEntries: 1024 });
-    let authoredOriginChunkPayload = null;
     if (microCells < 5 || microCells % 2 === 0) throw new Error('microCells must be an odd integer >= 5');
 
     function* getOrCompileBuildingPlanSteps({ key, planArgs, promotionArgs }) {
@@ -661,9 +659,9 @@ export function createKowloonFabricEngine({
          
          
          
-        if (edgeKey === 'H:0:0' || edgeKey === 'H:0:1' || edgeKey === 'V:0:0' || edgeKey === 'V:1:0') {
-            return Math.floor(microCells / 2);
-        }
+        // Every shared edge, including the four around world origin, uses the
+        // same deterministic lane authority. Spawn is a player-placement fact,
+        // not a road-topology species.
         return 1 + (hashString32(`${worldSeed}:road-edge:${edgeKey}`) % (microCells - 2));
     }
 
@@ -2847,7 +2845,7 @@ export function createKowloonFabricEngine({
             chunkZ: chunk.z,
             distanceChunks: chunk.weirdness?.distanceChunks ?? Math.hypot(chunk.x || 0, chunk.z || 0),
             weirdnessSampled: chunk.weirdness?.sampled ?? 0,
-            isSpawn: chunk.key === spawnChunkKey || String(chunk.key).startsWith('spawn-'),
+            isSpawn: String(chunk.key).startsWith('spawn-'),
             entityId: buildingPlanEntityId,
             signatureType: structureProfile?.signatureType ?? null,
             programHint: structureProfile?.semanticProgram ?? structureProfile?.programHint ?? districtBuildingPolicy.programHint ?? null,
@@ -4894,7 +4892,7 @@ export function createKowloonFabricEngine({
             chunkZ: chunk.z,
             distanceChunks: chunk.weirdness?.distanceChunks ?? Math.hypot(chunk.x || 0, chunk.z || 0),
             weirdnessSampled: weird,
-            isSpawn: chunk.key === spawnChunkKey || String(chunk.key).startsWith('spawn-'),
+            isSpawn: String(chunk.key).startsWith('spawn-'),
             entityId: buildingPlanEntityId,
             signatureType: structureProfile?.signatureType ?? null,
             programHint: structureProfile?.semanticProgram ?? structureProfile?.programHint ?? districtBuildingPolicy.programHint ?? null,
@@ -6389,7 +6387,7 @@ export function createKowloonFabricEngine({
      
      
     function districtLandmarkFor(chunk) {
-        if (!chunk || chunk.key === spawnChunkKey) return null;
+        if (!chunk) return null;
         const macroX = Math.floor(chunk.x / districtLandmarkSpacing);
         const macroZ = Math.floor(chunk.z / districtLandmarkSpacing);
         const macroSeed = hashString32(`${worldSeed}:district-landmark:${macroX}:${macroZ}`);
@@ -6397,10 +6395,6 @@ export function createKowloonFabricEngine({
         let localZ = (macroSeed >>> 8) % districtLandmarkSpacing;
         let chunkX = macroX * districtLandmarkSpacing + localX;
         let chunkZ = macroZ * districtLandmarkSpacing + localZ;
-        if (chunkX === 0 && chunkZ === 0) {
-            localX = (localX + 1) % districtLandmarkSpacing;
-            chunkX = macroX * districtLandmarkSpacing + localX;
-        }
         if (chunk.x !== chunkX || chunk.z !== chunkZ) return null;
         const type = districtLandmarkTypes[(macroSeed >>> 16) % districtLandmarkTypes.length];
         return {
@@ -8068,29 +8062,6 @@ export function createKowloonFabricEngine({
         return finalizeCeilingLayerPlanning(step.value);
     }
 
-    async function buildAuthoredCeilingOverlay({ groundEntities = [], ownerId = `spawn-ceiling:${worldSeed}` } = {}) {
-        const chunk = {
-            key: spawnChunkKey, x: 0, z: 0, centerX: 0, centerZ: 0,
-            seed: deterministicChunkSeed(worldSeed, 0, 0), ownerId,
-            weirdness: { sampled: 0.28 },
-        };
-        const iterator = buildCeilingCityLayerSteps({
-            chunk, ownerId, groundEntities, parentRoot: null,
-            worldChunkKey: spawnChunkKey, weirdness: 0.28,
-        });
-        let step = iterator.next();
-        while (!step.done) {
-            if (yieldControl) await yieldControl('building authored ceiling city', step.value?.current ?? 0, step.value?.total ?? 1);
-            step = iterator.next();
-        }
-        const result = await finalizeCeilingLayerPlanning(step.value);
-        if (result?.payload?.root) {
-            result.payload.root.userData.authoredSpawnCeilingCity = true;
-            result.payload.chunk = chunk;
-        }
-        return result?.payload ?? null;
-    }
-
     function attachFabricMeshes(root, transforms, namePrefix, { speculative = false } = {}) {
         const materials = speculative ? speculativePreviewMats : {
             road: roadMat, slab: slabMat, step: stepMat, prop: propMat,
@@ -8114,45 +8085,6 @@ export function createKowloonFabricEngine({
         const interiorPaintMesh = makeInstanced(`${namePrefix}-building-plan-interior-paint`, unitBox, materials.interiorPaint, transforms.interiorPaint);
         for (const mesh of [slabMesh, stepMesh, propMesh, guardMetalMesh, guardConcreteMesh, windowMesh, doorMesh, interiorPaintMesh]) if (mesh) root.add(mesh);
         return root.children.length - beforeChildren;
-    }
-
-    function buildAuthoredOriginChunk({ singulars = [] } = {}) {
-        if (authoredOriginChunkPayload) return authoredOriginChunkPayload;
-        const ownerId = worldChunkOwnerId(worldSeed, 0, 0);
-        const chunk = {
-            key: spawnChunkKey, x: 0, z: 0, centerX: 0, centerZ: 0,
-            seed: hashString32(`${worldSeed}:authored-origin`), ownerId,
-            weirdness: { sampled: 0 },
-        };
-        const root = new THREE.Group();
-        root.name = `world-chunk:${spawnChunkKey}`;
-        root.userData.noSpatialChunk = true;
-        root.userData.worldChunkRoot = true;
-        root.userData.worldChunkKey = spawnChunkKey;
-        root.userData.worldChunkOwnerId = ownerId;
-        root.userData.worldFormatVersion = WORLD_FORMAT_VERSION;
-        root.userData.renderAuthority = 'KowloonFabricEngine';
-        root.userData.streamAuthority = 'WorldChunkStreamer';
-        root.userData.authoredOriginComposite = true;
-        root.visible = false;
-        // The authored origin owns the same exact flat white macro-roof as the
-        // streamed world.  It is a world-space ceiling, never an inverted local
-        // frame; ordinary gravity and camera-up remain authoritative everywhere.
-        const authoredCeiling = new THREE.Mesh(unitPlane, ceilingMat);
-        authoredCeiling.name = 'ceiling-plane:authored-origin';
-        authoredCeiling.rotation.x = Math.PI / 2;
-        authoredCeiling.scale.set(chunkSize, chunkSize, 1);
-        authoredCeiling.position.set(0, HANGING_CITY_CEILING_Y + 0.025, 0);
-        authoredCeiling.receiveShadow = true;
-        root.add(authoredCeiling);
-        const { physics } = createFabricBuffers();
-        authoredOriginChunkPayload = {
-            formatVersion: WORLD_FORMAT_VERSION, key: spawnChunkKey, chunk, ownerId, root, physics,
-            entities: [], singulars: [...singulars], components: [], authoredOriginComposite: true,
-            committed: false, disposed: false, worldMatricesReady: false, physicsPublished: false,
-        };
-        freezeChunkRoot(root);
-        return authoredOriginChunkPayload;
     }
 
     function* buildAuthoredSiteSteps({
@@ -9204,22 +9136,14 @@ export function createKowloonFabricEngine({
         // Build-time preview is render-only and must disappear before authority
         // publication begins. If commit later fails, no stale ghost city survives.
         discardSpeculativePreview(chunk, 'commit-start');
-        // ONE publication boundary for authored spawn, singular shells, surface
-        // patches, cross-site links, and generic streamed chunks. Build stays
+        // ONE publication boundary for auxiliary authored payloads and generic
+        // streamed chunks. Build stays
         // off-scene. A player-conflicting owner may attach staged, but neither its
         // render nor any of its collision becomes authoritative until the capsule clears.
         if (payload.root) {
             payload.requestedVisible = payload.root.visible !== false;
             payload.root.visible = false;
-            const originComponent = authoredOriginChunkPayload?.committed
-                && payload !== authoredOriginChunkPayload
-                && payload.root.userData?.worldChunkKey === spawnChunkKey;
-            if (originComponent) {
-                authoredOriginChunkPayload.root.add(payload.root);
-                if (!authoredOriginChunkPayload.components.includes(payload)) authoredOriginChunkPayload.components.push(payload);
-            } else {
-                addStreamRoot(payload.root);
-            }
+            addStreamRoot(payload.root);
             payload.root.updateMatrixWorld(true);
             payload.worldMatricesReady = true;
         }
@@ -9302,33 +9226,18 @@ export function createKowloonFabricEngine({
         releaseCrossChunkTransportPairsForPayload(payload);
         const crossChunkKey = crossChunkCoordKey(chunk);
         if (crossChunkKey && committedChunkPayloads.get(crossChunkKey)?.payload === payload) committedChunkPayloads.delete(crossChunkKey);
-        if (payload.authoredOriginComposite) {
-            for (const component of payload.components || []) {
-                if (component?.physicsPublished) playerPhysics.unregisterOwnedWorld(component.ownerId);
-                if (component?.ownerId) committedOwners.delete(component.ownerId);
-                enrichment.disposePayload(component);
-                component.committed = false;
-                component.physicsPublished = false;
-            }
-            payload.components.length = 0;
-        }
         if (payload.committed && payload.physicsPublished) playerPhysics.unregisterOwnedWorld(payload.ownerId);
         if (payload.physicsPublished && payload.ownerId) committedOwners.delete(payload.ownerId);
         const hangingPayload = payload.hangingLayer?.payload ?? null;
         if (hangingPayload?.physicsPublished) playerPhysics.unregisterOwnedWorld(hangingPayload.ownerId);
         if (hangingPayload?.ownerId) committedOwners.delete(hangingPayload.ownerId);
         if (hangingPayload) enrichment.disposePayload(hangingPayload);
-        if (authoredOriginChunkPayload && payload !== authoredOriginChunkPayload) {
-            const componentIndex = authoredOriginChunkPayload.components.indexOf(payload);
-            if (componentIndex >= 0) authoredOriginChunkPayload.components.splice(componentIndex, 1);
-        }
         const root = payload.root;
         if (root?.parent) root.parent.remove(root);
         enrichment.disposePayload(payload);
         root?.clear?.();
         payload.committed = false;
         payload.physicsPublished = false;
-        if (payload === authoredOriginChunkPayload) authoredOriginChunkPayload = null;
     }
 
     function disposeShared() {
@@ -9377,5 +9286,5 @@ export function createKowloonFabricEngine({
     };
     const planningCacheStats = () => buildingPlanCache.stats();
 
-    return { build, buildAuthoredOriginChunk, buildAuthoredCeilingOverlay, buildAuthoredSite, buildAuthoredSiteSteps, buildAuthoredPlaza, buildAuthoredSurfacePatch, buildAuthoredBridge, planAuthoredBridgeNetwork, commit, setVisible, verifyReady, unload, requestProgressiveDeepening, refine, hasPendingRefinement, planChunk, districtLandmarkFor, planningCacheStats, crossChunkSeamStats, speculativePreviewStats, disposeShared };
+    return { build, buildAuthoredSite, buildAuthoredSiteSteps, buildAuthoredPlaza, buildAuthoredSurfacePatch, buildAuthoredBridge, planAuthoredBridgeNetwork, commit, setVisible, verifyReady, unload, requestProgressiveDeepening, refine, hasPendingRefinement, planChunk, districtLandmarkFor, planningCacheStats, crossChunkSeamStats, speculativePreviewStats, disposeShared };
 }

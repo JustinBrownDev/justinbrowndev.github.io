@@ -430,7 +430,7 @@
   "mediaIntent": {
     "sourceKey": "live-news.al-jazeera-english",
     "importance": "identity-but-nonauthoritative-runtime",
-    "defaultAudio": "muted",
+    "defaultAudio": "proximity",
     "fallback": "dark glass / subtle static / NO SIGNAL",
     "networkFailureIsFatal": false
   },

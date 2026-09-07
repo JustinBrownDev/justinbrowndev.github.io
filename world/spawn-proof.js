@@ -153,72 +153,81 @@ function relevantReservation(reservation, bounds, surfaceY) {
 export function collectSpawnFabricSpaces(fabricPayloads) {
     const spaces = [];
     for (const [payloadKey, payload] of iterablePayloadEntries(fabricPayloads)) {
-        const entity = payload?.entity;
-        const floorH = Number(entity?.floorH);
-        if (!entity || !Number.isFinite(floorH) || !(floorH > 0)) continue;
         const physics = payload.physics ?? {};
         const platforms = physics.platforms ?? [];
         const connectors = physics.semanticConnectors ?? [];
         const circulationReservations = physics.circulationReservations ?? [];
         const detailReservations = payload.detailReservations ?? [];
-        for (const module of entity.footprintModules ?? []) {
-            const rect = moduleRect(module);
-            const floors = Math.floor(Number(module?.floors) || 0);
-            if (!rect || floors < 1) continue;
-            const surfaceY = floors * floorH;
-            const bounds = moduleBounds(rect, surfaceY);
-            const supportPatches = platforms
-                .filter(platform => platform?.supportKind === 'roof' && Math.abs(finite(platform.y) - surfaceY) <= 0.16)
-                .map(patchBounds)
-                .filter(Boolean)
-                .filter(patch => patch.x >= bounds.minX - 0.05 && patch.x <= bounds.maxX + 0.05
-                    && patch.z >= bounds.minZ - 0.05 && patch.z <= bounds.maxZ + 0.05);
-            if (!supportPatches.length) continue;
+        // Spawn used to be fed one special authored-site payload at a time. The
+        // actual runtime now spawns inside an ordinary streamed chunk, whose
+        // structural authority is the normal `entities[]` array. Accept both
+        // shapes so spawn selection follows the same city data as every other
+        // player-visible chunk instead of requiring an authored origin adapter.
+        const entities = payload?.entity
+            ? [payload.entity]
+            : (payload?.entities ?? []).filter(entity => entity?.kind === 'building');
+        for (const entity of entities) {
+            const floorH = Number(entity?.floorH);
+            if (!entity || !Number.isFinite(floorH) || !(floorH > 0)) continue;
+            for (const module of entity.footprintModules ?? []) {
+                const rect = moduleRect(module);
+                const floors = Math.floor(Number(module?.floors) || 0);
+                if (!rect || floors < 1) continue;
+                const surfaceY = floors * floorH;
+                const bounds = moduleBounds(rect, surfaceY);
+                const supportPatches = platforms
+                    .filter(platform => platform?.supportKind === 'roof' && Math.abs(finite(platform.y) - surfaceY) <= 0.16)
+                    .map(patchBounds)
+                    .filter(Boolean)
+                    .filter(patch => patch.x >= bounds.minX - 0.05 && patch.x <= bounds.maxX + 0.05
+                        && patch.z >= bounds.minZ - 0.05 && patch.z <= bounds.maxZ + 0.05);
+                if (!supportPatches.length) continue;
 
-            const attachedConnectors = connectors.filter(connector =>
-                (connector.endpoints ?? []).some(endpoint =>
-                    pointNearModule(endpoint, rect) && Math.abs(finite(endpoint.y) - surfaceY) <= 0.35));
-            const connectorIds = attachedConnectors.map(connector => connector.id).filter(Boolean);
-            const connectorReservationIds = new Set(attachedConnectors.flatMap(connector =>
-                (connector.reservations ?? []).map(reservation => reservation?.id).filter(Boolean)));
-            const reservations = circulationReservations
-                .filter(reservation => connectorReservationIds.has(reservation?.id) || relevantReservation(reservation, bounds, surfaceY))
-                .map(reservationBounds)
-                .filter(Boolean);
-            const existingDetailReservations = detailReservations
-                .filter(reservation => relevantReservation(reservation, bounds, surfaceY))
-                .map(reservationBounds)
-                .filter(Boolean);
-            const nearbyWalls = (physics.mazeWalls ?? []).filter(wall => {
-                const yMin = finite(wall?.yMin, 0), yMax = finite(wall?.yMax, surfaceY + 2.2);
-                if (yMin > surfaceY + 1.5 || yMax < surfaceY - 0.05) return false;
-                const wallBounds = {
-                    minX: Math.min(finite(wall?.x1), finite(wall?.x2)),
-                    maxX: Math.max(finite(wall?.x1), finite(wall?.x2)),
-                    minZ: Math.min(finite(wall?.z1), finite(wall?.z2)),
-                    maxZ: Math.max(finite(wall?.z1), finite(wall?.z2)),
-                };
-                return boundsOverlap(wallBounds, bounds, 0.35);
-            });
-            const siteId = entity.semanticSiteKey ?? entity.siteId ?? String(payloadKey);
-            const entityId = entity.id ?? payload.ownerId ?? String(payloadKey);
-            spaces.push({
-                schema: 'jweb.fabric-roof-space.v1',
-                spaceId: `${entityId}:${module.key}:roof`,
-                payloadKey: String(payloadKey),
-                siteId,
-                entityId,
-                moduleKey: module.key,
-                surfaceClass: 'roof',
-                exposure: 'exterior',
-                surfaceY,
-                bounds,
-                supportPatches,
-                connectorIds,
-                reservations,
-                existingDetailReservations,
-                nearbyWalls,
-            });
+                const attachedConnectors = connectors.filter(connector =>
+                    (connector.endpoints ?? []).some(endpoint =>
+                        pointNearModule(endpoint, rect) && Math.abs(finite(endpoint.y) - surfaceY) <= 0.35));
+                const connectorIds = attachedConnectors.map(connector => connector.id).filter(Boolean);
+                const connectorReservationIds = new Set(attachedConnectors.flatMap(connector =>
+                    (connector.reservations ?? []).map(reservation => reservation?.id).filter(Boolean)));
+                const reservations = circulationReservations
+                    .filter(reservation => connectorReservationIds.has(reservation?.id) || relevantReservation(reservation, bounds, surfaceY))
+                    .map(reservationBounds)
+                    .filter(Boolean);
+                const existingDetailReservations = detailReservations
+                    .filter(reservation => relevantReservation(reservation, bounds, surfaceY))
+                    .map(reservationBounds)
+                    .filter(Boolean);
+                const nearbyWalls = (physics.mazeWalls ?? []).filter(wall => {
+                    const yMin = finite(wall?.yMin, 0), yMax = finite(wall?.yMax, surfaceY + 2.2);
+                    if (yMin > surfaceY + 1.5 || yMax < surfaceY - 0.05) return false;
+                    const wallBounds = {
+                        minX: Math.min(finite(wall?.x1), finite(wall?.x2)),
+                        maxX: Math.max(finite(wall?.x1), finite(wall?.x2)),
+                        minZ: Math.min(finite(wall?.z1), finite(wall?.z2)),
+                        maxZ: Math.max(finite(wall?.z1), finite(wall?.z2)),
+                    };
+                    return boundsOverlap(wallBounds, bounds, 0.35);
+                });
+                const siteId = entity.semanticSiteKey ?? entity.siteId ?? String(payloadKey);
+                const entityId = entity.id ?? payload.ownerId ?? String(payloadKey);
+                spaces.push({
+                    schema: 'jweb.fabric-roof-space.v1',
+                    spaceId: `${entityId}:${module.key}:roof`,
+                    payloadKey: String(payloadKey),
+                    siteId,
+                    entityId,
+                    moduleKey: module.key,
+                    surfaceClass: 'roof',
+                    exposure: 'exterior',
+                    surfaceY,
+                    bounds,
+                    supportPatches,
+                    connectorIds,
+                    reservations,
+                    existingDetailReservations,
+                    nearbyWalls,
+                });
+            }
         }
     }
     return spaces.sort((a, b) => a.spaceId.localeCompare(b.spaceId));
@@ -370,6 +379,26 @@ export function selectSpawnEnclaveCandidate({
     return best;
 }
 
+function relaxedFabricRuntime(locationRuntime) {
+    if (!locationRuntime?.selectionPolicy) return locationRuntime;
+    const policy = locationRuntime.selectionPolicy;
+    return {
+        ...locationRuntime,
+        selectionPolicy: {
+            ...policy,
+            // The TV/refuge identity is required; the old authored district's
+            // very specific rooftop fingerprint is not. Prefer the full policy,
+            // then accept any ordinary streamed roof that is safely navigable.
+            requireFabricConnector: false,
+            minElevationAboveOriginM: 0,
+            minEdgeSupportedDirections: Math.min(4, policy.minEdgeSupportedDirections ?? 4),
+            preferredHigherContextDirections: 0,
+            localPeakPenalty: 0,
+            minNavigableHeadings: Math.min(2, policy.minNavigableHeadings ?? 2),
+        },
+    };
+}
+
 function publishBoundLocation(locationRuntime, proof) {
     const bound = bindSpawnLocationRuntime(locationRuntime, proof);
     if (!bound || typeof window === 'undefined') return bound;
@@ -380,10 +409,10 @@ function publishBoundLocation(locationRuntime, proof) {
 }
 
 // A spawn is not "playable" merely because one capsule sample is empty. We require
-// a nearby pose that the real controller can actually move away from. Authored
+// a nearby pose that the real controller can actually move away from. Fabric-space
 // selection is stricter: the pose must first belong to a roof surface published by
-// the committed fabric payload, so a physically walkable interior floor can never
-// masquerade as a "fabric-space" rooftop merely because physics sampling liked it.
+// the committed chunk payload, so a physically walkable interior floor can never
+// masquerade as a rooftop merely because physics sampling liked it.
 export function provePlayableSpawn({
     playerPhysics,
     origin,
@@ -408,8 +437,16 @@ export function provePlayableSpawn({
 
     if (locationRuntime) {
         const fabricSpaces = collectSpawnFabricSpaces(fabricPayloads);
-        const enclave = selectSpawnEnclaveCandidate({
+        const preferredEnclave = selectSpawnEnclaveCandidate({
             playerPhysics, origin, locationRuntime, fabricSpaces, moveSpeed, stepSeconds,
+        });
+        const enclave = preferredEnclave ?? selectSpawnEnclaveCandidate({
+            playerPhysics,
+            origin,
+            locationRuntime: relaxedFabricRuntime(locationRuntime),
+            fabricSpaces,
+            moveSpeed,
+            stepSeconds,
         });
         if (enclave) {
             const hostSpace = {
@@ -431,7 +468,7 @@ export function provePlayableSpawn({
             const proof = {
                 ok: true,
                 pose: { x: enclave.x, z: enclave.z, feetY: enclave.feetY },
-                routeKind: 'authored-elevated-enclave',
+                routeKind: preferredEnclave ? 'streamed-elevated-enclave' : 'streamed-roof-fallback',
                 escapeDistance: enclave.navigation.bestDistance,
                 candidateIndex: 0,
                 candidateRing: enclave.ring,
@@ -440,7 +477,7 @@ export function provePlayableSpawn({
                 fabricSpace: hostSpace,
                 routeFan,
                 locationSelection: {
-                    mode: 'fabric-space:elevated-roof-enclave',
+                    mode: preferredEnclave ? 'fabric-space:elevated-roof-enclave' : 'fabric-space:ordinary-roof-fallback',
                     score: enclave.finalScore,
                     elevationAboveRequestedM: enclave.elevation,
                     edgeSupportedDirections: enclave.edgeSupportedDirections,
@@ -462,10 +499,10 @@ export function provePlayableSpawn({
                 },
             };
             proof.location = publishBoundLocation(locationRuntime, proof);
-            console.log?.('[spawn-location] bound authored elevated enclave', proof.locationSelection);
+            console.log?.('[spawn-location] bound streamed fabric roof', proof.locationSelection);
             return proof;
         }
-        console.warn?.('[spawn-location] no authoritative fabric roof enclave passed the runtime policy; using conservative local spawn proof');
+        console.warn?.('[spawn-location] no streamed fabric roof passed spawn selection; using conservative local spawn proof');
     }
 
     const candidates = candidatePoses(playerPhysics, origin, { searchRadius, radialStep, spokes });

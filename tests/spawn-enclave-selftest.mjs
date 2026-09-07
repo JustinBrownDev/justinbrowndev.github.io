@@ -85,7 +85,7 @@ assert.ok(selected.navigation.successful.length >= 3);
 
 const proof = provePlayableSpawn({ playerPhysics: physics, origin, locationRuntime: runtime, fabricPayloads });
 assert.equal(proof.ok, true);
-assert.equal(proof.routeKind, 'authored-elevated-enclave');
+assert.equal(proof.routeKind, 'streamed-elevated-enclave');
 assert.equal(proof.locationSelection.mode, 'fabric-space:elevated-roof-enclave');
 assert.equal(proof.locationSelection.hostSpace.spaceId, 'entity-east:8,0:roof');
 assert.equal(proof.location.hostSpace.entityId, 'entity-east');
@@ -115,4 +115,4 @@ const flatPhysics = {
 const fallback = provePlayableSpawn({ playerPhysics: flatPhysics, origin, locationRuntime: runtime, fabricPayloads: new Map() });
 assert.equal(fallback.ok, true, 'no authoritative roof must fall back to conservative local proof');
 assert.equal(fallback.routeKind, 'straight');
-assert.equal(fallback.location.hostSpace, null, 'fallback may bind authored identity data but must not fake fabric host-space authority');
+assert.equal(fallback.location.hostSpace, null, 'fallback may bind stable spawn identity data but must not fake fabric host-space authority');

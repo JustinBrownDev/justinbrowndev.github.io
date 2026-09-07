@@ -38,7 +38,7 @@ function makePalette(THREE, resources) {
     };
 }
 
-function makeContext({ THREE, resources, partBudget = DEFAULT_PART_BUDGET }) {
+function makeContext({ THREE, resources, partBudget = DEFAULT_PART_BUDGET, plan = null }) {
     const box = new THREE.BoxGeometry(1, 1, 1);
     resources?.geometries?.push?.(box);
     return {
@@ -47,6 +47,8 @@ function makeContext({ THREE, resources, partBudget = DEFAULT_PART_BUDGET }) {
         palette: makePalette(THREE, resources),
         partBudget: Math.max(24, finite(partBudget, DEFAULT_PART_BUDGET)),
         partCount: 0,
+        profileId: plan?.startProfile?.id ?? null,
+        spawnProgressionRank: Number(plan?.startProfile?.progressionRank ?? 0),
         detailedInstances: 0,
         replacedProxyInstances: 0,
     };
@@ -225,11 +227,37 @@ function mediaDetail(ctx, group, placement) {
     const id = String(placement.variantId ?? '');
     const tags = new Set(placement.tags ?? []);
     const p = ctx.palette;
+    const isLaptop = tags.has('laptop') || /laptop/.test(id) || ctx.profileId === 'small-tv-roof';
+    if (isLaptop) {
+        const keyboardD = Math.max(0.24, w * 0.62);
+        part(ctx, group, p.darkMetal, [w * 0.96, 0.035, keyboardD], [0, -h * 0.46, keyboardD * 0.46]);
+        part(ctx, group, p.wornMetal, [w * 0.86, 0.018, keyboardD * 0.56], [0, -h * 0.435, keyboardD * 0.46]);
+        for (let row = 0; row < 3; row++) for (let col = -3; col <= 3; col++) {
+            part(ctx, group, p.darkMetal, [w * 0.085, 0.009, keyboardD * 0.075], [col * w * 0.105, -h * 0.417, keyboardD * (0.32 + row * 0.13)]);
+        }
+        part(ctx, group, p.darkMetal, [w * 0.24, 0.010, keyboardD * 0.18], [0, -h * 0.414, keyboardD * 0.70]);
+        part(ctx, group, p.wornMetal, [w * 0.92, 0.026, 0.035], [0, -h * 0.34, 0.02]);
+        return;
+    }
     const isRadio = placement.familyId === 'spawn.media.radio' || tags.has('radio') || /^radio\./.test(id);
     if (isRadio) {
         part(ctx, group, p.wornMetal, [w * 0.64, 0.035, d * 0.66], [0, h * 0.56, 0]);
         part(ctx, group, p.wornMetal, [0.022, h * 1.35, 0.022], [w * 0.38, h * 0.88, -d * 0.16], [0, 0, -0.12]);
         part(ctx, group, p.warm, [w * 0.16, h * 0.12, 0.018], [w * 0.22, h * 0.14, d * 0.52]);
+        return;
+    }
+    const massiveCrt = ctx.spawnProgressionRank >= 3 && (tags.has('crt') || placement.constructionRecipe === 'crt-box' || /crt|video-monitor/.test(id));
+    if (massiveCrt) {
+        for (let y = -3; y <= 3; y++) {
+            part(ctx, group, p.wornMetal, [Math.max(0.025, w * 0.018), h * 0.075, d * 0.50], [-w * 0.49, y * h * 0.105, -d * 0.10]);
+            part(ctx, group, p.wornMetal, [Math.max(0.025, w * 0.018), h * 0.075, d * 0.50], [w * 0.49, y * h * 0.105, -d * 0.10]);
+        }
+        for (const sx of [-1, 1]) {
+            part(ctx, group, p.darkMetal, [w * 0.08, h * 0.14, d * 0.18], [sx * w * 0.34, -h * 0.43, d * 0.40]);
+            part(ctx, group, p.wornMetal, [w * 0.05, h * 0.10, d * 0.42], [sx * w * 0.43, h * 0.34, -d * 0.22]);
+        }
+        for (let i = -4; i <= 4; i++) part(ctx, group, p.darkMetal, [w * 0.055, 0.022, d * 0.34], [i * w * 0.085, h * 0.47, -d * 0.15]);
+        for (let i = 0; i < 5; i++) part(ctx, group, i === 0 ? p.warm : p.wornMetal, [w * 0.025, h * 0.04, 0.02], [w * (0.30 + i * 0.055), -h * 0.39, d * 0.505]);
         return;
     }
     const flat = tags.has('lcd') || id.includes('flat');
@@ -443,6 +471,72 @@ function landmarkDetail(ctx, group, placement) {
     for (const x of [-w * 0.22, 0, w * 0.22]) part(ctx, group, p.wornMetal, [w * 0.06, h * 0.16, d * 0.06], [x, h * 0.46, 0]);
 }
 
+function workstationDetail(ctx, group, placement) {
+    hideBaseMeshes(group);
+    ctx.replacedProxyInstances++;
+    const [w, h, d] = dimsOf(placement);
+    const p = ctx.palette;
+    const bottom = -h * 0.5;
+    const deskY = bottom + Math.min(0.78, h * 0.55);
+    part(ctx, group, p.wood, [w * 0.98, 0.065, d * 0.92], [0, deskY, 0]);
+    const legH = Math.max(0.38, deskY - bottom);
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) part(ctx, group, p.darkMetal, [0.045, legH, 0.045], [sx * w * 0.44, bottom + legH * 0.5, sz * d * 0.36]);
+    const screens = ctx.spawnProgressionRank >= 6 ? 3 : (ctx.spawnProgressionRank >= 4 ? 2 : 1);
+    for (let i = 0; i < screens; i++) {
+        const sw = Math.min(0.48, w * (screens === 1 ? 0.34 : 0.24));
+        const x = (i - (screens - 1) * 0.5) * sw * 1.18;
+        part(ctx, group, p.darkMetal, [sw, h * 0.27, 0.045], [x, deskY + h * 0.22, -d * 0.19], [0, (i - (screens - 1) * 0.5) * -0.14, 0]);
+        part(ctx, group, p.glass, [sw * 0.88, h * 0.22, 0.012], [x, deskY + h * 0.22, -d * 0.165], [0, (i - (screens - 1) * 0.5) * -0.14, 0]);
+        part(ctx, group, p.darkMetal, [0.035, h * 0.15, 0.035], [x, deskY + h * 0.07, -d * 0.20]);
+    }
+    part(ctx, group, p.darkMetal, [w * 0.46, 0.025, d * 0.24], [0, deskY + 0.055, d * 0.18]);
+    part(ctx, group, p.wornMetal, [w * 0.20, h * 0.30, d * 0.38], [w * 0.34, bottom + h * 0.20, -d * 0.08]);
+    for (let i = 0; i < 3; i++) part(ctx, group, p.warm, [0.018, 0.018, 0.018], [w * 0.42, bottom + h * (0.13 + i * 0.055), d * 0.12]);
+}
+
+function serverRackDetail(ctx, group, placement) {
+    hideBaseMeshes(group);
+    ctx.replacedProxyInstances++;
+    const [w, h, d] = dimsOf(placement);
+    const p = ctx.palette;
+    part(ctx, group, p.darkMetal, [w, 0.065, d], [0, -h * 0.47, 0]);
+    part(ctx, group, p.darkMetal, [w, 0.065, d], [0, h * 0.47, 0]);
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) part(ctx, group, p.wornMetal, [0.045, h * 0.92, 0.045], [sx * w * 0.45, 0, sz * d * 0.43]);
+    const units = ctx.spawnProgressionRank >= 7 ? 10 : 8;
+    for (let i = 0; i < units; i++) {
+        const y = -h * 0.38 + i * (h * 0.76 / Math.max(1, units - 1));
+        part(ctx, group, p.darkMetal, [w * 0.82, h * 0.055, d * 0.72], [0, y, 0]);
+        part(ctx, group, p.wornMetal, [w * 0.58, h * 0.018, 0.018], [-w * 0.07, y, d * 0.37]);
+        part(ctx, group, i % 3 === 0 ? p.warm : p.glass, [0.018, 0.018, 0.018], [w * 0.31, y, d * 0.39]);
+    }
+    part(ctx, group, p.wornMetal, [w * 0.06, h * 0.72, d * 0.08], [w * 0.40, 0, -d * 0.38]);
+}
+
+function operatorChairDetail(ctx, group, placement) {
+    hideBaseMeshes(group);
+    ctx.replacedProxyInstances++;
+    const [w, h, d] = dimsOf(placement);
+    const p = ctx.palette;
+    part(ctx, group, p.cloth, [w * 0.82, h * 0.10, d * 0.72], [0, -h * 0.04, 0]);
+    part(ctx, group, p.cloth, [w * 0.76, h * 0.46, 0.08], [0, h * 0.25, -d * 0.33]);
+    part(ctx, group, p.darkMetal, [0.05, h * 0.46, 0.05], [0, -h * 0.28, 0]);
+    for (let i = 0; i < 5; i++) {
+        const a = i * Math.PI * 2 / 5;
+        part(ctx, group, p.darkMetal, [w * 0.34, 0.035, 0.035], [Math.sin(a) * w * 0.16, -h * 0.47, Math.cos(a) * d * 0.16], [0, a, 0]);
+    }
+}
+
+function equipmentCartDetail(ctx, group, placement) {
+    hideBaseMeshes(group);
+    ctx.replacedProxyInstances++;
+    const [w, h, d] = dimsOf(placement);
+    const p = ctx.palette;
+    for (const y of [-h * 0.34, 0, h * 0.34]) part(ctx, group, p.wornMetal, [w * 0.92, 0.055, d * 0.88], [0, y, 0]);
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) part(ctx, group, p.darkMetal, [0.04, h * 0.86, 0.04], [sx * w * 0.42, 0, sz * d * 0.38]);
+    part(ctx, group, p.darkMetal, [w * 0.68, h * 0.20, d * 0.62], [0, h * 0.15, 0]);
+    part(ctx, group, p.glass, [w * 0.32, h * 0.08, 0.015], [-w * 0.12, h * 0.18, d * 0.32]);
+}
+
 function genericDetail(ctx, group, placement) {
     hideBaseMeshes(group);
     ctx.replacedProxyInstances++;
@@ -463,6 +557,10 @@ function detailPlacement(ctx, group, placement) {
     else if (slot === 'plant-softener') plantDetail(ctx, group, placement);
     else if (slot === 'roof-credibility') roofUtilityDetail(ctx, group, placement);
     else if (slot === 'vacuum-landmark') landmarkDetail(ctx, group, placement);
+    else if (slot === 'progression-workstation') workstationDetail(ctx, group, placement);
+    else if (slot === 'progression-server-rack') serverRackDetail(ctx, group, placement);
+    else if (slot === 'progression-operator-chair') operatorChairDetail(ctx, group, placement);
+    else if (slot === 'progression-equipment-cart') equipmentCartDetail(ctx, group, placement);
     else if (slot === 'power-explanation' || /power-and-cables/.test(familyId)) powerDetail(ctx, group, placement);
     else if (slot === 'drink-evidence' || slot === 'personal-evidence' || /clutter|small-electronics/.test(familyId)) clutterDetail(ctx, group, placement);
     else genericDetail(ctx, group, placement);
@@ -485,7 +583,7 @@ export function detailSpawnLocation({
         return { schema: ART_SCHEMA, applied: false, detailedInstances: 0, partCount: 0, replacedProxyInstances: 0 };
     }
 
-    const ctx = makeContext({ THREE, resources, partBudget });
+    const ctx = makeContext({ THREE, resources, partBudget, plan });
     for (const placement of plan.placements) {
         if (ctx.partCount >= ctx.partBudget) break;
         const group = findPlacementGroup(root, placement?.instanceId);

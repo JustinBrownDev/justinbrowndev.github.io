@@ -1,3 +1,4 @@
+import { augmentSpawnProgressionLayout } from './spawn-progression-layout.js';
 const EPS = 1e-6;
 
 function finite(value, fallback = 0) {
@@ -230,6 +231,14 @@ function chooseSupportPlacement({ locationId, pose, hostSpace, blockers, wallMou
     if (!supportPick || !tvPick) return null;
     const supportDims = dimsOf(supportPick, [0.92, 0.72, 0.48]);
     const tvDims = dimsOf(tvPick, [0.82, 0.62, 0.38]);
+    const profile = composition?.startProfile ?? {};
+    if (Number(profile.progressionRank ?? 0) >= 3 && profile.mediaRecipes?.includes?.('crt-box')) {
+        supportDims[0] = Math.max(supportDims[0], tvDims[0] * 0.78);
+        supportDims[1] = Number(profile.progressionRank ?? 0) >= 5
+            ? Math.min(supportDims[1], 0.34)
+            : Math.max(supportDims[1], Math.min(0.82, tvDims[1] * 0.24));
+        supportDims[2] = Math.max(supportDims[2], tvDims[2] * 0.76);
+    }
     const wallMounted = tvPick?.placement?.mount === 'wall';
     const halfX = (wallMounted ? supportDims[0] : Math.max(supportDims[0], tvDims[0])) * 0.5;
     const halfZ = (wallMounted ? supportDims[2] : Math.max(supportDims[2], tvDims[2])) * 0.5;
@@ -249,7 +258,7 @@ function chooseSupportPlacement({ locationId, pose, hostSpace, blockers, wallMou
     if (!chosen) return null;
     const rotY = facingRotation(chosen, pose);
     const support = makePlacement({
-        locationId, slot: 'tv-support', pick: supportPick, index: 0,
+        locationId, slot: 'tv-support', pick: { ...supportPick, dimensionsM: supportDims }, index: 0,
         x: chosen.x, y: hostSpace.surfaceY + supportDims[1] * 0.5, z: chosen.z, rotY,
         fallbackDims: supportDims,
     });
@@ -551,6 +560,10 @@ export function compileSpawnSpatialPlan({
         furnitureBlockers.push(envelope);
     }
 
+    const progressionLayout = augmentSpawnProgressionLayout({
+        locationId, pose, hostSpace, composition, placements, reservations,
+    });
+
     const realizedSlots = [...new Set(placements.map(item => item.slot))];
     const mediaKind = tvPlacement?.familyId === 'spawn.media.radio' ? 'radio' : (tvPlacement ? 'television' : 'none');
 
@@ -572,6 +585,7 @@ export function compileSpawnSpatialPlan({
         hostArchetype: hostSpace.hostArchetype ?? composition?.hostArchetype ?? null,
         startProfile: composition?.startProfile ? { ...composition.startProfile } : null,
         mediaKind,
+        progressionLayout,
         ready: mediaReady,
         complete: unresolved.length === 0,
         unresolved: [...new Set(unresolved)],

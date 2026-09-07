@@ -60,16 +60,21 @@ assert.ok([...shelteredProfiles].every(id => !id.includes('giga') && !id.include
 const giga = createSpawnComposition(runtime, 'giga-shop', gigaHost);
 assert.equal(giga.startProfile.id, 'giga-shopfront');
 const gigaMedia = giga.slots.find(slot => slot.slot === 'primary-tv')?.picks?.[0];
-assert.equal(gigaMedia?.variantId, 'tv.flat.wall-salvage');
-assert.ok(gigaMedia.dimensionsM[0] >= 3.4, `GIGA should read as storefront-scale, width=${gigaMedia.dimensionsM[0]}`);
-assert.equal(gigaMedia.placement?.mount, 'wall');
+assert.ok(gigaMedia?.variantId?.startsWith('tv.crt.'), `GIGA should select a CRT corpus variant, got ${gigaMedia?.variantId}`);
+assert.equal(gigaMedia?.constructionRecipe, 'crt-box', 'GIGA should be a deep CRT, not a flat wall panel');
+assert.ok(gigaMedia.dimensionsM[0] >= 3.1, `GIGA CRT should remain room-scale, width=${gigaMedia.dimensionsM[0]}`);
+assert.ok(gigaMedia.dimensionsM[2] >= 1.7, `GIGA CRT needs real cabinet depth, depth=${gigaMedia.dimensionsM[2]}`);
+assert.equal(gigaMedia.placement?.mount, 'surface');
 
 const terra = createSpawnComposition(runtime, 'terra-room', terraHost);
 assert.equal(terra.startProfile.id, 'terra-backroom');
 const terraMedia = terra.slots.find(slot => slot.slot === 'primary-tv')?.picks?.[0];
-assert.equal(terraMedia?.variantId, 'tv.flat.wall-salvage');
-assert.ok(terraMedia.dimensionsM[0] >= 8.0, `TERRA should start at eight meters wide, width=${terraMedia.dimensionsM[0]}`);
+assert.ok(terraMedia?.variantId?.startsWith('tv.crt.'), `TERRA should select a CRT corpus variant, got ${terraMedia?.variantId}`);
+assert.equal(terraMedia?.constructionRecipe, 'crt-box', 'TERRA should be a massive deep CRT, not a flat wall panel');
+assert.ok(terraMedia.dimensionsM[0] >= 4.8, `TERRA CRT should dominate the room, width=${terraMedia.dimensionsM[0]}`);
+assert.ok(terraMedia.dimensionsM[2] >= 2.5, `TERRA CRT should have truck-like cabinet depth, depth=${terraMedia.dimensionsM[2]}`);
 assert.ok(terraMedia.dimensionsM[1] < 2.9, `TERRA should fit a plausible room height, height=${terraMedia.dimensionsM[1]}`);
+assert.equal(terraMedia.placement?.mount, 'surface');
 assert.equal(terra.slots.find(slot => slot.slot === 'seating')?.picks?.length, 4, 'TERRA must provision a real four-seat hangout, not a screen-only closet');
 
 const undersizedTerraHost = { ...terraHost, supportAreaM2: 84, largestSupportPatchAreaM2: 38, maxSupportSpanM: 6.0, maxWallSpanM: 8.8 };

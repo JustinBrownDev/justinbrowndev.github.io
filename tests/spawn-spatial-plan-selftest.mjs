@@ -90,7 +90,10 @@ const terraPlan = compileSpawnSpatialPlan({
 });
 assert.ok(terraPlan.ready, `TERRA room should fit a real hangout: ${terraPlan.unresolved.join(', ')}`);
 assert.equal(terraPlan.placements.filter(item => item.slot === 'seating').length, 4, 'TERRA requires four realized seats');
-assert.ok(terraPlan.placements.find(item => item.slot === 'primary-tv')?.dimensionsM?.[0] >= 8.0, 'TERRA screen must remain at least eight meters wide after spatial planning');
+const terraPlannedMedia = terraPlan.placements.find(item => item.slot === 'primary-tv');
+assert.equal(terraPlannedMedia?.constructionRecipe, 'crt-box', 'TERRA planned media must remain a deep CRT');
+assert.ok(terraPlannedMedia?.dimensionsM?.[0] >= 4.8, 'TERRA CRT must remain room-dominating after spatial planning');
+assert.ok(terraPlannedMedia?.dimensionsM?.[2] >= 2.5, 'TERRA CRT must retain substantial physical depth after spatial planning');
 
 const gigaHost = enclosedHost('hanging-storefront', 4.2, 3.7);
 const gigaComposition = createSpawnComposition(runtime, 'giga-spatial-plan', gigaHost);

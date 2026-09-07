@@ -1,5 +1,6 @@
 import { compileSpawnSpatialPlan } from './spawn-spatial-plan.js';
 import { createMediaIntent } from './jweb-media-channel-pack/index.mjs';
+import { applySpawnProfileProgression, progressionSlotCountRange, shapeSpawnPickForProgression } from './spawn-profile-progression.js';
 
 const LOCATION_URL = new URL('../jweb-authored-location-data-pack/locations/spawn-rooftop-reality-leak.json', import.meta.url);
 const ASSET_URL = new URL('../jweb-authored-location-data-pack/assets/spawnpoint-asset-families.json', import.meta.url);
@@ -308,7 +309,7 @@ export function createSpawnComposition(runtime, stableKey, hostSpace = null) {
     const location = runtime.location;
     const rootSeed = hashString32(`${location.id}:${stableKey}`);
     const forcedFlavor = readSpawnFlavorOverride();
-    const startProfile = pickStartProfile(rootSeed, hostSpace, forcedFlavor);
+    const startProfile = applySpawnProfileProgression(pickStartProfile(rootSeed, hostSpace, forcedFlavor));
     const microstories = location.microstories ?? [];
     const story = weightedPick(mulberry32(rootSeed ^ 0x4d3c2b1a), microstories);
     const selected = [];
@@ -322,6 +323,7 @@ export function createSpawnComposition(runtime, stableKey, hostSpace = null) {
             lo = Math.max(lo, startProfile.seatRange[0]);
             hi = Math.min(hi, Math.max(lo, startProfile.seatRange[1]));
         }
+        [lo, hi] = progressionSlotCountRange(startProfile, slot.slot, [lo, hi]);
         const count = lo + Math.floor(rng() * (hi - lo + 1));
         const picks = [];
         for (let i = 0; i < count; i++) {
@@ -339,7 +341,7 @@ export function createSpawnComposition(runtime, stableKey, hostSpace = null) {
             const dimensionsM = slot.slot === 'primary-tv'
                 ? scaledDimensions(baseDimensions, startProfile.mediaScale)
                 : (slot.slot === 'tv-support' ? scaledDimensions(baseDimensions, startProfile.supportScale ?? 1) : baseDimensions);
-            picks.push({
+            picks.push(shapeSpawnPickForProgression(startProfile, slot.slot, i, {
                 familyId,
                 variantId: variant.id,
                 label: variant.label,
@@ -347,7 +349,7 @@ export function createSpawnComposition(runtime, stableKey, hostSpace = null) {
                 constructionRecipe: variant.constructionRecipe,
                 tags: [...(variant.tags ?? [])],
                 placement: clonePlain(variant.placement ?? null),
-            });
+            }));
         }
         selected.push({
             slot: slot.slot,

@@ -262,6 +262,26 @@ function colliderFromPlacement(placement, surfaceY) {
     };
 }
 
+function orientCameraToSpawnMedia(camera, plan) {
+    const media = plan?.placements?.find?.(item => item?.slot === 'primary-tv');
+    if (!camera?.position || !camera?.rotation || !media?.transform) return null;
+    const dx = media.transform.x - camera.position.x;
+    const dz = media.transform.z - camera.position.z;
+    const horizontal = Math.hypot(dx, dz);
+    if (!(horizontal > 0.08)) return null;
+    const targetY = Number.isFinite(media.transform.y) ? media.transform.y : camera.position.y;
+    const dy = targetY - camera.position.y;
+    const yaw = Math.atan2(-dx, -dz);
+    const pitch = Math.max(-0.38, Math.min(0.28, Math.atan2(dy, horizontal)));
+    camera.rotation.order = 'YXZ';
+    camera.rotation.y = yaw;
+    camera.rotation.x = pitch;
+    camera.rotation.z = 0;
+    camera.updateMatrix?.();
+    camera.updateMatrixWorld?.(true);
+    return { target: { x: media.transform.x, y: targetY, z: media.transform.z }, yaw, pitch, instanceId: media.instanceId };
+}
+
 function detachRoot(scene, root) {
     if (!root) return;
     if (typeof scene?.remove === 'function') {
@@ -335,6 +355,9 @@ export function realizeSpawnLocation({
         } else if (placement.slot === 'seating') {
             addSeatProxy(THREE, root, unitBox, seatMaterial, placement);
             colliders.push(colliderFromPlacement(placement, hostSpace.surfaceY));
+        } else if (placement.slot?.startsWith?.('progression-')) {
+            addDetailProxy(THREE, root, unitBox, detailMaterial, accentMaterial, placement);
+            colliders.push(colliderFromPlacement(placement, hostSpace.surfaceY));
         } else if (placement.slot === 'warm-practical') {
             addLightProxy(THREE, root, unitBox, lightMaterial, placement);
         } else if (placement.slot === 'plant-softener') {
@@ -345,10 +368,12 @@ export function realizeSpawnLocation({
     }
 
     try {
-        detailSpawnLocation({ THREE, root, plan, resources });
+        detailSpawnLocation({ THREE, root, plan, resources, partBudget: plan.startProfile?.artPartBudget });
     } catch (error) {
         console.warn?.('[spawn-detail-art-r1] detail pass failed; keeping base spawn geometry', error);
     }
+
+    const initialView = orientCameraToSpawnMedia(camera, plan);
 
     scene.add(root);
     if (Array.isArray(propColliders)) propColliders.push(...colliders);
@@ -391,6 +416,7 @@ export function realizeSpawnLocation({
         screenSockets,
         audioSockets,
         mediaController,
+        initialView,
         reservationsInstalled,
         colliders,
         colliderCount: colliders.length,

@@ -882,7 +882,21 @@ function rectangleBoundaryCountAgainstSpace(grid, minIx, minIz, width, depth, sp
   return count;
 }
 
-function candidateRectangleAnchors({ space, spaces, parentKey, routeSpaceKey, grid, profile, stableKey }) {
+function reachableEligibleCapacity(anchor, space, grid) {
+  if (!anchor || anchor.spaceId || !cellEligibleForSpace(anchor, space)) return 0;
+  const seen = new Set([anchor.key]);
+  const queue = [anchor];
+  for (let qi = 0; qi < queue.length; qi++) {
+    for (const neighbor of neighborsOf(queue[qi], grid)) {
+      if (seen.has(neighbor.key) || neighbor.spaceId || !cellEligibleForSpace(neighbor, space)) continue;
+      seen.add(neighbor.key);
+      queue.push(neighbor);
+    }
+  }
+  return seen.size;
+}
+
+function candidateRectangleAnchors({ space, spaces, parentKey, routeSpaceKey, grid, profile, stableKey, desiredTarget = 1 }) {
   const available = grid.cells.filter(cell => !cell.spaceId && cellEligibleForSpace(cell, space));
   const parentAdjacent = parentKey
     ? available.filter(cell => neighborsOf(cell, grid).some(neighbor => neighbor.spaceId === parentKey))
@@ -898,25 +912,39 @@ function candidateRectangleAnchors({ space, spaces, parentKey, routeSpaceKey, gr
   const source = routeAdjacent.length ? routeAdjacent : (parentAdjacent.length ? parentAdjacent : available);
   const frontageWeight = routeFrontageWeight(space);
   const scoreKey = `${stableKey}:rectangle-anchor`;
-  const ranked = source.map(cell => ({
-    cell,
-    exposure: cell.exposure + cell.exposedSides.length,
-    preference: preferenceScore(cell, space, profile, scoreKey),
-  }));
+  const requiredCapacity = Math.max(1, Math.floor(Number(desiredTarget) || 1));
+  const ranked = source.map(cell => {
+    const capacity = reachableEligibleCapacity(cell, space, grid);
+    return {
+      cell,
+      capacity,
+      capacityRatio: Math.min(1, capacity / requiredCapacity),
+      exposure: cell.exposure + cell.exposedSides.length,
+      preference: preferenceScore(cell, space, profile, scoreKey),
+    };
+  });
   ranked.sort((a, b) => {
+    // Capacity is a gate, not a cosmetic preference: a huge defining room must
+    // not accept a locally attractive cul-de-sac while a target-capable anchor exists.
+    const viable = Number(b.capacity >= requiredCapacity) - Number(a.capacity >= requiredCapacity);
+    if (viable) return viable;
+    const capacityBias = b.capacityRatio - a.capacityRatio;
+    if (Math.abs(capacityBias) > 0.05) return capacityBias;
     const frontageBias = frontageWeight > 0 ? (b.exposure - a.exposure) * frontageWeight : 0;
     if (frontageBias) return frontageBias;
-    return b.preference - a.preference || a.cell.key.localeCompare(b.cell.key);
+    return b.preference - a.preference || b.capacity - a.capacity || a.cell.key.localeCompare(b.cell.key);
   });
   return ranked.slice(0, 32).map(item => item.cell);
 }
 
 function placeRectangleFirstSpace({
-  space, spaces, target, parentKey, routeSpaceKey, grid, profile, stableKey,
+  space, spaces, target, parentKey, routeSpaceKey, requiredBoundaryKeys = [], requiredBoundaryCells = 1, grid, profile, stableKey,
 }) {
   if (!rectangleFirstPreferred(profile)) return null;
   if (!space || ['circulation', 'entry'].includes(space.role)) return null;
-  const anchors = candidateRectangleAnchors({ space, spaces, parentKey, routeSpaceKey, grid, profile, stableKey });
+  const sumWeight = spaces.reduce((sum, candidate) => sum + Math.max(0.001, Number(candidate.areaWeight) || 0), 0);
+  const weightedTarget = Math.max(target, Math.round(grid.cells.length * Math.max(0.001, Number(space.areaWeight) || 0) / Math.max(0.001, sumWeight)));
+  const anchors = candidateRectangleAnchors({ space, spaces, parentKey, routeSpaceKey, grid, profile, stableKey, desiredTarget: weightedTarget });
   if (!anchors.length) return null;
   const minimumShortMetres = minimumShortDimensionForSpace(space);
   const minimumShortCells = Math.max(1, Math.ceil((minimumShortMetres - EPS) / Math.max(EPS, grid.cellSize)));
@@ -934,6 +962,10 @@ function placeRectangleFirstSpace({
           if (!cells || cells.some(cell => cell.spaceId || !cellEligibleForSpace(cell, space))) continue;
           const parentBoundary = rectangleBoundaryCountAgainstSpace(grid, minIx, minIz, dim.width, dim.depth, parentKey);
           if (parentKey && !parentBoundary) continue;
+          const requiredBoundaryCounts = requiredBoundaryKeys.map(key => rectangleBoundaryCountAgainstSpace(
+            grid, minIx, minIz, dim.width, dim.depth, key,
+          ));
+          if (requiredBoundaryCounts.some(count => count < Math.max(1, requiredBoundaryCells))) continue;
           const routeBoundary = rectangleBoundaryCountAgainstSpace(grid, minIx, minIz, dim.width, dim.depth, routeSpaceKey);
           const exposure = cells.reduce((sum, cell) => sum + cell.exposure, 0);
           const preference = cells.reduce((sum, cell) => sum + preferenceByCell.get(cell), 0)
@@ -1040,20 +1072,32 @@ function growExistingSpaceRectangular({
   return state;
 }
 
-function absorbRegularSurplus({ grid, spaces, profile, stableKey }) {
-  if (!rectangleFirstPreferred(profile)) return 0;
+function absorbRegularSurplus({ grid, spaces, profile, stableKey, targets = null }) {
+  if (!rectangleFirstPreferred(profile) || !targets?.get) return 0;
   const ordinary = spaces.filter(space => !['circulation', 'entry'].includes(space.role));
   const growthStateByKey = new Map(ordinary.map(space => [space.key, rectangularGrowthState(space, grid)]));
   let claimed = 0;
   let rounds = 0;
   while (rounds++ < grid.cells.length) {
     let progress = 0;
-    for (const space of ordinary) {
+    const needy = ordinary
+      .filter(space => {
+        const state = growthStateByKey.get(space.key);
+        const target = Number(targets.get(space.key));
+        return state && Number.isFinite(target) && state.count < target;
+      })
+      .sort((a, b) => {
+        const sa = growthStateByKey.get(a.key), sb = growthStateByKey.get(b.key);
+        const da = (targets.get(a.key) ?? sa.count) - sa.count;
+        const db = (targets.get(b.key) ?? sb.count) - sb.count;
+        return db - da || a.key.localeCompare(b.key);
+      });
+    for (const space of needy) {
       const state = growthStateByKey.get(space.key);
-      if (!state) continue;
       const before = state.count;
       const grown = growExistingSpaceRectangular({
-        space, target: Infinity, grid, stableKey: `${stableKey}:surplus:${rounds}`, profile, allowOvershoot: true, oneStep: true, growthState: state,
+        space, target: targets.get(space.key), grid, stableKey: `${stableKey}:target-surplus:${rounds}`, profile,
+        allowOvershoot: false, oneStep: true, growthState: state,
       });
       const after = grown?.count ?? before;
       if (after > before) {
@@ -1120,6 +1164,248 @@ function seedResidualComponents({ grid, spaces, flexibleResidualKeys }) {
     seeded++;
   }
   return seeded;
+}
+
+function connectedComponentsForSpace(grid, spaceKey) {
+  const remaining = new Set(grid.cells.filter(cell => cell.spaceId === spaceKey).map(cell => cell.key));
+  const components = [];
+  while (remaining.size) {
+    const startKey = [...remaining][0];
+    remaining.delete(startKey);
+    const queue = [grid.byKey.get(startKey)];
+    const component = [];
+    for (let qi = 0; qi < queue.length; qi++) {
+      const cell = queue[qi];
+      if (!cell) continue;
+      component.push(cell);
+      for (const neighbor of neighborsOf(cell, grid)) {
+        if (neighbor.spaceId !== spaceKey || !remaining.has(neighbor.key)) continue;
+        remaining.delete(neighbor.key);
+        queue.push(neighbor);
+      }
+    }
+    if (component.length) components.push(component);
+  }
+  return components.sort((a, b) => b.length - a.length || a[0].key.localeCompare(b[0].key));
+}
+
+function repairDisconnectedSpaceIslands({ grid, spaces, targets }) {
+  const byKey = new Map(spaces.map(space => [space.key, space]));
+  let reassignedCells = 0;
+  let repairedIslands = 0;
+  for (let pass = 0; pass < 4; pass++) {
+    let progress = 0;
+    for (const space of spaces) {
+      const components = connectedComponentsForSpace(grid, space.key);
+      for (const island of components.slice(1)) {
+        const candidates = new Map();
+        for (const cell of island) {
+          for (const neighbor of neighborsOf(cell, grid)) {
+            if (!neighbor.spaceId || neighbor.spaceId === space.key) continue;
+            const candidate = byKey.get(neighbor.spaceId);
+            if (!candidate) continue;
+            const item = candidates.get(candidate.key) ?? { space: candidate, boundary: 0 };
+            item.boundary++;
+            candidates.set(candidate.key, item);
+          }
+        }
+        const eligible = [...candidates.values()].filter(item => island.every(cell => cellEligibleForSpace(cell, item.space)));
+        eligible.sort((a, b) => {
+          const countA = grid.cells.reduce((sum, cell) => sum + (cell.spaceId === a.space.key ? 1 : 0), 0);
+          const countB = grid.cells.reduce((sum, cell) => sum + (cell.spaceId === b.space.key ? 1 : 0), 0);
+          const targetA = Math.max(1, Number(targets?.get?.(a.space.key)) || 1);
+          const targetB = Math.max(1, Number(targets?.get?.(b.space.key)) || 1);
+          return (countA / targetA) - (countB / targetB) || b.boundary - a.boundary || a.space.key.localeCompare(b.space.key);
+        });
+        const selected = eligible[0];
+        if (!selected) continue;
+        for (const cell of island) cell.spaceId = selected.space.key;
+        reassignedCells += island.length;
+        repairedIslands++;
+        progress += island.length;
+      }
+    }
+    if (!progress) break;
+  }
+  return { reassignedCells, repairedIslands };
+}
+
+function rebalanceWeightedTargets({
+  grid, spaces, targets, minimumCellsByKey, desiredEdges = [], profile, stableKey, doorWidth = 0.86,
+}) {
+  if (!targets?.get || !spaces.length) return { movedCells: 0, remainingDeficitCells: 0, notes: [] };
+  const byKey = new Map(spaces.map(space => [space.key, space]));
+  const counts = new Map(spaces.map(space => [
+    space.key,
+    grid.cells.reduce((sum, cell) => sum + (cell.spaceId === space.key ? 1 : 0), 0),
+  ]));
+  const targetFor = key => Math.max(1, Number(targets.get(key)) || 1);
+  const minimumFor = key => Math.max(1, Number(minimumCellsByKey?.get?.(key)) || 1);
+  const desiredNeighbors = new Map(spaces.map(space => [space.key, new Set()]));
+  for (const edge of desiredEdges ?? []) {
+    if (!byKey.has(edge.a) || !byKey.has(edge.b)) continue;
+    desiredNeighbors.get(edge.a)?.add(edge.b);
+    desiredNeighbors.get(edge.b)?.add(edge.a);
+  }
+  const adjacencyFromBoundaries = boundaries => {
+    const adjacency = new Map(spaces.map(space => [space.key, new Set()]));
+    const directionHasEligibleBoundary = (fromKey, toKey, candidates) => {
+      const recipient = byKey.get(toKey);
+      if (!recipient) return false;
+      for (const segment of candidates ?? []) {
+        for (const cellKey of [segment.aCellKey, segment.bCellKey]) {
+          const cell = grid.byKey.get(cellKey);
+          if (!cell || cell.spaceId !== fromKey || cell.structuralReservationId) continue;
+          if (cellEligibleForSpace(cell, recipient)) return true;
+        }
+      }
+      return false;
+    };
+    for (const [pair, candidates] of boundaries.entries()) {
+      const [a, b] = pair.split('|');
+      if (!byKey.has(a) || !byKey.has(b)) continue;
+      if (directionHasEligibleBoundary(a, b, candidates)) adjacency.get(a)?.add(b);
+      if (directionHasEligibleBoundary(b, a, candidates)) adjacency.get(b)?.add(a);
+    }
+    return adjacency;
+  };
+  const shortestPath = (adjacency, fromKey, toKey) => {
+    if (fromKey === toKey) return [fromKey];
+    const queue = [fromKey];
+    const parent = new Map([[fromKey, null]]);
+    for (let qi = 0; qi < queue.length; qi++) {
+      const key = queue[qi];
+      const next = [...(adjacency.get(key) ?? [])].sort();
+      for (const neighborKey of next) {
+        if (parent.has(neighborKey)) continue;
+        parent.set(neighborKey, key);
+        if (neighborKey === toKey) {
+          const path = [toKey];
+          for (let cursor = key; cursor != null; cursor = parent.get(cursor)) path.push(cursor);
+          return path.reverse();
+        }
+        queue.push(neighborKey);
+      }
+    }
+    return null;
+  };
+  const canDonateCell = (cell, donor, recipient, boundaries) => {
+    if (!cell || cell.spaceId !== donor.key || !cellEligibleForSpace(cell, recipient)) return false;
+    if (cell.structuralReservationId) return false;
+    if ((counts.get(donor.key) ?? 0) - 1 < minimumFor(donor.key)) return false;
+    const donorNeighbors = neighborsOf(cell, grid).filter(neighbor => neighbor.spaceId === donor.key).length;
+    if (donorNeighbors >= 4) return false;
+    if (!spaceConnectedAfterRemovingCell(grid, donor.key, cell.key)) return false;
+    for (const neighborKey of desiredNeighbors.get(donor.key) ?? []) {
+      if (!neighborsOf(cell, grid).some(neighbor => neighbor.spaceId === neighborKey)) continue;
+      const pair = [donor.key, neighborKey].sort().join('|');
+      const candidates = boundaries.get(pair) ?? [];
+      const before = boundaryPairDoorCapacity(candidates, grid, doorWidth);
+      if (!before.capable) continue;
+      const remaining = candidates.filter(candidate => candidate.aCellKey !== cell.key && candidate.bCellKey !== cell.key);
+      if (!boundaryPairDoorCapacity(remaining, grid, doorWidth).capable) return false;
+    }
+    return true;
+  };
+  const transferOneAcrossBoundary = (donorKey, recipientKey, moveOrdinal) => {
+    const donor = byKey.get(donorKey), recipient = byKey.get(recipientKey);
+    if (!donor || !recipient) return null;
+    const boundaries = boundaryCandidates(grid);
+    const pair = [donorKey, recipientKey].sort().join('|');
+    const segments = boundaries.get(pair) ?? [];
+    const candidates = [];
+    const seen = new Set();
+    for (const segment of segments) {
+      for (const key of [segment.aCellKey, segment.bCellKey]) {
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const cell = grid.byKey.get(key);
+        if (!cell || cell.spaceId !== donorKey) continue;
+        const recipientNeighbors = neighborsOf(cell, grid).filter(neighbor => neighbor.spaceId === recipientKey).length;
+        const donorNeighbors = neighborsOf(cell, grid).filter(neighbor => neighbor.spaceId === donorKey).length;
+        const preferenceDelta = preferenceScore(cell, recipient, profile, `${stableKey}:conveyor:recipient`)
+          - preferenceScore(cell, donor, profile, `${stableKey}:conveyor:donor`);
+        const score = recipientNeighbors * 12 - donorNeighbors * 3
+          + Math.max(-5, Math.min(5, preferenceDelta * 0.2))
+          - stableIndex(`${stableKey}:conveyor:${moveOrdinal}:${donorKey}:${recipientKey}:${cell.key}`, 1000000) / 1000000;
+        candidates.push({ cell, score });
+      }
+    }
+    candidates.sort((a, b) => b.score - a.score || a.cell.key.localeCompare(b.cell.key));
+    for (const candidate of candidates.slice(0, 16)) {
+      if (!canDonateCell(candidate.cell, donor, recipient, boundaries)) continue;
+      candidate.cell.spaceId = recipientKey;
+      counts.set(donorKey, (counts.get(donorKey) ?? 0) - 1);
+      counts.set(recipientKey, (counts.get(recipientKey) ?? 0) + 1);
+      return candidate.cell.key;
+    }
+    return null;
+  };
+
+  const notes = [];
+  let movedCells = 0;
+  const maxNetMoves = Math.max(24, grid.cells.length);
+  for (let netMove = 0; netMove < maxNetMoves; netMove++) {
+    const recipients = spaces.filter(space => (counts.get(space.key) ?? 0) < targetFor(space.key))
+      .sort((a, b) => {
+        const ar = (targetFor(a.key) - (counts.get(a.key) ?? 0)) / targetFor(a.key);
+        const br = (targetFor(b.key) - (counts.get(b.key) ?? 0)) / targetFor(b.key);
+        return br - ar || a.key.localeCompare(b.key);
+      });
+    const donors = spaces.filter(space => (counts.get(space.key) ?? 0) > targetFor(space.key))
+      .sort((a, b) => {
+        const ae = ((counts.get(a.key) ?? 0) - targetFor(a.key)) / targetFor(a.key);
+        const be = ((counts.get(b.key) ?? 0) - targetFor(b.key)) / targetFor(b.key);
+        return be - ae || a.key.localeCompare(b.key);
+      });
+    if (!recipients.length || !donors.length) break;
+
+    const boundaries = boundaryCandidates(grid);
+    const adjacency = adjacencyFromBoundaries(boundaries);
+    let applied = null;
+    for (const recipient of recipients) {
+      const donorPaths = donors.map(donor => ({ donor, path: shortestPath(adjacency, donor.key, recipient.key) }))
+        .filter(item => item.path?.length >= 2)
+        .sort((a, b) => a.path.length - b.path.length
+          || (((counts.get(b.donor.key) ?? 0) - targetFor(b.donor.key)) / targetFor(b.donor.key))
+            - (((counts.get(a.donor.key) ?? 0) - targetFor(a.donor.key)) / targetFor(a.donor.key))
+          || a.donor.key.localeCompare(b.donor.key));
+      for (const { donor, path } of donorPaths) {
+        const ownershipBefore = grid.cells.map(cell => cell.spaceId);
+        const countsBefore = new Map(counts);
+        const moved = [];
+        let ok = true;
+        // Push one unit of area forward along the ownership-adjacency path.
+        // Every intermediate receives before it donates, so it never has to dip
+        // below its minimum just to relay capacity toward a starved neighbor.
+        for (let hop = 0; hop + 1 < path.length; hop++) {
+          const cellKey = transferOneAcrossBoundary(path[hop], path[hop + 1], `${netMove}:${hop}`);
+          if (!cellKey) { ok = false; break; }
+          moved.push({ fromSpaceKey: path[hop], toSpaceKey: path[hop + 1], cellKey });
+        }
+        if (!ok) {
+          for (let i = 0; i < grid.cells.length; i++) grid.cells[i].spaceId = ownershipBefore[i];
+          counts.clear(); for (const [key, value] of countsBefore) counts.set(key, value);
+          continue;
+        }
+        movedCells += moved.length;
+        applied = { source: donor.key, recipient: recipient.key, path, moved };
+        if (notes.length < 64) notes.push({
+          kind: 'weighted-target-boundary-conveyor',
+          sourceSpaceKey: donor.key,
+          recipientSpaceKey: recipient.key,
+          path,
+          hops: moved,
+        });
+        break;
+      }
+      if (applied) break;
+    }
+    if (!applied) break;
+  }
+  const remainingDeficitCells = spaces.reduce((sum, space) =>
+    sum + Math.max(0, targetFor(space.key) - (counts.get(space.key) ?? 0)), 0);
+  return { movedCells, remainingDeficitCells, notes };
 }
 
 function regularityMetricsForCells(cells) {
@@ -1630,13 +1916,24 @@ function targetCellCounts(spaces, grid, floorH) {
   return targets;
 }
 
-function preferredFrontierCell(frontier, space, profile, stableKey, scoreCache = null) {
+function preferredFrontierCell(frontier, space, profile, stableKey, scoreCache = null, grid = null) {
   let best = null;
   let bestScore = -Infinity;
   for (const cell of frontier.values()) {
     let score = scoreCache?.get(cell.key);
     if (score == null) {
       score = preferenceScore(cell, space, profile, stableKey);
+      if (grid) {
+        const same = neighborsOf(cell, grid).filter(neighbor => neighbor.spaceId === space.key).length;
+        // Broad-front growth fills bays and corners before extending tendrils.
+        score += same * 5;
+        if (same <= 1) score -= 7;
+        const diagonals = [
+          [cell.ix + 1, cell.iz + 1], [cell.ix - 1, cell.iz + 1],
+          [cell.ix + 1, cell.iz - 1], [cell.ix - 1, cell.iz - 1],
+        ];
+        score += diagonals.reduce((sum, [ix, iz]) => sum + (grid.byKey.get(`${ix},${iz}`)?.spaceId === space.key ? 1.5 : 0), 0);
+      }
       scoreCache?.set(cell.key, score);
     }
     if (score > bestScore || (score === bestScore && best && cell.key.localeCompare(best.key) < 0)) {
@@ -1677,7 +1974,7 @@ function growSpace({ space, seed, target, grid, stableKey, profile, reserveForRe
 
   while (assigned.length < target && frontier.size) {
     if (unassignedEligible <= reserveForRemaining) break;
-    const next = preferredFrontierCell(frontier, space, profile, stableKey, scoreCache);
+    const next = preferredFrontierCell(frontier, space, profile, stableKey, scoreCache, grid);
     if (!next) break;
     frontier.delete(next.key);
     if (next.spaceId) continue;
@@ -1751,12 +2048,40 @@ function chooseMinimumGeometryDropCandidate(spaces, shortfalls, floor, baseFloor
 
 function attemptMinimumProgramPlacement({
   spaces, floor, baseFloor = 0, grid, reservations, accessAnchors, profile, stableKey, floorH,
+  weightedPlacementPriority = true,
 }) {
   for (const cell of grid.cells) cell.spaceId = null;
 
   const topology = buildTopology({ spaces, floor, baseFloor, profile, stableKey: `${stableKey}:floor:${floor}` });
   const rootSpace = spaces.find(space => space.key === topology.rootKey) ?? spaces[0];
   const { order, parent } = graphBfsOrder(spaces, topology.edges, rootSpace.key);
+  const preliminaryTargets = targetCellCounts(spaces, grid, floorH);
+  // Preserve topology dependency, but among rooms whose parent is already placed,
+  // give the largest weighted targets first choice of viable territory. This keeps
+  // small siblings from sealing a defining room into a minimum-sized pocket.
+  const placementOrder = [];
+  if (!weightedPlacementPriority) {
+    placementOrder.push(...order);
+  } else {
+    const pending = new Map(order.map(space => [space.key, space]));
+    while (pending.size) {
+      const ready = [...pending.values()].filter(space => {
+        if (space.key === rootSpace.key) return placementOrder.length === 0;
+        const parentKey = parent.get(space.key);
+        return !parentKey || placementOrder.some(placed => placed.key === parentKey);
+      });
+      const candidates = ready.length ? ready : [...pending.values()];
+      candidates.sort((a, b) => {
+        if (a.key === rootSpace.key) return -1;
+        if (b.key === rootSpace.key) return 1;
+        const targetDiff = (preliminaryTargets.get(b.key) ?? 0) - (preliminaryTargets.get(a.key) ?? 0);
+        return targetDiff || a.key.localeCompare(b.key);
+      });
+      const selected = candidates[0];
+      placementOrder.push(selected);
+      pending.delete(selected.key);
+    }
+  }
   const minimumCellsByKey = new Map(spaces.map(space => [
     space.key,
     minimumCellCountForSpace(space, grid, floorH),
@@ -1780,8 +2105,8 @@ function attemptMinimumProgramPlacement({
     endpointIds: cityExchangeClaim.bindings.map(binding => binding.endpointId),
   });
 
-  for (let ordinal = 0; ordinal < order.length; ordinal++) {
-    const space = order[ordinal];
+  for (let ordinal = 0; ordinal < placementOrder.length; ordinal++) {
+    const space = placementOrder[ordinal];
     const existingCount = grid.cells.filter(cell => cell.spaceId === space.key).length;
     if (existingCount) {
       growExistingSpace({
@@ -1847,7 +2172,7 @@ function attemptMinimumProgramPlacement({
     }
     const reserveForRemaining = minimumEligibleCellsReservedForRemaining({
       currentSpace: space,
-      remainingSpaces: order.slice(ordinal + 1),
+      remainingSpaces: placementOrder.slice(ordinal + 1),
       grid,
       minimumCellsByKey,
     });
@@ -1927,7 +2252,7 @@ function chooseChildSeed({ space, parentKey, grid, profile, stableKey }) {
 }
 
 function assignLeftovers({ grid, spaces, profile, stableKey, targets = null }) {
-  const regularSurplusClaims = absorbRegularSurplus({ grid, spaces, profile, stableKey });
+  const regularSurplusClaims = absorbRegularSurplus({ grid, spaces, profile, stableKey, targets });
   const flexibleResidualKeys = new Set(spaces
     .filter(space => ['service', 'storage', 'shared'].includes(space.role) && !space.circulationFrontageReserved)
     .map(space => space.key));
@@ -1967,7 +2292,21 @@ function assignLeftovers({ grid, spaces, profile, stableKey, targets = null }) {
       return preferenceScore(cell, space, profile, `${stableKey}:leftover`) - circulationPenalty - overTargetPenalty;
     },
   };
-  let closure = claimUnassignedRasterToEligibleSpaces(closureArgs);
+  const targetGatedArgs = {
+    ...closureArgs,
+    cellEligibleForSpace: (cell, space) => {
+      if (!closureArgs.cellEligibleForSpace(cell, space)) return false;
+      const target = Number(targets?.get?.(space.key));
+      if (!Number.isFinite(target) || target <= 0) return true;
+      const current = grid.cells.reduce((sum, candidate) => sum + (candidate.spaceId === space.key ? 1 : 0), 0);
+      return current < target;
+    },
+  };
+  let closure = claimUnassignedRasterToEligibleSpaces(targetGatedArgs);
+  // Only after every reachable under-target claim has stalled may genuine surplus
+  // cross a weighted target. This prevents an already-large wrapper room from
+  // winning the floor before required rooms get their fair share.
+  if (closure.unclaimedCount > 0) closure = claimUnassignedRasterToEligibleSpaces(closureArgs);
   let residualComponentSeeds = 0;
   if (closure.unclaimedCount > 0 && rectangleFirstPreferred(profile)) {
     residualComponentSeeds = seedResidualComponents({ grid, spaces, flexibleResidualKeys });
@@ -2026,13 +2365,15 @@ function compactSpaceCells(cells, cellSize) {
   }));
 }
 
+const MINIMUM_INTERIOR_WALL_RETURN = 0.22;
+
 function boundaryCandidates(grid) {
   const map = new Map();
   const add = (a, b, boundary) => {
     if (!a?.spaceId || !b?.spaceId || a.spaceId === b.spaceId) return;
     const id = [a.spaceId, b.spaceId].sort().join('|');
     const list = map.get(id) ?? [];
-    list.push(boundary);
+    list.push({ ...boundary, aCellKey: a.key, bCellKey: b.key });
     map.set(id, list);
   };
   for (const cell of grid.cells) {
@@ -2050,12 +2391,233 @@ function boundaryCandidates(grid) {
   return map;
 }
 
-function realizeTopology({ spaces, desiredEdges, grid, rootKey, stableKey }) {
+function contiguousBoundaryRuns(candidates, cellSize) {
+  const byLine = new Map();
+  for (const candidate of candidates ?? []) {
+    const key = `${candidate.axis}:${Number(candidate.fixedCoord).toFixed(6)}`;
+    const list = byLine.get(key) ?? [];
+    list.push(candidate);
+    byLine.set(key, list);
+  }
+  const runs = [];
+  for (const list of byLine.values()) {
+    list.sort((a, b) => a.centerCoord - b.centerCoord || a.aCellKey.localeCompare(b.aCellKey));
+    let current = [];
+    for (const candidate of list) {
+      if (!current.length || Math.abs(candidate.centerCoord - current[current.length - 1].centerCoord - cellSize) <= Math.max(EPS, cellSize * 0.08)) {
+        current.push(candidate);
+      } else {
+        runs.push(current);
+        current = [candidate];
+      }
+    }
+    if (current.length) runs.push(current);
+  }
+  return runs;
+}
+
+function boundaryPairDoorCapacity(candidates, grid, doorWidth) {
+  const required = Math.max(0.72, Number(doorWidth) || 0.86) + 2 * MINIMUM_INTERIOR_WALL_RETURN;
+  const runs = contiguousBoundaryRuns(candidates, grid.cellSize);
+  const maxLength = runs.reduce((max, run) => Math.max(max, run.length * grid.cellSize), 0);
+  return { capable: maxLength + EPS >= required, maxLength, required, runs };
+}
+
+function claimUnassignedFlowSeamPath({ grid, space, neighborKey, doorWidth, stableKey, maxPathCells = 18 }) {
+  const pair = [space.key, neighborKey].sort().join('|');
+  const capacityNow = () => {
+    const boundary = boundaryCandidates(grid).get(pair);
+    return boundary ? boundaryPairDoorCapacity(boundary, grid, doorWidth) : { capable: false, maxLength: 0, required: Math.max(0.72, Number(doorWidth) || 0.86) + 2 * MINIMUM_INTERIOR_WALL_RETURN };
+  };
+  if (capacityNow().capable) return { ok: true, claimedCellKeys: [], pathLength: 0 };
+
+  const eligible = cell => !cell.spaceId && cellEligibleForSpace(cell, space) && !cell.structuralReservationId;
+  const starts = grid.cells
+    .filter(cell => eligible(cell) && neighborsOf(cell, grid).some(neighbor => neighbor.spaceId === space.key))
+    .sort((a, b) => a.key.localeCompare(b.key));
+  const parent = new Map();
+  const distance = new Map();
+  const queue = [];
+  for (const cell of starts) {
+    parent.set(cell.key, null);
+    distance.set(cell.key, 1);
+    queue.push(cell);
+  }
+  let goal = null;
+  for (let qi = 0; qi < queue.length; qi++) {
+    const cell = queue[qi];
+    const d = distance.get(cell.key) ?? 1;
+    if (neighborsOf(cell, grid).some(neighbor => neighbor.spaceId === neighborKey)) {
+      goal = cell;
+      break;
+    }
+    if (d >= maxPathCells) continue;
+    const next = neighborsOf(cell, grid)
+      .filter(neighbor => eligible(neighbor) && !parent.has(neighbor.key))
+      .sort((a, b) => a.key.localeCompare(b.key));
+    for (const neighbor of next) {
+      parent.set(neighbor.key, cell.key);
+      distance.set(neighbor.key, d + 1);
+      queue.push(neighbor);
+    }
+  }
+  if (!goal) return { ok: false, claimedCellKeys: [], pathLength: 0, reason: 'no-free-flow-seam-path' };
+
+  const path = [];
+  for (let key = goal.key; key != null; key = parent.get(key)) path.push(grid.byKey.get(key));
+  path.reverse();
+  for (const cell of path) cell.spaceId = space.key;
+  const claimed = [...path];
+
+  // Widen the terminal contact along the neighbor boundary until the accepted
+  // partition rule can place a door with both wall returns. Only unclaimed,
+  // recipient-eligible cells are consumed here; no already-realized room is cut.
+  for (let pass = 0; pass < 6 && !capacityNow().capable; pass++) {
+    const candidates = grid.cells.filter(cell => eligible(cell)
+      && neighborsOf(cell, grid).some(neighbor => neighbor.spaceId === space.key)
+      && neighborsOf(cell, grid).some(neighbor => neighbor.spaceId === neighborKey));
+    if (!candidates.length) break;
+    candidates.sort((a, b) => stableIndex(`${stableKey}:flow-seam-widen:${pair}:${a.key}`, 1000000)
+      - stableIndex(`${stableKey}:flow-seam-widen:${pair}:${b.key}`, 1000000) || a.key.localeCompare(b.key));
+    candidates[0].spaceId = space.key;
+    claimed.push(candidates[0]);
+  }
+  const capacity = capacityNow();
+  return {
+    ok: capacity.capable,
+    claimedCellKeys: claimed.map(cell => cell.key),
+    pathLength: path.length,
+    boundaryLength: capacity.maxLength,
+    requiredBoundaryLength: capacity.required,
+    reason: capacity.capable ? null : 'flow-seam-door-capacity-unavailable',
+  };
+}
+
+function spaceConnectedAfterRemovingCell(grid, spaceKey, removeKey) {
+  const owned = grid.cells.filter(cell => cell.spaceId === spaceKey && cell.key !== removeKey);
+  if (owned.length <= 1) return owned.length === 1;
+  const remaining = new Set(owned.map(cell => cell.key));
+  const start = owned[0];
+  remaining.delete(start.key);
+  const queue = [start];
+  for (let qi = 0; qi < queue.length; qi++) {
+    for (const neighbor of neighborsOf(queue[qi], grid)) {
+      if (neighbor.spaceId !== spaceKey || neighbor.key === removeKey || !remaining.has(neighbor.key)) continue;
+      remaining.delete(neighbor.key);
+      queue.push(neighbor);
+    }
+  }
+  return remaining.size === 0;
+}
+
+function boundaryExtensionMoves({ grid, pair, candidates, spacesByKey, targets, minimumCellsByKey, stableKey }) {
+  const [pairA, pairB] = pair.split('|');
+  const counts = new Map([pairA, pairB].map(key => [key, grid.cells.reduce((sum, cell) => sum + (cell.spaceId === key ? 1 : 0), 0)]));
+  const moves = [];
+  const consider = (donorCell, recipientKey, anchorRecipientCell, segment, directionTag) => {
+    if (!donorCell || !anchorRecipientCell) return;
+    const donorKey = donorCell.spaceId;
+    if (!donorKey || donorKey === recipientKey || ![pairA, pairB].includes(donorKey) || ![pairA, pairB].includes(recipientKey)) return;
+    const recipientSpace = spacesByKey.get(recipientKey);
+    if (!recipientSpace || !cellEligibleForSpace(donorCell, recipientSpace)) return;
+    const donorCount = counts.get(donorKey) ?? 0;
+    const donorMinimum = Math.max(1, Number(minimumCellsByKey?.get?.(donorKey)) || 1);
+    if (donorCount - 1 < donorMinimum) return;
+    if (!spaceConnectedAfterRemovingCell(grid, donorKey, donorCell.key)) return;
+    const recipientCount = counts.get(recipientKey) ?? 0;
+    const donorTarget = Math.max(1, Number(targets?.get?.(donorKey)) || donorCount);
+    const recipientTarget = Math.max(1, Number(targets?.get?.(recipientKey)) || recipientCount);
+    const beforeError = Math.abs(donorCount - donorTarget) + Math.abs(recipientCount - recipientTarget);
+    const afterError = Math.abs(donorCount - 1 - donorTarget) + Math.abs(recipientCount + 1 - recipientTarget);
+    const donorRole = spacesByKey.get(donorKey)?.role;
+    const routePenalty = ['circulation', 'entry'].includes(donorRole) ? 12 : 0;
+    const score = (afterError - beforeError) * 8 + routePenalty
+      + stableIndex(`${stableKey}:door-capacity:${pair}:${segment.axis}:${segment.fixedCoord}:${segment.centerCoord}:${directionTag}:${donorCell.key}:${recipientKey}`, 1000000) / 1000000;
+    moves.push({ donorCell, donorKey, recipientKey, score, pair, segment });
+  };
+
+  for (const segment of candidates ?? []) {
+    const a = grid.byKey.get(segment.aCellKey);
+    const b = grid.byKey.get(segment.bCellKey);
+    if (!a || !b || a.spaceId === b.spaceId) continue;
+    if (![pairA, pairB].includes(a.spaceId) || ![pairA, pairB].includes(b.spaceId)) continue;
+    for (const delta of [-1, 1]) {
+      const aNext = segment.axis === 'z' ? cellAt(grid, a.ix, a.iz + delta) : cellAt(grid, a.ix + delta, a.iz);
+      const bNext = segment.axis === 'z' ? cellAt(grid, b.ix, b.iz + delta) : cellAt(grid, b.ix + delta, b.iz);
+      if (!aNext || !bNext) continue;
+      if (aNext.spaceId === a.spaceId && bNext.spaceId === a.spaceId) {
+        consider(bNext, b.spaceId, b, segment, delta);
+      }
+      if (aNext.spaceId === b.spaceId && bNext.spaceId === b.spaceId) {
+        consider(aNext, a.spaceId, a, segment, delta);
+      }
+    }
+  }
+  return moves.sort((a, b) => a.score - b.score || a.donorCell.key.localeCompare(b.donorCell.key) || a.recipientKey.localeCompare(b.recipientKey));
+}
+
+function repairDoorCapableConnectivity({ grid, spaces, rootKey, doorWidth, targets, minimumCellsByKey, stableKey }) {
+  const spacesByKey = new Map(spaces.map(space => [space.key, space]));
+  const notes = [];
+  const maxRepairs = Math.max(4, spaces.length * 4);
+  for (let pass = 0; pass < maxRepairs; pass++) {
+    const boundaries = boundaryCandidates(grid);
+    const capableEdges = [];
+    const capacityByPair = new Map();
+    for (const [pair, candidates] of boundaries.entries()) {
+      const capacity = boundaryPairDoorCapacity(candidates, grid, doorWidth);
+      capacityByPair.set(pair, capacity);
+      if (!capacity.capable) continue;
+      const [a, b] = pair.split('|');
+      capableEdges.push({ a, b });
+    }
+    const reachable = graphReachable(spaces, capableEdges, rootKey);
+    if (reachable.size === spaces.length) {
+      return { repaired: notes.length, notes, reachableSpaceCount: reachable.size, complete: true };
+    }
+
+    const crossing = [...boundaries.entries()].filter(([pair]) => {
+      const [a, b] = pair.split('|');
+      return reachable.has(a) !== reachable.has(b);
+    }).sort((a, b) => {
+      const ca = capacityByPair.get(a[0]), cb = capacityByPair.get(b[0]);
+      const deficitA = (ca?.required ?? Infinity) - (ca?.maxLength ?? 0);
+      const deficitB = (cb?.required ?? Infinity) - (cb?.maxLength ?? 0);
+      return deficitA - deficitB || stableIndex(`${stableKey}:door-crossing:${a[0]}`, 1000000) - stableIndex(`${stableKey}:door-crossing:${b[0]}`, 1000000);
+    });
+
+    let applied = null;
+    for (const [pair, candidates] of crossing) {
+      const moves = boundaryExtensionMoves({ grid, pair, candidates, spacesByKey, targets, minimumCellsByKey, stableKey: `${stableKey}:pass:${pass}` });
+      if (!moves.length) continue;
+      applied = moves[0];
+      break;
+    }
+    if (!applied) {
+      return { repaired: notes.length, notes, reachableSpaceCount: reachable.size, complete: false };
+    }
+    const before = applied.donorCell.spaceId;
+    applied.donorCell.spaceId = applied.recipientKey;
+    notes.push({ kind: 'door-capacity-boundary-repair', pair: applied.pair, cellKey: applied.donorCell.key, fromSpaceKey: before, toSpaceKey: applied.recipientKey });
+  }
+  const finalBoundaries = boundaryCandidates(grid);
+  const finalEdges = [];
+  for (const [pair, candidates] of finalBoundaries.entries()) {
+    if (!boundaryPairDoorCapacity(candidates, grid, doorWidth).capable) continue;
+    const [a, b] = pair.split('|'); finalEdges.push({ a, b });
+  }
+  const reachable = graphReachable(spaces, finalEdges, rootKey);
+  return { repaired: notes.length, notes, reachableSpaceCount: reachable.size, complete: reachable.size === spaces.length };
+}
+
+function realizeTopology({ spaces, desiredEdges, grid, rootKey, stableKey, doorWidth = 0.86 }) {
   const boundaries = boundaryCandidates(grid);
   const pairEntries = [...boundaries.entries()].map(([pair, candidates]) => {
     const [a, b] = pair.split('|');
-    return { pair, a, b, candidates };
+    const doorCapacity = boundaryPairDoorCapacity(candidates, grid, doorWidth);
+    return { pair, a, b, candidates, doorCapacity };
   });
+  const doorCapablePairs = new Set(pairEntries.filter(item => item.doorCapacity.capable).map(item => item.pair));
   const desiredByPair = new Map();
   for (const edge of desiredEdges) desiredByPair.set([edge.a, edge.b].sort().join('|'), edge);
 
@@ -2066,6 +2628,10 @@ function realizeTopology({ spaces, desiredEdges, grid, rootKey, stableKey }) {
     const pair = [edge.a, edge.b].sort().join('|');
     if (!boundaries.has(pair)) {
       unrealizedDesiredEdges.push({ ...edge, reason: 'desired-adjacency-not-shared-wall' });
+      continue;
+    }
+    if (!doorCapablePairs.has(pair)) {
+      unrealizedDesiredEdges.push({ ...edge, reason: 'desired-adjacency-shared-wall-too-short-for-door' });
       continue;
     }
     usedPairs.add(pair);
@@ -2080,7 +2646,7 @@ function realizeTopology({ spaces, desiredEdges, grid, rootKey, stableKey }) {
   let repairOrdinal = 0;
   while (reachable.size < spaces.length) {
     const candidates = pairEntries.filter(item => {
-      if (usedPairs.has(item.pair)) return false;
+      if (usedPairs.has(item.pair) || !item.doorCapacity.capable) return false;
       const ar = reachable.has(item.a);
       const br = reachable.has(item.b);
       return ar !== br;
@@ -2324,7 +2890,32 @@ function* planFloorSteps({
       spaceCount: spaces.length,
     };
     if (!placementShortfalls.length) break;
-    const drop = chooseMinimumGeometryDropCandidate(spaces, placementShortfalls, floor, baseFloor);
+    let drop = chooseMinimumGeometryDropCandidate(spaces, placementShortfalls, floor, baseFloor);
+    // Weighted placement is an optimization, never authority to delete an
+    // operational-flow node. If that heuristic would force a program-flow room
+    // to yield, retry the same selected program in topology/BFS order first.
+    if (drop?.operationalFlowOrder != null) {
+      const topologyOrderPlacement = attemptMinimumProgramPlacement({
+        spaces, floor, baseFloor, grid, reservations, accessAnchors, profile, stableKey, floorH,
+        weightedPlacementPriority: false,
+      });
+      const topologyHallwayShortfalls = topologyOrderPlacement.shortfalls.length
+        ? []
+        : occupancyHallwayFrontageShortfalls(spaces, grid, floor, baseFloor);
+      const topologyShortfalls = [...topologyOrderPlacement.shortfalls, ...topologyHallwayShortfalls];
+      yield {
+        phase: 'building-plan-floor-minimum-placement-flow-preserving-retry',
+        floor,
+        attempt: minimumPlacementAttempts,
+        shortfallCount: topologyShortfalls.length,
+        spaceCount: spaces.length,
+      };
+      if (topologyShortfalls.length <= placementShortfalls.length) {
+        minimumPlacement = topologyOrderPlacement;
+        if (!topologyShortfalls.length) break;
+        drop = chooseMinimumGeometryDropCandidate(spaces, topologyShortfalls, floor, baseFloor);
+      }
+    }
     if (!drop) break;
     geometryDroppedSpaceKeys.push(drop.key);
     spaces = spaces.filter(space => space.key !== drop.key);
@@ -2360,47 +2951,340 @@ function* planFloorSteps({
     return a.key.localeCompare(b.key);
   });
   if (!minimumPlacement.shortfalls.length) {
-    for (let orderIndex = 0; orderIndex < surplusOrder.length; orderIndex++) {
-      const space = surplusOrder[orderIndex];
-      const target = targets.get(space.key) ?? (minimumCellsByKey.get(space.key) ?? 1);
-      const regular = growExistingSpaceRectangular({
+    // One bounded re-anchor pass for rooms that are demonstrably stranded at a
+    // tiny fraction of their weighted target. Existing minimum cells are released,
+    // a new capacity-aware rectangle seed is chosen from the remaining free plate,
+    // and the room gets first chance to grow toward its target before surplus closure.
+    for (const space of surplusOrder) {
+      if (['circulation', 'entry'].includes(space.role)) continue;
+      const target = targets.get(space.key) ?? 0;
+      const assigned = grid.cells.filter(cell => cell.spaceId === space.key);
+      if (target < 4 || assigned.length >= target * 0.6) continue;
+      const currentState = rectangularGrowthState(space, grid);
+      const canExpand = currentState && rectangularExpansionOptions(
+        space, grid, profile, `${stableKey}:floor:${floor}:reanchor-probe`, currentState.bounds,
+      ).length > 0;
+      if (canExpand) continue;
+
+      // Capacity rescue may move a room, but it may not erase the concrete
+      // predecessor/successor seams that make the selected program operational.
+      // Resolve those seams against realized siblings before releasing the old
+      // footprint, then require the new rectangle to own enough shared boundary
+      // for the partition authority's door + two minimum wall returns.
+      const flowNeighborTemplates = new Set();
+      for (const flow of programArchitecture?.flows ?? []) {
+        const sequence = flow.sequence ?? [];
+        for (let flowIndex = 0; flowIndex < sequence.length; flowIndex++) {
+          if (sequence[flowIndex] !== space.templateKey && sequence[flowIndex] !== space.operationalRole) continue;
+          if (flowIndex > 0) flowNeighborTemplates.add(sequence[flowIndex - 1]);
+          if (flowIndex + 1 < sequence.length) flowNeighborTemplates.add(sequence[flowIndex + 1]);
+        }
+      }
+      const boundaryBeforeReanchor = boundaryCandidates(grid);
+      const flowNeighborSeams = spaces
+        .filter(other => other.key !== space.key
+          && flowNeighborTemplates.has(other.templateKey)
+          && boundaryBeforeReanchor.has([space.key, other.key].sort().join('|')))
+        .map(other => other.key);
+      const ownershipBeforeReanchor = grid.cells.map(cell => cell.spaceId);
+      const oldCells = [...assigned];
+      for (const cell of oldCells) cell.spaceId = null;
+      const requiredDoorBoundaryCells = Math.max(1, Math.ceil((minimumClearWidth + 2 * 0.22 - EPS) / Math.max(EPS, grid.cellSize)));
+      const rescueSeedTarget = Math.max(1, minimumCellsByKey.get(space.key) ?? 1);
+      const replacement = placeRectangleFirstSpace({
+        space,
+        spaces,
+        target: rescueSeedTarget,
+        parentKey: null,
+        routeSpaceKey: minimumPlacement.cityTransferSpaceKey ?? null,
+        requiredBoundaryKeys: flowNeighborSeams,
+        requiredBoundaryCells: requiredDoorBoundaryCells,
+        grid,
+        profile,
+        stableKey: `${stableKey}:floor:${floor}:capacity-reanchor`,
+      });
+      if (!replacement) {
+        // A single-room move can be impossible even though a short operational
+        // chain can be laid out coherently as a unit (entry -> control -> major
+        // program -> service).  Retry as one bounded local transaction using
+        // only unambiguous flow nodes.  Fixed entry/circulation nodes stay put;
+        // movable nodes are released and re-seeded outward from those anchors.
+        // This preserves concrete predecessor/successor seams without globally
+        // changing placement order or teaching the allocator any program names.
+        for (let cellIndex = 0; cellIndex < grid.cells.length; cellIndex++) grid.cells[cellIndex].spaceId = ownershipBeforeReanchor[cellIndex];
+        const realizedByTemplate = new Map();
+        for (const candidateSpace of spaces) {
+          const templateKey = candidateSpace.templateKey ?? candidateSpace.operationalRole;
+          const list = realizedByTemplate.get(templateKey) ?? [];
+          list.push(candidateSpace);
+          realizedByTemplate.set(templateKey, list);
+        }
+        const uniqueFlowEdges = [];
+        for (const flow of programArchitecture?.flows ?? []) {
+          const sequence = flow.sequence ?? [];
+          for (let flowIndex = 0; flowIndex + 1 < sequence.length; flowIndex++) {
+            const left = realizedByTemplate.get(sequence[flowIndex]) ?? [];
+            const right = realizedByTemplate.get(sequence[flowIndex + 1]) ?? [];
+            if (left.length !== 1 || right.length !== 1 || left[0].key === right[0].key) continue;
+            const pair = [left[0].key, right[0].key].sort().join('|');
+            if (!uniqueFlowEdges.some(edge => edge.pair === pair)) uniqueFlowEdges.push({ a: left[0].key, b: right[0].key, pair });
+          }
+        }
+        const preRelayoutBoundaries = boundaryCandidates(grid);
+        const protectedFlowEdges = uniqueFlowEdges.filter(edge => preRelayoutBoundaries.has(edge.pair));
+        const flowAdjacency = new Map(spaces.map(candidateSpace => [candidateSpace.key, new Set()]));
+        for (const edge of protectedFlowEdges) {
+          flowAdjacency.get(edge.a)?.add(edge.b);
+          flowAdjacency.get(edge.b)?.add(edge.a);
+        }
+        const componentKeys = new Set([space.key]);
+        const componentQueue = [space.key];
+        for (let queueIndex = 0; queueIndex < componentQueue.length; queueIndex++) {
+          for (const neighborKey of flowAdjacency.get(componentQueue[queueIndex]) ?? []) {
+            if (componentKeys.has(neighborKey)) continue;
+            componentKeys.add(neighborKey);
+            componentQueue.push(neighborKey);
+          }
+        }
+        const componentSpaces = spaces.filter(candidateSpace => componentKeys.has(candidateSpace.key));
+        const fixedKeys = new Set(componentSpaces
+          .filter(candidateSpace => ['entry', 'circulation'].includes(candidateSpace.role)
+            || candidateSpace.key === minimumPlacement.cityTransferSpaceKey)
+          .map(candidateSpace => candidateSpace.key));
+        // Keep already-realized threshold relays in place when they connect a
+        // fixed route/entry anchor toward the rescued room.  The server control
+        // room is the canonical shape of this case: it is undersized, but its
+        // position is valuable because it already owns the entry seam.  Moving
+        // it together with the rack field throws away useful topology for no
+        // capacity gain.  Expand the fixed frontier only through existing real
+        // boundaries and never absorb the room whose capacity triggered rescue.
+        let fixedFrontierChanged = true;
+        while (fixedFrontierChanged) {
+          fixedFrontierChanged = false;
+          for (const candidateSpace of componentSpaces) {
+            if (candidateSpace.key === space.key || fixedKeys.has(candidateSpace.key)) continue;
+            const touchesFixed = [...(flowAdjacency.get(candidateSpace.key) ?? [])].some(neighborKey =>
+              fixedKeys.has(neighborKey)
+              && preRelayoutBoundaries.has([candidateSpace.key, neighborKey].sort().join('|')));
+            if (!touchesFixed) continue;
+            fixedKeys.add(candidateSpace.key);
+            fixedFrontierChanged = true;
+          }
+        }
+        const movableSpaces = componentSpaces.filter(candidateSpace => !fixedKeys.has(candidateSpace.key));
+        let flowRelayoutAccepted = movableSpaces.some(candidateSpace => candidateSpace.key === space.key) && componentSpaces.length > 1;
+        let flowRelayoutFailure = flowRelayoutAccepted ? null : 'no-movable-flow-component';
+        const relayoutBefore = grid.cells.map(cell => cell.spaceId);
+        if (flowRelayoutAccepted) {
+          const movableKeys = new Set(movableSpaces.map(candidateSpace => candidateSpace.key));
+          for (const cell of grid.cells) if (movableKeys.has(cell.spaceId)) cell.spaceId = null;
+          const placedKeys = new Set(fixedKeys);
+          const pending = new Map(movableSpaces.map(candidateSpace => [candidateSpace.key, candidateSpace]));
+          while (pending.size && flowRelayoutAccepted) {
+            const ready = [...pending.values()].filter(candidateSpace => {
+              const neighbors = [...(flowAdjacency.get(candidateSpace.key) ?? [])];
+              return neighbors.some(neighborKey => placedKeys.has(neighborKey)) || (!placedKeys.size && candidateSpace.key === space.key);
+            });
+            if (!ready.length) { flowRelayoutAccepted = false; flowRelayoutFailure = 'no-ready-flow-node'; break; }
+            ready.sort((a, b) => {
+              const aRescue = a.key === space.key ? 0 : 1;
+              const bRescue = b.key === space.key ? 0 : 1;
+              // When a fixed anchor exists, topology order wins.  With no fixed
+              // anchor, start from the room whose rescue triggered the relayout.
+              if (!fixedKeys.size && aRescue !== bRescue) return aRescue - bRescue;
+              const aPlaced = [...(flowAdjacency.get(a.key) ?? [])].filter(key => placedKeys.has(key)).length;
+              const bPlaced = [...(flowAdjacency.get(b.key) ?? [])].filter(key => placedKeys.has(key)).length;
+              return bPlaced - aPlaced || a.key.localeCompare(b.key);
+            });
+            const relayoutSpace = ready[0];
+            const requiredPlacedNeighbors = [...(flowAdjacency.get(relayoutSpace.key) ?? [])].filter(key => placedKeys.has(key));
+            const relayoutTarget = targets.get(relayoutSpace.key) ?? (minimumCellsByKey.get(relayoutSpace.key) ?? 1);
+            const relayoutMinimum = Math.max(1, minimumCellsByKey.get(relayoutSpace.key) ?? 1);
+            const relayoutSeedTarget = relayoutSpace.key === space.key
+              ? (relayoutTarget <= 96 ? relayoutTarget : Math.max(relayoutMinimum, Math.min(144, Math.round(relayoutTarget * 0.35))))
+              : relayoutMinimum;
+            const relayoutRectangle = placeRectangleFirstSpace({
+              space: relayoutSpace,
+              spaces,
+              target: relayoutSeedTarget,
+              parentKey: null,
+              routeSpaceKey: minimumPlacement.cityTransferSpaceKey ?? null,
+              requiredBoundaryKeys: requiredPlacedNeighbors,
+              requiredBoundaryCells: 1,
+              grid,
+              profile,
+              stableKey: `${stableKey}:floor:${floor}:flow-component-relayout:${space.key}:${relayoutSpace.key}`,
+            });
+            if (!relayoutRectangle) { flowRelayoutAccepted = false; flowRelayoutFailure = `rectangle:${relayoutSpace.key}:needs:${requiredPlacedNeighbors.join(',')}`; break; }
+            placedKeys.add(relayoutSpace.key);
+            pending.delete(relayoutSpace.key);
+          }
+          if (flowRelayoutAccepted) {
+            const relayoutBoundaries = boundaryCandidates(grid);
+            flowRelayoutAccepted = protectedFlowEdges
+              .filter(edge => componentKeys.has(edge.a) && componentKeys.has(edge.b))
+              .every(edge => {
+                const boundary = relayoutBoundaries.get(edge.pair);
+                return !!boundary && boundary.length > 0;
+              });
+          }
+        }
+        if (!flowRelayoutAccepted && !flowRelayoutFailure) flowRelayoutFailure = 'post-layout-door-capacity';
+        if (flowRelayoutAccepted) {
+          geometryNotes.push({
+            spaceKey: space.key,
+            kind: 'capacity-flow-component-relayout',
+            priorCellCount: oldCells.length,
+            targetCellCount: target,
+            componentKeys: [...componentKeys],
+            fixedKeys: [...fixedKeys],
+          });
+          continue;
+        }
+        for (let cellIndex = 0; cellIndex < grid.cells.length; cellIndex++) grid.cells[cellIndex].spaceId = relayoutBefore[cellIndex];
+        geometryNotes.push({
+          spaceKey: space.key,
+          kind: 'capacity-reanchor-rejected-flow-placement',
+          priorCellCount: oldCells.length,
+          targetCellCount: target,
+          rescueSeedTarget,
+          protectedFlowNeighbors: flowNeighborSeams,
+          flowRelayoutFailure,
+          flowRelayoutComponentKeys: [...componentKeys],
+          flowRelayoutFixedKeys: [...fixedKeys],
+          flowRelayoutEdges: protectedFlowEdges,
+          flowRelayoutPreBoundaryPairs: [...preRelayoutBoundaries.keys()].filter(pair => componentKeys.has(pair.split('|')[0]) && componentKeys.has(pair.split('|')[1])),
+        });
+        continue;
+      }
+      const seamClaims = [];
+      const rectangular = growExistingSpaceRectangular({
         space,
         target,
         grid,
-        stableKey: `${stableKey}:floor:${floor}:weighted-rectangle-grow`,
+        stableKey: `${stableKey}:floor:${floor}:capacity-reanchor-grow`,
         profile,
       });
-      // A rectangle-first space that stalls well short of its own weighted
-      // target (every cardinal expansion blocked by whatever claimed the
-      // neighboring cells first) previously stayed frozen at that stall point
-      // forever: growExistingSpaceRectangular returns a real (non-null) state
-      // even when it made zero progress, which used to skip the organic-growth
-      // fallback below entirely. A defining program room boxed in early should
-      // still be able to claim its fair share - just non-rectangularly - rather
-      // than a low-weight neighbor space quietly inheriting all of it instead.
-      // Never for a rectangleStrict space though (private dwelling units, route
-      // -frontage rooms, anything whose narrow-dimension contract demands a real
-      // rectangle) - breaking their rectangularity here silently corrupts whatever
-      // downstream geometry depends on it (e.g. dwelling-unit interior subdivision).
-      if (!space.rectangleStrict && (regular === null || (regular?.count ?? 0) < target)) {
+      if (!space.rectangleStrict && (rectangular?.count ?? 0) < target) {
         growExistingSpace({
           space,
           target,
           grid,
-          stableKey: `${stableKey}:floor:${floor}:weighted-grow`,
+          stableKey: `${stableKey}:floor:${floor}:capacity-reanchor-organic`,
           profile,
         });
+      }
+      const boundaryAfterReanchor = boundaryCandidates(grid);
+      const preservesFlowSeams = flowNeighborSeams.every(neighborKey => {
+        const pair = [space.key, neighborKey].sort().join('|');
+        const boundary = boundaryAfterReanchor.get(pair);
+        return !!boundary && boundaryPairDoorCapacity(boundary, grid, minimumClearWidth).capable;
+      });
+      if (!preservesFlowSeams) {
+        for (let cellIndex = 0; cellIndex < grid.cells.length; cellIndex++) grid.cells[cellIndex].spaceId = ownershipBeforeReanchor[cellIndex];
+        geometryNotes.push({
+          spaceKey: space.key,
+          kind: 'capacity-reanchor-rejected-flow-capacity',
+          priorCellCount: oldCells.length,
+          targetCellCount: target,
+          protectedFlowNeighbors: flowNeighborSeams,
+        });
+        continue;
+      }
+      geometryNotes.push({
+        spaceKey: space.key,
+        kind: 'capacity-reanchor',
+        priorCellCount: oldCells.length,
+        replacementCellCount: grid.cells.filter(cell => cell.spaceId === space.key).length,
+        targetCellCount: target,
+        protectedFlowNeighbors: flowNeighborSeams,
+        seamClaims,
+      });
+    }
+
+    // Spend weighted surplus progressively by normalized deficit instead of
+    // letting one large room run all the way to target before its siblings get
+    // a turn.  Greedy completion can wrap a rack field/lab/office around still-
+    // minimum support rooms and make their target area unreachable even though
+    // the plate had enough capacity when growth began.  Small bounded turns keep
+    // useful ownership fronts alive and also give repeated equal-target peers a
+    // generic fairness objective without naming any program.
+    const stalledSurplusKeys = new Set();
+    const maxSurplusTurns = Math.max(grid.cells.length, spaces.length * 16);
+    let surplusTurnCount = 0;
+    for (; surplusTurnCount < maxSurplusTurns; surplusTurnCount++) {
+      const candidates = spaces.filter(candidateSpace => {
+        if (stalledSurplusKeys.has(candidateSpace.key)) return false;
+        const target = targets.get(candidateSpace.key) ?? (minimumCellsByKey.get(candidateSpace.key) ?? 1);
+        const current = grid.cells.reduce((sum, cell) => sum + (cell.spaceId === candidateSpace.key ? 1 : 0), 0);
+        return current + EPS < target;
+      }).sort((a, b) => {
+        const targetA = Math.max(1, targets.get(a.key) ?? 1);
+        const targetB = Math.max(1, targets.get(b.key) ?? 1);
+        const countA = grid.cells.reduce((sum, cell) => sum + (cell.spaceId === a.key ? 1 : 0), 0);
+        const countB = grid.cells.reduce((sum, cell) => sum + (cell.spaceId === b.key ? 1 : 0), 0);
+        const ratioA = countA / targetA;
+        const ratioB = countB / targetB;
+        if (Math.abs(ratioA - ratioB) > EPS) return ratioA - ratioB;
+        const sameTemplate = a.templateKey === b.templateKey;
+        if (sameTemplate && countA !== countB) return countA - countB;
+        return (targetB - countB) - (targetA - countA) || a.key.localeCompare(b.key);
+      });
+      if (!candidates.length) break;
+      const candidateSpace = candidates[0];
+      const target = targets.get(candidateSpace.key) ?? (minimumCellsByKey.get(candidateSpace.key) ?? 1);
+      const before = grid.cells.reduce((sum, cell) => sum + (cell.spaceId === candidateSpace.key ? 1 : 0), 0);
+      const turnTarget = Math.min(target, before + 1);
+      const regular = growExistingSpaceRectangular({
+        space: candidateSpace,
+        target: turnTarget,
+        grid,
+        stableKey: `${stableKey}:floor:${floor}:balanced-rectangle-grow:${surplusTurnCount}`,
+        profile,
+      });
+      let after = grid.cells.reduce((sum, cell) => sum + (cell.spaceId === candidateSpace.key ? 1 : 0), 0);
+      if (!candidateSpace.rectangleStrict && (regular === null || after < turnTarget)) {
+        growExistingSpace({
+          space: candidateSpace,
+          target: turnTarget,
+          grid,
+          stableKey: `${stableKey}:floor:${floor}:balanced-grow:${surplusTurnCount}`,
+          profile,
+        });
+        after = grid.cells.reduce((sum, cell) => sum + (cell.spaceId === candidateSpace.key ? 1 : 0), 0);
+      }
+      if (after <= before) {
+        stalledSurplusKeys.add(candidateSpace.key);
+        continue;
       }
       yield {
         phase: 'building-plan-floor-surplus-growth',
         floor,
-        current: orderIndex + 1,
-        total: order.length,
-        spaceKey: space.key,
+        current: surplusTurnCount + 1,
+        total: maxSurplusTurns,
+        spaceKey: candidateSpace.key,
+        normalizedTargetRatio: after / Math.max(1, target),
       };
     }
   }
   const leftoverClosure = assignLeftovers({ grid, spaces, profile, stableKey: `${stableKey}:floor:${floor}`, targets });
+  const connectivityRepair = repairDisconnectedSpaceIslands({ grid, spaces, targets });
+  if (connectivityRepair.repairedIslands) geometryNotes.push({ kind: 'disconnected-island-repair', ...connectivityRepair });
+  const doorCapacityRepair = repairDoorCapableConnectivity({
+    grid,
+    spaces,
+    rootKey: rootSpace.key,
+    doorWidth: resolvedDoorWidth(physicalTruth),
+    targets,
+    minimumCellsByKey,
+    stableKey: `${stableKey}:floor:${floor}:door-capacity`,
+  });
+  if (doorCapacityRepair.repaired) geometryNotes.push(...doorCapacityRepair.notes);
+  if (!doorCapacityRepair.complete) geometryNotes.push({
+    kind: 'door-capacity-connectivity-shortfall',
+    reachableSpaceCount: doorCapacityRepair.reachableSpaceCount,
+    realizedSpaceCount: spaces.length,
+  });
   yield { phase: 'building-plan-floor-leftover-closure', floor, unclaimed: grid.cells.filter(cell => !cell.spaceId).length };
 
   const cellArea = grid.cellSize * grid.cellSize;
@@ -2454,6 +3338,7 @@ function* planFloorSteps({
       centroid,
       regions: compactSpaceCells(cells, grid.cellSize),
       regularity,
+      connectedComponentCount: connectedComponentsForSpace(grid, s.key).length,
       circulationFrontage,
       frontagePriority: s.frontagePriority ?? 'neutral',
       operationalRole: s.operationalRole ?? s.templateKey,
@@ -2494,7 +3379,12 @@ function* planFloorSteps({
   const realizedKeys = new Set(realizedSpaces.map(s => s.key));
   const desiredEdges = topology.edges.filter(edge => realizedKeys.has(edge.a) && realizedKeys.has(edge.b));
   const realizedTopology = realizeTopology({
-    spaces: realizedSpaces, desiredEdges, grid, rootKey: rootSpace.key, stableKey: `${stableKey}:floor:${floor}`,
+    spaces: realizedSpaces,
+    desiredEdges,
+    grid,
+    rootKey: rootSpace.key,
+    stableKey: `${stableKey}:floor:${floor}`,
+    doorWidth: resolvedDoorWidth(physicalTruth),
   });
   const realizedEdges = realizedTopology.edges;
   yield { phase: 'building-plan-floor-topology', floor, realizedEdgeCount: realizedEdges.length };
@@ -2539,6 +3429,15 @@ function* planFloorSteps({
     circulationDeferredModuleKeys: grid.deferredModules.map(module => module.key),
     approximateArea: area,
     rasterCellSize: grid.cellSize,
+    partitionOwnership: {
+      schema: 'jweb.floor-space-ownership.v1',
+      cellSize: grid.cellSize,
+      cells: grid.cells.filter(cell => cell.spaceId).map(cell => ({
+        ix: cell.ix,
+        iz: cell.iz,
+        spaceKey: cell.spaceId,
+      })),
+    },
     minimumClearWidth,
     rootSpaceKey: rootSpace.key,
     spaces: realizedSpaces,

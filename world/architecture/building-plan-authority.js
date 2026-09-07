@@ -7,6 +7,7 @@ export const BUILDING_PLAN_AUTHORITY_SCHEMA = 'jweb.building-plan-authority.v1';
 export const BUILDING_PLAN_SPACE_SCHEMA = 'jweb.building-plan-space.v1';
 
 const EPS = 1e-7;
+export const MINIMUM_PARTITION_WALL_RETURN = 0.22;
 
 function finite(value, fallback = 0) {
   return Number.isFinite(Number(value)) ? Number(value) : fallback;
@@ -68,21 +69,6 @@ function touchingBoundary(aRaw, bRaw) {
   return null;
 }
 
-function mergeIntervals(items) {
-  if (!items.length) return [];
-  const ordered = [...items].sort((a, b) => a.spanA - b.spanA || a.spanB - b.spanB);
-  const merged = [];
-  for (const item of ordered) {
-    const prior = merged[merged.length - 1];
-    if (prior && item.spanA <= prior.spanB + EPS) {
-      prior.spanB = Math.max(prior.spanB, item.spanB);
-      continue;
-    }
-    merged.push({ ...item });
-  }
-  return merged;
-}
-
 function clampGap(gap, spanA, spanB) {
   const lo = Math.max(spanA, Math.min(gap.lo, gap.hi));
   const hi = Math.min(spanB, Math.max(gap.lo, gap.hi));
@@ -110,24 +96,6 @@ function fullSpaceId(floor, key) {
   return floor?.spaces?.find(space => space.key === key)?.id ?? null;
 }
 
-function openingGapForRun(opening, run) {
-  if (!opening || opening.kind !== 'interior-door') return null;
-  if (opening.axis !== run.axis) return null;
-  const openingPair = pairKey(opening.fromSpaceKey, opening.toSpaceKey);
-  if (openingPair !== run.spaceKeyPair) return null;
-  const fixed = opening.axis === 'x' ? opening.z : opening.x;
-  if (Math.abs(fixed - run.fixedCoord) > Math.max(EPS, finite(opening.width, 0.9) * 0.12)) return null;
-  const along = opening.axis === 'x' ? opening.x : opening.z;
-  const half = Math.max(0.36, finite(opening.width, 0.9) * 0.5);
-  if (along + half <= run.spanA + EPS || along - half >= run.spanB - EPS) return null;
-  return {
-    lo: along - half,
-    hi: along + half,
-    height: Math.max(1.9, finite(opening.height, 2.03)),
-    openingIds: [opening.id],
-  };
-}
-
 function nestedUnitWallRunsForFloor(plan, floor, startOrdinal = 0) {
   const runs = [];
   let ordinal = startOrdinal;
@@ -142,7 +110,9 @@ function nestedUnitWallRunsForFloor(plan, floor, startOrdinal = 0) {
         const boundary = touchingBoundary(a, b);
         if (!boundary || boundary.spanB - boundary.spanA <= EPS) continue;
         const pair = pairKey(a.key, b.key);
-        const gapWidth = Math.min(0.86, Math.max(0.68, (boundary.spanB - boundary.spanA) * 0.42));
+        const boundaryLength = boundary.spanB - boundary.spanA;
+        const desiredGapWidth = Math.min(0.86, Math.max(0.68, boundaryLength * 0.42));
+        const gapWidth = boundaryLength + EPS >= desiredGapWidth + 2 * MINIMUM_PARTITION_WALL_RETURN ? desiredGapWidth : 0;
         const mid = (boundary.spanA + boundary.spanB) * 0.5;
         const doorId = `${plan.deterministicKey}:floor:${floor.floor}:unit:${parent.key}:door:${a.key}:${b.key}`;
         runs.push({
@@ -160,7 +130,7 @@ function nestedUnitWallRunsForFloor(plan, floor, startOrdinal = 0) {
           fromSpaceId: `${parent.id}:unit-room:${a.key}`,
           toSpaceId: `${parent.id}:unit-room:${b.key}`,
           spaceKeyPair: pairKey(`${parent.key}/${a.key}`, `${parent.key}/${b.key}`),
-          gaps: desiredPairs.has(pair) ? [{
+          gaps: desiredPairs.has(pair) && gapWidth > EPS ? [{
             lo: mid - gapWidth * 0.5,
             hi: mid + gapWidth * 0.5,
             height: 2.03,
@@ -176,55 +146,332 @@ function nestedUnitWallRunsForFloor(plan, floor, startOrdinal = 0) {
   return runs;
 }
 
+function inferredRasterCellSize(floor) {
+  const explicit = finite(floor?.rasterCellSize, 0);
+  if (explicit > EPS) return explicit;
+  const spans = [];
+  for (const space of floor?.spaces ?? []) {
+    for (const raw of space.regions ?? []) {
+      const region = regionBounds(raw);
+      if (region.maxX - region.minX > EPS) spans.push(region.maxX - region.minX);
+      if (region.maxZ - region.minZ > EPS) spans.push(region.maxZ - region.minZ);
+    }
+  }
+  return spans.length ? Math.min(...spans) : 0;
+}
+
+function floorOwnershipCells(floor) {
+  const cellSize = inferredRasterCellSize(floor);
+  if (!(cellSize > EPS)) return { cellSize: 0, cells: new Map(), source: 'unavailable' };
+  const cells = new Map();
+  const spacesById = new Map((floor.spaces ?? []).map(space => [String(space.id), space.key]));
+  const supplied = floor.partitionOwnership?.cells ?? floor.ownershipCells ?? null;
+  if (Array.isArray(supplied) && supplied.length) {
+    for (const raw of supplied) {
+      const ix = Number(raw.ix), iz = Number(raw.iz);
+      const spaceKey = raw.spaceKey ?? spacesById.get(String(raw.spaceId ?? '')) ?? raw.spaceId;
+      if (!Number.isInteger(ix) || !Number.isInteger(iz) || !spaceKey) continue;
+      cells.set(`${ix},${iz}`, { ix, iz, spaceKey: String(spaceKey) });
+    }
+    if (cells.size) return { cellSize, cells, source: 'floor-partition-ownership' };
+  }
+
+  // Integration fallback: the sidecar currently publishes compacted regions but not its
+  // final cell ownership array. Those regions are exact unions of raster cells, so recover
+  // the ownership field first, then derive topology from cell-neighbor ownership. Canonical
+  // walls are never reconstructed by comparing rectangle pairs.
+  for (const space of floor.spaces ?? []) {
+    for (const raw of space.regions ?? []) {
+      const region = regionBounds(raw);
+      const ix0 = Math.round(region.minX / cellSize);
+      const ix1 = Math.round(region.maxX / cellSize);
+      const iz0 = Math.round(region.minZ / cellSize);
+      const iz1 = Math.round(region.maxZ / cellSize);
+      for (let iz = iz0; iz < iz1; iz++) {
+        for (let ix = ix0; ix < ix1; ix++) {
+          const key = `${ix},${iz}`;
+          const prior = cells.get(key);
+          if (prior && prior.spaceKey !== space.key) {
+            throw new Error(`building plan floor ${floor.floor}: overlapping ownership at cell ${key}`);
+          }
+          cells.set(key, { ix, iz, spaceKey: space.key });
+        }
+      }
+    }
+  }
+  return { cellSize, cells, source: 'recovered-from-compacted-cell-regions' };
+}
+
+function vertexTypeForDirections(directions) {
+  const dirs = [...directions];
+  if (dirs.length <= 1) return 'endpoint';
+  if (dirs.length === 2) {
+    const horizontal = dirs.every(dir => dir === 'east' || dir === 'west');
+    const vertical = dirs.every(dir => dir === 'north' || dir === 'south');
+    return horizontal || vertical ? 'straight' : 'L';
+  }
+  if (dirs.length === 3) return 'T';
+  if (dirs.length === 4) return 'X';
+  return 'complex';
+}
+
+function compileFloorPartitionGraph(plan, floor) {
+  const ownership = floorOwnershipCells(floor);
+  const { cellSize, cells } = ownership;
+  if (!(cellSize > EPS) || !cells.size) {
+    return { schema: 'jweb.partition-graph.v1', floor: floor.floor, ownershipSource: ownership.source, cellSize, vertices: [], edges: [], diagnostics: { unavailable: true } };
+  }
+  const unitSegments = [];
+  const pushBoundary = (a, b, axis, fixedCoord, spanA, spanB, negativeSpaceKey, positiveSpaceKey) => {
+    if (!a || !b || a.spaceKey === b.spaceKey) return;
+    unitSegments.push({
+      axis, fixedCoord: coordKey(fixedCoord), spanA: coordKey(spanA), spanB: coordKey(spanB),
+      negativeSpaceKey, positiveSpaceKey,
+      spaceKeyPair: pairKey(a.spaceKey, b.spaceKey),
+    });
+  };
+  for (const cell of cells.values()) {
+    const east = cells.get(`${cell.ix + 1},${cell.iz}`);
+    pushBoundary(cell, east, 'z', (cell.ix + 1) * cellSize, cell.iz * cellSize, (cell.iz + 1) * cellSize, cell.spaceKey, east?.spaceKey);
+    const south = cells.get(`${cell.ix},${cell.iz + 1}`);
+    pushBoundary(cell, south, 'x', (cell.iz + 1) * cellSize, cell.ix * cellSize, (cell.ix + 1) * cellSize, cell.spaceKey, south?.spaceKey);
+  }
+
+  const vertexMap = new Map();
+  const ensureVertex = (x, z) => {
+    const key = `${coordKey(x)},${coordKey(z)}`;
+    if (!vertexMap.has(key)) vertexMap.set(key, { key, x: coordKey(x), z: coordKey(z), directions: new Set() });
+    return vertexMap.get(key);
+  };
+  const direction = (x0, z0, x1, z1) => x1 > x0 + EPS ? 'east' : x1 < x0 - EPS ? 'west' : z1 > z0 + EPS ? 'south' : 'north';
+  for (const segment of unitSegments) {
+    const a = segment.axis === 'x' ? [segment.spanA, segment.fixedCoord] : [segment.fixedCoord, segment.spanA];
+    const b = segment.axis === 'x' ? [segment.spanB, segment.fixedCoord] : [segment.fixedCoord, segment.spanB];
+    ensureVertex(...a).directions.add(direction(...a, ...b));
+    ensureVertex(...b).directions.add(direction(...b, ...a));
+  }
+  const shellAttachment = (vertex) => {
+    const ix = Math.round(vertex.x / cellSize), iz = Math.round(vertex.z / cellSize);
+    const surrounding = [cells.get(`${ix - 1},${iz - 1}`), cells.get(`${ix},${iz - 1}`), cells.get(`${ix - 1},${iz}`), cells.get(`${ix},${iz}`)];
+    return surrounding.some(Boolean) && surrounding.some(cell => !cell);
+  };
+  for (const vertex of vertexMap.values()) {
+    vertex.degree = vertex.directions.size;
+    vertex.type = vertexTypeForDirections(vertex.directions);
+    vertex.shellAttachment = shellAttachment(vertex);
+  }
+
+  const groups = new Map();
+  for (const segment of unitSegments) {
+    const key = `${segment.axis}:${segment.fixedCoord}:${segment.negativeSpaceKey}:${segment.positiveSpaceKey}`;
+    const list = groups.get(key) ?? [];
+    list.push(segment);
+    groups.set(key, list);
+  }
+  const edges = [];
+  let ordinal = 0;
+  for (const list of groups.values()) {
+    list.sort((a, b) => a.spanA - b.spanA || a.spanB - b.spanB);
+    let current = null;
+    for (const segment of list) {
+      if (!current) { current = { ...segment }; continue; }
+      const joinCoord = current.spanB;
+      const joinVertexKey = current.axis === 'x' ? `${coordKey(joinCoord)},${current.fixedCoord}` : `${current.fixedCoord},${coordKey(joinCoord)}`;
+      const joinVertex = vertexMap.get(joinVertexKey);
+      if (Math.abs(segment.spanA - current.spanB) <= EPS && joinVertex?.type === 'straight') {
+        current.spanB = segment.spanB;
+      } else {
+        edges.push(current); current = { ...segment };
+      }
+    }
+    if (current) edges.push(current);
+  }
+
+  const spaceIdByKey = new Map((floor.spaces ?? []).map(space => [space.key, space.id]));
+  const vertexIdByKey = new Map();
+  const vertices = [...vertexMap.values()].sort((a, b) => a.x - b.x || a.z - b.z).map((vertex, index) => {
+    const id = `${plan.deterministicKey}:floor:${floor.floor}:partition-vertex:${index}`;
+    vertexIdByKey.set(vertex.key, id);
+    return { id, x: vertex.x, z: vertex.z, degree: vertex.degree, type: vertex.type, shellAttachment: vertex.shellAttachment, incidentEdgeIds: [] };
+  });
+  const vertexById = new Map(vertices.map(vertex => [vertex.id, vertex]));
+  const canonicalEdges = edges.map(edge => {
+    const startKey = edge.axis === 'x' ? `${edge.spanA},${edge.fixedCoord}` : `${edge.fixedCoord},${edge.spanA}`;
+    const endKey = edge.axis === 'x' ? `${edge.spanB},${edge.fixedCoord}` : `${edge.fixedCoord},${edge.spanB}`;
+    const id = `${plan.deterministicKey}:floor:${floor.floor}:partition-edge:${ordinal++}`;
+    const negativeSpaceId = spaceIdByKey.get(edge.negativeSpaceKey) ?? null;
+    const positiveSpaceId = spaceIdByKey.get(edge.positiveSpaceKey) ?? null;
+    const canonical = {
+      id, kind: 'planned-interior-wall', floor: floor.floor, yBase: floor.yBase, height: floor.floorHeight,
+      axis: edge.axis, fixedCoord: edge.fixedCoord, spanA: edge.spanA, spanB: edge.spanB,
+      negativeSpaceKey: edge.negativeSpaceKey, positiveSpaceKey: edge.positiveSpaceKey,
+      spaceAKey: edge.negativeSpaceKey, spaceBKey: edge.positiveSpaceKey,
+      fromSpaceId: negativeSpaceId, toSpaceId: positiveSpaceId, spaceKeyPair: edge.spaceKeyPair,
+      startVertexId: vertexIdByKey.get(startKey), endVertexId: vertexIdByKey.get(endKey), gaps: [],
+      authority: BUILDING_PLAN_AUTHORITY_SCHEMA,
+    };
+    vertexById.get(canonical.startVertexId)?.incidentEdgeIds.push(id);
+    vertexById.get(canonical.endVertexId)?.incidentEdgeIds.push(id);
+    return canonical;
+  });
+
+  let relocatedOpenings = 0;
+  let rejectedOpenings = 0;
+  const rejectedOpeningRecords = [];
+  let minimumSurvivingReturn = Infinity;
+  for (const opening of floor.openings ?? []) {
+    if (opening.kind !== 'interior-door') continue;
+    const width = Math.max(0.72, finite(opening.width, 0.9));
+    const half = width * 0.5;
+    const candidates = canonicalEdges.filter(edge => edge.spaceKeyPair === pairKey(opening.fromSpaceKey, opening.toSpaceKey)
+      && edge.spanB - edge.spanA + EPS >= width + 2 * MINIMUM_PARTITION_WALL_RETURN);
+    const originalFixed = opening.axis === 'x' ? finite(opening.z) : finite(opening.x);
+    const originalAlong = opening.axis === 'x' ? finite(opening.x) : finite(opening.z);
+    candidates.sort((a, b) => {
+      const aAxisPenalty = a.axis === opening.axis ? 0 : 1000;
+      const bAxisPenalty = b.axis === opening.axis ? 0 : 1000;
+      const aFixed = Math.abs(a.fixedCoord - originalFixed);
+      const bFixed = Math.abs(b.fixedCoord - originalFixed);
+      const aAlong = originalAlong < a.spanA ? a.spanA - originalAlong : originalAlong > a.spanB ? originalAlong - a.spanB : 0;
+      const bAlong = originalAlong < b.spanA ? b.spanA - originalAlong : originalAlong > b.spanB ? originalAlong - b.spanB : 0;
+      return (aAxisPenalty + aFixed + aAlong) - (bAxisPenalty + bFixed + bAlong) || (b.spanB - b.spanA) - (a.spanB - a.spanA) || a.id.localeCompare(b.id);
+    });
+    const edge = candidates[0];
+    if (!edge) {
+      opening.partitionDisposition = 'rejected-insufficient-wall-return';
+      opening.partitionEdgeId = null;
+      opening.minimumWallReturn = MINIMUM_PARTITION_WALL_RETURN;
+      rejectedOpenings++;
+      rejectedOpeningRecords.push(opening);
+      continue;
+    }
+    const safeLo = edge.spanA + MINIMUM_PARTITION_WALL_RETURN + half;
+    const safeHi = edge.spanB - MINIMUM_PARTITION_WALL_RETURN - half;
+    const originalOnEdge = opening.axis === edge.axis && Math.abs(originalFixed - edge.fixedCoord) <= Math.max(EPS, width * 0.12);
+    const desiredAlong = originalOnEdge ? originalAlong : (edge.spanA + edge.spanB) * 0.5;
+    const center = Math.max(safeLo, Math.min(safeHi, desiredAlong));
+    const gap = { lo: center - half, hi: center + half, height: Math.max(1.9, finite(opening.height, 2.03)), openingIds: [opening.id] };
+    edge.gaps.push(gap);
+    const priorAxis = opening.axis, priorX = opening.x, priorZ = opening.z;
+    opening.axis = edge.axis;
+    if (edge.axis === 'x') { opening.x = center; opening.z = edge.fixedCoord; }
+    else { opening.x = edge.fixedCoord; opening.z = center; }
+    opening.fixedCoord = edge.fixedCoord;
+    opening.partitionEdgeId = edge.id;
+    opening.minimumWallReturn = MINIMUM_PARTITION_WALL_RETURN;
+    opening.partitionDisposition = (priorAxis === opening.axis && Math.abs(finite(priorX) - finite(opening.x)) <= EPS && Math.abs(finite(priorZ) - finite(opening.z)) <= EPS)
+      ? 'accepted' : 'relocated-for-wall-return';
+    if (opening.partitionDisposition !== 'accepted') relocatedOpenings++;
+    minimumSurvivingReturn = Math.min(minimumSurvivingReturn, gap.lo - edge.spanA, edge.spanB - gap.hi);
+  }
+  // A hard jamb rule must never silently turn a semantically connected floor into
+  // a physically sealed one. Remove rejected semantic adjacencies from the realized
+  // topology, then add the smallest deterministic set of door-capable canonical
+  // partition adjacencies needed to reconnect every room. This is an authority-level
+  // geometry repair: the raw ownership field remains unchanged.
+  const rejectedPairs = new Set(rejectedOpeningRecords.map(opening => pairKey(opening.fromSpaceKey, opening.toSpaceKey)));
+  if (rejectedPairs.size) {
+    floor.edges = (floor.edges ?? []).filter(edge => !rejectedPairs.has(pairKey(edge.a, edge.b)));
+  }
+  const spaceByKey = new Map((floor.spaces ?? []).map(space => [space.key, space]));
+  const allSpaceKeys = [...spaceByKey.keys()];
+  const rootSpaceKey = floor.rootSpaceKey && spaceByKey.has(floor.rootSpaceKey) ? floor.rootSpaceKey : allSpaceKeys[0] ?? null;
+  const repairWidth = 0.72; // narrowest permitted clear opening, used only for authority-level connectivity repair
+  const repairHeight = Math.max(1.9, finite((floor.openings ?? []).find(opening => opening.kind === 'interior-door')?.height, 2.03));
+  const physicalReachable = () => {
+    if (!rootSpaceKey) return new Set();
+    const neighbors = new Map(allSpaceKeys.map(key => [key, new Set()]));
+    for (const edge of canonicalEdges) {
+      if (!(edge.gaps ?? []).length) continue;
+      if (!neighbors.has(edge.negativeSpaceKey) || !neighbors.has(edge.positiveSpaceKey)) continue;
+      neighbors.get(edge.negativeSpaceKey).add(edge.positiveSpaceKey);
+      neighbors.get(edge.positiveSpaceKey).add(edge.negativeSpaceKey);
+    }
+    const seen = new Set([rootSpaceKey]);
+    const queue = [rootSpaceKey];
+    while (queue.length) {
+      const key = queue.shift();
+      for (const next of neighbors.get(key) ?? []) if (!seen.has(next)) { seen.add(next); queue.push(next); }
+    }
+    return seen;
+  };
+  let physicallyReachable = physicalReachable();
+  let partitionConnectivityRepairOpenings = 0;
+  while (physicallyReachable.size < allSpaceKeys.length) {
+    const candidates = canonicalEdges.filter(edge => {
+      if ((edge.gaps ?? []).length) return false;
+      if (edge.spanB - edge.spanA + EPS < repairWidth + 2 * MINIMUM_PARTITION_WALL_RETURN) return false;
+      return physicallyReachable.has(edge.negativeSpaceKey) !== physicallyReachable.has(edge.positiveSpaceKey);
+    }).sort((a, b) => {
+      // Prefer the most frameable shared wall; stable edge id is the deterministic tie-break.
+      return (b.spanB - b.spanA) - (a.spanB - a.spanA) || a.id.localeCompare(b.id);
+    });
+    const edge = candidates[0];
+    if (!edge) break;
+    const half = repairWidth * 0.5;
+    const safeLo = edge.spanA + MINIMUM_PARTITION_WALL_RETURN + half;
+    const safeHi = edge.spanB - MINIMUM_PARTITION_WALL_RETURN - half;
+    const center = Math.max(safeLo, Math.min(safeHi, (edge.spanA + edge.spanB) * 0.5));
+    const id = `${plan.deterministicKey}:floor:${floor.floor}:partition-connectivity-door:${partitionConnectivityRepairOpenings}`;
+    edge.gaps.push({ lo: center - half, hi: center + half, height: repairHeight, openingIds: [id] });
+    const opening = {
+      id, kind: 'interior-door', fromSpaceKey: edge.negativeSpaceKey, toSpaceKey: edge.positiveSpaceKey,
+      width: repairWidth, height: repairHeight, axis: edge.axis, fixedCoord: edge.fixedCoord,
+      x: edge.axis === 'x' ? center : edge.fixedCoord,
+      z: edge.axis === 'x' ? edge.fixedCoord : center,
+      topologySource: 'partition-connectivity-repair',
+      doorPlacementAuthority: 'canonical-partition-connectivity-repair',
+      partitionEdgeId: edge.id,
+      minimumWallReturn: MINIMUM_PARTITION_WALL_RETURN,
+      partitionDisposition: 'added-for-partition-connectivity',
+      wallReturn: Math.min(center - half - edge.spanA, edge.spanB - center - half),
+    };
+    floor.openings.push(opening);
+    const repairPair = pairKey(opening.fromSpaceKey, opening.toSpaceKey);
+    if (!(floor.edges ?? []).some(candidate => pairKey(candidate.a, candidate.b) === repairPair)) {
+      floor.edges = [...(floor.edges ?? []), {
+        a: opening.fromSpaceKey, b: opening.toSpaceKey, strength: 'required',
+        source: 'partition-connectivity-repair', geometryStatus: 'door-capable-canonical-partition',
+      }];
+    }
+    partitionConnectivityRepairOpenings++;
+    minimumSurvivingReturn = Math.min(minimumSurvivingReturn, opening.wallReturn);
+    physicallyReachable = physicalReachable();
+  }
+
+  for (const edge of canonicalEdges) edge.gaps = mergeGaps(edge.gaps, edge.spanA, edge.spanB);
+
+  const unexplainedInteriorEndpoints = vertices.filter(vertex => vertex.degree === 1 && !vertex.shellAttachment).length;
+  const countsByType = Object.fromEntries(['endpoint', 'straight', 'L', 'T', 'X', 'complex'].map(type => [type, vertices.filter(vertex => vertex.type === type).length]));
+  return {
+    schema: 'jweb.partition-graph.v1', floor: floor.floor, ownershipSource: ownership.source, cellSize,
+    vertices, edges: canonicalEdges,
+    diagnostics: {
+      unitBoundaryCount: unitSegments.length,
+      partitionEdgeCount: canonicalEdges.length,
+      veryShortEdgeCount: canonicalEdges.filter(edge => edge.spanB - edge.spanA <= cellSize + EPS).length,
+      vertexCountByType: countsByType,
+      unexplainedInteriorDegree1Endpoints: unexplainedInteriorEndpoints,
+      shellAttachmentEndpoints: vertices.filter(vertex => vertex.degree === 1 && vertex.shellAttachment).length,
+      relocatedOpenings,
+      rejectedOpenings,
+      partitionConnectivityRepairOpenings,
+      physicallyReachableSpaceCount: physicallyReachable.size,
+      physicallyConnected: physicallyReachable.size === allSpaceKeys.length,
+      minimumSurvivingWallReturn: Number.isFinite(minimumSurvivingReturn) ? minimumSurvivingReturn : null,
+    },
+  };
+}
+
 export function compileBuildingPlanWallRuns(plan) {
   if (!plan?.floors) return [];
   const result = [];
   for (const floor of plan.floors) {
-    const fragmentsByKey = new Map();
-    const spaces = floor.spaces ?? [];
-    for (let ai = 0; ai < spaces.length; ai++) {
-      const a = spaces[ai];
-      for (let bi = ai + 1; bi < spaces.length; bi++) {
-        const b = spaces[bi];
-        for (const ar of a.regions ?? []) {
-          for (const br of b.regions ?? []) {
-            const boundary = touchingBoundary(ar, br);
-            if (!boundary || boundary.spanB - boundary.spanA <= EPS) continue;
-            const key = `${boundary.axis}:${coordKey(boundary.fixedCoord)}:${pairKey(a.key, b.key)}`;
-            const list = fragmentsByKey.get(key) ?? [];
-            list.push({ ...boundary, spaceAKey: a.key, spaceBKey: b.key, spaceKeyPair: pairKey(a.key, b.key) });
-            fragmentsByKey.set(key, list);
-          }
-        }
-      }
-    }
-
-    let ordinal = 0;
-    for (const fragments of fragmentsByKey.values()) {
-      for (const merged of mergeIntervals(fragments)) {
-        const gaps = mergeGaps((floor.openings ?? []).map(opening => openingGapForRun(opening, merged)).filter(Boolean), merged.spanA, merged.spanB);
-        const fromSpaceId = fullSpaceId(floor, merged.spaceAKey);
-        const toSpaceId = fullSpaceId(floor, merged.spaceBKey);
-        result.push({
-          id: `${plan.deterministicKey}:floor:${floor.floor}:wall:${ordinal++}`,
-          kind: 'planned-interior-wall',
-          floor: floor.floor,
-          yBase: floor.yBase,
-          height: floor.floorHeight,
-          axis: merged.axis,
-          fixedCoord: merged.fixedCoord,
-          spanA: merged.spanA,
-          spanB: merged.spanB,
-          spaceAKey: merged.spaceAKey,
-          spaceBKey: merged.spaceBKey,
-          fromSpaceId,
-          toSpaceId,
-          spaceKeyPair: merged.spaceKeyPair,
-          gaps,
-          authority: BUILDING_PLAN_AUTHORITY_SCHEMA,
-        });
-      }
-    }
+    const graph = compileFloorPartitionGraph(plan, floor);
+    floor.partitionGraph = graph;
+    floor.partitionEdges = graph.edges;
+    floor.partitionVertices = graph.vertices;
+    result.push(...graph.edges);
   }
   for (const floor of plan.floors ?? []) {
     result.push(...nestedUnitWallRunsForFloor(plan, floor, result.length));
@@ -502,6 +749,11 @@ export function inspectBuildingPlan(plan) {
         toSpaceId: fullSpaceId(floor, opening.toSpaceKey) ?? opening.toSpaceKey,
       })),
       wallRunCount: (plan?.wallRuns ?? []).filter(run => run.floor === floor.floor).length,
+      partitionGraph: floor.partitionGraph ? {
+        edgeCount: floor.partitionGraph.edges?.length ?? 0,
+        vertexCount: floor.partitionGraph.vertices?.length ?? 0,
+        diagnostics: floor.partitionGraph.diagnostics ?? null,
+      } : null,
     })),
   };
 }
@@ -555,13 +807,22 @@ export function assertBuildingPlanAuthority(plan, { requirePersistentCore = true
 
   for (const floor of plan.floors ?? []) {
     const reachable = reachableFloorSpaceIds(floor);
-    if (reachable.size !== (floor.spaces?.length ?? 0)) throw new Error(`building plan floor ${floor.floor} has sealed required spaces`);
+    if (reachable.size !== (floor.spaces?.length ?? 0)) throw new Error(`building plan floor ${floor.floor} has sealed required spaces in ${plan.grammar?.id ?? plan.programArchitecture?.id ?? plan.deterministicKey}; physical=${JSON.stringify(floor.partitionGraph?.diagnostics ?? {})}; edges=${JSON.stringify(floor.edges ?? [])}`);
+    if (floor.partitionGraph?.diagnostics?.physicallyConnected === false) {
+      throw new Error(`building plan floor ${floor.floor} has no door-capable connected partition topology`);
+    }
     for (const opening of floor.openings ?? []) {
       if (opening.kind !== 'interior-door') continue;
       const pair = pairKey(opening.fromSpaceKey, opening.toSpaceKey);
-      const matched = plan.wallRuns.some(run => run.floor === floor.floor && run.spaceKeyPair === pair
+      if (opening.partitionDisposition === 'rejected-insufficient-wall-return') continue;
+      const matchedRun = plan.wallRuns.find(run => run.floor === floor.floor && run.spaceKeyPair === pair
         && run.gaps.some(gap => gap.openingIds.includes(opening.id)));
-      if (!matched) throw new Error(`building plan opening ${opening.id} has no realized wall gap`);
+      if (!matchedRun) throw new Error(`building plan opening ${opening.id} has no realized wall gap`);
+      const gap = matchedRun.gaps.find(candidate => candidate.openingIds.includes(opening.id));
+      if (!gap || gap.lo - matchedRun.spanA + EPS < MINIMUM_PARTITION_WALL_RETURN
+        || matchedRun.spanB - gap.hi + EPS < MINIMUM_PARTITION_WALL_RETURN) {
+        throw new Error(`building plan opening ${opening.id} violates minimum partition wall return`);
+      }
     }
   }
 
@@ -579,17 +840,25 @@ export function promoteBuildingPlanAuthority(plan, { coreReservationId = null, c
   if (!plan || !Array.isArray(plan.floors)) throw new Error('promoteBuildingPlanAuthority requires a building sidecar plan');
   plan.authoritySchema = BUILDING_PLAN_AUTHORITY_SCHEMA;
   plan.authority = 'topology-before-geometry';
+  // Compile canonical partitions first because hard wall-return constraints may
+  // replace an impossible semantic adjacency with a real door-capable repair edge.
+  // Topology-space adjacency must describe that physically realizable result.
+  plan.wallRuns = compileBuildingPlanWallRuns(plan);
   plan.topologySpaces = compileBuildingPlanTopologySpaces(plan, {
     chunkKey: chunkKey ?? plan.chunkKey,
     entityId: entityId ?? plan.entityId,
   });
-  plan.wallRuns = compileBuildingPlanWallRuns(plan);
   plan.circulationClearances = compileBuildingPlanCirculationClearances(plan);
   plan.verticalCore = verticalCoreForPlan(plan, plan.topologySpaces, coreReservationId, coreReservation);
   plan.inspection = inspectBuildingPlan(plan);
   plan.diagnostics = {
     ...plan.diagnostics,
     plannedWallRunCount: plan.wallRuns.length,
+    partitionEdgeCount: (plan.floors ?? []).reduce((sum, floor) => sum + (floor.partitionGraph?.edges?.length ?? 0), 0),
+    partitionVertexCount: (plan.floors ?? []).reduce((sum, floor) => sum + (floor.partitionGraph?.vertices?.length ?? 0), 0),
+    partitionRejectedOpeningCount: (plan.floors ?? []).reduce((sum, floor) => sum + (floor.partitionGraph?.diagnostics?.rejectedOpenings ?? 0), 0),
+    partitionRelocatedOpeningCount: (plan.floors ?? []).reduce((sum, floor) => sum + (floor.partitionGraph?.diagnostics?.relocatedOpenings ?? 0), 0),
+    partitionConnectivityRepairOpeningCount: (plan.floors ?? []).reduce((sum, floor) => sum + (floor.partitionGraph?.diagnostics?.partitionConnectivityRepairOpenings ?? 0), 0),
     semanticTopologySpaceCount: plan.topologySpaces.length,
     circulationClearanceCount: plan.circulationClearances.length,
     persistentVerticalCore: !!plan.verticalCore,

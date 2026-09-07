@@ -790,6 +790,7 @@ export function createKowloonFabricEngine({
         const coreReservation = plan?.verticalCore?.reservation ?? null;
         const allModules = plan?.envelope?.modules ?? [];
         const rasterCellSizeByFloor = new Map((plan?.floors ?? []).map(floor => [floor.floor, floor.rasterCellSize]));
+        const partitionVertexById = new Map((plan?.floors ?? []).flatMap(floor => (floor.partitionGraph?.vertices ?? []).map(vertex => [vertex.id, vertex])));
         const activeModulesByFloor = new Map();
         const activeModulesForFloor = (floor) => {
             if (!activeModulesByFloor.has(floor)) {
@@ -852,8 +853,15 @@ export function createKowloonFabricEngine({
         for (const run of plan?.wallRuns ?? []) {
             const activeModules = activeModulesForFloor(run.floor);
             const tolerance = Math.max(0.5, (Number(rasterCellSizeByFloor.get(run.floor)) || 0.8) * 1.5);
-            const drawSpanA = snapRunEndToModuleEdge(run.spanA, run.axis, run.fixedCoord, activeModules, tolerance);
-            const drawSpanB = snapRunEndToModuleEdge(run.spanB, run.axis, run.fixedCoord, activeModules, tolerance);
+            const startVertex = run.startVertexId ? partitionVertexById.get(run.startVertexId) : null;
+            const endVertex = run.endVertexId ? partitionVertexById.get(run.endVertexId) : null;
+            // Canonical interior junction coordinates are already exact. Only endpoints tagged
+            // as shell attachments may receive the defensive raster-to-module-edge correction.
+            // Legacy nested-unit runs have no graph vertices and retain the prior shell snap.
+            const drawSpanA = (!run.startVertexId || (startVertex?.shellAttachment && startVertex?.degree === 1))
+                ? snapRunEndToModuleEdge(run.spanA, run.axis, run.fixedCoord, activeModules, tolerance) : run.spanA;
+            const drawSpanB = (!run.endVertexId || (endVertex?.shellAttachment && endVertex?.degree === 1))
+                ? snapRunEndToModuleEdge(run.spanB, run.axis, run.fixedCoord, activeModules, tolerance) : run.spanB;
             let cursor = drawSpanA;
             const gaps = [...(run.gaps ?? [])].sort((a, b) => a.lo - b.lo || a.hi - b.hi);
             for (const gap of gaps) {
@@ -867,6 +875,27 @@ export function createKowloonFabricEngine({
             }
             emit(run, cursor, drawSpanB);
         }
+
+        // Partition topology owns its junctions. A deterministic wallT-square fill at true
+        // L/T/X vertices guarantees visual continuity without blindly lengthening every run.
+        // Straight degree-2 vertices need no fill, and core reservations remain authoritative.
+        for (const floor of plan?.floors ?? []) {
+            const ceilingY = floor.yBase + storyCeilingLocalY(floor.floorHeight);
+            const wallH = ceilingY - floor.yBase;
+            if (wallH <= 0.04) continue;
+            for (const vertex of floor.partitionGraph?.vertices ?? []) {
+                if (!['L', 'T', 'X', 'complex'].includes(vertex.type)) continue;
+                if (coreReservation) {
+                    const cut = reservationCutForAxisSegment(coreReservation, {
+                        axis: 'x', fixedCoord: vertex.z, from: vertex.x - wallT * 0.5, to: vertex.x + wallT * 0.5,
+                        yMin: floor.yBase, yMax: ceilingY,
+                    }, wallT * 0.5 + 0.01);
+                    if (cut) continue;
+                }
+                wallTransform(wallList, vertex.x, floor.yBase + wallH * 0.5, vertex.z, wallT, wallH, wallT);
+                segments++;
+            }
+        }
         return segments;
     }
 
@@ -877,6 +906,9 @@ export function createKowloonFabricEngine({
             const byKey = new Map((floor.spaces ?? []).map(space => [space.key, space]));
             for (const opening of floor.openings ?? []) {
                 if (opening.kind !== 'interior-door') continue;
+                // Rejected partition requests are diagnostics, not physical portals. A
+                // canonical connectivity-repair opening (when needed) is registered instead.
+                if (opening.partitionDisposition === 'rejected-insufficient-wall-return') continue;
                 const fromSpace = byKey.get(opening.fromSpaceKey);
                 const toSpace = byKey.get(opening.toSpaceKey);
                 if (!fromSpace || !toSpace) throw new Error(`building plan opening ${opening.id} references missing spaces`);

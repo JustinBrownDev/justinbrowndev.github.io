@@ -7273,6 +7273,17 @@ export function createKowloonFabricEngine({
         return { minX, maxX, minZ, maxZ };
     }
 
+    function ceilingSiteCellClaims(site, cx0, cz0, half, cellSize) {
+        return (site.cells ?? []).map(cell => {
+            const x = cx0 - half + (cell.col + 0.5) * cellSize;
+            const z = cz0 - half + (cell.row + 0.5) * cellSize;
+            return Object.freeze({
+                minX: x - cellSize * 0.5, maxX: x + cellSize * 0.5,
+                minZ: z - cellSize * 0.5, maxZ: z + cellSize * 0.5,
+            });
+        });
+    }
+
     function planCeilingBridgeNetwork({ phaseChunk, roadPlan, siteIdOf, buildingSiteIds, weird }) {
         const bridgePlans = [];
         const bridgePortalsBySite = new Map();
@@ -7614,6 +7625,7 @@ export function createKowloonFabricEngine({
             groundIntents.push({
                 id, siteId: plan.site.id,
                 bounds: ceilingSiteBounds(plan.site, cx0, cz0, half, cellSize),
+                claimBounds: ceilingSiteCellClaims(plan.site, cx0, cz0, half, cellSize),
                 desiredFloors, minimumFloors, floorHeight: circulationFloorHeight,
                 routeDemandScore,
                 routeRole: routeDemand?.role ?? null,
@@ -7648,6 +7660,7 @@ export function createKowloonFabricEngine({
             const intent = {
                 id, siteId: plan.site.id,
                 bounds: ceilingSiteBounds(plan.site, ceilingField.cx0, ceilingField.cz0, ceilingField.half, ceilingField.cellSize),
+                claimBounds: ceilingSiteCellClaims(plan.site, ceilingField.cx0, ceilingField.cz0, ceilingField.half, ceilingField.cellSize),
                 desiredFloors: routeHeightTarget, minimumFloors, floorHeight: HANGING_CITY_FLOOR_HEIGHT,
                 routeDemandScore,
                 routeRole: routeDemand?.role ?? null,

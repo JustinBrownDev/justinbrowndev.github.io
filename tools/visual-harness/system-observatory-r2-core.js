@@ -15,7 +15,7 @@ export const JWEB_SYSTEM_OBSERVATORY_R2_SCHEMA = 'jweb.system-observatory.v2';
 
 export const AUDIT_LENSES = Object.freeze([
   Object.freeze({ id: 'F01', severity: 'P0', short: 'transfer realizability', title: 'Tower-transfer demand is not realizable by the Building Plan', files: ['world/architecture/tower-transfer-authority.js', 'world/architecture/building-plan-authority.js', 'world/sectional-circulation.js', 'world/city-route-composer.js', 'world/circulation-graph.js'] }),
-  Object.freeze({ id: 'F02', severity: 'P1', short: 'vertical macro-shape', title: 'Ground and hanging fields read as separated slabs rather than an interlocked section', files: ['world/hanging-city-topology.js', 'kowloon-fabric-engine.js', 'world/sectional-circulation.js'] }),
+  Object.freeze({ id: 'F02', severity: 'P1', short: 'vertical macro-shape', title: 'Ground and hanging fields read as separated slabs rather than a sectionally meshed cavern', files: ['world/hanging-city-topology.js', 'kowloon-fabric-engine.js', 'world/sectional-circulation.js'] }),
   Object.freeze({ id: 'F03', severity: 'P1', short: 'void hierarchy', title: 'Figure-ground is too occupied or lacks large negative-space hierarchy', files: ['world/hanging-city-topology.js', 'world/district-block-composition.js', 'world/architecture/building-plan-authority.js'] }),
   Object.freeze({ id: 'F04', severity: 'P1', short: 'bridge family conflict', title: 'Hanging ownership overlays a suspension grammar onto a non-suspension bridge family', files: ['world/skybridge-architecture.js', 'world/sectional-circulation.js'] }),
   Object.freeze({ id: 'F05', severity: 'P1', short: 'bridge grammar stack', title: 'Multiple large structural grammars accumulate on one bridge span', files: ['world/skybridge-architecture.js', 'world/exterior-transport-network.js', 'world/city-route-composer.js'] }),
@@ -30,6 +30,7 @@ const arr = value => Array.isArray(value) ? value : [];
 const finite = (value, fallback = 0) => Number.isFinite(Number(value)) ? Number(value) : fallback;
 const clamp = (value, lo, hi) => Math.max(lo, Math.min(hi, finite(value)));
 const pct = value => `${(finite(value) * 100).toFixed(1)}%`;
+const fixed = (value, digits = 1, fallback = 'n/a') => Number.isFinite(Number(value)) ? Number(value).toFixed(digits) : fallback;
 
 function quantile(values, q = 0.5) {
   const sorted = arr(values).map(Number).filter(Number.isFinite).sort((a, b) => a - b);
@@ -96,12 +97,22 @@ function analyzeMacroForm(payload) {
   const keys = new Set([...ground.keys(), ...hanging.keys()]);
   const shared = [...ground.keys()].filter(key => hanging.has(key));
   const interlocks = [];
+  const sectionalMeshes = [];
   const gaps = [];
+  // Literal contact is not the desired macro criterion: the production joint
+  // solver deliberately reserves a safe vertical gap, and story quantization
+  // can add up to roughly one extra floor. Treat a shared plan cell as
+  // sectionally meshed when its two masses approach within that safe/readable
+  // band, while retaining literal interlock/contact as a separate truth signal.
+  const typicalFloorH = quantile([...groundModules, ...hangingModules].map(m => m.floorH), 0.5) ?? 3.15;
+  const sectionalMeshGapThreshold = clamp(typicalFloorH + 2.40, 3.0, 6.5);
   for (const key of shared) {
     const g = ground.get(key), h = hanging.get(key);
     const gap = h.y0 - g.y1;
     gaps.push(gap);
-    if (gap <= 0.20) interlocks.push({ key, gap, groundTop: g.y1, hangingBottom: h.y0 });
+    const row = { key, gap, groundTop: g.y1, hangingBottom: h.y0 };
+    if (gap <= 0.20) interlocks.push(row);
+    if (gap <= sectionalMeshGapThreshold) sectionalMeshes.push(row);
   }
   const gridCells = 81;
   const bins = 18;
@@ -131,6 +142,9 @@ function analyzeMacroForm(payload) {
     sharedOccupancy: shared.length / gridCells,
     interlockCells: interlocks.length,
     interlockShareOfShared: shared.length ? interlocks.length / shared.length : 0,
+    sectionalMeshCells: sectionalMeshes.length,
+    sectionalMeshShareOfShared: shared.length ? sectionalMeshes.length / shared.length : 0,
+    sectionalMeshGapThreshold,
     medianSharedVerticalGap: medianGap,
     groundTopMedian: quantile(groundTops, 0.5),
     groundTopP90: quantile(groundTops, 0.9),
@@ -139,6 +153,7 @@ function analyzeMacroForm(payload) {
     ground: [...ground.values()],
     hanging: [...hanging.values()],
     interlocks,
+    sectionalMeshes,
     vertical,
   };
 }
@@ -320,7 +335,7 @@ function lensEvidence(summary) {
   const stairExpressionShare = stair.explicitTopologyVariantCount >= 3 ? stair.dominantTopologyVariantShare : stair.dominantTopologyShare;
   return {
     F01: { value: summary.transfers.demands, compact: `${summary.transfers.demands} demands`, label: `${summary.transfers.demands} transfer demands`, level: summary.buildFailure?.code === 'JWEB_TOWER_TRANSFER_UNREALIZED' ? 3 : 0 },
-    F02: { value: macro.interlockShareOfShared, compact: `${pct(macro.interlockShareOfShared)} interlock`, label: `${macro.interlockCells}/${macro.sharedCells} shared plan cells vertically interlock`, level: macro.sharedCells && macro.interlockShareOfShared < 0.25 ? 2 : macro.sharedCells && macro.interlockShareOfShared < 0.55 ? 1 : 0 },
+    F02: { value: macro.sectionalMeshShareOfShared, compact: `${pct(macro.sectionalMeshShareOfShared)} mesh`, label: `${macro.sectionalMeshCells}/${macro.sharedCells} shared plan cells mesh within ${fixed(macro.sectionalMeshGapThreshold, 1)}m safe section band`, level: macro.sharedCells && macro.sectionalMeshShareOfShared < 0.25 ? 2 : macro.sharedCells && macro.sectionalMeshShareOfShared < 0.55 ? 1 : 0 },
     F03: { value: macro.unionOccupancy, compact: `${pct(macro.unionOccupancy)} occupied`, label: `${pct(macro.unionOccupancy)} module union occupancy`, level: macro.unionOccupancy >= 0.78 ? 2 : macro.unionOccupancy >= 0.65 ? 1 : 0 },
     F04: { value: bridge.suspensionOverlayConflicts, compact: `${bridge.suspensionOverlayConflicts} conflicts`, label: `${bridge.suspensionOverlayConflicts} non-suspension families carrying suspension grammar`, level: bridge.suspensionOverlayConflicts ? 2 : 0 },
     F05: { value: bridge.stackedLargeSystems, compact: `${bridge.stackedLargeSystems} triple`, label: `${bridge.stackedLargeSystems} bridges with 3 large grammar layers`, level: bridge.stackedLargeSystems ? 2 : 0 },
@@ -396,6 +411,8 @@ export function buildSweepAnalysisR2(chunks, failures = []) {
       unionOccupancyMedian: quantile(macroValues.map(v => v.unionOccupancy), 0.5),
       unionOccupancyP90: quantile(macroValues.map(v => v.unionOccupancy), 0.9),
       interlockShareMedian: quantile(macroValues.filter(v => v.sharedCells).map(v => v.interlockShareOfShared), 0.5),
+      sectionalMeshShareMedian: quantile(macroValues.filter(v => v.sharedCells).map(v => v.sectionalMeshShareOfShared), 0.5),
+      sectionalMeshGapThresholdMedian: quantile(macroValues.map(v => v.sectionalMeshGapThreshold).filter(Number.isFinite), 0.5),
       medianSharedGapMedian: quantile(macroValues.map(v => v.medianSharedVerticalGap).filter(Number.isFinite), 0.5),
       emptyCellsMedian: quantile(macroValues.map(v => v.emptyCells), 0.5),
     },
@@ -450,7 +467,7 @@ export function renderMacroAnatomySvg(summary, { width = 1500, height = 760 } = 
   const grids = [
     { x: 55, title: 'GROUND MODULES', rows: m.ground, fill: '#52df9b' },
     { x: 390, title: 'HANGING MODULES', rows: m.hanging, fill: '#63b5ff' },
-    { x: 725, title: 'COMBINED / INTERLOCK', rows: null, fill: '#fff' },
+    { x: 725, title: 'COMBINED / SECTION MESH', rows: null, fill: '#fff' },
   ];
   const gMap = new Map(m.ground.map(r => [r.key, r])), hMap = new Map(m.hanging.map(r => [r.key, r]));
   for (const grid of grids) {
@@ -462,12 +479,13 @@ export function renderMacroAnatomySvg(summary, { width = 1500, height = 760 } = 
       for (const key of new Set([...gMap.keys(), ...hMap.keys()])) {
         const [col, row] = key.split(',').map(Number); if (!(col >= 0 && col < 9 && row >= 0 && row < 9)) continue;
         const g = gMap.get(key), h = hMap.get(key);
-        const fill = g && h ? (g.y1 >= h.y0 - 0.2 ? '#ff5b78' : '#d58bff') : g ? '#52df9b' : '#63b5ff';
+        const gap = g && h ? h.y0 - g.y1 : Infinity;
+        const fill = g && h ? (gap <= 0.2 ? '#ff5b78' : gap <= m.sectionalMeshGapThreshold ? '#ffbf5f' : '#d58bff') : g ? '#52df9b' : '#63b5ff';
         parts.push(rectForCell(col, row, grid.x, gridY, cell, fill, '#dbe7f8', 0.86));
       }
     }
   }
-  parts.push(`<text x="725" y="435" class="tiny muted">red = vertical interlock in same plan cell; purple = shared plan cell but separated vertically</text>`);
+  parts.push(`<text x="725" y="435" class="tiny muted">red = literal contact/overlap; amber = safe sectional mesh; purple = shared plan cell still separated</text>`);
 
   const plotX = 1065, plotY = 104, plotW = 380, plotH = 445;
   parts.push(`<text x="${plotX}" y="102" class="med">VERTICAL OCCUPANCY</text>`, `<rect x="${plotX}" y="${plotY}" width="${plotW}" height="${plotH}" fill="#0d121b" stroke="#2a3548"/>`);
@@ -489,11 +507,12 @@ export function renderMacroAnatomySvg(summary, { width = 1500, height = 760 } = 
     `ground occupied cells ${m.groundCells}/81 (${pct(m.groundOccupancy)})`,
     `hanging occupied cells ${m.hangingCells}/81 (${pct(m.hangingOccupancy)})`,
     `combined occupied cells ${m.unionCells}/81 (${pct(m.unionOccupancy)}); empty ${m.emptyCells}`,
-    `shared plan cells ${m.sharedCells}; vertical interlock ${m.interlockCells} (${pct(m.interlockShareOfShared)})`,
-    `median ground top ${m.groundTopMedian?.toFixed(2) ?? 'n/a'}m; median hanging bottom ${m.hangingBottomMedian?.toFixed(2) ?? 'n/a'}m`,
-    `median vertical gap on shared cells ${m.medianSharedVerticalGap?.toFixed(2) ?? 'n/a'}m`,
+    `shared plan cells ${m.sharedCells}; safe sectional mesh ${m.sectionalMeshCells} (${pct(m.sectionalMeshShareOfShared)})`,
+    `literal contact/overlap ${m.interlockCells} (${pct(m.interlockShareOfShared)}); mesh band <= ${fixed(m.sectionalMeshGapThreshold, 2)}m`,
+    `median ground top ${fixed(m.groundTopMedian, 2)}m; median hanging bottom ${fixed(m.hangingBottomMedian, 2)}m`,
+    `median vertical gap on shared cells ${fixed(m.medianSharedVerticalGap, 2)}m`,
   ];
-  rows.forEach((text, i) => parts.push(`<text x="55" y="${metricsY + i * 23}" class="small ${i >= 3 && m.sharedCells && m.interlockShareOfShared < .25 ? 'p1' : ''}">${esc(text)}</text>`));
+  rows.forEach((text, i) => parts.push(`<text x="55" y="${metricsY + i * 23}" class="small ${i >= 3 && m.sharedCells && m.sectionalMeshShareOfShared < .25 ? 'p1' : ''}">${esc(text)}</text>`));
   parts.push('</svg>'); return parts.join('\n');
 }
 
@@ -558,17 +577,17 @@ export function renderAuditLensSvg(summary, { width = 1500, height = 500 } = {})
 export function renderMacroFieldSvg(sweep, { width = 1650, cellW = 250, cellH = 220 } = {}) {
   const list = arr(sweep?.chunks); const cols = Math.min(6, Math.max(1, Math.ceil(Math.sqrt(list.length))));
   const rows = Math.ceil(list.length / cols); const height = 105 + rows * cellH + 30;
-  const parts = svgStart(width, height, 'Many-chunk macro field', 'Each card is the same 0→ceiling section: green grows up from ground, blue grows down from the hanging datum. Occupancy and interlock come from generator modules.');
+  const parts = svgStart(width, height, 'Many-chunk macro field', 'Each card is the same 0→ceiling section: green grows up from ground, blue grows down from the hanging datum. Section mesh means opposing masses approach within the safe story-quantized band.');
   list.forEach((s, i) => {
     const col = i % cols, row = Math.floor(i / cols), x = 28 + col * cellW, y = 88 + row * cellH;
     const m = s.macro, plotX = x + 16, plotY = y + 48, plotW = 80, plotH = 125;
     const gTop = finite(m.groundTopMedian, 0), hBottom = finite(m.hangingBottomMedian, m.ceilingY);
     const sy = yy => plotY + plotH - clamp(yy / Math.max(1,m.ceilingY),0,1)*plotH;
-    const inter = m.sharedCells ? m.interlockShareOfShared : 0;
-    const border = inter < .25 ? '#ffbf5f' : '#3c5169';
+    const mesh = m.sharedCells ? m.sectionalMeshShareOfShared : 0;
+    const border = mesh < .25 ? '#ffbf5f' : '#3c5169';
     parts.push(`<rect x="${x}" y="${y}" width="${cellW-14}" height="${cellH-16}" rx="9" fill="#0e141e" stroke="${border}"/>`, `<text x="${x+14}" y="${y+25}" class="med">${esc(s.chunk.key)}</text>`, `<rect x="${plotX}" y="${plotY}" width="${plotW}" height="${plotH}" fill="#080b10" stroke="#263347"/>`, `<rect x="${plotX+8}" y="${sy(gTop)}" width="${plotW-16}" height="${plotY+plotH-sy(gTop)}" fill="#52df9b" opacity=".72"/>`, `<rect x="${plotX+8}" y="${plotY}" width="${plotW-16}" height="${sy(hBottom)-plotY}" fill="#63b5ff" opacity=".72"/>`, `<line x1="${plotX}" y1="${plotY}" x2="${plotX+plotW}" y2="${plotY}" stroke="#fff" opacity=".5"/>`);
     const tx = x + 112;
-    parts.push(`<text x="${tx}" y="${y+58}" class="small">union ${pct(m.unionOccupancy)}</text>`, `<text x="${tx}" y="${y+82}" class="small">shared ${m.sharedCells}/81</text>`, `<text x="${tx}" y="${y+106}" class="small ${inter < .25 && m.sharedCells ? 'p1':''}">interlock ${pct(inter)}</text>`, `<text x="${tx}" y="${y+130}" class="small">bridges ${s.bridgeGrammar.count}</text>`, `<text x="${tx}" y="${y+154}" class="small ${s.bridgeGrammar.suspensionOverlayConflicts ? 'p1':''}">F04 ${s.bridgeGrammar.suspensionOverlayConflicts}</text>`, `<text x="${tx}" y="${y+178}" class="small">stairs ${s.stairRhythm.count}</text>`);
+    parts.push(`<text x="${tx}" y="${y+58}" class="small">union ${pct(m.unionOccupancy)}</text>`, `<text x="${tx}" y="${y+82}" class="small">shared ${m.sharedCells}/81</text>`, `<text x="${tx}" y="${y+106}" class="small ${mesh < .25 && m.sharedCells ? 'p1':''}">section mesh ${pct(mesh)}</text>`, `<text x="${tx}" y="${y+130}" class="small">bridges ${s.bridgeGrammar.count}</text>`, `<text x="${tx}" y="${y+154}" class="small ${s.bridgeGrammar.suspensionOverlayConflicts ? 'p1':''}">F04 ${s.bridgeGrammar.suspensionOverlayConflicts}</text>`, `<text x="${tx}" y="${y+178}" class="small">stairs ${s.stairRhythm.count}</text>`);
   });
   parts.push('</svg>'); return parts.join('\n');
 }
@@ -578,7 +597,7 @@ export function renderModuleAtlasSvg(sweep, { width = 1600 } = {}) {
   const chunks = arr(sweep?.chunks);
   const cols = 6, cardW = 250, cardH = 182, cell = 11;
   const height = 92 + Math.ceil(Math.max(1, chunks.length) / cols) * cardH;
-  const parts = svgStart(width, height, 'Many-chunk module figure-ground atlas', 'Every mini-plan is the generator’s own 9×9 module footprint. Green=ground only, blue=hanging only, purple=same plan cell but vertically separated, red=actual vertical interlock.');
+  const parts = svgStart(width, height, 'Many-chunk module figure-ground atlas', 'Every mini-plan is the generator’s own 9×9 module footprint. Green=ground, blue=hanging, purple=shared but separated, amber=safe sectional mesh, red=literal contact/overlap.');
   chunks.forEach((summary, i) => {
     const col = i % cols, row = Math.floor(i / cols), x = 24 + col * cardW, y = 78 + row * cardH;
     const g = new Map(arr(summary.macro?.ground).map(v => [v.key, v]));
@@ -588,12 +607,12 @@ export function renderModuleAtlasSvg(sweep, { width = 1600 } = {}) {
     for(let rr=0;rr<9;rr++) for(let cc=0;cc<9;cc++) parts.push(rectForCell(cc,rr,gx,gy,cell,'#111925','#1d2938'));
     for(const key of new Set([...g.keys(),...h.keys()])){
       const [cc,rr]=key.split(',').map(Number); if(!(cc>=0&&cc<9&&rr>=0&&rr<9)) continue;
-      const gv=g.get(key), hv=h.get(key); const inter=gv&&hv&&gv.y1>=hv.y0-0.2;
-      const fill=gv&&hv?(inter?'#ff5b78':'#b768e5'):gv?'#52df9b':'#63b5ff';
+      const gv=g.get(key), hv=h.get(key); const gap=gv&&hv?hv.y0-gv.y1:Infinity;
+      const fill=gv&&hv?(gap<=0.2?'#ff5b78':gap<=summary.macro.sectionalMeshGapThreshold?'#ffbf5f':'#b768e5'):gv?'#52df9b':'#63b5ff';
       parts.push(rectForCell(cc,rr,gx,gy,cell,fill,'#d5dfef',0.9));
     }
     const tx=x+118;
-    parts.push(`<text x="${tx}" y="${y+48}" class="small">union ${pct(summary.macro?.unionOccupancy)}</text>`, `<text x="${tx}" y="${y+69}" class="small">shared ${summary.macro?.sharedCells ?? 0}/81</text>`, `<text x="${tx}" y="${y+90}" class="small ${summary.macro?.sharedCells && summary.macro?.interlockShareOfShared < .25 ? 'p1':''}">interlock ${pct(summary.macro?.interlockShareOfShared)}</text>`, `<text x="${tx}" y="${y+111}" class="tiny muted">median gap</text>`, `<text x="${tx}" y="${y+129}" class="small">${finite(summary.macro?.medianSharedVerticalGap,0).toFixed(1)}m</text>`);
+    parts.push(`<text x="${tx}" y="${y+48}" class="small">union ${pct(summary.macro?.unionOccupancy)}</text>`, `<text x="${tx}" y="${y+69}" class="small">shared ${summary.macro?.sharedCells ?? 0}/81</text>`, `<text x="${tx}" y="${y+90}" class="small ${summary.macro?.sharedCells && summary.macro?.sectionalMeshShareOfShared < .25 ? 'p1':''}">mesh ${pct(summary.macro?.sectionalMeshShareOfShared)}</text>`, `<text x="${tx}" y="${y+111}" class="tiny muted">median gap</text>`, `<text x="${tx}" y="${y+129}" class="small">${finite(summary.macro?.medianSharedVerticalGap,0).toFixed(1)}m</text>`);
   });
   parts.push('</svg>'); return parts.join('\n');
 }
@@ -629,7 +648,7 @@ export function buildTriageTargets(sweep, limit = 8) {
   const top=(rows,score,reason)=>[...rows].sort((a,b)=>score(b)-score(a)).slice(0,limit).map(item=>({chunkKey:item.chunk.key,x:item.chunk.x,z:item.chunk.z,score:score(item),reason:reason(item)}));
   return {
     F01: failures.filter(f=>f.code==='JWEB_TOWER_TRANSFER_UNREALIZED').slice(0,limit).map(f=>({chunkKey:f.chunkKey,x:f.x,z:f.z,score:3,reason:'hard transfer build failure'})),
-    F02: top(chunks,s=>(s.auditLenses?.F02?.level??0)*1e6+(s.macro?.sharedCells??0)*1e3+finite(s.macro?.medianSharedVerticalGap,0),s=>`${s.macro.sharedCells} shared cells · ${finite(s.macro.medianSharedVerticalGap,0).toFixed(1)}m median gap`),
+    F02: top(chunks,s=>(s.auditLenses?.F02?.level??0)*1e6+(s.macro?.sharedCells??0)*1e3+finite(s.macro?.medianSharedVerticalGap,0),s=>`${s.macro.sectionalMeshCells}/${s.macro.sharedCells} safe-mesh cells · ${finite(s.macro.medianSharedVerticalGap,0).toFixed(1)}m median gap`),
     F03: top(chunks,s=>finite(s.macro?.unionOccupancy,0),s=>`${pct(s.macro.unionOccupancy)} module occupancy`),
     F04: top(chunks,s=>finite(s.bridgeGrammar?.suspensionOverlayConflicts,0),s=>`${s.bridgeGrammar.suspensionOverlayConflicts} family/grammar conflicts`),
     F05: top(chunks,s=>finite(s.bridgeGrammar?.stackedLargeSystems,0),s=>`${s.bridgeGrammar.stackedLargeSystems} triple grammar stacks`),
@@ -698,20 +717,20 @@ export function renderChunkIndexHtmlR2(summary) {
 
 export function renderSweepIndexHtmlR2(sweep, { title = 'JWEB System Observatory R2' } = {}) {
   const ranked = [...arr(sweep?.chunks)].sort((a,b)=>((b.auditLenses?.F04?.level??0)+(b.auditLenses?.F05?.level??0)+(b.auditLenses?.F02?.level??0))-((a.auditLenses?.F04?.level??0)+(a.auditLenses?.F05?.level??0)+(a.auditLenses?.F02?.level??0)) || b.attention-a.attention);
-  const rows = ranked.map(s=>`<tr><td><a href="chunks/${esc(s.chunk.key)}/index.html">${esc(s.chunk.key)}</a></td><td>${pct(s.macro.unionOccupancy)}</td><td>${pct(s.macro.interlockShareOfShared)}</td><td>${s.bridgeGrammar.count}</td><td>${s.bridgeGrammar.suspensionOverlayConflicts}</td><td>${s.bridgeGrammar.stackedLargeSystems}</td><td>${s.stairRhythm.count}</td><td>${pct(s.stairRhythm.dominantTopologyShare)}</td><td>${s.transfers.demands}</td></tr>`).join('\n');
+  const rows = ranked.map(s=>`<tr><td><a href="chunks/${esc(s.chunk.key)}/index.html">${esc(s.chunk.key)}</a></td><td>${pct(s.macro.unionOccupancy)}</td><td>${pct(s.macro.sectionalMeshShareOfShared)}</td><td>${s.bridgeGrammar.count}</td><td>${s.bridgeGrammar.suspensionOverlayConflicts}</td><td>${s.bridgeGrammar.stackedLargeSystems}</td><td>${s.stairRhythm.count}</td><td>${pct(s.stairRhythm.dominantTopologyShare)}</td><td>${s.transfers.demands}</td></tr>`).join('\n');
   const failures = arr(sweep.failures).map(f=>`<tr><td>${esc(f.chunkKey)}</td><td>${esc(f.code)}</td><td>${esc(f.message)}</td></tr>`).join('\n');
-  return `<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)}</title><style>:root{color-scheme:dark}body{margin:0;background:#080b10;color:#eef2fb;font:14px ui-monospace,SFMono-Regular,Consolas,monospace}main{max-width:1750px;margin:auto;padding:28px}a{color:#78bfff}.muted{color:#8d98aa}.cards{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:10px}.card{background:#101722;border:1px solid #29364a;border-radius:9px;padding:14px}.big{font-size:26px;font-weight:800}img{width:100%;border:1px solid #29364a;border-radius:10px;background:#080b10;margin:10px 0 30px}table{border-collapse:collapse;width:100%;margin:12px 0 30px}th,td{padding:8px;border-bottom:1px solid #222c3c;text-align:right}th:first-child,td:first-child{text-align:left}@media(max-width:1050px){.cards{grid-template-columns:repeat(2,1fr)}}</style></head><body><main><h1>${esc(title)}</h1><p class="muted">A general picture first: macro figure-ground and section, known audit lenses, repeated system grammars, then per-chunk exact semantic topology.</p><div class="cards"><div class="card"><div class="big">${sweep.totals.chunks}</div>built chunks</div><div class="card"><div class="big">${sweep.failures.length}</div>build failures</div><div class="card"><div class="big">${pct(sweep.macro.unionOccupancyMedian)}</div>median module union</div><div class="card"><div class="big">${pct(sweep.macro.interlockShareMedian)}</div>median vertical interlock</div><div class="card"><div class="big">${sweep.bridgeGrammar.suspensionOverlayConflicts}</div>F04 bridge conflicts</div><div class="card"><div class="big">${sweep.bridgeGrammar.stackedLargeSystems}</div>F05 triple stacks</div></div><h2>1. General runtime picture</h2><img src="runtime-pipeline.svg"><h2>2. Vertical macro shape across chunks</h2><img src="macro-field.svg"><h2>3. Figure-ground atlas across chunks</h2><img src="module-atlas.svg"><h2>4. Known-issue lenses</h2><img src="audit-lens-matrix.svg"><h2>5. Stair contract / repetition</h2><img src="stair-contract-matrix.svg"><h2>6. What systems are actually being emitted?</h2><img src="system-fingerprint.svg"><h2>7. Where in code do those systems live?</h2><img src="code-issue-map.svg"><h2>8. Where should the exact harness look next?</h2><img src="triage-target-deck.svg"><h2>Chunks</h2><table><thead><tr><th>chunk</th><th>module union</th><th>interlock</th><th>bridges</th><th>F04</th><th>F05</th><th>stairs</th><th>dominant stair</th><th>transfer demands</th></tr></thead><tbody>${rows}</tbody></table>${failures?`<h2>Build failures</h2><table><thead><tr><th>chunk</th><th>code</th><th>message</th></tr></thead><tbody>${failures}</tbody></table>`:''}<p><a href="sweep.json">raw sweep JSON</a> · <a href="SYSTEM-FINDINGS.md">generated findings</a> · <a href="code-issue-scan.json">code issue scan</a></p></main></body></html>`;
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)}</title><style>:root{color-scheme:dark}body{margin:0;background:#080b10;color:#eef2fb;font:14px ui-monospace,SFMono-Regular,Consolas,monospace}main{max-width:1750px;margin:auto;padding:28px}a{color:#78bfff}.muted{color:#8d98aa}.cards{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:10px}.card{background:#101722;border:1px solid #29364a;border-radius:9px;padding:14px}.big{font-size:26px;font-weight:800}img{width:100%;border:1px solid #29364a;border-radius:10px;background:#080b10;margin:10px 0 30px}table{border-collapse:collapse;width:100%;margin:12px 0 30px}th,td{padding:8px;border-bottom:1px solid #222c3c;text-align:right}th:first-child,td:first-child{text-align:left}@media(max-width:1050px){.cards{grid-template-columns:repeat(2,1fr)}}</style></head><body><main><h1>${esc(title)}</h1><p class="muted">A general picture first: macro figure-ground and section, known audit lenses, repeated system grammars, then per-chunk exact semantic topology.</p><div class="cards"><div class="card"><div class="big">${sweep.totals.chunks}</div>built chunks</div><div class="card"><div class="big">${sweep.failures.length}</div>build failures</div><div class="card"><div class="big">${pct(sweep.macro.unionOccupancyMedian)}</div>median module union</div><div class="card"><div class="big">${pct(sweep.macro.sectionalMeshShareMedian)}</div>median section mesh</div><div class="card"><div class="big">${sweep.bridgeGrammar.suspensionOverlayConflicts}</div>F04 bridge conflicts</div><div class="card"><div class="big">${sweep.bridgeGrammar.stackedLargeSystems}</div>F05 triple stacks</div></div><h2>1. General runtime picture</h2><img src="runtime-pipeline.svg"><h2>2. Vertical macro shape across chunks</h2><img src="macro-field.svg"><h2>3. Figure-ground atlas across chunks</h2><img src="module-atlas.svg"><h2>4. Known-issue lenses</h2><img src="audit-lens-matrix.svg"><h2>5. Stair contract / repetition</h2><img src="stair-contract-matrix.svg"><h2>6. What systems are actually being emitted?</h2><img src="system-fingerprint.svg"><h2>7. Where in code do those systems live?</h2><img src="code-issue-map.svg"><h2>8. Where should the exact harness look next?</h2><img src="triage-target-deck.svg"><h2>Chunks</h2><table><thead><tr><th>chunk</th><th>module union</th><th>section mesh</th><th>bridges</th><th>F04</th><th>F05</th><th>stairs</th><th>dominant stair</th><th>transfer demands</th></tr></thead><tbody>${rows}</tbody></table>${failures?`<h2>Build failures</h2><table><thead><tr><th>chunk</th><th>code</th><th>message</th></tr></thead><tbody>${failures}</tbody></table>`:''}<p><a href="sweep.json">raw sweep JSON</a> · <a href="SYSTEM-FINDINGS.md">generated findings</a> · <a href="code-issue-scan.json">code issue scan</a></p></main></body></html>`;
 }
 
 export function renderFindingsMarkdownR2(sweep) {
-  const lines = ['# JWEB System Observatory R2 — generated sweep findings','', '> This is a triage report. It deliberately distinguishes measured runtime/code facts from aesthetic hypotheses.','', `Built chunks: **${sweep.totals.chunks}**`, `Build failures: **${sweep.failures.length}** (${sweep.transferFailures} tower-transfer unrealized)`, `Median combined 9×9 module occupancy: **${pct(sweep.macro.unionOccupancyMedian)}**`, `Median vertical interlock among shared ground/hanging plan cells: **${pct(sweep.macro.interlockShareMedian)}**`, `Bridge architecture records: **${sweep.bridgeGrammar.total}**`, `Non-suspension bridge families carrying suspended-catenary grammar: **${sweep.bridgeGrammar.suspensionOverlayConflicts}**`, `Bridges carrying family + variant + support systems: **${sweep.bridgeGrammar.stackedLargeSystems}**`, `Exact compound-stair ownership records: **${sweep.stairRhythm.total}**`, `Topology-tagged stair owners: **${sweep.stairRhythm.explicitTopologyCount}**; missing topology metadata: **${sweep.stairRhythm.missingTopologyMetadata}**`, `District thoroughfare stairs: **${sweep.stairRhythm.thoroughfareCount}** spanning **${sweep.stairRhythm.thoroughfareStories}** owned stories; median/max clear width **${sweep.stairRhythm.thoroughfareWidthMedian.toFixed(2)}m / ${sweep.stairRhythm.thoroughfareWidthMax.toFixed(2)}m**`, `Stair guard visual primitives: **${sweep.stairRhythm.stairGuardPrimitiveCount}** across **${sweep.stairRhythm.ownedStories}** owned stories (**${sweep.stairRhythm.guardPrimitivesPerOwnedStory.toFixed(1)}/story**)`, `Semantic spaces/connectors/portals emitted: **${sweep.runtimeCounts?.spaces ?? 0} / ${sweep.runtimeCounts?.connectors ?? 0} / ${sweep.runtimeCounts?.portals ?? 0}**`, ''];
+  const lines = ['# JWEB System Observatory R2 — generated sweep findings','', '> This is a triage report. It deliberately distinguishes measured runtime/code facts from aesthetic hypotheses.','', `Built chunks: **${sweep.totals.chunks}**`, `Build failures: **${sweep.failures.length}** (${sweep.transferFailures} tower-transfer unrealized)`, `Median combined 9×9 module occupancy: **${pct(sweep.macro.unionOccupancyMedian)}**`, `Median safe sectional mesh among shared ground/hanging plan cells: **${pct(sweep.macro.sectionalMeshShareMedian)}**`, `Bridge architecture records: **${sweep.bridgeGrammar.total}**`, `Non-suspension bridge families carrying suspended-catenary grammar: **${sweep.bridgeGrammar.suspensionOverlayConflicts}**`, `Bridges carrying family + variant + support systems: **${sweep.bridgeGrammar.stackedLargeSystems}**`, `Exact compound-stair ownership records: **${sweep.stairRhythm.total}**`, `Topology-tagged stair owners: **${sweep.stairRhythm.explicitTopologyCount}**; missing topology metadata: **${sweep.stairRhythm.missingTopologyMetadata}**`, `District thoroughfare stairs: **${sweep.stairRhythm.thoroughfareCount}** spanning **${sweep.stairRhythm.thoroughfareStories}** owned stories; median/max clear width **${fixed(sweep.stairRhythm.thoroughfareWidthMedian, 2)}m / ${fixed(sweep.stairRhythm.thoroughfareWidthMax, 2)}m**`, `Stair guard visual primitives: **${sweep.stairRhythm.stairGuardPrimitiveCount}** across **${sweep.stairRhythm.ownedStories}** owned stories (**${sweep.stairRhythm.guardPrimitivesPerOwnedStory.toFixed(1)}/story**)`, `Semantic spaces/connectors/portals emitted: **${sweep.runtimeCounts?.spaces ?? 0} / ${sweep.runtimeCounts?.connectors ?? 0} / ${sweep.runtimeCounts?.portals ?? 0}**`, ''];
   lines.push('## Audit lens incidence','');
   for (const lens of AUDIT_LENSES) lines.push(`- **${lens.id} ${lens.short}:** ${sweep.lensTotals[lens.id]?.chunksFlagged ?? 0} chunks/failures flagged by this diagnostic lens.`);
   lines.push('', '## Bridge family census',''); for (const [k,v] of Object.entries(sweep.bridgeGrammar.families).sort((a,b)=>b[1]-a[1])) lines.push(`- ${k}: ${v}`);
   lines.push('', '## Stair topology census',''); for (const [k,v] of Object.entries(sweep.stairRhythm.topologies).sort((a,b)=>b[1]-a[1])) lines.push(`- ${k}: ${v}`);
   lines.push('', '## Most useful next targets','');
   const ranked=[...sweep.chunks].sort((a,b)=>((b.auditLenses.F04.level+b.auditLenses.F05.level+b.auditLenses.F02.level)-(a.auditLenses.F04.level+a.auditLenses.F05.level+a.auditLenses.F02.level))||b.attention-a.attention).slice(0,12);
-  for(const s of ranked) lines.push(`- **${s.chunk.key}** — module union ${pct(s.macro.unionOccupancy)}, interlock ${pct(s.macro.interlockShareOfShared)}, F04=${s.bridgeGrammar.suspensionOverlayConflicts}, F05=${s.bridgeGrammar.stackedLargeSystems}, stair dominant=${pct(s.stairRhythm.dominantTopologyShare)}.`);
+  for(const s of ranked) lines.push(`- **${s.chunk.key}** — module union ${pct(s.macro.unionOccupancy)}, section mesh ${pct(s.macro.sectionalMeshShareOfShared)}, F04=${s.bridgeGrammar.suspensionOverlayConflicts}, F05=${s.bridgeGrammar.stackedLargeSystems}, stair dominant=${pct(s.stairRhythm.dominantTopologyShare)}.`);
   for(const f of sweep.failures.slice(0,12)) lines.push(`- **${f.chunkKey}** — BUILD FAILURE ${f.code}: ${f.message}`);
   return lines.join('\n')+'\n';
 }

@@ -153,7 +153,7 @@ for(const {x,z} of coords){
     fs.writeFileSync(path.join(dir,'building-stacks.svg'),renderBuildingStacksSvg(summary));
     fs.writeFileSync(path.join(dir,'attention-ledger.svg'),renderAttentionLedgerSvg(summary));
     fs.writeFileSync(path.join(dir,'index.html'),renderChunkIndexHtmlR2(summary));
-    process.stdout.write(`chunk ${chunk.key} macro=${(summary.macro.unionOccupancy*100).toFixed(0)}% interlock=${(summary.macro.interlockShareOfShared*100).toFixed(0)}% F04=${summary.bridgeGrammar.suspensionOverlayConflicts} F05=${summary.bridgeGrammar.stackedLargeSystems}\n`);
+    process.stdout.write(`chunk ${chunk.key} macro=${(summary.macro.unionOccupancy*100).toFixed(0)}% mesh=${(summary.macro.sectionalMeshShareOfShared*100).toFixed(0)}% F04=${summary.bridgeGrammar.suspensionOverlayConflicts} F05=${summary.bridgeGrammar.stackedLargeSystems}\n`);
   }catch(error){
     const failure=classifyBuildFailure(error,chunk); failures.push(failure); fs.mkdirSync(dir,{recursive:true}); fs.writeFileSync(failurePath,JSON.stringify(failure,null,2));
     process.stderr.write(`chunk ${chunk.key} FAILED ${failure.code}: ${failure.message}\n`);

@@ -145,7 +145,17 @@ function openBarVisuals({ axis, from, to, fixedCoord, y0, y1, profile }) {
     segmentBox3D({ p0: mid0, p1: mid1, crossY: member, crossNormal: member, role: 'mid-rail', material: profile.material }),
   );
   const run = Math.abs(to - from);
-  const sections = Math.max(1, Math.ceil(run / profile.postSpacing));
+  // postSpacing is an architectural rhythm target, not a hard maximum bay.
+  // Ceil-dividing every run made a 1.5m guard with a 1.42m target suddenly gain
+  // a midpoint post and read denser than a much longer neighboring span. Choose
+  // the nearest whole-bay rhythm, then enforce a generous upper bound so long
+  // spans never become visually or structurally implausible. Collision remains
+  // the same continuous guard span below this visual planner.
+  const targetSpacing = Math.max(EPS, profile.postSpacing);
+  const maxVisualBay = targetSpacing * 1.28;
+  const rhythmicSections = Math.max(1, Math.round(run / targetSpacing));
+  const limitSections = Math.max(1, Math.ceil(run / maxVisualBay));
+  const sections = Math.max(rhythmicSections, limitSections);
   for (let i = 0; i <= sections; i++) {
     const t = i / sections;
     const along = from + (to - from) * t;

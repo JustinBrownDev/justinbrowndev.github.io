@@ -23,6 +23,54 @@ function patchArea(patch) {
     return p ? p.halfX * 2 * p.halfZ * 2 : 0;
 }
 
+// A support patch is only "this room's floor" where it actually overlaps the
+// room's own module bounds. Neighboring bays/modules routinely publish their
+// own full-size floor slab, and that slab can graze this module's bounds by
+// a sliver without belonging to it at all — counting the slab's whole area
+// (or its whole span) would silently borrow floor from the room next door.
+function clipPatchToBounds(patch, bounds) {
+    const minX = Math.max(patch.minX, bounds.minX);
+    const maxX = Math.min(patch.maxX, bounds.maxX);
+    const minZ = Math.max(patch.minZ, bounds.minZ);
+    const maxZ = Math.min(patch.maxZ, bounds.maxZ);
+    if (!(maxX > minX) || !(maxZ > minZ)) return null;
+    return {
+        ...patch,
+        x: (minX + maxX) / 2,
+        z: (minZ + maxZ) / 2,
+        halfX: (maxX - minX) / 2,
+        halfZ: (maxZ - minZ) / 2,
+        minX, maxX, minZ, maxZ,
+    };
+}
+
+// Sum of each clipped patch's own area double-counts wherever two patches
+// (e.g. a floor slab and a mezzanine lip) legitimately overlap each other.
+// Coordinate-compress the small per-module patch set and sum only covered
+// cells so overlapping patches contribute their union, not their sum.
+function unionAreaOfRects(rects) {
+    if (!rects.length) return 0;
+    if (rects.length === 1) return Math.max(0, rects[0].maxX - rects[0].minX) * Math.max(0, rects[0].maxZ - rects[0].minZ);
+    const xs = [...new Set(rects.flatMap(r => [r.minX, r.maxX]))].sort((a, b) => a - b);
+    const zs = [...new Set(rects.flatMap(r => [r.minZ, r.maxZ]))].sort((a, b) => a - b);
+    let area = 0;
+    for (let i = 0; i < xs.length - 1; i++) {
+        const x0 = xs[i], x1 = xs[i + 1];
+        const dx = x1 - x0;
+        if (dx <= 1e-9) continue;
+        const midX = (x0 + x1) / 2;
+        for (let j = 0; j < zs.length - 1; j++) {
+            const z0 = zs[j], z1 = zs[j + 1];
+            const dz = z1 - z0;
+            if (dz <= 1e-9) continue;
+            const midZ = (z0 + z1) / 2;
+            const covered = rects.some(r => midX > r.minX && midX < r.maxX && midZ > r.minZ && midZ < r.maxZ);
+            if (covered) area += dx * dz;
+        }
+    }
+    return area;
+}
+
 function rectContainsPoint(rect, x, z, inset = 0) {
     const r = patchBounds(rect) ?? reservationBounds(rect);
     if (!r) return false;
@@ -326,7 +374,9 @@ export function collectSpawnFabricSpaces(fabricPayloads) {
                         .filter(platform => supportKinds.has(platform?.supportKind) && Math.abs(finite(platform.y) - surfaceY) <= 0.16)
                         .map(patchBounds)
                         .filter(Boolean)
-                        .filter(patch => boundsOverlap(patch, bounds, 0.08));
+                        .filter(patch => boundsOverlap(patch, bounds, 0.08))
+                        .map(patch => clipPatchToBounds(patch, bounds))
+                        .filter(Boolean);
                     if (!supportPatches.length) continue;
 
                     const overheadPatches = [
@@ -365,7 +415,7 @@ export function collectSpawnFabricSpaces(fabricPayloads) {
                         && finite(facade?.yMax, Infinity) >= surfaceY + 0.2);
                     const siteId = entity.semanticSiteKey ?? entity.siteId ?? String(payloadKey);
                     const entityId = entity.id ?? payload.ownerId ?? String(payloadKey);
-                    const supportAreaM2 = supportPatches.reduce((sum, patch) => sum + patchArea(patch), 0);
+                    const supportAreaM2 = unionAreaOfRects(supportPatches);
                     const largestSupportPatchAreaM2 = supportPatches.reduce((best, patch) => Math.max(best, patchArea(patch)), 0);
                     const storefrontLike = relevantFacades.length > 0 && frontageLikeEntity(entity);
                     const maxSupportSpanM = supportPatches.reduce((best, patch) => Math.max(best, patch.halfX * 2, patch.halfZ * 2), 0);

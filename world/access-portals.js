@@ -88,6 +88,13 @@ function inferredPortalFamily(connector) {
         .map(text).join(' ');
 
     if (kind === 'door') {
+        // An ordinary room-to-room door inside a building (building-plan-authority's
+        // dominant door source, visualRole 'interior-doorway') is not a building
+        // entrance at all - it has no facade-side aperture to bind to, and it must
+        // never be offered up by accessAnchorsForBuildingPortals as a real street
+        // access point just because it fell through to the generic 'entrance'
+        // default below. Keep it a plain, clearly-non-entrance family instead.
+        if (words.includes('interior-doorway')) return 'interior-doorway';
         if (words.includes('loading')) return 'loading-service-access';
         if (words.includes('service') || words.includes('maintenance') || words.includes('utility')) return 'service-entrance';
         if (words.includes('storefront') || words.includes('shop') || words.includes('retail')) return 'storefront-entrance';

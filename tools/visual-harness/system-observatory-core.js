@@ -96,7 +96,19 @@ function knownRefDiagnostics(spatialTopology, worldCirculation) {
   }
   const orphanReservations = reservations.filter(reservation => !reservation?.connectorId);
   const orphanApertures = apertures.filter(aperture => !aperture?.connectorId || !aperture?.portalId);
-  const unboundPortalApertures = portals.filter(portal => portal?.facadeEndpoint && portal?.apertureGeometry && !aperturePortalIds.has(String(portal.id)));
+  // Every door - interior or exterior - carries a facadeEndpoint/apertureGeometry
+  // shape (access-portals.js computes both from generic door threshold geometry,
+  // regardless of whether the door is actually on the building envelope). Binding
+  // to a real facade aperture is only a meaningful expectation for portal families
+  // that are actually supposed to sit on the facade; an ordinary interior-doorway
+  // has no facade to cut a hole in, so excluding it here is what makes this a
+  // real "binding gap" signal instead of counting every interior door in the city.
+  const FACADE_ELIGIBLE_PORTAL_FAMILIES = new Set([
+    'main-entrance', 'secondary-entrance', 'storefront-entrance',
+    'service-entrance', 'loading-service-access', 'roof-access',
+  ]);
+  const unboundPortalApertures = portals.filter(portal => portal?.facadeEndpoint && portal?.apertureGeometry
+    && FACADE_ELIGIBLE_PORTAL_FAMILIES.has(portal?.family) && !aperturePortalIds.has(String(portal.id)));
   return { unresolvedConnectorRefs, unresolvedPortalRefs, promotedConnectorWorldRefs, promotedPortalWorldRefs, orphanReservations, orphanApertures, unboundPortalApertures };
 }
 

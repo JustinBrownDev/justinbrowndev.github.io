@@ -4,17 +4,17 @@ const TAU = Math.PI * 2;
 
 
 export const SPAWN_HOST_ARCHETYPES = Object.freeze({
-    'deep-backroom': Object.freeze({ id: 'deep-backroom', probability: 0.012 }),
-    'hanging-storefront': Object.freeze({ id: 'hanging-storefront', probability: 0.058 }),
-    'sheltered-roof': Object.freeze({ id: 'sheltered-roof', probability: 0.18 }),
-    'exposed-roof': Object.freeze({ id: 'exposed-roof', probability: 0.75 }),
+    'deep-backroom': Object.freeze({ id: 'deep-backroom', probability: 0.01 }),
+    'hanging-storefront': Object.freeze({ id: 'hanging-storefront', probability: 0.09 }),
+    'sheltered-roof': Object.freeze({ id: 'sheltered-roof', probability: 0.30 }),
+    'exposed-roof': Object.freeze({ id: 'exposed-roof', probability: 0.60 }),
 });
 
 export function chooseSpawnHostArchetype(selectionKey) {
     const roll = hashString32(`spawn-host-archetype:${String(selectionKey ?? 'spawn')}`) / 4294967296;
-    if (roll < 0.012) return 'deep-backroom';
-    if (roll < 0.070) return 'hanging-storefront';
-    if (roll < 0.250) return 'sheltered-roof';
+    if (roll < 0.010) return 'deep-backroom';
+    if (roll < 0.100) return 'hanging-storefront';
+    if (roll < 0.400) return 'sheltered-roof';
     return 'exposed-roof';
 }
 
@@ -69,10 +69,45 @@ function retailLikeEntity(entity) {
         || /retail|shop|bar|convenience|market|diner/.test(program);
 }
 
+let sessionRandomSpawnRoll = null;
+
+export function readSpawnRollSalt(search = null) {
+    let raw = null;
+    try {
+        const query = search == null ? (globalThis.location?.search ?? '') : String(search);
+        raw = new URLSearchParams(query).get('spawnRoll');
+    } catch (_) {
+        raw = null;
+    }
+    if (!raw) return '0';
+    const normalized = String(raw).trim();
+    if (!normalized) return '0';
+    if (normalized.toLowerCase() !== 'random') return normalized.slice(0, 64);
+    if (sessionRandomSpawnRoll == null) {
+        const values = new Uint32Array(1);
+        try { globalThis.crypto?.getRandomValues?.(values); }
+        catch (_) { values[0] = 0; }
+        sessionRandomSpawnRoll = values[0] || Math.floor(Math.random() * 0x100000000) >>> 0;
+    }
+    return `random:${sessionRandomSpawnRoll}`;
+}
+
 function spaceSelectionKey(locationRuntime, spaces) {
     const seed = spaces.map(space => Number(space?.chunkSeed)).find(Number.isFinite);
     const identity = locationRuntime?.location?.id ?? 'spawn';
-    return `${identity}:${Number.isFinite(seed) ? seed : (spaces[0]?.payloadKey ?? 'local')}`;
+    const rollSalt = readSpawnRollSalt();
+    return `${identity}:${Number.isFinite(seed) ? seed : (spaces[0]?.payloadKey ?? 'local')}:roll=${rollSalt}`;
+}
+
+function candidateVarietyJitter(selectionKey, candidate, hostArchetype) {
+    const spaceId = candidate?.space?.spaceId ?? candidate?.space?.payloadKey ?? 'space';
+    const x = finite(Number(candidate?.x), 0).toFixed(2);
+    const z = finite(Number(candidate?.z), 0).toFixed(2);
+    const y = finite(Number(candidate?.feetY), 0).toFixed(2);
+    const unit = hashString32(`spawn-candidate:${selectionKey}:${hostArchetype}:${spaceId}:${x}:${z}:${y}`) / 4294967296;
+    // Small enough that safety/host quality still dominate, large enough to stop
+    // near-equivalent valid spots from always collapsing to the same champion.
+    return (unit - 0.5) * 5.0;
 }
 
 function finite(value, fallback = 0) {
@@ -557,8 +592,9 @@ export function selectSpawnEnclaveCandidate({
 } = {}) {
     if (!playerPhysics || !origin || !locationRuntime?.selectionPolicy || !fabricSpaces?.length) return null;
     const policy = locationRuntime.selectionPolicy;
+    const selectionKey = spaceSelectionKey(locationRuntime, fabricSpaces);
     const desiredHostArchetype = forcedHostArchetypeForSpawnFlavor()
-        ?? chooseSpawnHostArchetype(spaceSelectionKey(locationRuntime, fabricSpaces));
+        ?? chooseSpawnHostArchetype(selectionKey);
     const structural = fabricSpaceSamples(playerPhysics, origin, policy, fabricSpaces);
     const order = HOST_FALLBACK_ORDER[desiredHostArchetype] ?? ['exposed-roof'];
 
@@ -583,7 +619,8 @@ export function selectSpawnEnclaveCandidate({
                 + nav.verticalRoutes * 3.0
                 + verticalChoiceBonus
                 + branchingBonus
-                + seclusionBonus;
+                + seclusionBonus
+                + candidateVarietyJitter(selectionKey, candidate, hostArchetype);
             const result = { ...candidate, navigation: nav, finalScore, desiredHostArchetype, hostArchetype };
             if (!best || result.finalScore > best.finalScore) best = result;
         }
@@ -598,7 +635,8 @@ export function selectSpawnEnclaveCandidate({
         return {
             ...candidate,
             navigation: nav,
-            finalScore: candidate.score + nav.successful.length * 2.2 + nav.verticalRoutes * 3,
+            finalScore: candidate.score + nav.successful.length * 2.2 + nav.verticalRoutes * 3
+                + candidateVarietyJitter(selectionKey, candidate, 'last-resort'),
             desiredHostArchetype,
             hostArchetype: candidate.space?.surfaceClass === 'roof' ? 'exposed-roof' : 'interior-fallback',
         };

@@ -9,7 +9,7 @@ const PROFILES = Object.freeze({
     height: 0.82,
     memberThickness: 0.035,
     midRailHeight: 0.45,
-    postSpacing: 1.28,
+    postSpacing: 1.55,
     collisionThickness: 0.075,
   }),
   'residential-civic-bar': Object.freeze({
@@ -19,7 +19,7 @@ const PROFILES = Object.freeze({
     height: 0.96,
     memberThickness: 0.058,
     midRailHeight: 0.53,
-    postSpacing: 0.90,
+    postSpacing: 1.42,
     collisionThickness: 0.10,
   }),
   'roof-traversal-parapet': Object.freeze({

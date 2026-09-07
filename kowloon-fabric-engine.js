@@ -103,6 +103,7 @@ import {
     kowloonCellKey,
     kowloonIntensity,
     partitionKowloonCompounds,
+    planKowloonSingletonShoulders,
     selectKowloonCourtyardCell,
 } from './world/kowloon-structure.js';
 import {
@@ -4271,6 +4272,20 @@ export function createKowloonFabricEngine({
             }
         }
 
+        // A one-cell parcel can remain an important circulation node, especially
+        // after structural fallback, but it must not read as a many-storey facade
+        // wrapped around a stair shaft. Give ordinary singleton towers deterministic
+        // upper occupied shoulders without changing parcel identity, bridge planning,
+        // preflight, or the shared RNG stream.
+        const singletonShoulderCandidates = String(structureProfile?.singularRecipe ?? '').startsWith('district-landmark:')
+            ? []
+            : planKowloonSingletonShoulders({
+                site, faces: cantileverFacePool, floorH, maxShoulders: 3,
+                blockedOpeningKeys: new Set([
+                    ...bridgeOpeningKeys, ...serviceCageOpeningKeys, ...cantileverOpeningKeys, ...entranceConnectorByKey.keys(),
+                ]),
+            });
+
         // Scaffold circulation is solved before wall publication so facade apertures,
         // connector reservations and later realization all consume the same valid route.
         // The primary stair center is still chosen later by the legacy shared RNG, so
@@ -4486,6 +4501,19 @@ export function createKowloonFabricEngine({
                     }
                 }
             }
+        }
+
+        // Exterior circulation has higher authority than the sculptural shoulder
+        // treatment.  Plan shoulders before scaffold selection so they stay pure and
+        // deterministic, but only publish them after scaffold apertures are known.
+        // This preserves the existing circulation graph and RNG stream: a singleton
+        // tower may gain occupied mass, but it can never veto its fire escape or
+        // district-thoroughfare stair in order to do so.
+        const singletonShoulderPlans = singletonShoulderCandidates.filter(shoulder =>
+            !scaffoldOpeningByKey.has(shoulder.openingKey));
+        for (const shoulder of singletonShoulderPlans) {
+            cantileverPlans.push(shoulder);
+            cantileverOpeningKeys.add(shoulder.openingKey);
         }
         yield { phase: 'compound-exterior-feature-plan', current: 0, total: modulePlans.length };
 
@@ -5077,14 +5105,17 @@ export function createKowloonFabricEngine({
                 shellPieceId: `${shellOwnerId}:wall:${wallSerial++}`,
                 shellPieceKind: 'facade-jut-wall',
                 closureForOffset: 'cantilever-room',
-                moduleKey: face.module.key, localFloor: level, side, architectureRole: role,
+                moduleKey: face.module.key, localFloor: level, side,
+                architectureRole: plan.singletonShoulder ? 'singleton-occupied-shoulder' : role,
+                singletonShoulder: plan.singletonShoulder === true,
             });
             const addClosureRecord = ({ x1, z1, x2, z2, yMin, yMax, thickness, transform, role }) => {
                 const shellPieceId = `${shellOwnerId}:closure:${closureSerial++}`;
                 const shellMeta = {
                     shellOwnerId, shellPieceId, shellPieceKind: 'facade-offset-return',
                     closureForOffset: 'cantilever-room', moduleKey: face.module.key, localFloor: level, side,
-                    architectureRole: role,
+                    architectureRole: plan.singletonShoulder ? 'singleton-occupied-shoulder' : role,
+                    singletonShoulder: plan.singletonShoulder === true,
                 };
                 wallTransform(wallList, transform.x, transform.y, transform.z, transform.sx, transform.sy, transform.sz, shellMeta);
                 physics.structuralShellClosures.push({
@@ -5418,6 +5449,8 @@ export function createKowloonFabricEngine({
             } : null,
             serviceCages,
             cantileverRooms,
+            singletonOccupiedShoulders: singletonShoulderPlans.length,
+            singletonTowerSculpture: singletonShoulderPlans.length ? 'accreted-service-spine' : null,
             mezzanines,
             interiorClutter,
             serviceCores,

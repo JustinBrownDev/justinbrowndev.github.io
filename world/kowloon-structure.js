@@ -131,6 +131,55 @@ export function partitionKowloonCompounds({
 }
 
 
+export function planKowloonSingletonShoulders({
+    site, faces = [], floorH = 3.15, blockedOpeningKeys = null, maxShoulders = 3,
+} = {}) {
+    if ((site?.cells?.length ?? 0) !== 1) return [];
+    const eligible = faces
+        .filter(face => face?.module?.floors >= 2 && face?.module?.rect && face?.dir?.key && face?.dir?.side)
+        .slice()
+        .sort((a, b) => {
+            const aSpan = (a.dir.side === 'north' || a.dir.side === 'south') ? a.module.rect.halfX * 2 : a.module.rect.halfZ * 2;
+            const bSpan = (b.dir.side === 'north' || b.dir.side === 'south') ? b.module.rect.halfX * 2 : b.module.rect.halfZ * 2;
+            return bSpan - aSpan || String(a.dir.side).localeCompare(String(b.dir.side));
+        });
+    if (!eligible.length) return [];
+    const floors = Math.max(...eligible.map(face => Math.floor(Number(face.module.floors) || 0)));
+    if (floors < 2) return [];
+    const requestedLevels = [...new Set([1, Math.max(1, Math.floor((floors - 1) * 0.5)), floors - 1])]
+        .filter(level => level >= 1 && level < floors);
+    // Caller-owned reservations are input authority, not scratch state.
+    const blocked = new Set(blockedOpeningKeys || []);
+    const plans = [];
+    for (const level of requestedLevels) {
+        let chosen = null;
+        for (let offset = 0; offset < eligible.length; offset++) {
+            const face = eligible[(plans.length + offset) % eligible.length];
+            const openingKey = `${face.module.key}:${face.dir.key}:${level}`;
+            if (blocked.has(openingKey)) continue;
+            chosen = { face, openingKey };
+            break;
+        }
+        if (!chosen) continue;
+        const { face, openingKey } = chosen;
+        const horizontal = face.dir.side === 'north' || face.dir.side === 'south';
+        const alongHalf = horizontal ? face.module.rect.halfX : face.module.rect.halfZ;
+        const acrossHalf = horizontal ? face.module.rect.halfZ : face.module.rect.halfX;
+        plans.push({
+            face, level, horizontal,
+            depth: Math.max(0.82, Math.min(1.42, acrossHalf * 0.44)),
+            width: Math.max(1.5, Math.min(alongHalf * 1.72, 3.65)),
+            roomH: Math.max(2.25, Math.min(Number(floorH) * 0.84, 2.78)),
+            openingKey,
+            singletonShoulder: true,
+            architectureRole: 'singleton-occupied-shoulder',
+        });
+        blocked.add(openingKey);
+        if (plans.length >= Math.max(1, Math.floor(Number(maxShoulders) || 1))) break;
+    }
+    return plans;
+}
+
 export function selectKowloonCourtyardCell(site, degreeOf, primary, { minCells = 5, degree = 4 } = {}) {
     if (!site?.cells?.length || site.cells.length < minCells) return null;
     for (const cell of site.cells) {

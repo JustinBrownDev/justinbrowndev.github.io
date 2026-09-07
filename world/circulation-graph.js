@@ -44,6 +44,28 @@ function connectorPairs(connector, spaceById) {
     const ids = sortedUnique(connector?.spaceIds ?? []).filter(id => spaceById.has(id));
     if (ids.length < 2) return [];
     if (ids.length === 2) return [[ids[0], ids[1]]];
+    // A connector touching 3+ spaces is usually a persistent multi-floor stair:
+    // consecutive floors are the only physically valid single hop, so a chain
+    // (not every pairwise combination) is correct there. But geometric space
+    // inference (semantic-connectors.js) also attaches a same-floor connector
+    // (e.g. an ordinary door) to a third space whenever its opening/reservation
+    // footprint merely grazes that space's bounds - a doorway jammed into a
+    // tight corner next to another room is enough to trigger this. When every
+    // touched space is on the same floor there is no "ascending" order to
+    // chain, so emit every pair: all of them are mutually reachable through
+    // that one shared opening, not just neighbors in an arbitrary tie-broken
+    // sort (which previously dropped real edges, e.g. a same-floor door
+    // between a stair core and the office floor it opens onto, whenever the
+    // opening's footprint also grazed a third room and alphabetical
+    // space-id order didn't happen to place them next to each other).
+    const floors = ids.map(id => finite(spaceById.get(id)?.floor));
+    if (floors.every(floor => floor === floors[0])) {
+        const result = [];
+        for (let i = 0; i < ids.length; i++) {
+            for (let j = i + 1; j < ids.length; j++) result.push([ids[i], ids[j]]);
+        }
+        return result;
+    }
     const ordered = [...ids].sort((a, b) => {
         const as = spaceById.get(a), bs = spaceById.get(b);
         return finite(as?.floor) - finite(bs?.floor)

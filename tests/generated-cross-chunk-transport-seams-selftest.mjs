@@ -31,8 +31,9 @@ const factory = createKowloonFabricEngine({
   worldSeed, chunkSize, landmarkSpacingChunks: 3,
 });
 
-// Match the real browser order: 0,0 itself is the authored origin shell, so the
-// first seam-capable origin payload arrives later as buildAuthoredCeilingOverlay().
+// Match the real browser order: 0,0 commits later than its neighbor, so the
+// seam must stitch onto an already-live streamed neighbor rather than the
+// other way around.
 const neighborChunk = {
   key: '1,0', x: 1, z: 0, centerX: chunkSize, centerZ: 0,
   seed: deterministicChunkSeed(worldSeed, 1, 0),
@@ -44,17 +45,23 @@ factory.setVisible(neighborChunk, neighbor, true);
 assert.equal(factory.crossChunkSeamStats().activePairs, 0,
   'streamed neighbor alone cannot fabricate a boundary seam before its peer authority exists');
 
-const authoredCeiling = await factory.buildAuthoredCeilingOverlay({ groundEntities: [] });
-assert.equal(authoredCeiling.ceilingCity, true);
-assert.equal(authoredCeiling.chunk.key, '0,0');
-await factory.commit(authoredCeiling.chunk, authoredCeiling);
+// buildAuthoredCeilingOverlay()/buildAuthoredOriginChunk() were retired: chunk
+// 0,0 is no longer a special ceiling-only shell, it builds through the same
+// ordinary factory.build() path as any other chunk (ground + hanging layer
+// together) - see cut16-authored-ceiling-overlay-selftest.mjs.
+const originChunk = {
+  key: '0,0', x: 0, z: 0, centerX: 0, centerZ: 0,
+  seed: deterministicChunkSeed(worldSeed, 0, 0),
+  weirdness: worldWeirdnessAt(0, 0, { worldSeed, startRadius: 1.5, fullRadius: 36, curve: 1.3 }),
+};
+const authoredCeiling = await factory.build(originChunk);
+await factory.commit(originChunk, authoredCeiling);
+factory.setVisible(originChunk, authoredCeiling, true);
 const stats = factory.crossChunkSeamStats();
 assert.equal(stats.committedChunks, 2);
 assert.equal(stats.activePairs, 1);
-assert.equal(stats.groundRoadHandoffs, 0,
-  'ceiling-only authored origin must not claim ground-road authority it does not own');
 assert.equal(stats.skyStreetSeams, 1,
-  'late authored-origin ceiling layer must stitch to the already-live streamed neighbor');
+  'the late-committed origin\'s hanging layer must stitch to the already-live streamed neighbor');
 assert.equal(stats.visibleSkyStreetSeams, 1);
 assert.deepEqual(stats.edgeKeys, ['V:1:0']);
 
@@ -67,7 +74,7 @@ assert.ok(Math.abs(sky.rise) <= 0.08, 'cross-chunk sky seam must remain level');
 assert.ok(sky.from < 32 && sky.to > 32, 'seam deck must physically cross the x=32 chunk boundary');
 assert.ok(Math.abs(sky.boundaryCoordinate - 32) < 1e-9);
 
-const originSurface = (authoredCeiling.physics.exteriorTransportSurfaces ?? []).find(item => item.id === sky.firstSurfaceId);
+const originSurface = (authoredCeiling.hangingLayer?.payload?.physics?.exteriorTransportSurfaces ?? []).find(item => item.id === sky.firstSurfaceId);
 const neighborSurface = (neighbor.hangingLayer?.payload?.physics?.exteriorTransportSurfaces ?? []).find(item => item.id === sky.secondSurfaceId);
 assert.equal(originSurface?.kind, 'clear-roof-street-layer');
 assert.equal(neighborSurface?.kind, 'clear-roof-street-layer');
@@ -101,7 +108,7 @@ assert.equal(owners.has(sky.ownerId), false);
 assert.equal(seamRoot.parent, null);
 assert.equal((authoredCeiling.crossChunkTransportSeams ?? []).length, 0,
   'surviving authored ceiling must not retain stale cross-chunk metadata');
-await factory.unload(authoredCeiling.chunk, authoredCeiling);
+await factory.unload(originChunk, authoredCeiling);
 assert.equal(factory.crossChunkSeamStats().committedChunks, 0);
 
 console.log('[generated-cross-chunk-transport-seams-selftest] PASS', {
@@ -109,6 +116,6 @@ console.log('[generated-cross-chunk-transport-seams-selftest] PASS', {
   skyGap: Number(sky.gap.toFixed(3)),
   skyY: sky.y,
   sideRails: rails.length,
-  authoredOriginLateJoin: true,
-  invariant: 'the real authored 0,0 ceiling overlay can join a previously committed streamed neighbor through one short canonical sky-street deck',
+  originLateJoin: true,
+  invariant: 'the real 0,0 origin chunk\'s hanging layer can join a previously committed streamed neighbor through one short canonical sky-street deck',
 });

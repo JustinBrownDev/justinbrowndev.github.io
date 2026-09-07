@@ -100,13 +100,18 @@ assert.ok(warehouse.programArchitectureEvidence.identityFixtures.includes('loadi
 // to the city circulation graph.
 const apartment = plan('apartment', 'residential-lodging');
 const units = apartment.spaces.filter(space => space.templateKey === 'dwelling-unit');
-assert.ok(units.length >= 6);
+assert.ok(units.length >= 3, 'larger domestic envelopes should reduce unit count before they reduce unit size');
 assert.ok(units.every(space => space.traversalPermission === 'PRIVATE_DESTINATION_ONLY'));
-assert.ok(units.every(space => space.unitPlan?.roomCount === 5));
-assert.ok(units.every(space => space.unitPlan.rooms.some(room => room.key === 'entry')));
-assert.ok(units.every(space => space.unitPlan.rooms.some(room => room.key === 'bedroom')));
-assert.ok(units.every(space => space.unitPlan.rooms.some(room => room.key === 'bathroom')));
-for (const unit of units) {
+assert.ok(units.every(space => space.realizedArea + 1e-7 >= 48), 'dwelling envelopes must retain the real-space area floor');
+assert.ok(units.every(space => space.realizedShortDimension + 1e-7 >= 4.2), 'dwelling envelopes must not become pencil strips');
+const nestedUnits = units.filter(space => space.unitPlan?.roomCount === 5);
+assert.ok(nestedUnits.length >= 1, 'a sufficiently deep dwelling should still realize a real nested room plan');
+assert.ok(nestedUnits.every(space => space.unitPlan.rooms.some(room => room.key === 'entry')));
+assert.ok(nestedUnits.every(space => space.unitPlan.rooms.some(room => room.key === 'bedroom')));
+assert.ok(nestedUnits.every(space => space.unitPlan.rooms.some(room => room.key === 'bathroom')));
+for (const unit of nestedUnits) {
+  assert.ok(unit.unitPlan.rooms.every(room => room.shortDimension + 1e-7 >= room.minimumShortDimension),
+    `dwelling unit ${unit.key}: nested rooms must satisfy their metre-scale short dimension`);
   const keys = new Set(unit.unitPlan.rooms.map(room => room.key));
   const neighbors = new Map([...keys].map(key => [key, []]));
   for (const [a, b] of unit.unitPlan.adjacency) {
@@ -135,7 +140,7 @@ for (const unit of units) {
   if (unit.unitPlan.corridorSide === 'west') assert.ok(Math.abs(entryRoom.minX - minX) < 1e-6);
   if (unit.unitPlan.corridorSide === 'east') assert.ok(Math.abs(entryRoom.maxX - maxX) < 1e-6);
 }
-assert.ok(apartment.programArchitectureEvidence.nestedDwellingUnitCount === units.length);
+assert.equal(apartment.programArchitectureEvidence.nestedDwellingUnitCount, nestedUnits.length);
 const promotedApartment = promoteBuildingPlanAuthority(apartment, {
   coreReservationId: core.id,
   coreReservation: core,
@@ -143,7 +148,7 @@ const promotedApartment = promoteBuildingPlanAuthority(apartment, {
   entityId: 'cut21v:apartment',
 });
 const unitWalls = promotedApartment.wallRuns.filter(run => run.unitPlan === true);
-assert.ok(unitWalls.length >= units.length * 2, 'nested apartment plan should emit real interior partitions');
+assert.ok(unitWalls.length >= nestedUnits.length * 2, 'only physically deep apartment envelopes should emit interior partitions');
 assert.ok(unitWalls.some(run => run.gaps.length > 0), 'nested unit partitions should own real interior door gaps');
 
 console.log('[cut21v-program-architecture-selftest] PASS', {
@@ -154,5 +159,7 @@ console.log('[cut21v-program-architecture-selftest] PASS', {
   courtPermissions: Object.fromEntries(['public-corridor', 'judge-route', 'secure-route'].map(key => [key, courtGround.spaces.find(space => space.templateKey === key)?.traversalPermission])),
   warehouseFlowRatio: warehouse.programArchitectureEvidence.directTransitionRatio,
   apartmentUnits: units.length,
+  apartmentNestedUnits: nestedUnits.length,
+  apartmentAdaptableUnits: units.length - nestedUnits.length,
   apartmentUnitWalls: unitWalls.length,
 });

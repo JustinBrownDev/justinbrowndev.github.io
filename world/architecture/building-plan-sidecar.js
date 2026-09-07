@@ -277,6 +277,18 @@ const MINIMUM_ENCLOSED_VOLUME_BY_ROLE = Object.freeze({
   program: 34,
 });
 
+// Floor area by itself is not enough to describe a believable room. A 10 m2
+// pencil strip is still a bad room. These metre-scale dimensions are deliberately
+// conservative defaults; specific programs may request more. They constrain the
+// plan authority before walls are realized, so visual geometry cannot hide a
+// pathologically narrow semantic space.
+const MINIMUM_SHORT_DIMENSION_BY_ROLE = Object.freeze({
+  // Role defaults stay permissive for legacy/specialized programs. Spaciousness
+  // is asserted by the program/section that actually owns it (housing, lodging,
+  // public halls, etc.) rather than by a global rule that can erase apparatus
+  // bays, plant rooms or other deliberate special geometries.
+});
+
 function minimumVolumeForSpace(space) {
   return Number(MINIMUM_ENCLOSED_VOLUME_BY_ROLE[space?.role] ?? 24);
 }
@@ -284,6 +296,14 @@ function minimumVolumeForSpace(space) {
 function minimumAreaForSpace(space, floorH) {
   const height = Math.max(2.4, Number(floorH) || 3.15);
   return Math.max(Number(space?.minArea) || 0, minimumVolumeForSpace(space) / height);
+}
+
+function minimumShortDimensionForSpace(space) {
+  const explicit = Number(space?.minShortDimension);
+  if (Number.isFinite(explicit) && explicit > 0) return explicit;
+  const envelope = Number(space?.unitEnvelope?.minimumShortDimension);
+  if (Number.isFinite(envelope) && envelope > 0) return envelope;
+  return Number(MINIMUM_SHORT_DIMENSION_BY_ROLE[space?.role] ?? 0);
 }
 
 function traversalPermissionForSpace(space) {
@@ -305,7 +325,7 @@ function traversalPermissionForSpace(space) {
 
 function expandedTemplates({ grammar, floor, baseFloor = 0, area, profile, authoredIntent, stableKey, semanticProgram, programArchitecture = null, routeServed = false }) {
   const isBaseFloor = floor === baseFloor;
-  const templates = (!authoredIntent ? programTemplatesForFloor(programArchitecture, { isBaseFloor, routeServed }) : null)
+  const templates = (!authoredIntent ? programTemplatesForFloor(programArchitecture, { isBaseFloor, routeServed, morphologyId: grammar.id }) : null)
     ?? (isBaseFloor ? grammar.ground : grammar.upper);
   const result = [];
   const operationalFlowOrder = new Map();
@@ -320,6 +340,13 @@ function expandedTemplates({ grammar, floor, baseFloor = 0, area, profile, autho
   }
 
   for (const template of templates) {
+    const minimumPlateArea = Number(template.minPlateArea);
+    if (Number.isFinite(minimumPlateArea) && area + EPS < minimumPlateArea) continue;
+    const floorInterval = Math.max(1, Math.floor(Number(template.floorInterval) || 1));
+    if (floorInterval > 1) {
+      const offset = stableIndex(`${stableKey}:${template.key}:floor-interval`, floorInterval);
+      if (((floor - baseFloor + offset) % floorInterval + floorInterval) % floorInterval !== 0) continue;
+    }
     let count = 1;
     if (template.repeat) {
       const natural = Math.round((area * template.areaWeight) / Math.max(2, template.repeat.desiredArea));
@@ -355,6 +382,10 @@ function expandedTemplates({ grammar, floor, baseFloor = 0, area, profile, autho
         serviceSpine: template.serviceSpine === true,
         functionalFixture: template.functionalFixture ?? null,
         unitEnvelope: template.unitEnvelope ?? null,
+        minShortDimension: template.minShortDimension ?? null,
+        residualSink: template.residualSink === true,
+        minPlateArea: template.minPlateArea ?? null,
+        floorInterval: template.floorInterval ?? null,
         spaceType: authoredType ?? template.program ?? `${semanticProgram}:${template.role}`,
         source: authoredType ? 'spawn-authored-intent' : 'grammar',
         traversalPermission: traversalPermissionForSpace(template),
@@ -399,8 +430,10 @@ function configureUpperOccupancyHallway(spaces, grid, floor, baseFloor = 0) {
   if (!grid?.cells?.length) return null;
   const occupancyRoles = new Set(['private', 'program', 'work']);
   const occupancies = spaces.filter(space => space.repeat && occupancyRoles.has(space.role));
-  const hallway = spaces.find(space => space.role === 'circulation');
-  if (!hallway || occupancies.length < 4) return null;
+  const requiredRouteTemplates = new Set(occupancies.flatMap(space => space.requiredAdjacency ?? []));
+  const hallway = spaces.find(space => space.role === 'circulation' && requiredRouteTemplates.has(space.templateKey))
+    ?? spaces.find(space => space.role === 'circulation');
+  if (!hallway || occupancies.length < 3) return null;
 
   const cellArea = grid.cellSize * grid.cellSize;
   const reserved = grid.cells.filter(cell => cell.structuralReservationId);
@@ -461,7 +494,7 @@ function occupancyHallwayFrontageShortfalls(spaces, grid, floor, baseFloor = 0) 
   const hallway = spaces.find(space => space.circulationShape === 'occupancy-hallway');
   if (!hallway) return [];
   const occupancies = spaces.filter(space => space.repeat && ['private', 'program', 'work'].includes(space.role));
-  if (occupancies.length < 4) return [];
+  if (occupancies.length < 3) return [];
   const boundaries = boundaryCandidates(grid);
   return occupancies
     .filter(space => !boundaries.has([hallway.key, space.key].sort().join('|')))
@@ -770,7 +803,7 @@ function routeFrontageEligible(space) {
   return routeFrontageWeight(space) > 0;
 }
 
-function rectangleDimensionsForCells(target) {
+function rectangleDimensionsForCells(target, minimumShortCells = 1) {
   const needed = Math.max(1, Math.floor(Number(target) || 1));
   const maxArea = needed + Math.max(2, Math.ceil(needed * 0.28));
   const result = [];
@@ -780,6 +813,7 @@ function rectangleDimensionsForCells(target) {
     const area = width * depth;
     if (area < needed || area > maxArea || depth > 18) continue;
     const shortSide = Math.min(width, depth);
+    if (shortSide < Math.max(1, Math.floor(Number(minimumShortCells) || 1))) continue;
     const longSide = Math.max(width, depth);
     const aspect = longSide / Math.max(1, shortSide);
     result.push({ width, depth, area, aspect });
@@ -856,7 +890,9 @@ function placeRectangleFirstSpace({
   if (!space || ['circulation', 'entry'].includes(space.role)) return null;
   const anchors = candidateRectangleAnchors({ space, spaces, parentKey, routeSpaceKey, grid, profile, stableKey });
   if (!anchors.length) return null;
-  const dimensions = rectangleDimensionsForCells(target);
+  const minimumShortMetres = minimumShortDimensionForSpace(space);
+  const minimumShortCells = Math.max(1, Math.ceil((minimumShortMetres - EPS) / Math.max(EPS, grid.cellSize)));
+  const dimensions = rectangleDimensionsForCells(target, minimumShortCells);
   const preferenceKey = `${stableKey}:rectangle`;
   const preferenceByCell = new Map(grid.cells.map(cell => [cell, preferenceScore(cell, space, profile, preferenceKey)]));
   let best = null;
@@ -892,7 +928,8 @@ function placeRectangleFirstSpace({
   space.rectangleFirst = true;
   space.circulationFrontageReserved = best.routeBoundary > 0 && routeFrontageEligible(space);
   space.rectangleStrict = space.role === 'private'
-    || space.circulationFrontageReserved;
+    || space.circulationFrontageReserved
+    || minimumShortMetres > grid.cellSize * 1.25;
   return best;
 }
 
@@ -1143,59 +1180,89 @@ function nestedDwellingUnitPlan(space, cells, grid, routeSpaceKey) {
     ? rankedSides[0][0]
     : (width >= depth ? 'north' : 'west');
   const horizontalEntry = corridorSide === 'north' || corridorSide === 'south';
+  const tangentSpan = horizontalEntry ? bounds.maxX - bounds.minX : bounds.maxZ - bounds.minZ;
+  const normalSpan = horizontalEntry ? bounds.maxZ - bounds.minZ : bounds.maxX - bounds.minX;
+  const minimumNormalDepth = Math.max(6.4, Number(space.unitEnvelope.nestedMinimumNormalDepth) || 0);
+  const minimumTangentWidth = Math.max(5.0, Number(space.unitEnvelope.nestedMinimumTangentWidth) || 0);
+
+  // A semantic room list is not a license to manufacture five closets. If the
+  // envelope cannot support a real domestic section, leave it as one large,
+  // adaptable dwelling territory. The parent space still owns the unit; it just
+  // has no fake internal walls until there is enough physical depth to deserve them.
+  if (normalSpan + EPS < minimumNormalDepth || tangentSpan + EPS < minimumTangentWidth) return null;
+
+  const roomMinimumShortDimension = Object.freeze({
+    entry: 1.35,
+    work: 2.0,
+    service: 1.8,
+    shared: 2.7,
+    private: 2.3,
+  });
   const rooms = [];
+  let invalidRoom = false;
   const addRoom = (key, role, minX, maxX, minZ, maxZ) => {
-    if (maxX - minX < cellSize * 0.30 || maxZ - minZ < cellSize * 0.30) return;
+    const roomWidth = maxX - minX;
+    const roomDepth = maxZ - minZ;
+    const shortDimension = Math.min(roomWidth, roomDepth);
+    const requiredShortDimension = roomMinimumShortDimension[role] ?? 2.0;
+    if (roomWidth <= EPS || roomDepth <= EPS || shortDimension + EPS < requiredShortDimension) {
+      invalidRoom = true;
+      return;
+    }
     rooms.push({
       id: `${space.key}:unit-room:${key}`,
       key, role,
       minX, maxX, minZ, maxZ,
       cx: (minX + maxX) * 0.5, cz: (minZ + maxZ) * 0.5,
-      halfX: (maxX - minX) * 0.5, halfZ: (maxZ - minZ) * 0.5,
+      halfX: roomWidth * 0.5, halfZ: roomDepth * 0.5,
+      area: roomWidth * roomDepth,
+      shortDimension,
+      minimumShortDimension: requiredShortDimension,
     });
   };
 
-  // The unit is organized from the common-circulation edge inward. A shallow
-  // full-width entry band means the exterior/corridor door always lands in a
-  // legitimate unit hall instead of randomly opening straight into a bedroom
-  // or bathroom. Wet/service rooms then occupy the next band and the deeper
-  // facade zone is reserved for living + sleeping space.
+  // Organize from common circulation inward using metre-scale bands rather than
+  // percentages. This makes a deeper unit become a deeper room instead of making
+  // every room proportionally skinnier when the parent happens to be awkward.
+  const entryDepth = clamp(normalSpan * 0.19, 1.40, 1.80);
+  const serviceDepth = clamp(normalSpan * 0.29, 2.00, 2.55);
+  const deepDepth = normalSpan - entryDepth - serviceDepth;
+  if (deepDepth + EPS < 3.0) return null;
+
   if (horizontalEntry) {
-    const zSpan = bounds.maxZ - bounds.minZ;
     const first = corridorSide === 'north' ? bounds.minZ : bounds.maxZ;
     const direction = corridorSide === 'north' ? 1 : -1;
-    const entryEdge = first + direction * zSpan * 0.23;
-    const serviceEdge = first + direction * zSpan * 0.53;
+    const entryEdge = first + direction * entryDepth;
+    const serviceEdge = entryEdge + direction * serviceDepth;
     const entryZ0 = Math.min(first, entryEdge), entryZ1 = Math.max(first, entryEdge);
     const serviceZ0 = Math.min(entryEdge, serviceEdge), serviceZ1 = Math.max(entryEdge, serviceEdge);
-    const deepZ0 = Math.min(serviceEdge, corridorSide === 'north' ? bounds.maxZ : bounds.minZ);
-    const deepZ1 = Math.max(serviceEdge, corridorSide === 'north' ? bounds.maxZ : bounds.minZ);
-    const serviceSplitX = bounds.minX + (bounds.maxX - bounds.minX) * 0.55;
-    const deepSplitX = bounds.minX + (bounds.maxX - bounds.minX) * 0.58;
+    const deepEnd = corridorSide === 'north' ? bounds.maxZ : bounds.minZ;
+    const deepZ0 = Math.min(serviceEdge, deepEnd), deepZ1 = Math.max(serviceEdge, deepEnd);
+    const serviceSplitX = bounds.minX + tangentSpan * 0.58;
+    const deepSplitX = bounds.minX + tangentSpan * 0.55;
     addRoom('entry', 'entry', bounds.minX, bounds.maxX, entryZ0, entryZ1);
     addRoom('kitchen', 'work', bounds.minX, serviceSplitX, serviceZ0, serviceZ1);
     addRoom('bathroom', 'service', serviceSplitX, bounds.maxX, serviceZ0, serviceZ1);
     addRoom('living-dining', 'shared', bounds.minX, deepSplitX, deepZ0, deepZ1);
     addRoom('bedroom', 'private', deepSplitX, bounds.maxX, deepZ0, deepZ1);
   } else {
-    const xSpan = bounds.maxX - bounds.minX;
     const first = corridorSide === 'west' ? bounds.minX : bounds.maxX;
     const direction = corridorSide === 'west' ? 1 : -1;
-    const entryEdge = first + direction * xSpan * 0.23;
-    const serviceEdge = first + direction * xSpan * 0.53;
+    const entryEdge = first + direction * entryDepth;
+    const serviceEdge = entryEdge + direction * serviceDepth;
     const entryX0 = Math.min(first, entryEdge), entryX1 = Math.max(first, entryEdge);
     const serviceX0 = Math.min(entryEdge, serviceEdge), serviceX1 = Math.max(entryEdge, serviceEdge);
-    const deepX0 = Math.min(serviceEdge, corridorSide === 'west' ? bounds.maxX : bounds.minX);
-    const deepX1 = Math.max(serviceEdge, corridorSide === 'west' ? bounds.maxX : bounds.minX);
-    const serviceSplitZ = bounds.minZ + (bounds.maxZ - bounds.minZ) * 0.55;
-    const deepSplitZ = bounds.minZ + (bounds.maxZ - bounds.minZ) * 0.58;
+    const deepEnd = corridorSide === 'west' ? bounds.maxX : bounds.minX;
+    const deepX0 = Math.min(serviceEdge, deepEnd), deepX1 = Math.max(serviceEdge, deepEnd);
+    const serviceSplitZ = bounds.minZ + tangentSpan * 0.58;
+    const deepSplitZ = bounds.minZ + tangentSpan * 0.55;
     addRoom('entry', 'entry', entryX0, entryX1, bounds.minZ, bounds.maxZ);
     addRoom('kitchen', 'work', serviceX0, serviceX1, bounds.minZ, serviceSplitZ);
     addRoom('bathroom', 'service', serviceX0, serviceX1, serviceSplitZ, bounds.maxZ);
     addRoom('living-dining', 'shared', deepX0, deepX1, bounds.minZ, deepSplitZ);
     addRoom('bedroom', 'private', deepX0, deepX1, deepSplitZ, bounds.maxZ);
   }
-  if (rooms.length < 4) return null;
+  if (invalidRoom || rooms.length !== 5) return null;
   return {
     schema: space.unitEnvelope.schema ?? 'jweb.dwelling-unit-program.v1',
     parentSpaceKey: space.key,
@@ -1204,7 +1271,9 @@ function nestedDwellingUnitPlan(space, cells, grid, routeSpaceKey) {
     roomCount: rooms.length,
     rooms,
     adjacency: (space.unitEnvelope.adjacency ?? []).map(pair => [...pair]),
-    rule: 'common-circulation door -> full-width unit entry -> wet/service band -> deeper living and sleeping rooms',
+    envelopeWidth: tangentSpan,
+    envelopeDepth: normalSpan,
+    rule: 'common route -> real-width entry band -> wet/service band -> deep living/sleeping territory; no subdivision below metre-scale thresholds',
   };
 }
 
@@ -1452,6 +1521,13 @@ function fitSpacesToFloorCapacity(spaces, grid, floorH, floor, baseFloor = 0) {
       const aEcho = String(a.source).includes('echo') ? 0 : 1;
       const bEcho = String(b.source).includes('echo') ? 0 : 1;
       if (aEcho !== bEcho) return aEcho - bEcho;
+      // Keep one flexible shared/service territory alive as the pressure valve
+      // for leftover floor area. Repeated private rooms should yield in count
+      // before the only believable residual sink disappears and circulation
+      // is forced to become an enormous catch-all blob.
+      const aSink = a.residualSink ? 1 : 0;
+      const bSink = b.residualSink ? 1 : 0;
+      if (aSink !== bSink) return aSink - bSink;
       const role = roleDropRank(a.role) - roleDropRank(b.role);
       if (role) return role;
       return a.areaWeight - b.areaWeight || a.key.localeCompare(b.key);
@@ -1712,7 +1788,9 @@ function attemptMinimumProgramPlacement({
       continue;
     }
     const strictRectangleRequired = rectangleFirstPreferred(profile)
-      && (space.role === 'private' || (!!cityExchangeClaim.transferSpace?.key && routeFrontageEligible(space)));
+      && (space.role === 'private'
+        || minimumShortDimensionForSpace(space) > grid.cellSize * 1.25
+        || (!!cityExchangeClaim.transferSpace?.key && routeFrontageEligible(space)));
     if (strictRectangleRequired) {
       // Do not fall back to greedy cell growth for the room classes that define
       // 21U's believable-plan contract. Mark the contract before the repair pass
@@ -2263,6 +2341,10 @@ function* planFloorSteps({
     const cells = grid.cells.filter(cell => cell.spaceId === s.key);
     const centroid = spaceCentroid(cells);
     const regularity = regularityMetricsForCells(cells);
+    const realizedWidth = cells.length ? (Math.max(...cells.map(cell => cell.ix)) - Math.min(...cells.map(cell => cell.ix)) + 1) * grid.cellSize : 0;
+    const realizedDepth = cells.length ? (Math.max(...cells.map(cell => cell.iz)) - Math.min(...cells.map(cell => cell.iz)) + 1) * grid.cellSize : 0;
+    const realizedShortDimension = Math.min(realizedWidth, realizedDepth);
+    const minimumShortDimension = minimumShortDimensionForSpace(s);
     const circulationFrontage = circulationFrontageForSpace(
       s, cells, grid, minimumPlacement.cityTransferSpaceKey ?? null,
     );
@@ -2294,6 +2376,11 @@ function* planFloorSteps({
       targetArea: (targets.get(s.key) ?? 0) * cellArea,
       minimumArea: minimumAreaForSpace(s, floorH),
       minimumVolume: minimumVolumeForSpace(s),
+      minimumShortDimension,
+      realizedWidth,
+      realizedDepth,
+      realizedShortDimension,
+      shortDimensionHealthy: realizedShortDimension + EPS >= minimumShortDimension,
       realizedArea: cells.length * cellArea,
       realizedVolume: cells.length * cellArea * floorH,
       cellCount: cells.length,
@@ -2440,6 +2527,15 @@ function* planFloorSteps({
       rectangleFirstPreferred: rectangleFirstPreferred(profile),
       rectangleFirstSpaceCount: spaces.filter(space => space.rectangleFirst).length,
       strictRectangleSpaceCount: spaces.filter(space => space.rectangleStrict).length,
+      crampedDestinationSpaceCount: realizedSpaces
+        .filter(space => !['circulation', 'entry'].includes(space.role) && !space.shortDimensionHealthy)
+        .length,
+      adaptableUnsubdividedDwellingCount: realizedSpaces
+        .filter(space => space.templateKey === 'dwelling-unit' && !space.unitPlan)
+        .length,
+      subdividedDwellingCount: realizedSpaces
+        .filter(space => space.templateKey === 'dwelling-unit' && space.unitPlan)
+        .length,
       privateNeckCellCount: realizedSpaces
         .filter(space => space.role === 'private')
         .reduce((sum, space) => sum + (space.regularity?.neckCellCount ?? 0), 0),

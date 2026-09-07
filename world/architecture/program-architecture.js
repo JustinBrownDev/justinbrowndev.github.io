@@ -21,6 +21,10 @@ const zone = (key, role, areaWeight, options = {}) => Object.freeze({
   operationalRole: options.operationalRole ?? key,
   functionalFixture: options.functionalFixture ?? null,
   unitEnvelope: options.unitEnvelope ?? null,
+  minShortDimension: options.minShortDimension ?? null,
+  residualSink: options.residualSink === true,
+  minPlateArea: options.minPlateArea ?? null,
+  floorInterval: options.floorInterval ?? null,
 });
 
 const flow = (id, sequence, options = {}) => Object.freeze({
@@ -43,6 +47,7 @@ const profile = (id, morphologies, ground, upper, options = {}) => Object.freeze
   serviceSpineKeys: Object.freeze([...(options.serviceSpineKeys ?? [])]),
   frontageKeys: Object.freeze([...(options.frontageKeys ?? [])]),
   identityFixtures: Object.freeze([...(options.identityFixtures ?? [])]),
+  morphologyTemplates: Object.freeze({ ...(options.morphologyTemplates ?? {}) }),
   notes: options.notes ?? '',
 });
 
@@ -56,6 +61,11 @@ const NONE = TRAVERSAL_PERMISSION.NO_THROUGH;
 
 const APARTMENT_UNIT = Object.freeze({
   schema: 'jweb.dwelling-unit-program.v1',
+  targetArea: 72,
+  minimumArea: 48,
+  minimumShortDimension: 4.2,
+  nestedMinimumNormalDepth: 7.0,
+  nestedMinimumTangentWidth: 5.4,
   rooms: Object.freeze([
     Object.freeze({ key: 'entry', role: 'entry', areaWeight: 0.08 }),
     Object.freeze({ key: 'living-dining', role: 'shared', areaWeight: 0.36 }),
@@ -74,31 +84,101 @@ const APARTMENT_UNIT = Object.freeze({
 });
 
 const apartment = profile('apartment', ['single-loaded-tenement', 'double-loaded-lodging', 'courtyard-ring'], [
-  zone('entry', 'entry', 0.06, { exteriorPreference: 'street', privacy: 'public', requiredAdjacency: ['circulation'], traversalPermission: PUBLIC, frontagePriority: 'preferred' }),
-  zone('circulation', 'circulation', 0.18, { exteriorPreference: 'perimeter', requiredAdjacency: ['entry', 'dwelling-unit'], traversalPermission: PUBLIC }),
-  zone('dwelling-unit', 'private', 0.62, { repeat: { min: 2, max: 4, desiredArea: 38 }, exteriorPreference: 'perimeter', privacy: 'private', daylight: 'high', facadePattern: 'domestic-bay', requiredAdjacency: ['circulation'], traversalPermission: PRIVATE, unitEnvelope: APARTMENT_UNIT }),
-  zone('shared-service', 'service', 0.14, { exteriorPreference: 'deep', privacy: 'service', daylight: 'low', requiredAdjacency: ['circulation'], traversalPermission: SERVICE, serviceSpine: true }),
+  zone('entry', 'entry', 0.05, { minArea: 10, exteriorPreference: 'street', privacy: 'public', requiredAdjacency: ['circulation'], traversalPermission: PUBLIC, frontagePriority: 'preferred' }),
+  zone('circulation', 'circulation', 0.08, { minArea: 12, exteriorPreference: 'deep', requiredAdjacency: ['entry', 'resident-passage'], traversalPermission: PUBLIC }),
+  zone('resident-passage', 'circulation', 0.07, { minArea: 16, minShortDimension: 1.2, exteriorPreference: 'perimeter', requiredAdjacency: ['circulation', 'dwelling-unit'], traversalPermission: SEMI, functionalFixture: 'resident-passage' }),
+  zone('dwelling-unit', 'private', 0.62, { minArea: 48, minShortDimension: 4.2, repeat: { min: 1, max: 6, desiredArea: 68 }, exteriorPreference: 'perimeter', privacy: 'private', daylight: 'high', facadePattern: 'domestic-bay', requiredAdjacency: ['resident-passage'], traversalPermission: PRIVATE, unitEnvelope: APARTMENT_UNIT }),
+  zone('shared-service', 'service', 0.18, { minArea: 16, residualSink: true, exteriorPreference: 'deep', privacy: 'service', daylight: 'low', requiredAdjacency: ['circulation'], traversalPermission: SERVICE, serviceSpine: true }),
 ], [
-  zone('circulation', 'circulation', 0.18, { exteriorPreference: 'perimeter', requiredAdjacency: ['dwelling-unit'], traversalPermission: PUBLIC }),
-  zone('dwelling-unit', 'private', 0.68, { repeat: { min: 2, max: 4, desiredArea: 38 }, exteriorPreference: 'perimeter', privacy: 'private', daylight: 'high', facadePattern: 'domestic-bay', requiredAdjacency: ['circulation'], traversalPermission: PRIVATE, unitEnvelope: APARTMENT_UNIT }),
-  zone('shared-service', 'service', 0.14, { exteriorPreference: 'deep', privacy: 'service', daylight: 'low', requiredAdjacency: ['circulation'], traversalPermission: SERVICE, serviceSpine: true }),
+  zone('circulation', 'circulation', 0.09, { minArea: 12, exteriorPreference: 'deep', requiredAdjacency: ['resident-passage'], traversalPermission: PUBLIC }),
+  zone('resident-passage', 'circulation', 0.07, { minArea: 16, minShortDimension: 1.2, exteriorPreference: 'perimeter', requiredAdjacency: ['circulation', 'dwelling-unit'], traversalPermission: SEMI, functionalFixture: 'resident-passage' }),
+  zone('dwelling-unit', 'private', 0.64, { minArea: 48, minShortDimension: 4.2, repeat: { min: 1, max: 8, desiredArea: 72 }, exteriorPreference: 'perimeter', privacy: 'private', daylight: 'high', facadePattern: 'domestic-bay', requiredAdjacency: ['resident-passage'], traversalPermission: PRIVATE, unitEnvelope: APARTMENT_UNIT }),
+  zone('shared-room', 'shared', 0.08, { minArea: 26, minShortDimension: 3.4, minPlateArea: 180, floorInterval: 4, exteriorPreference: 'courtyard', privacy: 'semi', daylight: 'high', requiredAdjacency: ['resident-passage'], traversalPermission: SEMI, functionalFixture: 'resident-common-room' }),
+  zone('shared-service', 'service', 0.12, { minArea: 16, residualSink: true, exteriorPreference: 'deep', privacy: 'service', daylight: 'low', requiredAdjacency: ['circulation'], traversalPermission: SERVICE, serviceSpine: true }),
 ], {
-  flows: [flow('resident-access', ['circulation', 'dwelling-unit'], { routeClass: 'resident' })],
+  flows: [flow('resident-access', ['circulation', 'resident-passage', 'dwelling-unit'], { routeClass: 'resident' })],
   serviceCharacter: 'stacked-domestic-wet-service',
   serviceSpineKeys: ['shared-service'],
-  notes: 'Dwelling is an apartment envelope containing a nested room program, not a terminal room label.',
+  morphologyTemplates: {
+    // Narrow/deep shop-houses use the historically plausible simpler section:
+    // one rear/side common route with large rooms off it. Do not spend scarce
+    // tangent width on a second corridor just to satisfy a universal maze rule.
+    'shop-house': Object.freeze({
+      ground: Object.freeze([
+        zone('entry', 'entry', 0.05, { minArea: 10, exteriorPreference: 'street', privacy: 'public', requiredAdjacency: ['circulation'], traversalPermission: PUBLIC, frontagePriority: 'preferred' }),
+        zone('circulation', 'circulation', 0.15, { minArea: 14, exteriorPreference: 'deep', requiredAdjacency: ['entry', 'dwelling-unit'], traversalPermission: PUBLIC }),
+        zone('dwelling-unit', 'private', 0.62, { minArea: 48, minShortDimension: 4.2, repeat: { min: 1, max: 5, desiredArea: 72 }, exteriorPreference: 'perimeter', privacy: 'private', daylight: 'high', facadePattern: 'domestic-bay', requiredAdjacency: ['circulation'], traversalPermission: PRIVATE, unitEnvelope: APARTMENT_UNIT }),
+        zone('shared-service', 'service', 0.18, { minArea: 16, residualSink: true, exteriorPreference: 'deep', privacy: 'service', daylight: 'low', requiredAdjacency: ['circulation'], traversalPermission: SERVICE, serviceSpine: true }),
+      ]),
+      upper: Object.freeze([
+        zone('circulation', 'circulation', 0.16, { minArea: 14, exteriorPreference: 'deep', requiredAdjacency: ['dwelling-unit'], traversalPermission: PUBLIC }),
+        zone('dwelling-unit', 'private', 0.64, { minArea: 48, minShortDimension: 4.2, repeat: { min: 1, max: 6, desiredArea: 74 }, exteriorPreference: 'perimeter', privacy: 'private', daylight: 'high', facadePattern: 'domestic-bay', requiredAdjacency: ['circulation'], traversalPermission: PRIVATE, unitEnvelope: APARTMENT_UNIT }),
+        zone('shared-room', 'shared', 0.08, { minArea: 26, minShortDimension: 3.4, minPlateArea: 180, floorInterval: 4, exteriorPreference: 'courtyard', privacy: 'semi', daylight: 'high', requiredAdjacency: ['circulation'], traversalPermission: SEMI, functionalFixture: 'resident-common-room' }),
+        zone('shared-service', 'service', 0.12, { minArea: 16, residualSink: true, exteriorPreference: 'deep', privacy: 'service', daylight: 'low', requiredAdjacency: ['circulation'], traversalPermission: SERVICE, serviceSpine: true }),
+      ]),
+    }),
+    'single-loaded-tenement': Object.freeze({
+      ground: Object.freeze([
+        zone('entry', 'entry', 0.05, { minArea: 10, exteriorPreference: 'street', privacy: 'public', requiredAdjacency: ['circulation'], traversalPermission: PUBLIC, frontagePriority: 'preferred' }),
+        zone('circulation', 'circulation', 0.07, { minArea: 12, exteriorPreference: 'deep', requiredAdjacency: ['entry', 'resident-passage'], traversalPermission: PUBLIC }),
+        zone('resident-passage', 'circulation', 0.07, { minArea: 16, minShortDimension: 1.2, exteriorPreference: 'perimeter', requiredAdjacency: ['circulation', 'dwelling-unit'], traversalPermission: SEMI, functionalFixture: 'resident-passage' }),
+        zone('dwelling-unit', 'private', 0.63, { minArea: 48, minShortDimension: 4.2, repeat: { min: 1, max: 5, desiredArea: 72 }, exteriorPreference: 'perimeter', privacy: 'private', daylight: 'high', facadePattern: 'domestic-bay', requiredAdjacency: ['resident-passage'], traversalPermission: PRIVATE, unitEnvelope: APARTMENT_UNIT }),
+        zone('shared-service', 'service', 0.18, { minArea: 16, residualSink: true, exteriorPreference: 'deep', privacy: 'service', daylight: 'low', requiredAdjacency: ['circulation'], traversalPermission: SERVICE, serviceSpine: true }),
+      ]),
+      upper: Object.freeze([
+        zone('circulation', 'circulation', 0.08, { minArea: 12, exteriorPreference: 'deep', requiredAdjacency: ['resident-passage'], traversalPermission: PUBLIC }),
+        zone('resident-passage', 'circulation', 0.07, { minArea: 16, minShortDimension: 1.2, exteriorPreference: 'perimeter', requiredAdjacency: ['circulation', 'dwelling-unit'], traversalPermission: SEMI, functionalFixture: 'resident-passage' }),
+        zone('dwelling-unit', 'private', 0.66, { minArea: 48, minShortDimension: 4.2, repeat: { min: 1, max: 6, desiredArea: 74 }, exteriorPreference: 'perimeter', privacy: 'private', daylight: 'high', facadePattern: 'domestic-bay', requiredAdjacency: ['resident-passage'], traversalPermission: PRIVATE, unitEnvelope: APARTMENT_UNIT }),
+        zone('shared-room', 'shared', 0.07, { minArea: 26, minShortDimension: 3.4, minPlateArea: 180, floorInterval: 4, exteriorPreference: 'perimeter', privacy: 'semi', daylight: 'high', requiredAdjacency: ['resident-passage'], traversalPermission: SEMI, functionalFixture: 'resident-common-room' }),
+        zone('shared-service', 'service', 0.12, { minArea: 16, residualSink: true, exteriorPreference: 'deep', privacy: 'service', daylight: 'low', requiredAdjacency: ['circulation'], traversalPermission: SERVICE, serviceSpine: true }),
+      ]),
+    }),
+    'double-loaded-lodging': Object.freeze({
+      ground: Object.freeze([
+        zone('entry', 'entry', 0.05, { minArea: 12, exteriorPreference: 'street', privacy: 'public', requiredAdjacency: ['circulation'], traversalPermission: PUBLIC, frontagePriority: 'preferred' }),
+        zone('circulation', 'circulation', 0.08, { minArea: 12, exteriorPreference: 'deep', requiredAdjacency: ['entry', 'resident-passage'], traversalPermission: PUBLIC }),
+        zone('resident-passage', 'circulation', 0.09, { minArea: 18, minShortDimension: 1.3, exteriorPreference: 'deep', requiredAdjacency: ['circulation', 'dwelling-unit'], traversalPermission: SEMI, functionalFixture: 'resident-passage' }),
+        zone('dwelling-unit', 'private', 0.60, { minArea: 48, minShortDimension: 4.2, repeat: { min: 1, max: 7, desiredArea: 66 }, exteriorPreference: 'perimeter', privacy: 'private', daylight: 'high', facadePattern: 'domestic-bay', requiredAdjacency: ['resident-passage'], traversalPermission: PRIVATE, unitEnvelope: APARTMENT_UNIT }),
+        zone('shared-service', 'service', 0.18, { minArea: 18, residualSink: true, exteriorPreference: 'deep', privacy: 'service', daylight: 'low', requiredAdjacency: ['circulation'], traversalPermission: SERVICE, serviceSpine: true }),
+      ]),
+      upper: Object.freeze([
+        zone('circulation', 'circulation', 0.09, { minArea: 12, exteriorPreference: 'deep', requiredAdjacency: ['resident-passage'], traversalPermission: PUBLIC }),
+        zone('resident-passage', 'circulation', 0.09, { minArea: 18, minShortDimension: 1.3, exteriorPreference: 'deep', requiredAdjacency: ['circulation', 'dwelling-unit'], traversalPermission: SEMI, functionalFixture: 'resident-passage' }),
+        zone('dwelling-unit', 'private', 0.62, { minArea: 48, minShortDimension: 4.2, repeat: { min: 1, max: 8, desiredArea: 68 }, exteriorPreference: 'perimeter', privacy: 'private', daylight: 'high', facadePattern: 'domestic-bay', requiredAdjacency: ['resident-passage'], traversalPermission: PRIVATE, unitEnvelope: APARTMENT_UNIT }),
+        zone('shared-room', 'shared', 0.08, { minArea: 28, minShortDimension: 3.4, minPlateArea: 220, floorInterval: 4, exteriorPreference: 'perimeter', privacy: 'semi', daylight: 'high', requiredAdjacency: ['resident-passage'], traversalPermission: SEMI, functionalFixture: 'resident-common-room' }),
+        zone('shared-service', 'service', 0.12, { minArea: 18, residualSink: true, exteriorPreference: 'deep', privacy: 'service', daylight: 'low', requiredAdjacency: ['circulation'], traversalPermission: SERVICE, serviceSpine: true }),
+      ]),
+    }),
+    'courtyard-ring': Object.freeze({
+      ground: Object.freeze([
+        zone('entry', 'entry', 0.05, { minArea: 12, exteriorPreference: 'street', privacy: 'public', requiredAdjacency: ['circulation'], traversalPermission: PUBLIC, frontagePriority: 'preferred' }),
+        zone('circulation', 'circulation', 0.09, { minArea: 14, exteriorPreference: 'deep', requiredAdjacency: ['entry', 'resident-passage'], traversalPermission: PUBLIC }),
+        zone('resident-passage', 'circulation', 0.09, { minArea: 20, minShortDimension: 1.4, exteriorPreference: 'courtyard', requiredAdjacency: ['circulation', 'dwelling-unit', 'court-edge'], traversalPermission: SEMI, functionalFixture: 'resident-court-gallery' }),
+        zone('dwelling-unit', 'private', 0.54, { minArea: 50, minShortDimension: 4.4, repeat: { min: 1, max: 7, desiredArea: 76 }, exteriorPreference: 'perimeter', privacy: 'private', daylight: 'high', facadePattern: 'domestic-bay', requiredAdjacency: ['resident-passage'], traversalPermission: PRIVATE, unitEnvelope: APARTMENT_UNIT }),
+        zone('court-edge', 'shared', 0.11, { minArea: 30, minShortDimension: 3.6, exteriorPreference: 'courtyard', privacy: 'semi', daylight: 'high', requiredAdjacency: ['resident-passage'], traversalPermission: SEMI, functionalFixture: 'resident-court-edge' }),
+        zone('shared-service', 'service', 0.12, { minArea: 18, residualSink: true, exteriorPreference: 'deep', privacy: 'service', daylight: 'low', requiredAdjacency: ['circulation'], traversalPermission: SERVICE, serviceSpine: true }),
+      ]),
+      upper: Object.freeze([
+        zone('circulation', 'circulation', 0.10, { minArea: 14, exteriorPreference: 'deep', requiredAdjacency: ['resident-passage'], traversalPermission: PUBLIC }),
+        zone('resident-passage', 'circulation', 0.10, { minArea: 20, minShortDimension: 1.4, exteriorPreference: 'courtyard', requiredAdjacency: ['circulation', 'dwelling-unit', 'court-edge'], traversalPermission: SEMI, functionalFixture: 'resident-court-gallery' }),
+        zone('dwelling-unit', 'private', 0.54, { minArea: 50, minShortDimension: 4.4, repeat: { min: 1, max: 8, desiredArea: 78 }, exteriorPreference: 'perimeter', privacy: 'private', daylight: 'high', facadePattern: 'domestic-bay', requiredAdjacency: ['resident-passage'], traversalPermission: PRIVATE, unitEnvelope: APARTMENT_UNIT }),
+        zone('court-edge', 'shared', 0.14, { minArea: 32, minShortDimension: 3.6, exteriorPreference: 'courtyard', privacy: 'semi', daylight: 'high', requiredAdjacency: ['resident-passage'], traversalPermission: SEMI, functionalFixture: 'resident-court-edge' }),
+        zone('shared-service', 'service', 0.12, { minArea: 18, residualSink: true, exteriorPreference: 'deep', privacy: 'service', daylight: 'low', requiredAdjacency: ['circulation'], traversalPermission: SERVICE, serviceSpine: true }),
+      ]),
+    }),
+  },
+  notes: 'Large adaptable dwelling envelopes around a morphology-specific common route; internal rooms are only subdivided when real metre-scale depth exists.',
 });
-
 const motel = profile('motel-room-building', ['double-loaded-lodging'], [
   zone('entry', 'entry', 0.06, { exteriorPreference: 'street', privacy: 'public', requiredAdjacency: ['lobby', 'circulation'], traversalPermission: PUBLIC }),
   zone('lobby', 'public', 0.16, { exteriorPreference: 'street', privacy: 'public', daylight: 'high', facadePattern: 'lobby-glazed', requiredAdjacency: ['entry'], traversalPermission: PUBLIC, frontagePriority: 'preferred' }),
   zone('circulation', 'circulation', 0.20, { exteriorPreference: 'deep', requiredAdjacency: ['entry', 'lodging-room'], traversalPermission: PUBLIC }),
-  zone('lodging-room', 'private', 0.48, { repeat: { min: 2, max: 3, desiredArea: 18 }, exteriorPreference: 'perimeter', privacy: 'private', daylight: 'high', facadePattern: 'lodging-repeat', requiredAdjacency: ['circulation'], traversalPermission: PRIVATE }),
-  zone('service', 'service', 0.10, { exteriorPreference: 'deep', requiredAdjacency: ['circulation'], traversalPermission: SERVICE, serviceSpine: true }),
+  zone('lodging-room', 'private', 0.48, { minArea: 24, minShortDimension: 3.2, repeat: { min: 2, max: 3, desiredArea: 30 }, exteriorPreference: 'perimeter', privacy: 'private', daylight: 'high', facadePattern: 'lodging-repeat', requiredAdjacency: ['circulation'], traversalPermission: PRIVATE }),
+  zone('service', 'service', 0.10, { residualSink: true, exteriorPreference: 'deep', requiredAdjacency: ['circulation'], traversalPermission: SERVICE, serviceSpine: true }),
 ], [
   zone('circulation', 'circulation', 0.20, { exteriorPreference: 'deep', requiredAdjacency: ['lodging-room', 'service'], traversalPermission: PUBLIC }),
-  zone('lodging-room', 'private', 0.68, { repeat: { min: 3, max: 10, desiredArea: 18 }, exteriorPreference: 'perimeter', privacy: 'private', daylight: 'high', facadePattern: 'lodging-repeat', requiredAdjacency: ['circulation'], traversalPermission: PRIVATE }),
-  zone('service', 'service', 0.12, { exteriorPreference: 'deep', requiredAdjacency: ['circulation'], traversalPermission: SERVICE, serviceSpine: true }),
+  zone('lodging-room', 'private', 0.68, { minArea: 24, minShortDimension: 3.2, repeat: { min: 2, max: 8, desiredArea: 30 }, exteriorPreference: 'perimeter', privacy: 'private', daylight: 'high', facadePattern: 'lodging-repeat', requiredAdjacency: ['circulation'], traversalPermission: PRIVATE }),
+  zone('service', 'service', 0.12, { residualSink: true, exteriorPreference: 'deep', requiredAdjacency: ['circulation'], traversalPermission: SERVICE, serviceSpine: true }),
 ], { flows: [
   flow('guest-check-in', ['entry', 'lobby'], { routeClass: 'public' }),
   flow('guest-room-access', ['entry', 'circulation', 'lodging-room'], { routeClass: 'public' }),
@@ -402,9 +482,11 @@ export function programMorphologyPool(program) {
   return Object.freeze([...(programArchitectureFor(program)?.morphologies ?? [])]);
 }
 
-export function programTemplatesForFloor(programArchitecture, { isBaseFloor = false, routeServed = false } = {}) {
+export function programTemplatesForFloor(programArchitecture, { isBaseFloor = false, routeServed = false, morphologyId = null } = {}) {
   if (!programArchitecture) return null;
   if (!isBaseFloor && routeServed && programArchitecture.route?.length) return programArchitecture.route;
+  const morphology = morphologyId ? programArchitecture.morphologyTemplates?.[morphologyId] : null;
+  if (morphology) return isBaseFloor ? morphology.ground : morphology.upper;
   return isBaseFloor ? programArchitecture.ground : programArchitecture.upper;
 }
 

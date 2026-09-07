@@ -283,10 +283,21 @@ const MINIMUM_ENCLOSED_VOLUME_BY_ROLE = Object.freeze({
 // plan authority before walls are realized, so visual geometry cannot hide a
 // pathologically narrow semantic space.
 const MINIMUM_SHORT_DIMENSION_BY_ROLE = Object.freeze({
-  // Role defaults stay permissive for legacy/specialized programs. Spaciousness
-  // is asserted by the program/section that actually owns it (housing, lodging,
-  // public halls, etc.) rather than by a global rule that can erase apparatus
-  // bays, plant rooms or other deliberate special geometries.
+  // Deliberately conservative fallbacks only - a specific template's own
+  // minShortDimension/unitEnvelope always wins (see minimumShortDimensionForSpace).
+  // This purely feeds the informational shortDimensionHealthy/crampedDestination
+  // diagnostics, not the hard assertBuildingPlanAuthority gate, so it can never
+  // newly break a floor that previously generated fine - it only makes a
+  // pathologically narrow sliver visible as unhealthy instead of silently passing.
+  entry: 1.1,
+  circulation: 0.9,
+  service: 1.0,
+  storage: 0.9,
+  private: 1.7,
+  shared: 1.8,
+  public: 2.0,
+  work: 1.8,
+  program: 1.8,
 });
 
 function minimumVolumeForSpace(space) {
@@ -298,11 +309,28 @@ function minimumAreaForSpace(space, floorH) {
   return Math.max(Number(space?.minArea) || 0, minimumVolumeForSpace(space) / height);
 }
 
+// Explicit-only: a template that actually asserts its own narrowness contract
+// (minShortDimension / unitEnvelope) affects real rectangle geometry - the
+// candidate rectangle's shape (placeRectangleFirstSpace) and whether it must
+// hold a strict rectangle or may fall back to organic growth. Role-level
+// defaults deliberately do NOT flow into that geometry: they only exist to
+// make a pathologically narrow *result* visible (see minimumShortDimensionForDiagnostic
+// below), not to newly demand a wider rectangle than a program ever asked for
+// and risk failing placement on a floor that used to fit fine.
 function minimumShortDimensionForSpace(space) {
   const explicit = Number(space?.minShortDimension);
   if (Number.isFinite(explicit) && explicit > 0) return explicit;
   const envelope = Number(space?.unitEnvelope?.minimumShortDimension);
   if (Number.isFinite(envelope) && envelope > 0) return envelope;
+  return 0;
+}
+
+// Same as above, but also falls back to the conservative role-level default -
+// used only by the informational shortDimensionHealthy/crampedDestinationSpaceCount
+// diagnostic, never by placement/geometry decisions.
+function minimumShortDimensionForDiagnostic(space) {
+  const explicit = minimumShortDimensionForSpace(space);
+  if (explicit > 0) return explicit;
   return Number(MINIMUM_SHORT_DIMENSION_BY_ROLE[space?.role] ?? 0);
 }
 
@@ -1898,7 +1926,7 @@ function chooseChildSeed({ space, parentKey, grid, profile, stableKey }) {
   return { seed: candidates[0] ?? null, parentBoundaryRealized: boundary.length > 0 };
 }
 
-function assignLeftovers({ grid, spaces, profile, stableKey }) {
+function assignLeftovers({ grid, spaces, profile, stableKey, targets = null }) {
   const regularSurplusClaims = absorbRegularSurplus({ grid, spaces, profile, stableKey });
   const flexibleResidualKeys = new Set(spaces
     .filter(space => ['service', 'storage', 'shared'].includes(space.role) && !space.circulationFrontageReserved)
@@ -1909,6 +1937,19 @@ function assignLeftovers({ grid, spaces, profile, stableKey }) {
       .sort((a, b) => Number(b.areaWeight || 0) - Number(a.areaWeight || 0) || a.key.localeCompare(b.key))[0];
     if (fallbackResidual) flexibleResidualKeys.add(fallbackResidual.key);
   }
+  // A space that has already reached (or passed) its own weighted fair share
+  // should stop winning contested leftover cells against a space that hasn't.
+  // Without this, whichever space wins the first shell of a contested unclaimed
+  // region keeps a permanent adjacency advantage and can snowball into claiming
+  // nearly all of it - regardless of areaWeight - while a defining program room
+  // that got boxed in early (e.g. a strict-rectangle industrial bay with no
+  // remaining cardinal expansion) stays pinned at its bare minimum forever.
+  const overTargetRatio = space => {
+    const target = Number(targets?.get?.(space.key));
+    if (!Number.isFinite(target) || target <= 0) return 0;
+    const current = grid.cells.reduce((sum, cell) => sum + (cell.spaceId === space.key ? 1 : 0), 0);
+    return Math.max(0, current / target - 1);
+  };
   const closureArgs = {
     cells: grid.cells,
     spaces,
@@ -1922,7 +1963,8 @@ function assignLeftovers({ grid, spaces, profile, stableKey }) {
       const circulationPenalty = rectangleFirstPreferred(profile)
         && (space.role === 'circulation' || space.role === 'entry')
         && !cell.structuralReservationId ? 8 : 0;
-      return preferenceScore(cell, space, profile, `${stableKey}:leftover`) - circulationPenalty;
+      const overTargetPenalty = overTargetRatio(space) * 6;
+      return preferenceScore(cell, space, profile, `${stableKey}:leftover`) - circulationPenalty - overTargetPenalty;
     },
   };
   let closure = claimUnassignedRasterToEligibleSpaces(closureArgs);
@@ -2304,9 +2346,22 @@ function* planFloorSteps({
   // Weighted area is surplus. It may only be spent after the whole selected
   // program has acquired its physical minimum.
   const targets = targetCellCounts(spaces, grid, floorH);
+  // Surplus growth spends weighted area, so the space that most defines the
+  // floor (the largest weighted target - the room the whole program exists
+  // for) must get first pick of whatever's still open, not whichever space
+  // happens to sit earliest in the topology-graph traversal order. Growing in
+  // graph order let a small, easily-satisfied room (e.g. an entry/circulation
+  // room a few cells from its own tiny target) claim and wall off the
+  // surrounding floor before a genuinely defining room - stalled at its
+  // minimum rectangle with nowhere left to expand - ever got a turn.
+  const surplusOrder = [...order].sort((a, b) => {
+    const targetDiff = (targets.get(b.key) ?? 0) - (targets.get(a.key) ?? 0);
+    if (targetDiff) return targetDiff;
+    return a.key.localeCompare(b.key);
+  });
   if (!minimumPlacement.shortfalls.length) {
-    for (let orderIndex = 0; orderIndex < order.length; orderIndex++) {
-      const space = order[orderIndex];
+    for (let orderIndex = 0; orderIndex < surplusOrder.length; orderIndex++) {
+      const space = surplusOrder[orderIndex];
       const target = targets.get(space.key) ?? (minimumCellsByKey.get(space.key) ?? 1);
       const regular = growExistingSpaceRectangular({
         space,
@@ -2315,7 +2370,19 @@ function* planFloorSteps({
         stableKey: `${stableKey}:floor:${floor}:weighted-rectangle-grow`,
         profile,
       });
-      if (regular === null) {
+      // A rectangle-first space that stalls well short of its own weighted
+      // target (every cardinal expansion blocked by whatever claimed the
+      // neighboring cells first) previously stayed frozen at that stall point
+      // forever: growExistingSpaceRectangular returns a real (non-null) state
+      // even when it made zero progress, which used to skip the organic-growth
+      // fallback below entirely. A defining program room boxed in early should
+      // still be able to claim its fair share - just non-rectangularly - rather
+      // than a low-weight neighbor space quietly inheriting all of it instead.
+      // Never for a rectangleStrict space though (private dwelling units, route
+      // -frontage rooms, anything whose narrow-dimension contract demands a real
+      // rectangle) - breaking their rectangularity here silently corrupts whatever
+      // downstream geometry depends on it (e.g. dwelling-unit interior subdivision).
+      if (!space.rectangleStrict && (regular === null || (regular?.count ?? 0) < target)) {
         growExistingSpace({
           space,
           target,
@@ -2333,7 +2400,7 @@ function* planFloorSteps({
       };
     }
   }
-  const leftoverClosure = assignLeftovers({ grid, spaces, profile, stableKey: `${stableKey}:floor:${floor}` });
+  const leftoverClosure = assignLeftovers({ grid, spaces, profile, stableKey: `${stableKey}:floor:${floor}`, targets });
   yield { phase: 'building-plan-floor-leftover-closure', floor, unclaimed: grid.cells.filter(cell => !cell.spaceId).length };
 
   const cellArea = grid.cellSize * grid.cellSize;
@@ -2344,7 +2411,7 @@ function* planFloorSteps({
     const realizedWidth = cells.length ? (Math.max(...cells.map(cell => cell.ix)) - Math.min(...cells.map(cell => cell.ix)) + 1) * grid.cellSize : 0;
     const realizedDepth = cells.length ? (Math.max(...cells.map(cell => cell.iz)) - Math.min(...cells.map(cell => cell.iz)) + 1) * grid.cellSize : 0;
     const realizedShortDimension = Math.min(realizedWidth, realizedDepth);
-    const minimumShortDimension = minimumShortDimensionForSpace(s);
+    const minimumShortDimension = minimumShortDimensionForDiagnostic(s);
     const circulationFrontage = circulationFrontageForSpace(
       s, cells, grid, minimumPlacement.cityTransferSpaceKey ?? null,
     );

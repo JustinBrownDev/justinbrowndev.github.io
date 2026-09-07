@@ -18,6 +18,13 @@ const out=path.resolve(arg('--out','jweb-scene-snapshot.json'));
 const worldSeed=Number(arg('--seed','671278205'))|0;
 const x=Number(arg('--x','16'))|0, z=Number(arg('--z','0'))|0;
 const includeProps=flag('--include-props');
+// Interior partition-wall paint (world/architecture/building-plan-authority.js runs, realized
+// by realizeBuildingPlanWallRuns() in kowloon-fabric-engine.js) is excluded by default because
+// it is cosmetic sidecar geometry, same as windows/doors/roads -- noise for the original
+// structural-authority use case. Bugs where that paint (or the partition wall behind it) pokes
+// through the exterior shell and becomes visible from outside are invisible to this capture
+// unless explicitly opted back in.
+const includeInteriorPaint=flag('--include-interior-paint');
 const visualMode=String(arg('--visual-mode','exact')).toLowerCase();
 if (!['exact','bounds'].includes(visualMode)) throw new Error(`--visual-mode must be exact or bounds, got ${visualMode}`);
 if (!fs.existsSync(repo)) throw new Error(`JWEB repo not found: ${repo}`);
@@ -28,7 +35,8 @@ const THREE=await import(pathToFileURL(path.join(repo,'vendor/three/three.module
 const {createKowloonFabricEngine}=await import(pathToFileURL(path.join(repo,'kowloon-fabric-engine.js')));
 const {deterministicChunkSeed,worldWeirdnessAt}=await import(pathToFileURL(path.join(repo,'world-chunk-streamer.js')));
 
-const EXCLUDE=[/(?:^|[:\-])(roads?)(?:$|[:\-])/i,/(?:^|[:\-])(windows?)(?:$|[:\-])/i,/(?:^|[:\-])(doors?)(?:$|[:\-])/i,/interior-paint/i,/ceiling-plane/i,/ground-plane/i];
+const EXCLUDE=[/(?:^|[:\-])(roads?)(?:$|[:\-])/i,/(?:^|[:\-])(windows?)(?:$|[:\-])/i,/(?:^|[:\-])(doors?)(?:$|[:\-])/i,/ceiling-plane/i,/ground-plane/i,
+  ...(includeInteriorPaint?[]:[/interior-paint/i])];
 function excluded(o){const name=String(o?.name??'');return EXCLUDE.some(r=>r.test(name));}
 function effectiveVisible(o,boundaryRoot=null){for(let c=o;c && c!==boundaryRoot;c=c.parent) if(c.visible===false) return false; return true;}
 function materialVisible(m){return !!m && m.visible!==false && !(m.transparent===true && Number(m.opacity)<=0);}
@@ -94,7 +102,7 @@ const payload=await engine.build(chunk);
 const buildMs=performance.now()-buildStarted;
 const elements=[];
 const stats={visual:{meshes:0,instances:0,excludedMeshes:0,invisibleMeshes:0,emptyMeshes:0,ground:0,hanging:0},physics:{mazeWalls:0,platforms:0,ramps:0,props:0,ceilings:0}};
-const health={pass:true,errors:[],warnings:[],visualMode};
+const health={pass:true,errors:[],warnings:[],visualMode,includeInteriorPaint};
 function problem(kind,index,error,item=null){health.errors.push({kind,index,error:String(error?.message??error),item:item??undefined});health.pass=false;}
 
 // VISUAL INGEST -------------------------------------------------------------
@@ -136,8 +144,15 @@ function addWall(w,i){try{
   const dx=x2-x1,dz=z2-z1,len=Math.hypot(dx,dz); if(!(len>1e-9)) throw new Error('wall segment has zero horizontal length');
   const yMin=finiteRequired(w.yMin,`mazeWalls[${i}].yMin`), yMax=finiteRequired(w.yMax,`mazeWalls[${i}].yMax`); if(!(yMax>yMin)) throw new Error(`wall yMax (${yMax}) must exceed yMin (${yMin})`);
   const th=w.thickness==null?0.12:positiveRequired(w.thickness,`mazeWalls[${i}].thickness`);
+  // shellPieceKind distinguishes the authoritative exterior shell (addCompoundSideWall,
+  // kowloon-fabric-engine.js) from everything else that also lands in physics.mazeWalls
+  // (building-plan-partition interior walls, stair-shaft enclosures, crown/roof walls, ...).
+  // supportKind alone only labels the non-exterior cases, so forward both plus the handful
+  // of identity fields each wall-emitting function actually sets -- needed to tell "this
+  // interior partition's paint is outside the exterior shell it should be inside" from pixels.
   elements.push({type:'box',id:`collider:maze-wall:${i}`,roles:['collider'],center:[(x1+x2)/2,(yMin+yMax)/2,(z1+z2)/2],size:[th,yMax-yMin,len],yaw_deg:Math.atan2(dx,dz)*180/Math.PI,
-    source:{kind:'physics-maze-wall',supportKind:w.supportKind??null}});stats.physics.mazeWalls++;
+    source:{kind:'physics-maze-wall',supportKind:w.supportKind??null,shellPieceKind:w.shellPieceKind??null,shellOwnerId:w.shellOwnerId??null,
+      side:w.side??null,moduleKey:w.moduleKey??null,buildingPlanWallId:w.buildingPlanWallId??null,fromSpaceId:w.fromSpaceId??null,toSpaceId:w.toSpaceId??null}});stats.physics.mazeWalls++;
 }catch(error){problem('maze-wall',i,error,w);}}
 for(let i=0;i<(ph.mazeWalls?.length||0);i++) addWall(ph.mazeWalls[i],i);
 for(let i=0;i<(ph.platforms?.length||0);i++){const p=ph.platforms[i];try{

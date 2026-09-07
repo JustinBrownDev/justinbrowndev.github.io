@@ -1037,13 +1037,14 @@ def _parse_views(value) -> tuple[str,...]:
     return tuple(items)
 
 
-def capture_jweb_snapshot(repo: Path, snapshot_path: Path, *, world_seed=671278205, chunk_x=16, chunk_z=0, include_props=True, visual_mode="exact"):
+def capture_jweb_snapshot(repo: Path, snapshot_path: Path, *, world_seed=671278205, chunk_x=16, chunk_z=0, include_props=True, visual_mode="exact", include_interior_paint=False):
     script=Path(__file__).with_name('capture_jweb_scene.mjs')
     if not script.exists(): raise FileNotFoundError(f'missing JWEB capture adapter: {script}')
     repo=Path(repo).resolve(); snapshot_path=Path(snapshot_path).resolve(); snapshot_path.parent.mkdir(parents=True,exist_ok=True)
     cmd=['node',str(script),'--repo',str(repo),'--out',str(snapshot_path),'--seed',str(int(world_seed)),
          '--x',str(int(chunk_x)),'--z',str(int(chunk_z)),'--visual-mode',str(visual_mode)]
     if include_props: cmd.append('--include-props')
+    if include_interior_paint: cmd.append('--include-interior-paint')
     cp=subprocess.run(cmd,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
     if cp.returncode != 0:
         raise RuntimeError(f'JWEB capture failed ({cp.returncode})\nSTDOUT:\n{cp.stdout}\nSTDERR:\n{cp.stderr}')
@@ -1126,13 +1127,14 @@ def main(argv=None):
         ap.add_argument('--include-props',dest='include_props',action='store_true',default=True,help='capture prop colliders (default)')
         ap.add_argument('--visual-mode',choices=('exact','bounds'),default='exact',help='capture real THREE triangles (default) or legacy local AABB boxes')
         ap.add_argument('--exclude-props',dest='include_props',action='store_false',help='omit prop colliders for a lighter structural-only city snapshot')
+        ap.add_argument('--include-interior-paint',action='store_true',default=False,help='capture interior partition-wall paint sidecar geometry (excluded by default as cosmetic noise; opt in when debugging paint/partition walls that poke through the exterior shell)')
         ap.add_argument('--strict-geometry',action='store_true')
         ns=ap.parse_args(argv)
         try: cx,cz=(int(x.strip()) for x in ns.chunk.split(',',1))
         except Exception as exc: raise SystemExit(f'--chunk must be x,z: {ns.chunk!r}') from exc
         ns.out.mkdir(parents=True,exist_ok=True)
         snapshot=ns.out/'jweb-scene-snapshot.json'
-        cap=capture_jweb_snapshot(ns.repo,snapshot,world_seed=ns.seed,chunk_x=cx,chunk_z=cz,include_props=ns.include_props,visual_mode=ns.visual_mode)
+        cap=capture_jweb_snapshot(ns.repo,snapshot,world_seed=ns.seed,chunk_x=cx,chunk_z=cz,include_props=ns.include_props,visual_mode=ns.visual_mode,include_interior_paint=ns.include_interior_paint)
         views=_parse_views(ns.views)
         report=render_structure(snapshot,ns.out,width=ns.size,height=ns.size,supersample=ns.supersample,view_order=views)
         summary={'output':str(ns.out),'snapshot':str(snapshot),'render_ms':round(report['render_ms'],2),

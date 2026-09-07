@@ -35,6 +35,12 @@ python tools/geometry-harness/source/jweb_silhouette_tester.py city --repo . --c
 
 Silhouette differences localize suspicious regions; JWEB's own physical/semantic metadata remains deciding evidence.
 
+Interior partition-wall paint (the sidecar planes `realizeBuildingPlanWallRuns()` adds to each face of a Building Plan interior wall) is excluded by default, same as windows/doors/roads -- it's cosmetic noise for the original structural-authority use case. Pass `--include-interior-paint` when debugging that paint (or the partition wall behind it) poking through the exterior shell and becoming visible from outside.
+
+```sh
+python tools/geometry-harness/source/jweb_silhouette_tester.py city --repo . --chunk 16,0 --seed 671278205 --include-interior-paint -o /tmp/jweb-geometry-city-paint
+```
+
 ## Authored fixtures
 
 ```sh

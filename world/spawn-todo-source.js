@@ -13,5 +13,5 @@
 // reports (spawn scene semantics, spawn TODO bridge, skyway junctions,
 // occupancy/shell allocation) after verifying each against current main:
 export const SPAWN_TODO_ITEMS = [
-    'Skyway junction authority Phase A/B: plan guard/rail topology up front instead of retroactive carve-after-overlap',
+    'Skyway junction authority Phase B: wire transport-junction-authority into pre-carve candidate surfaces so guard/rail topology is actually planned up front (Phase A geometry landed, tested on 10 hostile fixtures + property tests)',
 ];

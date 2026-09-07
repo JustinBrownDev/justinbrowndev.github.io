@@ -13,7 +13,6 @@
 // reports (spawn scene semantics, spawn TODO bridge, skyway junctions,
 // occupancy/shell allocation) after verifying each against current main:
 export const SPAWN_TODO_ITEMS = [
-    'Rebuild spawn TV/seating around a focal-frame: viewing half-space, same room, sightline not crossing a wall',
     'Reconnect spawn host selection to real Building Plan room topology instead of the flattened module/floor fabric-space model',
     'Skyway junction authority Phase A/B: plan guard/rail topology up front instead of retroactive carve-after-overlap',
 ];

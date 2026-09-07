@@ -760,7 +760,21 @@ export function inspectBuildingPlan(plan) {
 
 export function assertBuildingPlanAuthority(plan, { requirePersistentCore = true } = {}) {
   if (!plan || plan.authoritySchema !== BUILDING_PLAN_AUTHORITY_SCHEMA) throw new Error('building plan authority schema missing');
-  if (!plan.diagnostics?.topologyHealthy) throw new Error('building plan topology is not connected');
+  if (!plan.diagnostics?.topologyHealthy) {
+    // A bare "not connected" told you nothing about which floor or why - this
+    // is the hardest-to-reproduce failure in the whole authority (seed/chunk
+    // dependent, and the culprit is always a floor's *desired* edges that
+    // never became doors, not the floors list itself), so name the actual
+    // unreachable spaces and the specific required edges that were rejected.
+    const unhealthyFloors = (plan.floors ?? []).filter(f => !f.diagnostics?.reachable).map(f => {
+      const unrealizedRequired = (f.diagnostics?.unrealizedDesiredEdges ?? [])
+        .filter(edge => edge.strength === 'required')
+        .map(edge => `${edge.a}~${edge.b} (${edge.reason})`);
+      return `floor ${f.floor}: root=${f.rootSpaceKey ?? '?'} spaces=[${(f.spaces ?? []).map(s => s.key).join(', ')}]`
+        + (unrealizedRequired.length ? `; unrealized required edges: ${unrealizedRequired.join('; ')}` : '');
+    });
+    throw new Error(`building plan topology is not connected - ${unhealthyFloors.join(' | ')}`);
+  }
   if ((plan.diagnostics?.unclaimedRasterCellCount ?? 0) !== 0) {
     const floorCounts = (plan.floors ?? [])
       .filter(floor => (floor.diagnostics?.unclaimedCellCount ?? 0) > 0)

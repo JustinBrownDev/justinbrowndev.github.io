@@ -29,7 +29,10 @@ const lodging = planBuildingSidecar({
   circulationReservations: [core],
 });
 
-assert.equal(lodging.architecturalField.phase, 'forensic-spawn');
+// distanceChunks 0 always yields near-conventional now - distance-inversion.js's
+// architecturalFieldProfile() retired the separate 'forensic-spawn' phase (isSpawn
+// is intentionally ignored: "streamed origin has no special phase").
+assert.equal(lodging.architecturalField.phase, 'near-conventional');
 assert.ok(lodging.floors.every(floor => floor.diagnostics.rectangleFirstPreferred === true));
 const privateRooms = lodging.floors.flatMap(floor => floor.spaces.filter(space => space.role === 'private'));
 assert.ok(privateRooms.length >= 15, 'fixture must exercise a repeated residential population');

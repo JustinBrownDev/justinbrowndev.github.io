@@ -17,7 +17,9 @@ assert.doesNotMatch(scaffold, /splitRiseA|splitRiseB|streetLaneCoord|buildingLan
 assert.match(engine, /canonical-facade-zigzag/);
 assert.doesNotMatch(engine, /plan\.topology !== 'canonical-scaffold-switchback'/,
   'runtime acceptance may not keep the retired prism topology gate');
-assert.match(engine, /blockedRects:\s*physics\.fastStairThroats/);
+// blockedRects now merges throat clearances with roof transport blockers
+// (kowloon-fabric-engine.js), rather than being fastStairThroats alone.
+assert.match(engine, /blockedRects:\s*\[\.\.\.\(physics\.fastStairThroats[^)]*\),\s*\.\.\.\(physics\.roofTransportBlockers/);
 assert.match(engine, /reconcileTransportPlatformOwnership/);
 assert.match(transport, /candidateBlocked/);
 assert.match(transport, /linksConflict/);

@@ -55,7 +55,10 @@ const spawnAgain = planBuildingSidecar({
 
 assert.deepEqual(spawn, spawnAgain, 'same input must produce byte-equivalent deterministic plan data');
 assert.equal(spawn.schema, 'jweb.building-plan-sidecar.v1');
-assert.equal(spawn.architecturalField.phase, 'forensic-spawn');
+// distanceChunks 0 always yields near-conventional now - distance-inversion.js's
+// architecturalFieldProfile() retired the separate 'forensic-spawn' phase (isSpawn
+// is intentionally ignored: "streamed origin has no special phase").
+assert.equal(spawn.architecturalField.phase, 'near-conventional');
 assert.equal(spawn.architecturalField.fidelity, 1);
 assert.equal(spawn.architecturalField.inversion, 0);
 assert.equal(spawn.northStar.organism, 'kowloon-walled-city');

@@ -13,5 +13,11 @@
 // reports (spawn scene semantics, spawn TODO bridge, skyway junctions,
 // occupancy/shell allocation) after verifying each against current main:
 export const SPAWN_TODO_ITEMS = [
-    'Skyway junction authority Phase B: wire transport-junction-authority into pre-carve candidate surfaces so guard/rail topology is actually planned up front (Phase A geometry landed, tested on 10 hostile fixtures + property tests)',
+    // All 7 items from the 2026-09-07 architecture-report synthesis landed:
+    // spawn support-area inflation, allocator proportion/narrowness, ceiling
+    // -height sidecar, focal-frame seating, Building Plan room reconnection,
+    // the broken cross-chunk seam test, and skyway junction authority (Phase
+    // A geometry + Phase B wired into live rail-gap carving). The deeper
+    // junction-owns-structure/global-corridor vision (report 3's Phase C+)
+    // is real, explicitly-scoped future work, not something left undone here.
 ];

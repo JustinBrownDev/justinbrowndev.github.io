@@ -243,6 +243,61 @@ function payloadPhysicsTargets(entry, payloadIndex) {
   return out;
 }
 
+function renderConstructionTargets(THREE, root, { ownerId = '', chunkKey = '' } = {}) {
+  if (!root?.traverse) return [];
+  root.updateMatrixWorld?.(true);
+  const assemblies=new Map(), roles=new Map(), languages=new Map();
+  const instanceMatrix=new THREE.Matrix4(), worldMatrix=new THREE.Matrix4();
+  const include=(map,key,source,bounds,selector,labels)=>{
+    const current=map.get(key)??{bounds:null,selector,labels:new Set(),sourceCount:0};
+    current.bounds=unionBounds(current.bounds,bounds);current.sourceCount++;
+    for(const label of labels)if(label!=null&&String(label))current.labels.add(String(label));
+    map.set(key,current);
+  };
+  root.traverse(object=>{
+    if(!object?.isInstancedMesh)return;
+    const sources=object.userData?.visualProbeInstanceSources;
+    if(!(sources instanceof Map)||!sources.size)return;
+    const localBox=localGeometryBox(THREE,object.geometry);if(!localBox||localBox.isEmpty())return;
+    object.updateWorldMatrix?.(true,false);
+    for(const [index,source] of sources){
+      const constructionId=source?.buildingConstructionId;
+      if(constructionId==null||!Number.isInteger(index)||index<0||index>=object.count)continue;
+      object.getMatrixAt(index,instanceMatrix);worldMatrix.multiplyMatrices(object.matrixWorld,instanceMatrix);
+      const bounds=threeBoxToBounds(localBox.clone().applyMatrix4(worldMatrix));if(!boundsValid(bounds))continue;
+      const commonLabels=['building-construction',constructionId,source.architectureFamily,source.constructionFlavor,source.semanticRole,source.moduleKey,source.side];
+      include(assemblies,String(constructionId),source,bounds,{buildingConstructionId:constructionId},commonLabels);
+      if(source.architectureRole!=null){
+        const roleKey=`${constructionId}|${source.architectureRole}`;
+        include(roles,roleKey,source,bounds,{buildingConstructionId:constructionId,architectureRole:source.architectureRole},
+          [...commonLabels,'building-construction-role',source.architectureRole]);
+      }
+      if(source.facadeLanguage!=null){
+        const languageKey=`${constructionId}|${source.facadeLanguage}`;
+        include(languages,languageKey,source,bounds,{buildingConstructionId:constructionId,facadeLanguage:source.facadeLanguage},
+          [...commonLabels,'building-construction-facade-language',source.facadeLanguage]);
+      }
+    }
+  });
+  const out=[];
+  const emit=(map,targetKind,arrayName,idFor)=>{
+    let index=0;
+    for(const [key,record] of [...map.entries()].sort((a,b)=>a[0].localeCompare(b[0]))){
+      if(!boundsValid(record.bounds))continue;
+      attachBoundsOwnership(record.bounds,[record.selector],{replace:true});
+      out.push({
+        schema:JWEB_VISUAL_PROBE_SCHEMA,targetKind,arrayName,index:index++,id:idFor(key),ownerId:String(ownerId),chunkKey:String(chunkKey),
+        bounds:record.bounds,labels:[targetKind,arrayName,...record.labels].filter(Boolean).map(String),
+        raw:{...record.selector,visualOwnershipAuthority:'exact-structural-instance-ownership-v2',sourceInstanceCount:record.sourceCount},
+      });
+    }
+  };
+  emit(assemblies,'building-construction','renderConstructionAssemblies',key=>key);
+  emit(roles,'building-construction-role','renderConstructionRoles',key=>key.replace('|',':role:'));
+  emit(languages,'building-construction-facade-language','renderConstructionFacadeLanguages',key=>key.replace('|',':facade:'));
+  return out;
+}
+
 function rootBounds(THREE, root) {
   if (!root) return null;
   root.updateMatrixWorld?.(true);
@@ -265,6 +320,10 @@ export function buildTargetCatalog(THREE, payloadEntries = [], { includeRoots = 
       });
     }
     out.push(...payloadPhysicsTargets(entry,payloadIndex));
+    if(root) out.push(...renderConstructionTargets(THREE,root,{
+      ownerId:String(payload?.ownerId ?? root.userData?.worldChunkOwnerId ?? entry.ownerId ?? `payload-${payloadIndex}`),
+      chunkKey:String(entry.chunkKey ?? root.userData?.worldChunkKey ?? ''),
+    }));
   });
   return out;
 }

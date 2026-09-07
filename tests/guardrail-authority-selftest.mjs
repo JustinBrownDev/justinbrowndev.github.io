@@ -16,13 +16,13 @@ assert.ok(fire.memberThickness < civic.memberThickness, 'fire escape members mus
 assert.ok(civic.height > fire.height, 'ordinary civic/residential guard may be more substantial than the accepted fire-escape guard');
 assert.ok(municipal.bodyThickness >= 0.16 && municipal.construction === 'solid-mold', 'municipal guard must read as a real concrete mold/barrier');
 
-assert.equal(guardFamilyForContext({ supportKind: 'scaffold-rail' }), 'fire-escape-pipe');
+assert.equal(guardFamilyForContext({ supportKind: 'scaffold-rail' }), 'scaffold-pipe');
 assert.equal(guardFamilyForContext({ supportKind: 'parapet' }), 'municipal-concrete');
 const traversalParapet = guardProfile('roof-traversal-parapet');
 assert.ok(traversalParapet.height < 0.65, 'transport-roof parapet must sit safely below the controller max-step threshold');
 assert.equal(traversalParapet.construction, 'solid-mold');
 assert.equal(guardFamilyForContext({ physicalUse: 'residential-lodging', visualRole: 'stair' }), 'residential-civic-bar');
-assert.equal(guardFamilyForContext({ physicalUse: 'industrial-service', visualRole: 'transport-stair' }), 'fire-escape-pipe');
+assert.equal(guardFamilyForContext({ physicalUse: 'industrial-service', visualRole: 'transport-stair' }), 'industrial-two-rail');
 assert.equal(guardFamilyForContext({ physicalUse: 'assembly-institutional', visualRole: 'stair' }), 'residential-civic-bar');
 
 const landing = planHorizontalGuardSpan({ id: 'landing', x1: -2.4, z1: 1, x2: 2.4, z2: 1, y: 3.2, family: 'fire-escape-pipe' });

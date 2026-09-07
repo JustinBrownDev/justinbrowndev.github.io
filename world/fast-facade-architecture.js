@@ -43,6 +43,8 @@ export function planFastFacadeArchitecture({
   defaultDoorWidth = 1.35,
   defaultDoorHeight = 2.2,
   programFrontages = [],
+  constructionProfile = null,
+  constructionDirectives = [],
 } = {}) {
   const props = [];
   const windows = [];
@@ -63,7 +65,31 @@ export function planFastFacadeArchitecture({
     programFrontages: 0,
     elevatedProgramFrontages: 0,
     programPortalFrontages: 0,
+    constructionDirectedFloors: 0,
+    semanticWindows: 0,
+    opaqueProgramFloors: 0,
+    operationalPanels: 0,
+    suppressedGenericGroundBays: 0,
   };
+
+  const constructionDirectiveByFaceFloor = new Map();
+  for (const directive of constructionDirectives ?? []) {
+    const localFloor = Number.isFinite(Number(directive?.localFloor))
+      ? Math.max(0, Math.floor(Number(directive.localFloor)))
+      : null;
+    if (localFloor == null || !directive?.moduleKey || !directive?.side) continue;
+    const key = `${directive.moduleKey}:${directive.side}:${localFloor}`;
+    if (!constructionDirectiveByFaceFloor.has(key)) constructionDirectiveByFaceFloor.set(key, directive);
+  }
+  const constructionMeta = directive => directive ? {
+    buildingConstructionId: directive.buildingConstructionId ?? constructionProfile?.id ?? null,
+    architectureFamily: directive.architectureFamily ?? constructionProfile?.architectureFamily ?? null,
+    constructionFlavor: directive.constructionFlavor ?? constructionProfile?.constructionFlavor ?? null,
+    facadeLanguage: directive.facadeLanguage ?? null,
+    semanticSpaceId: directive.semanticSpaceId ?? null,
+    semanticRole: directive.semanticRole ?? null,
+  } : {};
+  const constructionDirectiveFor = (face, floor) => constructionDirectiveByFaceFloor.get(`${face.moduleKey}:${face.side}:${floor}`) ?? null;
 
   const programFrontageByFaceFloor = new Map();
   for (const frontage of [...programFrontages].sort((a, b) => String(a?.id ?? '').localeCompare(String(b?.id ?? '')))) {
@@ -238,76 +264,171 @@ export function planFastFacadeArchitecture({
 
     const groundOccupied = openingByFloor.has(0) || programFrontageFloors.has(0);
     const groundBaseY = floorBaseOf(face) * floorH;
+    const groundConstruction = constructionDirectiveFor(face, 0);
     let groundBay = null;
     if (!groundOccupied && tangentSpan >= 2.0) {
-      const roll = stableHash(`${stableKey}:${face.moduleKey}:${face.dirKey}:ground-bay`) % 100;
-      const bayKind = roll < 64 ? 'storefront' : 'service-shutter';
-      const bayWidth = clamp(tangentSpan * (bayKind === 'storefront' ? 0.58 : 0.48), 1.55, Math.min(3.4, tangentSpan - 0.30));
-      const bayHeight = bayKind === 'storefront' ? Math.min(2.45, floorH - 0.18) : Math.min(2.25, floorH * 0.72);
-      const center = geometry.tangentCenter;
-      const panelNormal = geometry.faceCoord + geometry.outward * 0.035;
-      const baseY = groundBaseY;
-      if (bayKind === 'storefront') {
-        // Storefront is a literal ground-level wall cut, like a broad doorway.
-        // It remains facade architecture rather than fabricating a circulation portal.
-        apertures.push(freezeRecord({
-          id: `${stableKey}:${face.moduleKey}:${face.dirKey}:storefront-aperture`,
-          kind: 'storefront', moduleKey: face.moduleKey, dirKey: face.dirKey, side: face.side,
-          floor: 0, floorBase: floorBaseOf(face), center, width: bayWidth, height: bayHeight, bottom: 0,
-        }));
-        // Deliberately empty: the storefront treatment is the carved opening itself.
-        // No glass/panel plane is allowed to refill the hole.
-        const frameT = 0.10;
-        const frameNormal = geometry.faceCoord + geometry.outward * 0.055;
-        const frameY = baseY + bayHeight * 0.5;
-        props.push(orientedBox(face, center - bayWidth * 0.5 - frameT * 0.5, frameNormal, frameY, frameT, 0.11, bayHeight + 0.18,
-          { facadeRole: 'storefront-frame', moduleKey: face.moduleKey, dirKey: face.dirKey }));
-        props.push(orientedBox(face, center + bayWidth * 0.5 + frameT * 0.5, frameNormal, frameY, frameT, 0.11, bayHeight + 0.18,
-          { facadeRole: 'storefront-frame', moduleKey: face.moduleKey, dirKey: face.dirKey }));
-        props.push(orientedBox(face, center, frameNormal, frameY + bayHeight * 0.5 + 0.09, bayWidth + frameT * 2, 0.11, 0.12,
-          { facadeRole: 'storefront-frame', moduleKey: face.moduleKey, dirKey: face.dirKey }));
-        const canopyDepth = 0.66;
-        props.push(orientedBox(face, center, geometry.faceCoord + geometry.outward * canopyDepth * 0.5, Math.min(floorH - 0.38, 2.38), bayWidth + 0.42, canopyDepth, 0.10,
-          { facadeRole: 'shop-awning', moduleKey: face.moduleKey, dirKey: face.dirKey, floor: 0 }));
-        metrics.storefronts++;
-        metrics.canopies++;
+      const language = String(groundConstruction?.facadeLanguage ?? '');
+      const family = String(groundConstruction?.architectureFamily ?? constructionProfile?.architectureFamily ?? '');
+      let bayKind = null;
+      if (!groundConstruction) {
+        const roll = stableHash(`${stableKey}:${face.moduleKey}:${face.dirKey}:ground-bay`) % 100;
+        bayKind = roll < 64 ? 'storefront' : 'service-shutter';
+      } else if (language === 'large-operational-bay') {
+        bayKind = 'service-shutter';
+      } else if (language === 'technical-service' || (language === 'service-opaque' && /data|laboratory|utility/.test(family))) {
+        bayKind = 'technical-panel';
+      } else if (language === 'service-opaque' && /warehouse|workshop|industrial/.test(family)) {
+        bayKind = 'service-shutter';
       } else {
-        props.push(orientedBox(face, center, panelNormal, baseY + bayHeight * 0.5 + 0.10, bayWidth, 0.08, bayHeight,
-          { facadeRole: 'closed-service-shutter', moduleKey: face.moduleKey, dirKey: face.dirKey, floor: 0 }));
-        props.push(orientedBox(face, center, geometry.faceCoord + geometry.outward * 0.07, baseY + bayHeight + 0.19, bayWidth + 0.24, 0.14, 0.18,
-          { facadeRole: 'service-shutter-hood', moduleKey: face.moduleKey, dirKey: face.dirKey, floor: 0 }));
-        metrics.serviceShutters++;
+        // A domestic, civic, office, or ordinary work facade no longer receives
+        // a random shopfront merely because its ground wall had spare space.
+        metrics.suppressedGenericGroundBays++;
       }
-      groundBay = bayKind;
-      treatments.push(freezeRecord({
-        id: `${stableKey}:${face.moduleKey}:${face.dirKey}:ground-bay`, kind: bayKind,
-        moduleKey: face.moduleKey, dirKey: face.dirKey, side: face.side, floor: 0,
-        width: bayWidth, height: bayHeight, center,
-      }));
+
+      if (bayKind) {
+        const bayWidth = clamp(tangentSpan * (bayKind === 'storefront' ? 0.58 : bayKind === 'technical-panel' ? 0.40 : 0.54),
+          1.55, Math.min(bayKind === 'service-shutter' ? 4.8 : 3.4, tangentSpan - 0.30));
+        const bayHeight = bayKind === 'storefront' ? Math.min(2.45, floorH - 0.18)
+          : bayKind === 'technical-panel' ? Math.min(1.85, floorH * 0.60)
+          : Math.min(2.55, floorH * 0.80);
+        const center = geometry.tangentCenter;
+        const panelNormal = geometry.faceCoord + geometry.outward * 0.035;
+        const baseY = groundBaseY;
+        const cMeta = constructionMeta(groundConstruction);
+        if (bayKind === 'storefront') {
+          // Legacy/no-program fallback only. Program-aware commercial frontages are
+          // supplied by programFrontages above and therefore remain route-aligned.
+          apertures.push(freezeRecord({
+            id: `${stableKey}:${face.moduleKey}:${face.dirKey}:storefront-aperture`,
+            kind: 'storefront', moduleKey: face.moduleKey, dirKey: face.dirKey, side: face.side,
+            floor: 0, floorBase: floorBaseOf(face), center, width: bayWidth, height: bayHeight, bottom: 0,
+          }));
+          const frameT = 0.10;
+          const frameNormal = geometry.faceCoord + geometry.outward * 0.055;
+          const frameY = baseY + bayHeight * 0.5;
+          props.push(orientedBox(face, center - bayWidth * 0.5 - frameT * 0.5, frameNormal, frameY, frameT, 0.11, bayHeight + 0.18,
+            { facadeRole: 'storefront-frame', moduleKey: face.moduleKey, dirKey: face.dirKey, ...cMeta }));
+          props.push(orientedBox(face, center + bayWidth * 0.5 + frameT * 0.5, frameNormal, frameY, frameT, 0.11, bayHeight + 0.18,
+            { facadeRole: 'storefront-frame', moduleKey: face.moduleKey, dirKey: face.dirKey, ...cMeta }));
+          props.push(orientedBox(face, center, frameNormal, frameY + bayHeight * 0.5 + 0.09, bayWidth + frameT * 2, 0.11, 0.12,
+            { facadeRole: 'storefront-frame', moduleKey: face.moduleKey, dirKey: face.dirKey, ...cMeta }));
+          const canopyDepth = 0.66;
+          props.push(orientedBox(face, center, geometry.faceCoord + geometry.outward * canopyDepth * 0.5, Math.min(floorH - 0.38, 2.38), bayWidth + 0.42, canopyDepth, 0.10,
+            { facadeRole: 'shop-awning', moduleKey: face.moduleKey, dirKey: face.dirKey, floor: 0, ...cMeta }));
+          metrics.storefronts++;
+          metrics.canopies++;
+        } else if (bayKind === 'technical-panel') {
+          props.push(orientedBox(face, center, panelNormal, baseY + floorH * 0.52, bayWidth, 0.09, bayHeight,
+            { facadeRole: 'technical-service-panel', moduleKey: face.moduleKey, dirKey: face.dirKey, floor: 0, ...cMeta }));
+          const rails = 4;
+          for (let i = 0; i < rails; i++) {
+            props.push(orientedBox(face, center, geometry.faceCoord + geometry.outward * 0.085,
+              baseY + floorH * 0.52 - bayHeight * 0.34 + (bayHeight * 0.68) * (i / (rails - 1)),
+              bayWidth * 0.88, 0.08, 0.055,
+              { facadeRole: 'technical-panel-louver', moduleKey: face.moduleKey, dirKey: face.dirKey, floor: 0, ...cMeta }));
+          }
+          metrics.operationalPanels++;
+        } else {
+          // Closed operational bay: visually reads as a real door/shutter but does
+          // not punch an unowned traversable hole through the collision shell.
+          props.push(orientedBox(face, center, panelNormal, baseY + bayHeight * 0.5 + 0.10, bayWidth, 0.08, bayHeight,
+            { facadeRole: 'closed-service-shutter', moduleKey: face.moduleKey, dirKey: face.dirKey, floor: 0, ...cMeta }));
+          props.push(orientedBox(face, center, geometry.faceCoord + geometry.outward * 0.07, baseY + bayHeight + 0.19, bayWidth + 0.24, 0.14, 0.18,
+            { facadeRole: 'service-shutter-hood', moduleKey: face.moduleKey, dirKey: face.dirKey, floor: 0, ...cMeta }));
+          metrics.serviceShutters++;
+          metrics.operationalPanels++;
+        }
+        groundBay = bayKind;
+        treatments.push(freezeRecord({
+          id: `${stableKey}:${face.moduleKey}:${face.dirKey}:ground-bay`, kind: bayKind,
+          moduleKey: face.moduleKey, dirKey: face.dirKey, side: face.side, floor: 0,
+          width: bayWidth, height: bayHeight, center, ...cMeta,
+        }));
+      }
     }
 
     for (let floor = 0; floor < floors; floor++) {
       if (openingByFloor.has(floor)) continue;
       if (programFrontageFloors.has(floor)) continue;
       if (floor === 0 && groundBay) continue;
-      const y = (floorBaseOf(face) + floor) * floorH + floorH * 0.56;
-      const windowCount = tangentSpan >= 5.6 ? 2 : 1;
-      const width = clamp(tangentSpan * (windowCount === 2 ? 0.22 : 0.32), 0.82, 1.28);
-      const height = clamp(floorH * 0.25, 0.68, 0.90);
+      const directive = constructionDirectiveFor(face, floor);
+      const cMeta = constructionMeta(directive);
+      const language = String(directive?.facadeLanguage ?? '');
+      let windowCount;
+      let width;
+      let height;
+      let centerHeight;
+
+      if (!directive) {
+        windowCount = tangentSpan >= 5.6 ? 2 : 1;
+        width = clamp(tangentSpan * (windowCount === 2 ? 0.22 : 0.32), 0.82, 1.28);
+        height = clamp(floorH * 0.25, 0.68, 0.90);
+        centerHeight = floorH * 0.56;
+      } else {
+        metrics.constructionDirectedFloors++;
+        if (language === 'technical-service') {
+          windowCount = 0;
+        } else if (language === 'service-opaque') {
+          const roll = stableHash(`${stableKey}:${face.moduleKey}:${face.side}:${floor}:service-window`) % 100;
+          windowCount = roll < 28 ? 1 : 0;
+          width = clamp(tangentSpan * 0.17, 0.58, 0.88);
+          height = clamp(floorH * 0.19, 0.50, 0.68);
+          centerHeight = floorH * 0.68;
+        } else if (language === 'domestic-cellular') {
+          windowCount = tangentSpan >= 7.2 ? 3 : tangentSpan >= 4.6 ? 2 : 1;
+          width = clamp(tangentSpan / (windowCount + 2.6) * 0.58, 0.72, 1.08);
+          height = clamp(floorH * 0.34, 0.92, 1.24);
+          centerHeight = floorH * 0.57;
+        } else if (language === 'public-open' || language === 'public-service-threshold') {
+          windowCount = tangentSpan >= 5.2 ? 2 : 1;
+          width = clamp(tangentSpan * (windowCount === 2 ? 0.29 : 0.46), 1.05, 1.72);
+          height = clamp(floorH * 0.42, 1.05, 1.42);
+          centerHeight = floorH * 0.54;
+        } else if (language === 'work-regular') {
+          windowCount = tangentSpan >= 5.0 ? 2 : 1;
+          width = clamp(tangentSpan * (windowCount === 2 ? 0.27 : 0.40), 0.95, 1.55);
+          height = clamp(floorH * 0.30, 0.78, 1.04);
+          centerHeight = floorH * 0.62;
+        } else if (language === 'large-operational-bay') {
+          // Ground operational faces are occupied by the closed bay panel above.
+          // Upper floors get a restrained high strip rather than apartment windows.
+          windowCount = floor === 0 ? 0 : 1;
+          width = clamp(tangentSpan * 0.34, 1.10, 1.85);
+          height = clamp(floorH * 0.20, 0.55, 0.72);
+          centerHeight = floorH * 0.69;
+        } else {
+          windowCount = tangentSpan >= 5.6 ? 2 : 1;
+          width = clamp(tangentSpan * (windowCount === 2 ? 0.22 : 0.32), 0.82, 1.28);
+          height = clamp(floorH * 0.25, 0.68, 0.90);
+          centerHeight = floorH * 0.56;
+        }
+      }
+
+      if (!(windowCount > 0)) {
+        if (directive) metrics.opaqueProgramFloors++;
+        continue;
+      }
+      const y = (floorBaseOf(face) + floor) * floorH + centerHeight;
       for (let i = 0; i < windowCount; i++) {
-        const u = windowCount === 1 ? 0 : (i === 0 ? -0.30 : 0.30);
+        const u = windowCount === 1 ? 0 : windowCount === 2 ? (i === 0 ? -0.30 : 0.30) : (i - 1) * 0.30;
         const tangent = geometry.tangentCenter + u * geometry.tangentHalf;
+        const bottom = centerHeight - height * 0.5;
         apertures.push(freezeRecord({
           id: `${stableKey}:${face.moduleKey}:${face.dirKey}:window-aperture:${floor}:${i}`,
           kind: 'window', moduleKey: face.moduleKey, dirKey: face.dirKey, side: face.side,
-          floor, floorBase: floorBaseOf(face), center: tangent, width, height, bottom: floorH * 0.56 - height * 0.5,
+          floor, floorBase: floorBaseOf(face), center: tangent, width, height, bottom, ...cMeta,
         }));
         props.push(orientedBox(face, tangent, geometry.faceCoord + geometry.outward * 0.055, y - height * 0.5 - 0.055, width + 0.16, 0.12, 0.10,
-          { facadeRole: 'window-sill', moduleKey: face.moduleKey, dirKey: face.dirKey, floor, windowIndex: i }));
+          { facadeRole: 'window-sill', moduleKey: face.moduleKey, dirKey: face.dirKey, floor, windowIndex: i, ...cMeta }));
+        if (directive) {
+          windows.push(facadePlane(face, tangent, geometry.faceCoord + geometry.outward * 0.02, y, width, height,
+            { facadeRole: 'construction-window-glazing', moduleKey: face.moduleKey, dirKey: face.dirKey, floor, windowIndex: i, ...cMeta }));
+          metrics.semanticWindows++;
+        }
         treatments.push(freezeRecord({
           id: `${stableKey}:${face.moduleKey}:${face.dirKey}:window:${floor}:${i}`,
           kind: 'window', moduleKey: face.moduleKey, dirKey: face.dirKey, side: face.side,
-          floor, center: tangent, width, height,
+          floor, center: tangent, width, height, ...cMeta,
         }));
         metrics.windows++;
       }

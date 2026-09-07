@@ -9,10 +9,21 @@ export const ARCHITECTURE_MATERIAL_HANDWRITING_SCHEMA = 'jweb.architecture-mater
 const DEFAULT_PALETTE = Object.freeze({ metal: 0x62635e, concrete: 0x737169 });
 
 export const ARCHITECTURE_MATERIAL_PALETTES = Object.freeze({
-  // Stair / circulation expression families.
+  // Stair architecture species. Material handwriting follows construction history;
+  // it never selects the species or substitutes for a silhouette difference.
+  'domestic-enclosed-dogleg': Object.freeze({ metal: 0x6d6961, concrete: 0x766d61 }),
+  'retrofit-facade-fire-escape': Object.freeze({ metal: 0x5f5448, concrete: 0x747069 }),
+  'industrial-work-stair': Object.freeze({ metal: 0x575a55, concrete: 0x6c6961 }),
+  'institutional-egress': Object.freeze({ metal: 0x697071, concrete: 0x777a78 }),
+  'civic-monumental': Object.freeze({ metal: 0x687172, concrete: 0x747979 }),
+  'district-thoroughfare': Object.freeze({ metal: 0x625d57, concrete: 0x66615a }),
+  'scaffold-access-tower': Object.freeze({ metal: 0x565c58, concrete: 0x696a64 }),
+  'utility-ship-stair': Object.freeze({ metal: 0x4f605b, concrete: 0x686d68 }),
+
+  // Legacy aliases retained for old captured payloads / fixtures. New planners do
+  // not select these names.
   'industrial-fire-escape': Object.freeze({ metal: 0x5f5448, concrete: 0x747069 }),
   'residential-enclosed': Object.freeze({ metal: 0x6d6961, concrete: 0x766d61 }),
-  'civic-monumental': Object.freeze({ metal: 0x687172, concrete: 0x747979 }),
   'scaffold-service': Object.freeze({ metal: 0x565c58, concrete: 0x696a64 }),
   'utility-rack': Object.freeze({ metal: 0x4f605b, concrete: 0x686d68 }),
   'brutalist-mass': Object.freeze({ metal: 0x625d57, concrete: 0x66615a }),

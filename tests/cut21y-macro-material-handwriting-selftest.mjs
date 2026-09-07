@@ -49,11 +49,11 @@ const route = {
   ],
 };
 const stair = planStairArchitectureExpression({
-  id: '21y:stair', route, family: 'industrial-fire-escape', field: 'ground', routeWidthScale: 1.5,
+  id: '21y:stair', route, family: 'retrofit-facade-fire-escape', field: 'ground', routeWidthScale: 1.5,
 });
 assert.ok(stair?.parts > 0);
 assert.equal(stair.parts, stair.metal.length + stair.concrete.length, 'tinting must not change part count');
-assert.equal(stair.traversalAuthority, 'canonical-stair-kernel-unchanged');
+assert.equal(stair.traversalAuthority, 'species-selected-before-visual-expression');
 assert.ok([...stair.metal, ...stair.concrete].every(part => Number.isInteger(part.color)), 'every stair wrapper part should use the existing instance-color channel');
 
 const module = { key: 'main', cx: 0, cz: 0, halfX: 9, halfZ: 8, floors: 4, floorBase: 0 };

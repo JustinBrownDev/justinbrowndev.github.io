@@ -22,6 +22,46 @@ const PROFILES = Object.freeze({
     postSpacing: 1.42,
     collisionThickness: 0.10,
   }),
+  'residential-half-wall': Object.freeze({
+    family: 'residential-half-wall',
+    construction: 'solid-mold',
+    material: 'concrete',
+    height: 0.82,
+    bodyThickness: 0.14,
+    capThickness: 0.17,
+    capHeight: 0.055,
+    collisionThickness: 0.14,
+  }),
+  'institutional-handrail': Object.freeze({
+    family: 'institutional-handrail',
+    construction: 'open-bar',
+    material: 'metal',
+    height: 1.02,
+    memberThickness: 0.050,
+    midRailHeight: 0.57,
+    postSpacing: 1.35,
+    collisionThickness: 0.10,
+  }),
+  'industrial-two-rail': Object.freeze({
+    family: 'industrial-two-rail',
+    construction: 'open-bar',
+    material: 'metal',
+    height: 1.04,
+    memberThickness: 0.065,
+    midRailHeight: 0.56,
+    postSpacing: 1.52,
+    collisionThickness: 0.11,
+  }),
+  'scaffold-pipe': Object.freeze({
+    family: 'scaffold-pipe',
+    construction: 'open-bar',
+    material: 'metal',
+    height: 0.92,
+    memberThickness: 0.042,
+    midRailHeight: 0.50,
+    postSpacing: 1.78,
+    collisionThickness: 0.085,
+  }),
   'roof-traversal-parapet': Object.freeze({
     family: 'roof-traversal-parapet',
     construction: 'solid-mold',
@@ -148,11 +188,12 @@ export function guardProfile(family = 'residential-civic-bar') {
 export function guardFamilyForContext({ supportKind = '', visualRole = '', physicalUse = '', kind = '' } = {}) {
   const text = `${supportKind}|${visualRole}|${kind}`.toLowerCase();
   const use = String(physicalUse ?? '').toLowerCase();
-  if (text.includes('scaffold') || text.includes('fire-escape')) return 'fire-escape-pipe';
+  if (text.includes('fire-escape')) return 'fire-escape-pipe';
+  if (text.includes('scaffold')) return 'scaffold-pipe';
   if (text.includes('parapet') || text.includes('municipal-concrete') || text.includes('concrete-barrier')) return 'municipal-concrete';
   if (['industrial-service', 'storage', 'maintenance-utility'].includes(use)
       && (text.includes('stair') || text.includes('catwalk') || text.includes('transport') || text.includes('mezzanine'))) {
-    return 'fire-escape-pipe';
+    return 'industrial-two-rail';
   }
   return 'residential-civic-bar';
 }

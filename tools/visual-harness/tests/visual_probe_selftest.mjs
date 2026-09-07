@@ -62,6 +62,19 @@ assert.ok(overlay.materials.some(material=>material.transparent&&material.opacit
 const catwalks=searchTargetCatalog(catalog,'guarded-catwalk',{limit:20});
 assert.ok(catwalks.some(t=>t.targetKind==='transport-surface'),'transport surface catalog must expose guarded-catwalk targets');
 
+// 21X architecture construction is deliberately probe-native: future art passes
+// can isolate the complete construction language, a structural role, or one
+// semantic facade language with exact retained instance ownership.
+const constructions=searchTargetCatalog(catalog,'building-construction',{limit:100});
+assert.ok(constructions.some(t=>t.targetKind==='building-construction'),'construction engine must be a first-class visual target');
+const constructionRoles=searchTargetCatalog(catalog,'construction-bay-pier',{limit:100});
+assert.ok(constructionRoles.some(t=>t.targetKind==='building-construction-role'),'construction roles must be directly searchable');
+const constructionTarget=constructionRoles.find(t=>t.targetKind==='building-construction-role') ?? constructions.find(t=>t.targetKind==='building-construction');
+const constructionFragments=visualFragmentsForBounds(THREE,[payload.root],constructionTarget.bounds);
+assert.ok(constructionFragments.length>0,'construction target must resolve to runtime fragments');
+assert.ok(constructionFragments.some(f=>f.selectionAuthority==='exact-structural-instance-ownership-v2'),'construction probes must use exact retained instance ownership');
+assert.ok(constructionFragments.reduce((sum,f)=>sum+(f.instanceIndices?.length??0),0)>0,'construction probes need exact owned instances');
+
 const combined=unionBounds(stair.bounds,catwalks[0]?.bounds);
 const camera=frameCameraForBounds(THREE,combined,{view:'iso',aspect:16/9});
 assert.ok(camera.position.toArray().every(Number.isFinite),'framed camera must be finite');
@@ -87,4 +100,4 @@ for(const clone of isolated.clones){clone.geometry?.dispose?.();}
 for(const record of collider.records){record.mesh.geometry?.dispose?.();record.mesh.material?.dispose?.();}
 for(const record of overlay.records){record.mesh.geometry?.dispose?.();record.mesh.material?.dispose?.();}
 engine.disposeShared?.();
-console.log(JSON.stringify({pass:true,catalogTargets:catalog.length,stairMatches:stairs.length,stairFragments:fragments.length,stairTriangles:fragments.reduce((sum,f)=>sum+f.triangleCount,0),stairColliderProxies:collider.records.length,catwalkMatches:catwalks.length},null,2));
+console.log(JSON.stringify({pass:true,catalogTargets:catalog.length,stairMatches:stairs.length,stairFragments:fragments.length,stairTriangles:fragments.reduce((sum,f)=>sum+f.triangleCount,0),stairColliderProxies:collider.records.length,catwalkMatches:catwalks.length,constructionTargets:constructions.length,constructionRoleTargets:constructionRoles.length},null,2));

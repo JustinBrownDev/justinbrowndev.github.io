@@ -6,9 +6,10 @@ import {
   assertInteriorStairCoreWalkability,
 } from './stair-volume-contract.js';
 import { planStructuralFeasibility } from './architecture/structural-feasibility.js';
+import { stairInteriorProfileFor, stairTopologyLabelFor } from './stair-architecture-doctrine.js';
 
 // JWEB_INTENT: STAIR_WALKABILITY_V1
-export const INTERIOR_STAIR_CORE_SCHEMA = 'jweb.interior-stair-core.v2';
+export const INTERIOR_STAIR_CORE_SCHEMA = 'jweb.interior-stair-core.v3';
 
 const EPS = 1e-7;
 
@@ -63,7 +64,7 @@ function exposedPerimeterGuardEdges({ axis, rect, mouthSide = 'low' }) {
   ]);
 }
 
-function candidateForAxis({ axis, rect, floorH, truth, playerRadius, stableKey, tier, flightCount, clearWidthOverride = null }) {
+function candidateForAxis({ axis, rect, floorH, truth, playerRadius, stableKey, tier, flightCount, clearWidthOverride = null, architectureBrief = null }) {
   const alongHalf = axis === 'x' ? finite(rect.halfX) : finite(rect.halfZ);
   const crossHalf = axis === 'x' ? finite(rect.halfZ) : finite(rect.halfX);
   const alongCenter = axis === 'x' ? finite(rect.cx) : finite(rect.cz);
@@ -71,26 +72,33 @@ function candidateForAxis({ axis, rect, floorH, truth, playerRadius, stableKey, 
   // The compact tier spends dead wall-offset before it ever shrinks a stair.
   // Landing depth, flight width, tread/riser truth and capsule clearances remain
   // unchanged; 8cm is only the non-walkable shell gap outside that authority.
-  const wallMargin = tier === 'generous' ? 0.24 : 0.08;
-  const requestedClearWidth = Number(clearWidthOverride);
-  const clearWidth = Math.max(0.78, Number.isFinite(requestedClearWidth) && requestedClearWidth > 0
-    ? requestedClearWidth
-    : finite(truth?.stair?.widthSI, 0.91));
-  const sourceLanding = Math.max(0.90, finite(truth?.stair?.landingDepthSI, clearWidth));
-  const laneGap = Math.max(0.30, playerRadius * 1.35);
-
+  const architectureProfile = stairInteriorProfileFor(architectureBrief);
   const generous = tier === 'generous';
+  const wallMargin = architectureProfile
+    ? (generous ? architectureProfile.wallMarginGenerous : architectureProfile.wallMarginCompact)
+    : (generous ? 0.24 : 0.08);
+  const requestedClearWidth = Number(clearWidthOverride);
+  const truthWidth = finite(truth?.stair?.widthSI, 0.91);
+  const architectureMinimumWidth = finite(architectureProfile?.minClearWidth, 0.78);
+  const clearWidth = Math.max(0.78, architectureMinimumWidth, Number.isFinite(requestedClearWidth) && requestedClearWidth > 0
+    ? requestedClearWidth
+    : truthWidth);
+  const sourceLanding = Math.max(0.90, finite(truth?.stair?.landingDepthSI, clearWidth));
+  const laneGap = Math.max(finite(architectureProfile?.laneGap, 0.30), playerRadius * 1.35);
+
   const floorLandingDepth = Math.max(
-    generous ? 1.65 : 1.35,
+    architectureProfile ? architectureProfile.floorLandingMin : (generous ? 1.65 : 1.35),
     sourceLanding,
-    clearWidth * (generous ? 1.50 : 1.25),
+    clearWidth * (architectureProfile?.floorLandingWidthScale ?? (generous ? 1.50 : 1.25)),
   );
   const turnLandingDepth = Math.max(
-    generous ? 1.35 : 1.15,
+    architectureProfile ? architectureProfile.turnLandingMin : (generous ? 1.35 : 1.15),
     sourceLanding,
-    clearWidth * (generous ? 1.25 : 1.10),
+    clearWidth * (architectureProfile?.turnLandingWidthScale ?? (generous ? 1.25 : 1.10)),
   );
-  const sideCapsuleClearance = playerRadius + (generous ? 0.10 : 0.06);
+  const sideCapsuleClearance = playerRadius + (architectureProfile
+    ? (generous ? architectureProfile.sideClearanceGenerous : architectureProfile.sideClearanceCompact)
+    : (generous ? 0.10 : 0.06));
   const segmentFlight = deriveStairFlight({
     rise: floorH / flightCount,
     truth,
@@ -178,9 +186,15 @@ function candidateForAxis({ axis, rect, floorH, truth, playerRadius, stableKey, 
     intentTag: STAIR_WALKABILITY_INTENT,
     stableKey,
     id: `${stableKey}:${axis}:${tier}:${flightCount}`,
-    topology: flightCount === 2 ? 'two-flight-switchback' : 'four-flight-switchback',
-    topologyVariant: `${flightCount === 2 ? 'two-flight-switchback' : 'four-flight-switchback'}:${returnHandedness}`,
+    topology: stairTopologyLabelFor(architectureBrief, flightCount),
+    topologyVariant: `${stairTopologyLabelFor(architectureBrief, flightCount)}:${returnHandedness}`,
     returnHandedness,
+    stairSpecies: architectureBrief?.species ?? null,
+    architectureBrief,
+    landingGrammar: architectureBrief?.landingGrammar ?? null,
+    endpointGrammar: architectureBrief?.endpointGrammar ?? null,
+    loadPath: architectureBrief?.loadPath ?? null,
+    guardFamily: architectureBrief?.guardFamily ?? null,
     fitTier: tier,
     flightCount,
     storyHeight: floorH,
@@ -232,6 +246,7 @@ export function planInteriorSwitchbackStairCore({
   traversalEnvelope = null,
   stableKey = 'interior-switchback',
   clearWidthOverride = null,
+  architectureBrief = null,
 } = {}) {
   if (!rect || !physicalTruth?.stair || !(finite(floorH) > 0)) return null;
   if (![rect.cx, rect.cz, rect.halfX, rect.halfZ].every(value => Number.isFinite(Number(value)))) return null;
@@ -250,7 +265,7 @@ export function planInteriorSwitchbackStairCore({
       const candidates = axes
         .map(axis => candidateForAxis({
           axis, rect, floorH: Number(floorH), truth: physicalTruth, playerRadius,
-          stableKey, tier, flightCount, clearWidthOverride,
+          stableKey, tier, flightCount, clearWidthOverride, architectureBrief,
         }))
         .filter(Boolean)
         .sort((a, b) => {
@@ -275,6 +290,7 @@ export function planInteriorStairCoreStructuralFeasibility({
   stableKey = 'interior-switchback',
   maxConsumedModules = Infinity,
   clearWidthOverride = null,
+  architectureBrief = null,
 } = {}) {
   return planStructuralFeasibility({
     modulePlans,
@@ -284,7 +300,7 @@ export function planInteriorStairCoreStructuralFeasibility({
     traversalEnvelope,
     stableKey,
     maxConsumedModules,
-    planStairCore: args => planInteriorSwitchbackStairCore({ ...args, clearWidthOverride }),
+    planStairCore: args => planInteriorSwitchbackStairCore({ ...args, clearWidthOverride, architectureBrief }),
   });
 }
 

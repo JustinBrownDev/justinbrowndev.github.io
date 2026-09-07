@@ -1,4 +1,7 @@
 import { resolveMediaSource } from './media-source-resolver.js';
+import { resolveJwebMediaChannel } from './jweb-media-channel-pack/resolver.mjs';
+
+const DEFAULT_HLS_JS_URL = 'https://cdn.jsdelivr.net/npm/hls.js@1.7.1/dist/hls.min.js';
 
 const scriptPromises = new Map();
 
@@ -102,6 +105,61 @@ function safeCall(fn) {
     catch (_) { return undefined; }
 }
 
+function attachDeferredChannelPackMedia(options = {}) {
+    const {
+        mediaIntent,
+        audioOnly = false,
+        windowRef = typeof window === 'undefined' ? null : window,
+    } = options;
+    let inner = null;
+    let disposed = false;
+    const state = {
+        schema: audioOnly ? 'jweb.audio-media-state.v1' : 'jweb.screen-media-state.v1',
+        mode: audioOnly ? 'audio-only' : 'screen',
+        sourceKey: mediaIntent?.sourceKey ?? null,
+        status: 'resolving-channel-pack',
+        active: false,
+        lastError: null,
+    };
+    const config = windowRef?.__jwebMediaConfig ?? {};
+    const ready = Promise.resolve().then(async () => {
+        const resolved = await resolveJwebMediaChannel(mediaIntent, {
+            fetchImpl: globalThis.fetch,
+            baseResolver: resolveMediaSource,
+            dvidsApiKey: config.dvidsApiKey,
+        });
+        if (disposed) return null;
+        if (!resolved?.streams?.length) {
+            state.status = resolved?.readiness ? `unavailable:${resolved.readiness}` : 'unavailable';
+            return null;
+        }
+        inner = attachScreenMedia({ ...options, mediaIntent: resolved });
+        state.status = inner ? 'ready' : 'unavailable';
+        return inner;
+    }).catch(error => {
+        state.status = 'resolve-error';
+        state.lastError = String(error?.message ?? error);
+        console.warn?.('[screen-media] channel-pack resolution failed; keeping fallback media surface', error);
+        return null;
+    });
+    return {
+        schema: audioOnly ? 'jweb.deferred-audio-media-controller.v1' : 'jweb.deferred-screen-media-controller.v1',
+        mode: audioOnly ? 'audio-only' : 'screen',
+        get source() { return inner?.source ?? null; },
+        sockets: options.sockets ?? [],
+        ready,
+        sync: async () => { await ready; return inner?.sync ? inner.sync() : { ...state }; },
+        unlockAudio: () => inner?.unlockAudio?.() ?? false,
+        dispose: () => {
+            disposed = true;
+            state.status = 'disposed';
+            inner?.dispose?.();
+            inner = null;
+        },
+        getState: () => inner?.getState?.() ?? { ...state },
+    };
+}
+
 export function attachScreenMedia({
     THREE,
     camera = null,
@@ -113,9 +171,17 @@ export function attachScreenMedia({
     autoSchedule = true,
     audioOnly = false,
 } = {}) {
-    const source = resolveMediaSource(mediaIntent);
     const usableSockets = (sockets ?? []).filter(socket => audioOnly ? socket?.center : socket?.mesh);
-    if (!source || !usableSockets.length) return null;
+    if (!usableSockets.length) return null;
+    const source = mediaIntent?.schema === 'jweb.media-source.v1' && Array.isArray(mediaIntent?.streams)
+        ? mediaIntent
+        : resolveMediaSource(mediaIntent);
+    if (!source && mediaIntent?.sourceKey) {
+        return attachDeferredChannelPackMedia({
+            THREE, camera, sockets, mediaIntent, documentRef, windowRef, loadHlsClass, autoSchedule, audioOnly,
+        });
+    }
+    if (!source) return null;
 
     let disposed = false;
     let video = null;
@@ -311,6 +377,15 @@ export function attachScreenMedia({
             return;
         }
 
+        const isHls = stream.transport === 'hls' || /\.m3u8(?:$|[?#])/i.test(stream.url);
+        if (!isHls) {
+            destroyHls();
+            media.src = stream.url;
+            media.load?.();
+            await playVideo();
+            return;
+        }
+
         const nativeHls = !!media.canPlayType?.('application/vnd.apple.mpegurl');
         if (nativeHls) {
             destroyHls();
@@ -324,7 +399,7 @@ export function attachScreenMedia({
         try {
             Hls = loadHlsClass
                 ? await loadHlsClass(source)
-                : await loadClassicScript(source.hlsLibraryUrl, documentRef, windowRef);
+                : await loadClassicScript(source.hlsLibraryUrl ?? DEFAULT_HLS_JS_URL, documentRef, windowRef);
         } catch (error) {
             handleStreamFailure(error);
             return;

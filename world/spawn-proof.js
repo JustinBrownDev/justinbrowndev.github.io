@@ -1,4 +1,4 @@
-import { LIVE_SPAWN_LOCATION_RUNTIME, bindSpawnLocationRuntime, hashString32 } from './spawn-location-runtime.js';
+import { LIVE_SPAWN_LOCATION_RUNTIME, bindSpawnLocationRuntime, hashString32, forcedHostArchetypeForSpawnFlavor } from './spawn-location-runtime.js';
 
 const TAU = Math.PI * 2;
 
@@ -557,7 +557,8 @@ export function selectSpawnEnclaveCandidate({
 } = {}) {
     if (!playerPhysics || !origin || !locationRuntime?.selectionPolicy || !fabricSpaces?.length) return null;
     const policy = locationRuntime.selectionPolicy;
-    const desiredHostArchetype = chooseSpawnHostArchetype(spaceSelectionKey(locationRuntime, fabricSpaces));
+    const desiredHostArchetype = forcedHostArchetypeForSpawnFlavor()
+        ?? chooseSpawnHostArchetype(spaceSelectionKey(locationRuntime, fabricSpaces));
     const structural = fabricSpaceSamples(playerPhysics, origin, policy, fabricSpaces);
     const order = HOST_FALLBACK_ORDER[desiredHostArchetype] ?? ['exposed-roof'];
 

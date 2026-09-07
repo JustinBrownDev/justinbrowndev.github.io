@@ -1,4 +1,5 @@
 import { compileSpawnSpatialPlan } from './spawn-spatial-plan.js';
+import { createMediaIntent } from './jweb-media-channel-pack/index.mjs';
 
 const LOCATION_URL = new URL('../jweb-authored-location-data-pack/locations/spawn-rooftop-reality-leak.json', import.meta.url);
 const ASSET_URL = new URL('../jweb-authored-location-data-pack/assets/spawnpoint-asset-families.json', import.meta.url);
@@ -83,6 +84,90 @@ export const START_SCENE_PROFILES = Object.freeze([
     Object.freeze({ id: 'terra-backroom', hostArchetypes: ['deep-backroom'], weight: 1.0, mediaFamily: 'spawn.media.television', mediaScale: [10.0, 4.9, 3.0], supportScale: 1.25, seatRange: [4, 4], detailBudget: 6, seatRadiiM: [3.6, 4.4, 5.2], minHostAreaM2: 110, minContiguousAreaM2: 96, minHostSpanM: 10.0, minWallSpanM: 9.2, requireOverhead: true, mediaVariantIds: ['tv.flat.wall-salvage'], vocabularyTags: ['office', 'institutional', 'workshop', 'industrial', 'repair', 'fluorescent', 'bench'] }),
 ]);
 
+export const SPAWN_FLAVOR_ALIASES = Object.freeze({
+    small: 'small-tv-roof',
+    normal: 'normal-tv-roof',
+    big: 'big-tv-roof',
+    super: 'super-big-tv-roof',
+    'super-big': 'super-big-tv-roof',
+    radio: 'radio-roof',
+    shelter: 'mega-big-shelter',
+    sheltered: 'mega-big-shelter',
+    mega: 'mega-big-shelter',
+    'mega-big': 'mega-big-shelter',
+    'sheltered-super': 'super-big-shelter',
+    'radio-shelter': 'radio-under-shelter',
+    giga: 'giga-shopfront',
+    shop: 'giga-shopfront',
+    shopfront: 'giga-shopfront',
+    terra: 'terra-backroom',
+    backroom: 'terra-backroom',
+});
+
+const SPAWN_PROFILE_BY_ID = new Map(START_SCENE_PROFILES.map(profile => [profile.id, profile]));
+
+const SPAWN_MEDIA_POOLS = Object.freeze({
+    'small-tv-roof': Object.freeze([['live-news.al-jazeera-english', 0.66], ['linear-cartoons.blender-open-movies', 0.34]]),
+    'normal-tv-roof': Object.freeze([['live-news.al-jazeera-english', 0.56], ['linear-cartoons.blender-open-movies', 0.44]]),
+    'big-tv-roof': Object.freeze([['live-news.al-jazeera-english', 0.46], ['linear-cartoons.blender-open-movies', 0.54]]),
+    'super-big-tv-roof': Object.freeze([['live-news.al-jazeera-english', 0.34], ['linear-cartoons.blender-open-movies', 0.66]]),
+    'radio-roof': Object.freeze([['live-news.al-jazeera-english', 0.74], ['linear-cartoons.blender-open-movies', 0.26]]),
+    'super-big-shelter': Object.freeze([['live-news.al-jazeera-english', 0.42], ['linear-cartoons.blender-open-movies', 0.58]]),
+    'mega-big-shelter': Object.freeze([['live-news.al-jazeera-english', 0.30], ['linear-cartoons.blender-open-movies', 0.70]]),
+    'radio-under-shelter': Object.freeze([['live-news.al-jazeera-english', 0.68], ['linear-cartoons.blender-open-movies', 0.32]]),
+    'giga-shopfront': Object.freeze([['live-news.al-jazeera-english', 0.18], ['linear-cartoons.blender-open-movies', 0.82]]),
+    'terra-backroom': Object.freeze([['live-news.al-jazeera-english', 0.54], ['linear-cartoons.blender-open-movies', 0.46]]),
+});
+
+const SPAWN_MEDIA_ALIASES = Object.freeze({
+    news: 'live-news.al-jazeera-english',
+    aljazeera: 'live-news.al-jazeera-english',
+    cartoons: 'linear-cartoons.blender-open-movies',
+    cartoon: 'linear-cartoons.blender-open-movies',
+    blender: 'linear-cartoons.blender-open-movies',
+    dvids: 'live-public-affairs.dvids',
+});
+
+export function normalizeSpawnFlavorOverride(value) {
+    const raw = String(value ?? '').trim().toLowerCase();
+    if (!raw) return null;
+    const id = SPAWN_FLAVOR_ALIASES[raw] ?? raw;
+    return SPAWN_PROFILE_BY_ID.has(id) ? id : null;
+}
+
+export function readSpawnFlavorOverride(search = globalThis?.location?.search ?? '') {
+    try { return normalizeSpawnFlavorOverride(new URLSearchParams(String(search)).get('spawnFlavor')); }
+    catch (_) { return null; }
+}
+
+export function forcedHostArchetypeForSpawnFlavor(value = readSpawnFlavorOverride()) {
+    const profile = SPAWN_PROFILE_BY_ID.get(normalizeSpawnFlavorOverride(value));
+    return profile?.hostArchetypes?.[0] ?? null;
+}
+
+export function readSpawnMediaOverride(search = globalThis?.location?.search ?? '') {
+    try {
+        const raw = String(new URLSearchParams(String(search)).get('spawnMedia') ?? '').trim().toLowerCase();
+        if (!raw) return null;
+        return SPAWN_MEDIA_ALIASES[raw] ?? raw;
+    } catch (_) { return null; }
+}
+
+function chooseSpawnMediaIntent(startProfile, stableKey, forcedSourceKey = readSpawnMediaOverride()) {
+    let sourceKey = forcedSourceKey;
+    if (!sourceKey) {
+        const pool = SPAWN_MEDIA_POOLS[startProfile?.id] ?? SPAWN_MEDIA_POOLS['normal-tv-roof'];
+        const candidates = pool.map(([key, weight]) => ({ key, weight }));
+        const picked = weightedPick(mulberry32(hashString32(`spawn-media:${stableKey}:${startProfile?.id ?? 'normal'}`)), candidates);
+        sourceKey = picked?.key ?? 'live-news.al-jazeera-english';
+    }
+    return createMediaIntent({
+        sourceKey,
+        defaultAudio: 'proximity',
+        fallback: startProfile?.mediaFamily === 'spawn.media.radio' ? 'silent radio / weak carrier' : 'dark glass / subtle static / NO SIGNAL',
+    }) ?? clonePlain({ sourceKey, defaultAudio: 'proximity', networkFailureIsFatal: false });
+}
+
 function profileFitsHost(profile, hostSpace) {
     if (!profile || !hostSpace) return true;
     const archetype = hostSpace.hostArchetype ?? 'exposed-roof';
@@ -95,7 +180,7 @@ function profileFitsHost(profile, hostSpace) {
     return true;
 }
 
-function pickStartProfile(rootSeed, hostSpace = null) {
+function pickStartProfile(rootSeed, hostSpace = null, forcedFlavor = readSpawnFlavorOverride()) {
     // No host means we do not know that any oversized scene can physically fit.
     // Keep unknown/fallback composition conservative; production binding passes
     // the selected host and unlocks larger place-conditioned tiers there.
@@ -103,6 +188,9 @@ function pickStartProfile(rootSeed, hostSpace = null) {
         hostArchetype: 'exposed-roof', supportAreaM2: 0, largestSupportPatchAreaM2: 0,
         maxWallSpanM: 0, overheadCovered: false, nearbyWalls: [],
     };
+    const forcedId = normalizeSpawnFlavorOverride(forcedFlavor);
+    const forcedProfile = forcedId ? SPAWN_PROFILE_BY_ID.get(forcedId) : null;
+    if (forcedProfile && profileFitsHost(forcedProfile, evaluatedHost)) return forcedProfile;
     const matching = START_SCENE_PROFILES.filter(profile => profileFitsHost(profile, evaluatedHost));
     const pool = matching.length ? matching : START_SCENE_PROFILES.filter(profile => profile.id === 'normal-tv-roof' || profile.id === 'radio-roof');
     return weightedPick(mulberry32(rootSeed ^ 0x6a09e667), pool) ?? START_SCENE_PROFILES[0];
@@ -219,7 +307,8 @@ export function createSpawnComposition(runtime, stableKey, hostSpace = null) {
     if (!runtime) return null;
     const location = runtime.location;
     const rootSeed = hashString32(`${location.id}:${stableKey}`);
-    const startProfile = pickStartProfile(rootSeed, hostSpace);
+    const forcedFlavor = readSpawnFlavorOverride();
+    const startProfile = pickStartProfile(rootSeed, hostSpace, forcedFlavor);
     const microstories = location.microstories ?? [];
     const story = weightedPick(mulberry32(rootSeed ^ 0x4d3c2b1a), microstories);
     const selected = [];
@@ -277,7 +366,8 @@ export function createSpawnComposition(runtime, stableKey, hostSpace = null) {
         startProfile: Object.freeze({ ...startProfile }),
         hardInvariantBeats: (location.hardInvariants ?? []).map(item => item.beat),
         slots: selected,
-        media: clonePlain(location.mediaIntent ?? null),
+        requestedStartProfile: forcedFlavor,
+        media: chooseSpawnMediaIntent(startProfile, stableKey),
         progressiveRealization: clonePlain(location.progressiveRealization ?? []),
     });
 }

@@ -473,7 +473,7 @@ function canvasTexture(THREE, kind, items, { pageIndex = 0, pageCount = 1 } = {}
             y += 7;
         });
         ctx.fillStyle = '#34705a'; ctx.font = '24px ui-monospace, monospace';
-        ctx.fillText(`SOURCE /TODO.md   OPEN ${items.length}`, 48, canvas.height - 40);
+        ctx.fillText(`SOURCE JWEB-TODO   OPEN ${items.length}`, 48, canvas.height - 40);
     } else if (kind === 'whiteboard') {
         ctx.fillStyle = '#eef0e9'; ctx.fillRect(0, 0, canvas.width, canvas.height);
         ctx.fillStyle = '#27302c';
@@ -668,7 +668,7 @@ export function attachSpawnTodoDisplay({ THREE, root, plan, hostSpace = null } =
     let ownedResources = null;
     const controller = {
         schema: DISPLAY_SCHEMA,
-        source: 'TODO.md',
+        source: 'spawn-todo-source.js',
         mode: spawnTodoDisplayMode(plan),
         itemCount: 0,
         itemIds: [],

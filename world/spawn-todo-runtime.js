@@ -1,6 +1,7 @@
+import { SPAWN_TODO_ITEMS } from './spawn-todo-source.js';
+
 const TODO_SCHEMA = 'jweb.todo-list.v1';
 const TODO_ITEM_SCHEMA = 'jweb.todo-item.v1';
-export const SPAWN_TODO_SOURCE_URL = new URL('../TODO.md', import.meta.url);
 
 function hashText(input) {
     let hash = 2166136261;
@@ -47,20 +48,47 @@ export function parseSpawnTodoText(text = '', { source = 'TODO.md' } = {}) {
 function unavailableList() {
     return Object.freeze({
         schema: TODO_SCHEMA,
-        source: 'TODO.md',
+        source: 'spawn-todo-source.js',
         items: Object.freeze([]),
         unavailable: true,
     });
 }
 
-export async function loadSpawnTodoList({ fetchImpl = globalThis.fetch, url = SPAWN_TODO_SOURCE_URL } = {}) {
-    if (typeof fetchImpl !== 'function') return unavailableList();
+// Same normalized shape as parseSpawnTodoText, but for the inline data
+// source instead of Markdown text: an entry is a bare string (an open
+// task) or { text, state } if you want to mark one done without deleting it.
+function normalizeSpawnTodoItems(rawItems = [], { source = 'spawn-todo-source.js' } = {}) {
+    const items = [];
+    const duplicateCounts = new Map();
+    rawItems.forEach((raw, index) => {
+        const entry = typeof raw === 'string' ? { text: raw } : (raw ?? {});
+        const text = String(entry.text ?? '').trim().replace(/\s+/g, ' ');
+        if (!text) return;
+        const state = entry.state === 'done' ? 'done' : 'open';
+        if (state !== 'open') return;
+        const identityText = text.toLowerCase();
+        const occurrence = (duplicateCounts.get(identityText) ?? 0) + 1;
+        duplicateCounts.set(identityText, occurrence);
+        items.push(Object.freeze({
+            schema: TODO_ITEM_SCHEMA,
+            id: `todo:${hashText(identityText)}:${occurrence}`,
+            text,
+            state,
+            source: Object.freeze({ file: source, line: index + 1 }),
+        }));
+    });
+    return Object.freeze({
+        schema: TODO_SCHEMA,
+        source,
+        items: Object.freeze(items),
+    });
+}
+
+export async function loadSpawnTodoList() {
     try {
-        const response = await fetchImpl(url, { cache: 'no-store' });
-        if (!response?.ok) throw new Error(`HTTP ${response?.status ?? 'unknown'}`);
-        return parseSpawnTodoText(await response.text(), { source: 'TODO.md' });
+        return normalizeSpawnTodoItems(SPAWN_TODO_ITEMS);
     } catch (error) {
-        console.warn?.('[spawn-todo] TODO.md unavailable; spawn remains playable', error);
+        console.warn?.('[spawn-todo] inline TODO source unavailable; spawn remains playable', error);
         return unavailableList();
     }
 }

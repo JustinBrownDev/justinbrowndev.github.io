@@ -48,7 +48,10 @@ for (const slug of targets) {
         continue;
     }
     for (const mode of modes) {
-        const base = await collect(mode);
+        const dir = path.join(OUT_ROOT, slug, mode);
+        fs.mkdirSync(dir, { recursive: true });
+        console.log(`[target-report] ${slug}/${mode}: collecting (visual-capture sections may take a while - real headless Chrome runs)...`);
+        const base = await collect(mode, dir);
         const record = {
             ...base,
             mode,
@@ -56,8 +59,6 @@ for (const slug of targets) {
             gitCommit,
             nodeVersion: process.version,
         };
-        const dir = path.join(OUT_ROOT, base.slug, mode);
-        fs.mkdirSync(dir, { recursive: true });
         fs.writeFileSync(path.join(dir, 'index.html'), renderReport(record));
         fs.writeFileSync(path.join(dir, 'record.json'), JSON.stringify(record, null, 2));
         allRecords.push(record);

@@ -43,18 +43,32 @@ Add a `collect<Name>(mode)` function to `collectors.mjs` that returns
 never fake data to make a section look real). Register it in `COLLECTORS`.
 Reuse `visualCaptureSection()` for the standard visual-harness repro block.
 
-## What's real vs. not yet wired (as of first pass, 2026-09-07)
+## What's real vs. not yet wired (updated 2026-09-07)
 
 - Catalog/authority lookups (asset bounds, placement metadata, media
   resolution, junction geometry on a synthetic fixture) are real — they
   import and call actual JWEB source modules.
-- Pixel capture (`tools/visual-harness`) is not automated yet — no
-  headless-browser driver is wired in, so those sections are `pending` with
-  the exact URL/console script to run by hand.
+- Pixel capture is now automated for real via `tools/visual-harness/capture.mjs`
+  + `headless-driver.mjs` — a from-scratch CDP client (no puppeteer/playwright
+  dependency) driving the system's own chromium-browser/google-chrome. It
+  actually attempts the capture and reports a real `visual-capture` section:
+  `real` (with files written under `visual/`) on success, `pending` (with the
+  literal error and a manual fallback command) on failure. See
+  `tools/visual-harness/README` update below for validated proof-of-life.
 - `tools/geometry-harness`'s Python side (numpy/Pillow) is confirmed
   installable but not installed in this pass, so those audit/silhouette
-  sections are also `pending` with the exact command.
+  sections are still `pending` with the exact command.
 
-The obvious next step is a headless-Chrome (CDP) driver so the visual-capture
-sections become real automated output instead of a manual command — chromium
-is already present on this machine, no new repo dependency needed.
+### Known limitation: full-world (slow mode) settle speed
+
+Headless Chrome here has no real GPU — WebGL runs through SwiftShader
+(software rendering), which renders a full streamed city at only ~2-3 fps
+("potato" quality). The harness's own settle-wait (`waitForSettled`) can
+legitimately take longer than that to see "local render ring complete" under
+this framerate; in the first full run, `trash-can` and `roof-topper` slow-mode
+captures still timed out at a 150s wait budget. This is a real environmental
+constraint, not a bug in the wiring - the honest `pending` + timeout message
+is the correct result, not something to silently paper over. Options to push
+further: raise `wait.timeoutMs` again, or add a `wait: null` best-effort
+fallback (grab whatever's rendered right now instead of waiting for a full
+settle) - not implemented yet.

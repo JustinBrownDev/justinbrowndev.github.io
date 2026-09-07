@@ -21,6 +21,10 @@ function renderSection(s) {
     if (s.sourceRefs?.length) {
         parts.push(`<p class="refs">source: ${s.sourceRefs.map(r => `<code>${esc(r)}</code>`).join(', ')}</p>`);
     }
+    if (s.key === 'visual-capture' && s.status === 'real' && Array.isArray(s.data?.files)) {
+        const thumbs = s.data.files.filter(f => /\.png$/i.test(f)).map(f => `<figure><img src="visual/${esc(f)}" loading="lazy" alt="${esc(f)}"><figcaption>${esc(f)}</figcaption></figure>`).join('\n');
+        parts.push(`<div class="thumbs">${thumbs}</div>`);
+    }
     if (s.data != null) parts.push(pre(s.data));
     if (s.reproCommand) parts.push(`<p class="repro-label">reproduce:</p><pre class="repro">${esc(s.reproCommand)}</pre>`);
     if (s.notes) parts.push(`<p class="notes">${esc(s.notes)}</p>`);
@@ -46,6 +50,10 @@ details { border: 1px solid color-mix(in srgb, currentColor 20%, transparent); b
 summary { cursor: pointer; font-weight: 600; }
 h3 { margin: 0.5rem 0; font-size: 1rem; }
 .section-body { margin-top: 0.5rem; }
+.thumbs { display: flex; flex-wrap: wrap; gap: 0.75rem; margin: 0.5rem 0; }
+.thumbs figure { margin: 0; max-width: 220px; }
+.thumbs img { max-width: 220px; max-height: 180px; border: 1px solid color-mix(in srgb, currentColor 20%, transparent); border-radius: 4px; background: #000; }
+.thumbs figcaption { font-size: 0.68rem; opacity: 0.7; word-break: break-all; }
 .badge { display: inline-block; font-size: 0.7rem; padding: 1px 6px; border-radius: 4px; margin-right: 6px; vertical-align: middle; }
 .badge-real { background: #1b5e20; color: #eaffea; }
 .badge-pending { background: #7a5b00; color: #fff6dd; }

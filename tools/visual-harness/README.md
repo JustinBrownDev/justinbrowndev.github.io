@@ -220,6 +220,28 @@ Windows can run `tools\visual-harness\OPEN_VISUAL_HARNESS.cmd`.
 
 For moving-main integration boundaries, read `INTEGRATION.md` and `PORTABILITY.md`. There is intentionally no automatic source patcher.
 
+## Headless automation (no browser required)
+
+`headless-driver.mjs` is a from-scratch Chrome DevTools Protocol client (no
+puppeteer/playwright dependency - talks raw CDP over Node's built-in
+`WebSocket`, driving the system's own chromium-browser/google-chrome).
+`capture.mjs` builds on it with two ready-to-use entry points that own the
+`serve.mjs` lifecycle themselves:
+
+```js
+import { captureSpecimen, captureWorldInvestigation } from './tools/visual-harness/capture.mjs';
+
+// fast/isolated - fixture or generator specimen
+await captureSpecimen({ mode: 'fixture', fixture: 'apartment-stair', target: 'flight-low', outDir: '/tmp/out' });
+
+// slow/full-generation - real running city, seed pinned for reproducibility
+await captureWorldInvestigation({ queries: ['trash_can'], outDir: '/tmp/out' });
+```
+
+Both write PNGs + `manifest.json` under `outDir` and return `{ manifest, files }` on success, or throw with a real error (no match, page exception, settle timeout) on failure - callers decide how to report that. `tools/target-report/collectors.mjs` is the reference caller: real success flips a section to `real`; real failure keeps it `pending` with the exact error and a manual fallback command, never a faked result either way.
+
+Known constraint: this machine has no GPU, so WebGL runs through SwiftShader (software rendering) - a full streamed city renders at only ~2-3 fps headless, and the harness's own settle-wait can legitimately time out before "local render ring complete" under that framerate. Fixture/generator (fast mode) captures don't have this problem (validated: real renders of `flight-low` and `stair` came back correctly shaded, not blank).
+
 ## Tests
 
 ```text

@@ -22,6 +22,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { captureSpecimen, captureWorldInvestigation } from '../visual-harness/capture.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, '..', '..');
@@ -46,39 +47,42 @@ function section({ key, title, status, data = null, sourceRefs = [], reproComman
     return { key, title, status, data, sourceRefs, reproCommand, notes };
 }
 
-function visualCaptureSection({ mode, fastUrl, slowScript }) {
-    if (mode === 'fast') {
+const VISUAL_CAPTURE_TITLE = 'Visual capture (beauty / silhouette / depth / normals / object-id / instance-id / collider / semantic)';
+
+// Actually drives headless Chrome (tools/visual-harness/capture.mjs). Real
+// success -> status 'real' with the files it wrote. Real failure (no match,
+// page error, timeout) -> status 'pending' with the exact error message and
+// a manual fallback command - never fake a result either way.
+async function attemptVisualCapture({ mode, kind, params, outDir, fallbackReproCommand, fallbackNotes }) {
+    const dir = path.join(outDir, 'visual');
+    try {
+        const result = kind === 'specimen'
+            ? await captureSpecimen({ ...params, outDir: dir })
+            : await captureWorldInvestigation({ ...params, outDir: dir });
         return section({
             key: 'visual-capture',
-            title: 'Visual capture (beauty / silhouette / depth / normals / object-id / instance-id / collider / semantic)',
+            title: VISUAL_CAPTURE_TITLE,
+            status: 'real',
+            data: { fileCount: result.files.length, files: result.files, manifestSchema: result.manifest?.schema ?? null },
+            sourceRefs: ['tools/visual-harness/capture.mjs', 'tools/visual-harness/headless-driver.mjs'],
+            notes: `Captured live via headless Chrome (${kind}, ${mode} mode). Image files are written under visual/ next to this report (manifest.json alongside them) - not embedded in this record to keep it pasteable.`,
+        });
+    } catch (err) {
+        return section({
+            key: 'visual-capture',
+            title: VISUAL_CAPTURE_TITLE,
             status: 'pending',
-            sourceRefs: ['tools/visual-harness/GPT-ENTRYPOINT.md', 'tools/visual-harness/specimen.html'],
-            reproCommand: [
-                'node tools/visual-harness/serve.mjs --port 8123',
-                `open http://127.0.0.1:8123/tools/visual-harness/specimen.html?${fastUrl}`,
-            ].join('\n'),
-            notes: 'Not automated in this pass (no headless-browser driver wired yet). `target=` is a search string matched against the generated chunk\'s semantic labels (same as GPT-ENTRYPOINT.md\'s own compound-stair example), not a preregistered specimen id - whether this exact seed/chunk actually rolls this feature is unverified this pass. Opening the URL and running captureInvestigation()/captureArtPass() in the page console produces the real image+manifest packet; if the search comes up empty, try another chunk/seed.',
+            sourceRefs: ['tools/visual-harness/capture.mjs'],
+            reproCommand: fallbackReproCommand,
+            notes: `Automated headless-Chrome attempt failed: ${err.message}${fallbackNotes ? ` — ${fallbackNotes}` : ''} Run the command above by hand, or adjust seed/chunk/query and retry.`,
         });
     }
-    return section({
-        key: 'visual-capture',
-        title: 'Visual capture (beauty / silhouette / depth / normals / object-id / instance-id / collider / semantic)',
-        status: 'pending',
-        sourceRefs: ['tools/visual-harness/GPT-ENTRYPOINT.md'],
-        reproCommand: [
-            'node tools/visual-harness/serve.mjs --port 8123',
-            'open http://127.0.0.1:8123/?visualProbe=1',
-            '// in the page console:',
-            slowScript,
-        ].join('\n'),
-        notes: 'Not automated in this pass. Full REAL CITY mode - run the console script above once the city has finished streaming near the target.',
-    });
 }
 
 // ---------------------------------------------------------------------
 // 1. TV in spawn
 // ---------------------------------------------------------------------
-async function collectSpawnTv(mode) {
+async function collectSpawnTv(mode, outDir) {
     const families = readJson('jweb-authored-location-data-pack/assets/spawnpoint-asset-families.json');
     const tvFamily = families.families.find(f => f.id === 'spawn.media.television');
     const wallVariant = tvFamily.variants.find(v => v.id === 'tv.flat.wall-salvage');
@@ -131,11 +135,28 @@ async function collectSpawnTv(mode) {
             sourceRefs: ['world/media-source-resolver.js', 'world/jweb-media-channel-pack/'],
             notes: 'Al Jazeera English is the only wired news channel today; jweb-media-channel-pack adds DVIDS Live / Blender PeerTube cartoons behind the same jweb.media-source.v1 shape (see world/jweb-media-channel-pack/README.md for what\'s ready vs. gated).',
         }),
-        visualCaptureSection({
-            mode,
-            fastUrl: 'mode=generator&seed=671278205&chunk=0,0&target=tv.flat.wall-salvage',
-            slowScript: "await p.captureInvestigation([{ query: 'tv.flat.wall-salvage', decompose: true }], { wait: { localRender: true, authoredStructures: true }, download: true });",
-        }),
+        await (mode === 'fast'
+            ? attemptVisualCapture({
+                mode, kind: 'specimen',
+                params: { mode: 'generator', seed: 671278205, chunk: '0,0', target: 'tv.flat.wall-salvage' },
+                outDir,
+                fallbackReproCommand: [
+                    'node tools/visual-harness/serve.mjs --port 8123',
+                    'open http://127.0.0.1:8123/tools/visual-harness/specimen.html?mode=generator&seed=671278205&chunk=0,0&target=tv.flat.wall-salvage',
+                ].join('\n'),
+                fallbackNotes: 'The TV is placed by the spawn-location pipeline, not by the bare Kowloon chunk this generator specimen builds - a "no match" here is expected, not automation failure. Slow/full-generation mode is the real way to see this one.',
+            })
+            : attemptVisualCapture({
+                mode, kind: 'world',
+                params: { queries: [{ query: 'tv.flat.wall-salvage', decompose: true }], wait: { localRender: true, authoredStructures: true, timeoutMs: 150000 } },
+                outDir,
+                fallbackReproCommand: [
+                    'node tools/visual-harness/serve.mjs --port 8123',
+                    'open http://127.0.0.1:8123/?visualProbe=1',
+                    '// in the page console:',
+                    "const p = await window.__debug.visualProbe.install(); await p.captureInvestigation([{ query: 'tv.flat.wall-salvage', decompose: true }], { wait: { localRender: true, authoredStructures: true }, download: true });",
+                ].join('\n'),
+            })),
     ];
     return { slug: 'spawn-tv', label: 'TV in spawn (wall-mounted flat panel, giga-shopfront)', targetType: 'media-furniture', sections };
 }
@@ -143,7 +164,7 @@ async function collectSpawnTv(mode) {
 // ---------------------------------------------------------------------
 // 2. An intersection (transport junction)
 // ---------------------------------------------------------------------
-async function collectIntersection(mode) {
+async function collectIntersection(mode, outDir) {
     const { planTransportJunctions } = await importRepo('world/transport-junction-authority.js');
 
     const sourceRefs = [
@@ -196,9 +217,16 @@ async function collectIntersection(mode) {
             notes: 'No geometry-harness fixture spec exists for an isolated junction (only apartment-stair, fence, fork, horse-statue, house, wall-business-sign) and there is no standalone generator target either, since a junction is a derived relationship between surfaces, not a placed asset. Authoring tools/geometry-harness/specs/junction-demo.json from the synthetic fixture above would make this a true fast/isolated visual target.',
         }));
     } else {
-        sections.push(visualCaptureSection({
-            mode,
-            slowScript: "await p.captureInvestigation([{ query: 'transport-junction', decompose: true }], { wait: { localRender: true }, download: true });",
+        sections.push(await attemptVisualCapture({
+            mode, kind: 'world',
+            params: { queries: [{ query: 'transport-junction', decompose: true }], wait: { localRender: true, timeoutMs: 150000 } },
+            outDir,
+            fallbackReproCommand: [
+                'node tools/visual-harness/serve.mjs --port 8123',
+                'open http://127.0.0.1:8123/?visualProbe=1',
+                '// in the page console:',
+                "const p = await window.__debug.visualProbe.install(); await p.captureInvestigation([{ query: 'transport-junction', decompose: true }], { wait: { localRender: true }, download: true });",
+            ].join('\n'),
         }));
     }
 
@@ -208,7 +236,7 @@ async function collectIntersection(mode) {
 // ---------------------------------------------------------------------
 // 3. Roof toppers
 // ---------------------------------------------------------------------
-async function collectRoofTopper(mode) {
+async function collectRoofTopper(mode, outDir) {
     const sourceRefs = [
         'kowloon-fabric-engine.js:5625-5994 (roofTopper assignment, values incl. \'spire\'/\'none\')',
         'world/kowloon-fabric-enrichment.js:1075 (roof-topper enrichment task)',
@@ -247,18 +275,35 @@ async function collectRoofTopper(mode) {
             : 'node tools/geometry-harness/source/audit_jweb_authority.mjs --repo . --chunks "0,0;1,0;2,0;16,0" --seed 671278205 --strict --out /tmp/jweb-geometry-authority.json',
         notes: 'Roof toppers are procedurally assigned per-building from geometry + seed, not a fixed catalog id - there\'s no single static record to dump, and this pass did not verify which chunk/seed actually rolls a spire. Needs numpy+Pillow installed (confirmed installable via pip, not yet installed this pass).',
     }));
-    sections.push(visualCaptureSection({
-        mode,
-        fastUrl: 'mode=generator&seed=671278205&chunk=0,0&target=roof-topper',
-        slowScript: "await p.captureInvestigation([{ query: 'roof-topper' }], { wait: { localRender: true }, download: true });",
-    }));
+    sections.push(await (mode === 'fast'
+        ? attemptVisualCapture({
+            mode, kind: 'specimen',
+            params: { mode: 'generator', seed: 671278205, chunk: '0,0', target: 'roof-topper' },
+            outDir,
+            fallbackReproCommand: [
+                'node tools/visual-harness/serve.mjs --port 8123',
+                'open http://127.0.0.1:8123/tools/visual-harness/specimen.html?mode=generator&seed=671278205&chunk=0,0&target=roof-topper',
+            ].join('\n'),
+            fallbackNotes: 'A "no match" here is real evidence, not automation failure - either this seed/chunk did not roll a topper, or roof toppers are not registered as a searchable visual-probe label at all yet (unconfirmed either way).',
+        })
+        : attemptVisualCapture({
+            mode, kind: 'world',
+            params: { queries: ['roof-topper'] },
+            outDir,
+            fallbackReproCommand: [
+                'node tools/visual-harness/serve.mjs --port 8123',
+                'open http://127.0.0.1:8123/?visualProbe=1',
+                '// in the page console:',
+                "const p = await window.__debug.visualProbe.install(); await p.captureInvestigation([{ query: 'roof-topper' }], { wait: { localRender: true }, download: true });",
+            ].join('\n'),
+        })));
     return { slug: 'roof-topper', label: 'Roof toppers (procedural rooftop features)', targetType: 'procedural-roof-feature', sections };
 }
 
 // ---------------------------------------------------------------------
 // 4. A trash can
 // ---------------------------------------------------------------------
-async function collectTrashCan(mode) {
+async function collectTrashCan(mode, outDir) {
     const { CLAUDE_CITY_ASSETS } = await importRepo('vendor/city-pack/asset-catalog.js');
     const variants = CLAUDE_CITY_ASSETS.filter(a => a.kind === 'trash_can');
     const { cityAssetPlacementMetadata } = await importRepo('vendor/city-pack/placement-metadata.js');
@@ -294,11 +339,28 @@ async function collectTrashCan(mode) {
             sourceRefs: ['tools/geometry-harness/specs/'],
             notes: 'No fixture spec exists for a trash can (only apartment-stair, fence, fork, horse-statue, house, wall-business-sign). Authoring tools/geometry-harness/specs/trash-can-01.json would make this a true fast/isolated silhouette render instead of relying on the generator specimen.',
         }),
-        visualCaptureSection({
-            mode,
-            fastUrl: 'mode=generator&target=street/trash_can_01',
-            slowScript: "await p.captureInvestigation([{ query: 'trash_can' }], { wait: { localRender: true }, download: true });",
-        }),
+        await (mode === 'fast'
+            ? attemptVisualCapture({
+                mode, kind: 'specimen',
+                params: { mode: 'generator', seed: 671278205, chunk: '0,0', target: 'street/trash_can_01' },
+                outDir,
+                fallbackReproCommand: [
+                    'node tools/visual-harness/serve.mjs --port 8123',
+                    'open http://127.0.0.1:8123/tools/visual-harness/specimen.html?mode=generator&seed=671278205&chunk=0,0&target=street/trash_can_01',
+                ].join('\n'),
+                fallbackNotes: 'Trash cans are placed by the adornment/street-furniture system layered on top of a built chunk, not by kowloon-fabric-engine itself - a "no match" here is expected, not automation failure. Slow/full-generation mode is the real way to see this one.',
+            })
+            : attemptVisualCapture({
+                mode, kind: 'world',
+                params: { queries: ['trash_can'] },
+                outDir,
+                fallbackReproCommand: [
+                    'node tools/visual-harness/serve.mjs --port 8123',
+                    'open http://127.0.0.1:8123/?visualProbe=1',
+                    '// in the page console:',
+                    "const p = await window.__debug.visualProbe.install(); await p.captureInvestigation([{ query: 'trash_can' }], { wait: { localRender: true }, download: true });",
+                ].join('\n'),
+            })),
     ];
     return { slug: 'trash-can', label: 'A trash can (street/trash_can_01..04)', targetType: 'street-prop', sections };
 }

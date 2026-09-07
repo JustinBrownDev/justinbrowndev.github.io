@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import {
     clusterTransportJunctions,
     exposedBoundarySegments,
+    internalBoundarySegments,
     planTransportJunctions,
 } from '../world/transport-junction-authority.js';
 
@@ -50,6 +51,15 @@ function boundsOf(members) {
     const northRun = j.exposedBoundary.find(seg => seg.side === 'north');
     assert.ok(northRun, '01: must have one merged north run');
     assert.ok(Math.abs((northRun.x2 - northRun.x1)) >= 7.9, '01: north run must span the full merged length, not per-piece fragments');
+
+    // a:[-3,3] and b:[2,8] genuinely overlap by 1m (x:[2,3]), not merely touch -
+    // that 1m zone is covered by BOTH members, so its two boundaries (x=2,
+    // entering dual coverage; x=3, leaving it) are each real internal edges.
+    // The union of their spans is the full carve extent either surface needs.
+    const internal = internalBoundarySegments(rects);
+    assert.equal(internal.length, 2, '01b: a real 1m double-covered overlap has two internal boundary edges');
+    const zSpan = { from: Math.min(...internal.map(s => Math.min(s.z1, s.z2))), to: Math.max(...internal.map(s => Math.max(s.z1, s.z2))) };
+    assert.ok(Math.abs((zSpan.to - zSpan.from) - 2) < 1e-9, '01b: merged carve span must equal the real 2m shared width');
 }
 
 // 02 - 90deg corner: an L-shaped union.
@@ -112,6 +122,18 @@ function boundsOf(members) {
         if (segmentLiesOnSharedInterior(seg, rects)) orphanFragments++;
     }
     assert.equal(orphanFragments, 0, '06: offset T must not produce tiny orphan interior fragments - the classic pairwise-cut failure mode');
+
+    // This is exactly the case where the OLD guessed-width carve is wrong:
+    // trunk and branch only *touch* at z=1 (zero-height intersection rect),
+    // so the old Math.max(0.90, Math.min(cut.hx*2, cut.hz*2, 1.65)) formula
+    // degenerates to the 0.90m floor - even though the real shared mouth
+    // (branch's x-span, 3 to 5) is a full 2m wide. A 0.90m carve would leave
+    // 1.1m of spurious rail sitting across the real opening.
+    const internal = internalBoundarySegments(rects);
+    assert.equal(internal.length, 1, '06b: exactly one internal seam at the branch mouth');
+    const seg = internal[0];
+    assert.ok(Math.abs(Math.abs(seg.x2 - seg.x1) - 2) < 1e-9,
+        `06b: true shared mouth is 2m wide, not the old formula's clamped 0.9m guess (got ${Math.abs(seg.x2 - seg.x1)})`);
 }
 
 // 07 - two almost-overlapping cuts: three surfaces whose openings interleave.

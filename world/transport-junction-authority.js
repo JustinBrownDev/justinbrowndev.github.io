@@ -151,6 +151,59 @@ export function exposedBoundarySegments(rects) {
     return mergeCollinearSegments(rawSegments);
 }
 
+// The complement of exposedBoundarySegments: the internal edges where two
+// DIFFERENT members meet (a shared party wall), rather than the exterior
+// perimeter. This is what a carve needs to know - not "guess a width from
+// the intersection rectangle's own dimensions" but "here is the exact
+// shared boundary, use its real position and length". A cell edge where
+// both sides belong to the SAME member (or where either side is empty) is
+// not a party wall and is excluded.
+export function internalBoundarySegments(rects) {
+    if (rects.length < 2) return [];
+    const xs = [...new Set(rects.flatMap(r => [r.minX, r.maxX]))].sort((a, b) => a - b);
+    const zs = [...new Set(rects.flatMap(r => [r.minZ, r.maxZ]))].sort((a, b) => a - b);
+    const cols = xs.length - 1, rows = zs.length - 1;
+    if (cols <= 0 || rows <= 0) return [];
+    const owners = new Array(cols * rows).fill(null);
+    const cellIndex = (ix, iz) => iz * cols + ix;
+    for (let ix = 0; ix < cols; ix++) {
+        if (xs[ix + 1] - xs[ix] <= EPS) continue;
+        const midX = (xs[ix] + xs[ix + 1]) / 2;
+        for (let iz = 0; iz < rows; iz++) {
+            if (zs[iz + 1] - zs[iz] <= EPS) continue;
+            const midZ = (zs[iz] + zs[iz + 1]) / 2;
+            const covering = rects.filter(r => midX > r.minX - EPS && midX < r.maxX + EPS
+                && midZ > r.minZ - EPS && midZ < r.maxZ + EPS);
+            if (covering.length) owners[cellIndex(ix, iz)] = covering.map(r => r.id).sort();
+        }
+    }
+    const sameOwner = (a, b) => !!a && !!b && a.length === b.length && a.every((id, i) => id === b[i]);
+    const rawSegments = [];
+    for (let iz = 0; iz < rows; iz++) {
+        for (let ix = 1; ix < cols; ix++) {
+            const left = owners[cellIndex(ix - 1, iz)], right = owners[cellIndex(ix, iz)];
+            if (!left || !right || sameOwner(left, right)) continue;
+            rawSegments.push({
+                x1: xs[ix], z1: zs[iz], x2: xs[ix], z2: zs[iz + 1],
+                axis: 'z', at: xs[ix], from: zs[iz], to: zs[iz + 1],
+                side: 'internal', ownerIds: [...new Set([...left, ...right])],
+            });
+        }
+    }
+    for (let ix = 0; ix < cols; ix++) {
+        for (let iz = 1; iz < rows; iz++) {
+            const below = owners[cellIndex(ix, iz - 1)], above = owners[cellIndex(ix, iz)];
+            if (!below || !above || sameOwner(below, above)) continue;
+            rawSegments.push({
+                x1: xs[ix], z1: zs[iz], x2: xs[ix + 1], z2: zs[iz],
+                axis: 'x', at: zs[iz], from: xs[ix], to: xs[ix + 1],
+                side: 'internal', ownerIds: [...new Set([...below, ...above])],
+            });
+        }
+    }
+    return mergeCollinearSegments(rawSegments);
+}
+
 // Merge adjacent same-axis, same-"at"-coordinate, same-side segments into
 // maximal runs, so a junction sends guardrail authority one clean long span
 // per exposed edge instead of one tiny fragment per raster cell.

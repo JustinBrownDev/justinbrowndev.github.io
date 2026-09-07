@@ -31,6 +31,7 @@ import {
 import { planSkybridgeArchitecture } from './world/skybridge-architecture.js';
 import { planFacadeRouteGallery } from './world/facade-route-gallery.js';
 import { carveJunctionYieldingParts } from './world/transport-junction-clearance.js';
+import { internalBoundarySegments } from './world/transport-junction-authority.js';
 import {
     CAVERN_LADDER_SCHEMA,
     planCavernLadderCandidates,
@@ -1813,11 +1814,42 @@ export function createKowloonFabricEngine({
         return { surface, overlaps: overlaps.map(item => item.surface), pieces };
     }
 
+    // Phase B of the 2026-09-07 skyway-junction correction: this used to guess
+    // the carve opening from the intersection rectangle's own two dimensions
+    // (Math.min(cut.hx*2, cut.hz*2)), which is wrong whenever a and b merely
+    // touch along one axis (a near-zero intersection depth there clamps the
+    // "opening" down to the 0.90m floor even though the real shared mouth -
+    // measured along the OTHER axis, where the two surfaces actually run
+    // parallel - can be several metres wide). transport-junction-authority.js's
+    // internalBoundarySegments() computes the real shared boundary instead of
+    // guessing it. This still only refines the point/width fed into the
+    // existing carve (carveTransportRailGap is untouched, and callers that
+    // pass an explicit width, e.g. facade galleries choosing their own
+    // crossing width, are unaffected) - it is not the full junction-owns-the-
+    // geometry architecture yet, just the retroactive carve becoming
+    // precise instead of approximate.
     function smoothTransportUnion({ physics, transforms, a, b, intersection = null, width = null }) {
         const cut = intersection ?? transportSurfaceIntersection(a, b) ?? transportRectIntersection(a, b);
         if (!cut) return 0;
-        const openingWidth = width ?? Math.max(0.90, Math.min(cut.hx * 2, cut.hz * 2, 1.65));
-        const point = { x: cut.x, z: cut.z };
+        let point = { x: cut.x, z: cut.z };
+        let openingWidth = width;
+        if (openingWidth == null) {
+            const internal = internalBoundarySegments([
+                { id: a.id, minX: a.x - a.hx, maxX: a.x + a.hx, minZ: a.z - a.hz, maxZ: a.z + a.hz },
+                { id: b.id, minX: b.x - b.hx, maxX: b.x + b.hx, minZ: b.z - b.hz, maxZ: b.z + b.hz },
+            ]);
+            if (internal.length) {
+                const xs = internal.flatMap(seg => [seg.x1, seg.x2]);
+                const zs = internal.flatMap(seg => [seg.z1, seg.z2]);
+                const minX = Math.min(...xs), maxX = Math.max(...xs);
+                const minZ = Math.min(...zs), maxZ = Math.max(...zs);
+                point = { x: (minX + maxX) / 2, z: (minZ + maxZ) / 2 };
+                // A boundary segment has ~zero extent along its own axis; the
+                // real opening is whichever extent is non-degenerate.
+                openingWidth = Math.max(maxX - minX, maxZ - minZ);
+            }
+        }
+        if (openingWidth == null) openingWidth = Math.max(0.90, Math.min(cut.hx * 2, cut.hz * 2, 1.65));
         return carveTransportRailGap({ physics, transforms, surfaceId: a.id, point, width: openingWidth })
             + carveTransportRailGap({ physics, transforms, surfaceId: b.id, point, width: openingWidth });
     }

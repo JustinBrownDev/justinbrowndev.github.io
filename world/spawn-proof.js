@@ -315,6 +315,56 @@ function relevantReservation(reservation, bounds, surfaceY) {
     return boundsOverlap(r, bounds, 0.2);
 }
 
+// When an entity carries real Building Plan authority (world/architecture/
+// building-plan-authority.js's compileBuildingPlanTopologySpaces), its
+// topologySpaces already know actual room identity - role, semanticProgram,
+// operationalRole, adjacency - keyed by the exact same module+floor system
+// kowloon-fabric-engine.js's own buildingPlanSpaceForModuleFloor() uses to
+// materialize interior walls. Spawn previously never looked at any of this;
+// collectSpawnFabricSpaces flattened straight to raw physics. Surface it
+// here, additively, so callers that want real room grouping (progression
+// layout's wall-anchored desks/racks) can use it, while everything that
+// doesn't stays on exactly the same fields as before.
+function topologySpacesForModuleFloor(entity, moduleKey, floorIndex) {
+    const all = entity?.buildingPlan?.topologySpaces;
+    if (!Array.isArray(all) || !all.length) return [];
+    return all.filter(space => Number(space?.floor) === Number(floorIndex)
+        && (space?.moduleKey === moduleKey || (space?.moduleKeys ?? []).includes(moduleKey)));
+}
+
+function regionArea(space) {
+    return (space?.regions ?? []).reduce((sum, region) => {
+        const w = Number(region?.maxX) - Number(region?.minX);
+        const d = Number(region?.maxZ) - Number(region?.minZ);
+        return sum + (Number.isFinite(w) && Number.isFinite(d) ? Math.max(0, w) * Math.max(0, d) : 0);
+    }, 0);
+}
+
+function roomSpacesSummary(roomSpaces) {
+    if (!roomSpaces.length) return null;
+    const primary = [...roomSpaces].sort((a, b) => regionArea(b) - regionArea(a))[0];
+    return {
+        roomSpaceIds: roomSpaces.map(space => space.id),
+        roomSpaces: roomSpaces.map(space => ({
+            id: space.id,
+            role: space.role ?? null,
+            spaceType: space.spaceType ?? null,
+            semanticProgram: space.semanticProgram ?? null,
+            operationalRole: space.operationalRole ?? null,
+            serviceSpine: space.serviceSpine === true,
+            adjacentSpaceIds: [...(space.adjacentSpaceIds ?? [])],
+            regions: (space.regions ?? []).map(region => ({ ...region })),
+        })),
+        roomSpaceId: primary.id,
+        roomRole: primary.role ?? null,
+        roomSpaceType: primary.spaceType ?? null,
+        roomSemanticProgram: primary.semanticProgram ?? null,
+        roomOperationalRole: primary.operationalRole ?? null,
+        roomServiceSpine: primary.serviceSpine === true,
+        roomAdjacentSpaceIds: [...(primary.adjacentSpaceIds ?? [])],
+    };
+}
+
 export function collectSpawnFabricSpaces(fabricPayloads) {
     const spaces = [];
     for (const [payloadKey, rootPayload] of iterablePayloadEntries(fabricPayloads)) {
@@ -420,6 +470,10 @@ export function collectSpawnFabricSpaces(fabricPayloads) {
                     const storefrontLike = relevantFacades.length > 0 && frontageLikeEntity(entity);
                     const maxSupportSpanM = supportPatches.reduce((best, patch) => Math.max(best, patch.halfX * 2, patch.halfZ * 2), 0);
                     const maxWallSpanM = nearbyWalls.reduce((best, wall) => Math.max(best, segmentLength(wall)), 0);
+                    const roomSpaces = surface.surfaceClass === 'interior-floor'
+                        ? topologySpacesForModuleFloor(entity, module.key, surface.floorIndex)
+                        : [];
+                    const roomSummary = roomSpacesSummary(roomSpaces);
                     spaces.push({
                         schema: 'jweb.fabric-habitable-space.v2',
                         spaceId: surface.surfaceClass === 'roof' ? `${entityId}:${module.key}:roof` : `${entityId}:${module.key}:floor:${surface.floorIndex}`,
@@ -450,6 +504,18 @@ export function collectSpawnFabricSpaces(fabricPayloads) {
                         retailLike,
                         storefrontLike,
                         chunkSeed: payload?.chunk?.seed ?? rootPayload?.chunk?.seed ?? null,
+                        // Real Building Plan room identity where it exists (interior
+                        // floors only - roofs have no topologySpace). All fields are
+                        // additive and default to absent/empty for legacy geometry.
+                        roomSpaceId: roomSummary?.roomSpaceId ?? null,
+                        roomSpaceIds: roomSummary?.roomSpaceIds ?? [],
+                        roomSpaces: roomSummary?.roomSpaces ?? [],
+                        roomRole: roomSummary?.roomRole ?? null,
+                        roomSpaceType: roomSummary?.roomSpaceType ?? null,
+                        roomSemanticProgram: roomSummary?.roomSemanticProgram ?? null,
+                        roomOperationalRole: roomSummary?.roomOperationalRole ?? null,
+                        roomServiceSpine: roomSummary?.roomServiceSpine ?? false,
+                        roomAdjacentSpaceIds: roomSummary?.roomAdjacentSpaceIds ?? [],
                     });
                 }
             }
@@ -851,6 +917,15 @@ export function provePlayableSpawn({
                 programArchitectureId: enclave.space.programArchitectureId,
                 hostArchetype: enclave.hostArchetype,
                 desiredHostArchetype: enclave.desiredHostArchetype,
+                roomSpaceId: enclave.space.roomSpaceId,
+                roomSpaceIds: enclave.space.roomSpaceIds,
+                roomSpaces: enclave.space.roomSpaces,
+                roomRole: enclave.space.roomRole,
+                roomSpaceType: enclave.space.roomSpaceType,
+                roomSemanticProgram: enclave.space.roomSemanticProgram,
+                roomOperationalRole: enclave.space.roomOperationalRole,
+                roomServiceSpine: enclave.space.roomServiceSpine,
+                roomAdjacentSpaceIds: enclave.space.roomAdjacentSpaceIds,
             };
             const routeFan = enclave.navigation.successful;
             const proof = {

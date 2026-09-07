@@ -166,6 +166,27 @@ function chooseCandidate(hostSpace, dims, blockers, score, rotY = 0) {
     return candidates[0] ?? null;
 }
 
+// Real Building Plan room identity, where collectSpawnFabricSpaces() found
+// it (see world/spawn-proof.js). A module/floor fabric-space frequently spans
+// several actual rooms; a wall candidate's own (x, z) tells us which one it's
+// actually standing in, independent of which side of the wall "fromSpaceId"
+// happens to be recorded against.
+function roomForPoint(hostSpace, x, z) {
+    for (const room of hostSpace?.roomSpaces ?? []) {
+        for (const region of room.regions ?? []) {
+            if (x >= Number(region.minX) && x <= Number(region.maxX)
+                && z >= Number(region.minZ) && z <= Number(region.maxZ)) return room;
+        }
+    }
+    return null;
+}
+
+function roomFitsRole(room, roleHints) {
+    if (!room) return 0;
+    const text = `${room.role ?? ''} ${room.operationalRole ?? ''} ${room.semanticProgram ?? ''} ${room.spaceType ?? ''}`.toLowerCase();
+    return roleHints.some(hint => text.includes(hint)) ? 1 : 0;
+}
+
 function usableWalls(hostSpace, dims) {
     const minimumLength = Math.max(0.8, dims[0] + 0.22);
     const surfaceY = finite(Number(hostSpace?.surfaceY));
@@ -237,6 +258,7 @@ function wallAnchoredCandidates(hostSpace, dims, blockers, { wallGap = 0.11 } = 
                     wallLength: wall.length,
                     wallKind: wall.wall?.supportKind ?? (wall.wall?.side ? 'exterior-shell' : 'wall'),
                     nx, nz, tx: wall.tx, tz: wall.tz,
+                    room: roomForPoint(hostSpace, x, z),
                 });
             }
         }
@@ -335,6 +357,14 @@ export function augmentSpawnProgressionLayout({
     const mediaPoint = media.transform;
     const spawnPoint = pose ?? mediaPoint;
 
+    // Room assignment before wall candidate selection: once the first
+    // workstation/rack picks a real room, later ones of the same kind
+    // strongly prefer staying in it rather than scattering across every wall
+    // the whole (possibly building-wide) fabric host happens to expose.
+    // Soft scoring only - a host with no Building Plan room data (roomSpaces
+    // empty) sees roomFitsRole/sameRoomBonus stay at 0 and behaves exactly as
+    // before.
+    let workstationRoomId = null;
     for (let index = 0; index < spec.workstations; index++) {
         const dims = [1.55, 1.42, 0.78];
         const point = chooseWallCandidate(hostSpace, dims, blockers, candidate => {
@@ -342,9 +372,12 @@ export function augmentSpawnProgressionLayout({
             const ds = Math.hypot(candidate.x - spawnPoint.x, candidate.z - spawnPoint.z);
             const frontage = Math.min(4, candidate.wallLength - dims[0]) * 0.18;
             const semantic = candidate.wallKind === 'building-plan-partition' ? 0.30 : 0.10;
-            return -Math.abs(dm - (3.0 + index * 0.34)) * 0.42 + Math.min(6, ds) * 0.12 + frontage + semantic;
+            const roomFit = roomFitsRole(candidate.room, ['work', 'office', 'program']) * 0.9;
+            const sameRoom = workstationRoomId && candidate.room?.id === workstationRoomId ? 1.6 : 0;
+            return -Math.abs(dm - (3.0 + index * 0.34)) * 0.42 + Math.min(6, ds) * 0.12 + frontage + semantic + roomFit + sameRoom;
         }, candidate => !!operatorChairPose(candidate, dims, hostSpace, blockers));
         if (!point) break;
+        workstationRoomId = workstationRoomId ?? point.room?.id ?? null;
         const workstation = makeSyntheticPlacement({
             locationId, slot: 'progression-workstation', index,
             x: point.x, z: point.z, surfaceY: hostSpace.surfaceY, dims,
@@ -370,15 +403,22 @@ export function augmentSpawnProgressionLayout({
         }
     }
 
+    let rackRoomId = null;
     for (let index = 0; index < spec.racks; index++) {
         const dims = [0.72, 2.05, 0.86];
         const point = chooseWallCandidate(hostSpace, dims, blockers, candidate => {
             const ds = Math.hypot(candidate.x - spawnPoint.x, candidate.z - spawnPoint.z);
             const dm = Math.hypot(candidate.x - mediaPoint.x, candidate.z - mediaPoint.z);
             const serviceWall = candidate.wallKind === 'building-plan-partition' ? 0.18 : 0.35;
-            return ds * 0.34 + dm * 0.08 + Math.min(5, candidate.wallLength) * 0.08 + serviceWall;
+            const roomFit = roomFitsRole(candidate.room, ['service', 'storage', 'server', 'utility', 'industrial', 'data']) * 1.1;
+            const sameRoom = rackRoomId && candidate.room?.id === rackRoomId ? 1.6 : 0;
+            // Racks belong away from the primary social focal point when a
+            // choice exists, but never at the expense of staying in the same
+            // service room once one is chosen.
+            return ds * 0.34 + dm * 0.08 + Math.min(5, candidate.wallLength) * 0.08 + serviceWall + roomFit + sameRoom;
         });
         if (!point) break;
+        rackRoomId = rackRoomId ?? point.room?.id ?? null;
         const rack = makeSyntheticPlacement({
             locationId, slot: 'progression-server-rack', index,
             x: point.x, z: point.z, surfaceY: hostSpace.surfaceY, dims,

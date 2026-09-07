@@ -744,6 +744,42 @@ export function createKowloonFabricEngine({
         return claim;
     }
 
+    function moduleActiveOnGlobalFloor(module, floor) {
+        const floorBase = Math.max(0, Math.floor(Number(module?.floorBase) || 0));
+        const floorTop = Number.isFinite(Number(module?.floorTop))
+            ? Math.max(floorBase + 1, Math.floor(Number(module.floorTop)))
+            : floorBase + Math.max(1, Math.floor(Number(module?.floors) || 1));
+        return floor >= floorBase && floor < floorTop;
+    }
+
+    // A run's *logical* spanA/spanB (compileBuildingPlanWallRuns, world/architecture/
+    // building-plan-authority.js) come off the room-layout raster and stay untouched here --
+    // door-gap matching depends on those exact values. But the raster's cell size is chosen
+    // independently of each module's real exterior-wall edges, so the run's outermost drawn
+    // extent can overshoot past the true edge (interior wall/paint visible outside the shell),
+    // undershoot short of it (a gap you can see through into the next room), or land close
+    // enough to be nearly coincident (z-fighting). Snapping only the two true endpoints of the
+    // run -- never the gap-interior cursor positions used for doorways -- to the nearest real
+    // module edge within one raster cell fixes the drawn geometry without touching topology.
+    function snapRunEndToModuleEdge(value, axis, fixedCoord, activeModules, tolerance) {
+        let best = value;
+        let bestDist = tolerance;
+        for (const module of activeModules) {
+            const halfX = Number(module?.halfX) || 0;
+            const halfZ = Number(module?.halfZ) || 0;
+            const crossLo = axis === 'x' ? (Number(module?.cz) || 0) - halfZ : (Number(module?.cx) || 0) - halfX;
+            const crossHi = axis === 'x' ? (Number(module?.cz) || 0) + halfZ : (Number(module?.cx) || 0) + halfX;
+            if (fixedCoord < crossLo - tolerance || fixedCoord > crossHi + tolerance) continue;
+            const edgeLo = axis === 'x' ? (Number(module?.cx) || 0) - halfX : (Number(module?.cz) || 0) - halfZ;
+            const edgeHi = axis === 'x' ? (Number(module?.cx) || 0) + halfX : (Number(module?.cz) || 0) + halfZ;
+            for (const edge of [edgeLo, edgeHi]) {
+                const dist = Math.abs(edge - value);
+                if (dist < bestDist) { best = edge; bestDist = dist; }
+            }
+        }
+        return best;
+    }
+
     function realizeBuildingPlanWallRuns({ physics, wallList, plan, paintList = null }) {
         const wallT = 0.14;
         const paintT = 0.018;
@@ -751,6 +787,15 @@ export function createKowloonFabricEngine({
             String(space.id), interiorPaintPalette[hashString32(`interior-paint:${space.id}`) % interiorPaintPalette.length],
         ]));
         const coreReservation = plan?.verticalCore?.reservation ?? null;
+        const allModules = plan?.envelope?.modules ?? [];
+        const rasterCellSizeByFloor = new Map((plan?.floors ?? []).map(floor => [floor.floor, floor.rasterCellSize]));
+        const activeModulesByFloor = new Map();
+        const activeModulesForFloor = (floor) => {
+            if (!activeModulesByFloor.has(floor)) {
+                activeModulesByFloor.set(floor, allModules.filter(module => moduleActiveOnGlobalFloor(module, floor)));
+            }
+            return activeModulesByFloor.get(floor);
+        };
         let segments = 0;
         const emitRaw = (run, a, b, yMin = run.yBase, yMax = run.yBase + run.height) => {
             const ceilingY = run.yBase + storyCeilingLocalY(run.height);
@@ -804,18 +849,22 @@ export function createKowloonFabricEngine({
         };
 
         for (const run of plan?.wallRuns ?? []) {
-            let cursor = run.spanA;
+            const activeModules = activeModulesForFloor(run.floor);
+            const tolerance = Math.max(0.5, (Number(rasterCellSizeByFloor.get(run.floor)) || 0.8) * 1.5);
+            const drawSpanA = snapRunEndToModuleEdge(run.spanA, run.axis, run.fixedCoord, activeModules, tolerance);
+            const drawSpanB = snapRunEndToModuleEdge(run.spanB, run.axis, run.fixedCoord, activeModules, tolerance);
+            let cursor = drawSpanA;
             const gaps = [...(run.gaps ?? [])].sort((a, b) => a.lo - b.lo || a.hi - b.hi);
             for (const gap of gaps) {
-                const lo = Math.max(run.spanA, gap.lo);
-                const hi = Math.min(run.spanB, gap.hi);
+                const lo = Math.max(drawSpanA, gap.lo);
+                const hi = Math.min(drawSpanB, gap.hi);
                 if (hi <= lo) continue;
                 emit(run, cursor, lo);
                 const openingTop = Math.min(run.yBase + run.height, run.yBase + Math.max(1.9, Number(gap.height) || 2.03));
                 emit(run, lo, hi, openingTop, run.yBase + run.height);
                 cursor = Math.max(cursor, hi);
             }
-            emit(run, cursor, run.spanB);
+            emit(run, cursor, drawSpanB);
         }
         return segments;
     }

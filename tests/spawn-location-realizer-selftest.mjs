@@ -103,3 +103,25 @@ radioResult.dispose();
 assert.equal(radioScene.children.length, 0, 'dispose must remove optional hangout geometry');
 assert.equal(radioColliders.length, 0, 'dispose must remove optional hangout colliders');
 console.log('[spawn-location-realizer-selftest] RADIO PASS', { mediaKind: radioResult.mediaKind });
+
+const hangingBoundLocation = {
+    ...boundLocation,
+    hostSpace: { ...boundLocation.hostSpace, payloadLayer: 'hanging', entityId: 'hanging-entity' },
+};
+const hangingPayload = { entity: { id: 'hanging-entity' }, physics: { circulationReservations: [] } };
+const rootWithHanging = {
+    entity: { id: 'ground-entity' }, physics: { circulationReservations: [] },
+    hangingLayer: { payload: hangingPayload },
+};
+const hangingScene = { children: [], add(node) { this.children.push(node); } };
+const hangingResult = realizeSpawnLocation({
+    THREE,
+    scene: hangingScene,
+    boundLocation: hangingBoundLocation,
+    fabricPayloads: new Map([['site-test', rootWithHanging]]),
+    propColliders: [],
+});
+assert.ok(hangingResult, 'hanging-city host must realize through the nested payload');
+assert.equal(hangingPayload.physics.circulationReservations.length, 2, 'spawn reservations must install on hanging physics ownership');
+assert.equal(rootWithHanging.physics.circulationReservations.length, 0, 'hanging spawn must not mutate the upright payload reservations');
+console.log('[spawn-location-realizer-selftest] HANGING HOST PASS', { reservationsInstalled: hangingResult.reservationsInstalled });

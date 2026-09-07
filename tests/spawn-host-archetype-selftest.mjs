@@ -19,7 +19,7 @@ assert.ok(terraRate > 0.008 && terraRate < 0.016, `TERRA host request should sta
 
 function seedFor(archetype) {
     for (let seed = 0; seed < 200000; seed++) {
-        if (chooseSpawnHostArchetype(`${location.id}:${seed}`) === archetype) return seed;
+        if (chooseSpawnHostArchetype(`${location.id}:${seed}:roll=0`) === archetype) return seed;
     }
     throw new Error(`could not find deterministic seed for ${archetype}`);
 }
@@ -85,10 +85,10 @@ let selected = selectSpawnEnclaveCandidate({ playerPhysics: physicsFor([deep, ex
 assert.ok(selected);
 assert.equal(selected.desiredHostArchetype, 'deep-backroom');
 assert.equal(selected.hostArchetype, 'deep-backroom', 'TERRA RNG should intentionally choose the qualifying large backroom over an ordinary roof');
-assert.ok(selected.space.supportAreaM2 >= 110 && selected.space.largestSupportPatchAreaM2 >= 96, 'TERRA host must be a genuinely large contiguous hangout room');
-assert.ok(selected.wallDirectionCount >= 3 && selected.edgeDepthM >= 3.0, 'TERRA host must read as enclosed/deep rather than a shallow alcove');
+assert.ok(selected.space.supportAreaM2 >= 90 && selected.space.maxWallSpanM >= 9, 'TERRA host must be a genuinely large hall with a real wall for the 8.8m panel');
+assert.ok(selected.space.largestSupportPatchAreaM2 >= 42, 'TERRA may span structural bays but still needs meaningful contiguous floor patches');
 
-const tooSmallDeep = space({ id: 'too-small-deep', x: 3, z: 0, halfX: 4.8, halfZ: 4.8, surfaceClass: 'interior-floor', chunkSeed: deepSeed, overhead: true });
+const tooSmallDeep = space({ id: 'too-small-deep', x: 3, z: 0, halfX: 4.4, halfZ: 4.4, surfaceClass: 'interior-floor', chunkSeed: deepSeed, overhead: true });
 selected = selectSpawnEnclaveCandidate({ playerPhysics: physicsFor([tooSmallDeep, exposedAtDeepSeed]), origin: { x: 0, z: 0, feetY: 0 }, locationRuntime: runtime, fabricSpaces: [tooSmallDeep, exposedAtDeepSeed] });
 assert.ok(selected);
 assert.notEqual(selected.hostArchetype, 'deep-backroom', 'a cramped room must make a TERRA request step down safely');

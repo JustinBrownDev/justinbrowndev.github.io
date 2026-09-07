@@ -66,7 +66,19 @@ function enclosedHost(archetype, halfX, halfZ) {
     };
 }
 
-const terraHost = enclosedHost('deep-backroom', 6.0, 5.0);
+const terraHost = {
+    ...enclosedHost('deep-backroom', 6.0, 4.0),
+    supportAreaM2: 96,
+    largestSupportPatchAreaM2: 48,
+    maxSupportSpanM: 8,
+    maxWallSpanM: 12,
+    // Model the way current large JWEB buildings are actually built: one big
+    // operational hall carried by adjacent structural floor bays.
+    supportPatches: [
+        { x: -3, z: 0, halfX: 3, halfZ: 4, minX: -6, maxX: 0, minZ: -4, maxZ: 4, yMin: 6, yMax: 6.12 },
+        { x: 3, z: 0, halfX: 3, halfZ: 4, minX: 0, maxX: 6, minZ: -4, maxZ: 4, yMin: 6, yMax: 6.12 },
+    ],
+};
 const terraComposition = createSpawnComposition(runtime, 'terra-spatial-plan', terraHost);
 assert.equal(terraComposition.startProfile.id, 'terra-backroom');
 const terraPlan = compileSpawnSpatialPlan({

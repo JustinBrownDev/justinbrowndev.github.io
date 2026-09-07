@@ -22,10 +22,8 @@ assert.match(proofSource, /roll=\$\{rollSalt\}/);
 assert.match(proofSource, /candidateVarietyJitter\(selectionKey, candidate, hostArchetype\)/);
 
 const mainSource = fs.readFileSync(new URL('../main.js', import.meta.url), 'utf8');
-assert.match(mainSource, /spawnHostAuditionBudget/);
-assert.match(mainSource, /worldChunkStreamer\.pump\(\{/);
-assert.match(mainSource, /spawn host audition matched/);
-assert.match(mainSource, /spawnFlavorIsForced/);
-assert.match(mainSource, /initialSpawnFabricPayloads\.set\(chunk\.key, chunk\.payload\)/);
+assert.doesNotMatch(mainSource, /spawnHostAuditionBudget/, 'spawn flavor selection must never synchronously audition extra chunks before control');
+assert.doesNotMatch(mainSource, /auditioning nearby ordinary chunks/, 'retired blocking spawn audition must stay retired');
+assert.match(mainSource, /Spawn proof is intentionally single-chunk/);
 
 console.log('[spawn-place-variety-selftest] PASS', { archetypes: [...seen].sort() });

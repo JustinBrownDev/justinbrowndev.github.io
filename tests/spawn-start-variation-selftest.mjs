@@ -72,7 +72,7 @@ assert.ok(terraMedia.dimensionsM[0] >= 8.0, `TERRA should start at eight meters 
 assert.ok(terraMedia.dimensionsM[1] < 2.9, `TERRA should fit a plausible room height, height=${terraMedia.dimensionsM[1]}`);
 assert.equal(terra.slots.find(slot => slot.slot === 'seating')?.picks?.length, 4, 'TERRA must provision a real four-seat hangout, not a screen-only closet');
 
-const undersizedTerraHost = { ...terraHost, supportAreaM2: 96, largestSupportPatchAreaM2: 84, maxSupportSpanM: 9.5, maxWallSpanM: 9.0 };
+const undersizedTerraHost = { ...terraHost, supportAreaM2: 84, largestSupportPatchAreaM2: 38, maxSupportSpanM: 6.0, maxWallSpanM: 8.8 };
 for (let i = 0; i < 24; i++) {
     assert.notEqual(createSpawnComposition(runtime, `terra-too-small-${i}`, undersizedTerraHost).startProfile.id, 'terra-backroom', 'undersized rooms must not unlock TERRA');
 }

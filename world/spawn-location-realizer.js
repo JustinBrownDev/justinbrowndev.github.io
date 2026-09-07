@@ -10,12 +10,21 @@ function iterablePayloadEntries(input) {
 
 function findHostPayload(fabricPayloads, hostSpace) {
     if (!hostSpace) return null;
+    const selectLayer = payload => {
+        if (!payload) return null;
+        return hostSpace.payloadLayer === 'hanging'
+            ? (payload.hangingLayer?.payload ?? null)
+            : payload;
+    };
     if (fabricPayloads instanceof Map && fabricPayloads.has(hostSpace.payloadKey)) {
-        return fabricPayloads.get(hostSpace.payloadKey);
+        const selected = selectLayer(fabricPayloads.get(hostSpace.payloadKey));
+        if (selected) return selected;
     }
     for (const [key, payload] of iterablePayloadEntries(fabricPayloads)) {
-        if (String(key) === String(hostSpace.payloadKey)) return payload;
-        if (payload?.entity?.id && payload.entity.id === hostSpace.entityId) return payload;
+        const selected = selectLayer(payload);
+        if (String(key) === String(hostSpace.payloadKey) && selected) return selected;
+        if (selected?.entity?.id && selected.entity.id === hostSpace.entityId) return selected;
+        if ((selected?.entities ?? []).some(entity => entity?.id === hostSpace.entityId)) return selected;
     }
     return null;
 }

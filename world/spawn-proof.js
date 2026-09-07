@@ -69,6 +69,15 @@ function retailLikeEntity(entity) {
         || /retail|shop|bar|convenience|market|diner/.test(program);
 }
 
+function frontageLikeEntity(entity) {
+    if (retailLikeEntity(entity)) return true;
+    const family = String(entity?.physicalUse?.family ?? entity?.physicalUse ?? '').toLowerCase();
+    const program = String(programArchitectureId(entity) ?? '').toLowerCase();
+    // When a seed has no literal retail building, a business/workshop/service
+    // frontage is still the right visual host for the GIGA vape-shop flavor.
+    return /business|industrial-service|workshop|service/.test(`${family} ${program}`);
+}
+
 let sessionRandomSpawnRoll = null;
 
 export function readSpawnRollSalt(search = null) {
@@ -260,7 +269,11 @@ function relevantReservation(reservation, bounds, surfaceY) {
 
 export function collectSpawnFabricSpaces(fabricPayloads) {
     const spaces = [];
-    for (const [payloadKey, payload] of iterablePayloadEntries(fabricPayloads)) {
+    for (const [payloadKey, rootPayload] of iterablePayloadEntries(fabricPayloads)) {
+        const layers = [{ payload: rootPayload, payloadLayer: 'ground' }];
+        const hangingPayload = rootPayload?.hangingLayer?.payload ?? null;
+        if (hangingPayload?.physics) layers.push({ payload: hangingPayload, payloadLayer: 'hanging' });
+        for (const { payload, payloadLayer } of layers) {
         const physics = payload.physics ?? {};
         const platforms = physics.platforms ?? [];
         const ceilings = physics.ceilings ?? [];
@@ -290,6 +303,10 @@ export function collectSpawnFabricSpaces(fabricPayloads) {
                 // survey. Hanging towers include their bottom occupied plate; upright
                 // towers begin at floor 1 because ground-level spawn is not the goal.
                 const floorIndices = new Set();
+                // Retail frontage is a legitimate spawn destination. Sampling its
+                // entry floor gives GIGA an actual storefront instead of making the
+                // requested class categorically unreachable on upright buildings.
+                if (retailLike) floorIndices.add(0);
                 if (ceilingRooted) floorIndices.add(0);
                 if (floors > 1) floorIndices.add(1);
                 if (floors > 2) floorIndices.add(Math.floor((floors - 1) * 0.5));
@@ -350,13 +367,14 @@ export function collectSpawnFabricSpaces(fabricPayloads) {
                     const entityId = entity.id ?? payload.ownerId ?? String(payloadKey);
                     const supportAreaM2 = supportPatches.reduce((sum, patch) => sum + patchArea(patch), 0);
                     const largestSupportPatchAreaM2 = supportPatches.reduce((best, patch) => Math.max(best, patchArea(patch)), 0);
-                    const storefrontLike = retailLike && surface.floorIndex === 0 && relevantFacades.length > 0;
+                    const storefrontLike = relevantFacades.length > 0 && frontageLikeEntity(entity);
                     const maxSupportSpanM = supportPatches.reduce((best, patch) => Math.max(best, patch.halfX * 2, patch.halfZ * 2), 0);
                     const maxWallSpanM = nearbyWalls.reduce((best, wall) => Math.max(best, segmentLength(wall)), 0);
                     spaces.push({
                         schema: 'jweb.fabric-habitable-space.v2',
                         spaceId: surface.surfaceClass === 'roof' ? `${entityId}:${module.key}:roof` : `${entityId}:${module.key}:floor:${surface.floorIndex}`,
                         payloadKey: String(payloadKey),
+                        payloadLayer,
                         siteId,
                         entityId,
                         moduleKey: module.key,
@@ -381,10 +399,11 @@ export function collectSpawnFabricSpaces(fabricPayloads) {
                         programArchitectureId: programId,
                         retailLike,
                         storefrontLike,
-                        chunkSeed: payload?.chunk?.seed ?? null,
+                        chunkSeed: payload?.chunk?.seed ?? rootPayload?.chunk?.seed ?? null,
                     });
                 }
             }
+        }
         }
     }
     return spaces.sort((a, b) => a.spaceId.localeCompare(b.spaceId));
@@ -507,6 +526,13 @@ function fabricSpaceSamples(playerPhysics, origin, policy, spaces) {
     return candidates.sort((a, b) => b.score - a.score || a.radius - b.radius || a.space.spaceId.localeCompare(b.space.spaceId));
 }
 
+function terraOperationalAffinity(space) {
+    const text = `${space?.physicalUseFamily ?? ''} ${space?.programArchitectureId ?? ''}`.toLowerCase();
+    if (/warehouse|storage|utility|server|data|industrial|workshop|archive|service|laboratory/.test(text)) return 64;
+    if (/courthouse|institution|civic|office|assembly/.test(text)) return -10;
+    return 0;
+}
+
 function archetypeFitScore(candidate, archetype) {
     const space = candidate.space;
     const area = finite(space?.supportAreaM2, 0);
@@ -516,16 +542,45 @@ function archetypeFitScore(candidate, archetype) {
     const interior = space?.surfaceClass === 'interior-floor';
     const roof = space?.surfaceClass === 'roof';
     if (archetype === 'deep-backroom') {
-        if (!interior || space?.retailLike || !candidate.overheadCovered || area < 110 || contiguousArea < 96 || maxSpan < 10.0 || wallSpan < 9.2 || candidate.wallDirectionCount < 3 || candidate.edgeDepthM < 3.0) return -Infinity;
-        return candidate.score + area * 0.08 + candidate.wallDirectionCount * 4 + candidate.edgeDepthM * 2.2 - Math.abs((candidate.overheadClearanceM ?? 3.1) - 3.0) * 1.5;
+        // Current JWEB large buildings are bay/compound structures: a genuinely
+        // huge hall is usually several ~50-65m2 support bays, not one 96m2 slab.
+        // TERRA therefore keys on total hall area + a real 9m TV wall, then strongly
+        // prefers warehouse/utility/storage/service architecture.
+        if (!interior || space?.retailLike || !candidate.overheadCovered
+            || area < 90 || contiguousArea < 42 || maxSpan < 6.2 || wallSpan < 9.0) return -Infinity;
+        return candidate.score
+            + area * 0.055
+            + contiguousArea * 0.045
+            + wallSpan * 0.9
+            + candidate.wallDirectionCount * 1.2
+            + terraOperationalAffinity(space)
+            + (space.payloadLayer === 'hanging' ? 2 : 0);
     }
     if (archetype === 'hanging-storefront') {
-        if (!interior || !candidate.overheadCovered || !space?.storefrontLike || area < 30 || contiguousArea < 24 || maxSpan < 4.2 || wallSpan < 3.8 || candidate.wallDirectionCount < 2) return -Infinity;
-        return candidate.score + area * 0.05 + candidate.wallDirectionCount * 2.2 + (space.ceilingRooted ? 12 : 0) + Math.min(4, space.facadeCount ?? 0) * 2.4;
+        // "Hanging" is a strong visual preference, not an existence requirement.
+        // The actual semantic requirement is a mercantile/workshop frontage with
+        // a ceiling and enough wall/floor to host the GIGA screen + hangout.
+        if (!interior || !candidate.overheadCovered || !space?.storefrontLike
+            || area < 30 || contiguousArea < 24 || maxSpan < 4.2 || wallSpan < 3.8) return -Infinity;
+        return candidate.score
+            + area * 0.05
+            + candidate.wallDirectionCount * 1.4
+            + (space.ceilingRooted || space.payloadLayer === 'hanging' ? 18 : 0)
+            + (space.retailLike ? 10 : 0)
+            + Math.min(4, space.facadeCount ?? 0) * 2.4;
     }
     if (archetype === 'sheltered-roof') {
-        if (!roof || !candidate.overheadCovered || area < 14 || maxSpan < 3.5) return -Infinity;
-        return candidate.score + area * 0.04 + candidate.wallDirectionCount * 1.7 + 8;
+        // Mega means "sheltered from above generally". A broad upper/service
+        // interior is visually and structurally a better host than requiring the
+        // rare special case of a roof with another slab hovering over it.
+        const shelteredInterior = interior && candidate.overheadCovered;
+        const coveredRoof = roof && candidate.overheadCovered;
+        if ((!shelteredInterior && !coveredRoof) || area < 20 || contiguousArea < 18 || maxSpan < 3.5) return -Infinity;
+        return candidate.score
+            + area * 0.04
+            + candidate.wallDirectionCount * 1.2
+            + (shelteredInterior ? 12 : 8)
+            + (space.payloadLayer === 'hanging' ? 2 : 0);
     }
     if (archetype === 'exposed-roof') {
         if (!roof || candidate.overheadCovered || area < 7) return -Infinity;
@@ -717,6 +772,7 @@ export function provePlayableSpawn({
             const hostSpace = {
                 spaceId: enclave.space.spaceId,
                 payloadKey: enclave.space.payloadKey,
+                payloadLayer: enclave.space.payloadLayer ?? 'ground',
                 siteId: enclave.space.siteId,
                 entityId: enclave.space.entityId,
                 moduleKey: enclave.space.moduleKey,
@@ -784,6 +840,7 @@ export function provePlayableSpawn({
                     downRoutes: enclave.navigation.downRoutes,
                     hostSpace: {
                         spaceId: hostSpace.spaceId,
+                        payloadLayer: hostSpace.payloadLayer,
                         siteId: hostSpace.siteId,
                         entityId: hostSpace.entityId,
                         moduleKey: hostSpace.moduleKey,

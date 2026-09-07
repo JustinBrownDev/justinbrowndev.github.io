@@ -66,7 +66,7 @@ export const START_SCENE_PROFILES = Object.freeze([
     // object that still reads as something dragged outside rather than a facade.
     Object.freeze({ id: 'small-tv-roof', hostArchetypes: ['exposed-roof'], weight: 1.15, mediaFamily: 'spawn.media.television', mediaScale: 0.78, supportScale: 1.0, seatRange: [2, 3], detailBudget: 3, seatRadiiM: [1.25, 1.55, 1.85], vocabularyTags: ['portable', 'patio', 'cheap', 'folding', 'improvised', 'weather'] }),
     Object.freeze({ id: 'normal-tv-roof', hostArchetypes: ['exposed-roof'], weight: 1.35, mediaFamily: 'spawn.media.television', mediaScale: 1.0, supportScale: 1.0, seatRange: [2, 3], detailBudget: 4, seatRadiiM: [1.3, 1.65, 1.95], vocabularyTags: ['patio', 'cheap', 'improvised', 'rooftop', 'portable'] }),
-    Object.freeze({ id: 'big-tv-roof', hostArchetypes: ['exposed-roof'], weight: 0.9, mediaFamily: 'spawn.media.television', mediaScale: 1.25, supportScale: 1.05, seatRange: [2, 3], detailBudget: 4, seatRadiiM: [1.45, 1.8, 2.15], minHostAreaM2: 9, vocabularyTags: ['industrial', 'salvaged', 'improvised', 'patio'] }),
+    Object.freeze({ id: 'big-tv-roof', hostArchetypes: ['exposed-roof'], weight: 0.9, mediaFamily: 'spawn.media.television', mediaScale: 1.25, supportScale: 1.05, seatRange: [2, 3], detailBudget: 4, seatRadiiM: [1.45, 1.8, 2.15], minHostAreaM2: 7, vocabularyTags: ['industrial', 'salvaged', 'improvised', 'patio'] }),
     Object.freeze({ id: 'super-big-tv-roof', hostArchetypes: ['exposed-roof'], weight: 0.34, mediaFamily: 'spawn.media.television', mediaScale: 1.75, supportScale: 1.18, seatRange: [2, 4], detailBudget: 5, seatRadiiM: [1.75, 2.15, 2.55], minHostAreaM2: 14, vocabularyTags: ['industrial', 'salvaged', 'construction', 'bench'] }),
     Object.freeze({ id: 'radio-roof', hostArchetypes: ['exposed-roof'], weight: 0.92, mediaFamily: 'spawn.media.radio', mediaScale: 0.9, supportScale: 1.0, seatRange: [2, 3], detailBudget: 4, seatRadiiM: [1.2, 1.5, 1.8], vocabularyTags: ['portable', 'cheap', 'folding', 'patio', 'communications'] }),
 
@@ -78,10 +78,10 @@ export const START_SCENE_PROFILES = Object.freeze([
     // GIGA belongs to a real retail/frontage room, preferably in hanging fabric.
     Object.freeze({ id: 'giga-shopfront', hostArchetypes: ['hanging-storefront'], weight: 1.0, mediaFamily: 'spawn.media.television', mediaScale: [4.0, 3.2, 2.2], supportScale: 1.15, seatRange: [3, 4], detailBudget: 6, seatRadiiM: [2.6, 3.25, 4.0], minHostAreaM2: 30, minContiguousAreaM2: 24, minWallSpanM: 3.8, requireOverhead: true, mediaVariantIds: ['tv.flat.wall-salvage'], vocabularyTags: ['retail', 'diner', 'chrome', 'office', 'repurposed', 'takeout', 'reading'] }),
 
-    // TERRA is deliberately extreme and only exists in a large, enclosed,
-    // overhead-covered interior host. The host-selection roll targets this class
-    // only ~1.2% of worlds; failed eligibility steps down rather than forcing it.
-    Object.freeze({ id: 'terra-backroom', hostArchetypes: ['deep-backroom'], weight: 1.0, mediaFamily: 'spawn.media.television', mediaScale: [10.0, 4.9, 3.0], supportScale: 1.25, seatRange: [4, 4], detailBudget: 6, seatRadiiM: [3.6, 4.4, 5.2], minHostAreaM2: 110, minContiguousAreaM2: 96, minHostSpanM: 10.0, minWallSpanM: 9.2, requireOverhead: true, mediaVariantIds: ['tv.flat.wall-salvage'], vocabularyTags: ['office', 'institutional', 'workshop', 'industrial', 'repair', 'fluorescent', 'bench'] }),
+    // TERRA is deliberately extreme, but current JWEB buildings are assembled from
+    // structural bays rather than unicorn-sized single slabs. Treat a large covered
+    // operational floor with a real 9m wall as the warehouse / TV-dome host.
+    Object.freeze({ id: 'terra-backroom', hostArchetypes: ['deep-backroom'], weight: 1.0, mediaFamily: 'spawn.media.television', mediaScale: [10.0, 4.9, 3.0], supportScale: 1.25, seatRange: [4, 4], detailBudget: 6, seatRadiiM: [3.2, 4.0, 4.8], minHostAreaM2: 90, minContiguousAreaM2: 42, minHostSpanM: 6.2, minWallSpanM: 9.0, requireOverhead: true, mediaVariantIds: ['tv.flat.wall-salvage'], vocabularyTags: ['warehouse', 'storage', 'utility', 'service', 'workshop', 'industrial', 'repair', 'fluorescent', 'bench'] }),
 ]);
 
 export const SPAWN_FLAVOR_ALIASES = Object.freeze({

@@ -1983,7 +1983,7 @@ worldChunkStreamer.ensureNeighborhood();
 playerPhysics.syncDynamicWorld();
 const initialSpawnFabricPayloads = new Map([[initialSpawnChunk.key, initialSpawnChunk.payload]]);
 const requestedSpawnPose = { x: 0, z: 0, feetY: 0 };
-let spawnProof = provePlayableSpawn({
+const spawnProof = provePlayableSpawn({
     playerPhysics,
     origin: requestedSpawnPose,
     fabricPayloads: initialSpawnFabricPayloads,
@@ -1992,76 +1992,10 @@ let spawnProof = provePlayableSpawn({
     searchRadius: Math.min(28, STREAM_CHUNK_SIZE * 0.42),
 });
 
-// PLACE-FIRST SPAWN AUDITION:
-// A rolled/forced special spawn used to inspect only chunk 0,0 and then silently
-// fall back to the same exposed roof whenever that one chunk lacked the requested
-// architecture. Keep ordinary city ownership, but audition a tiny bounded set of
-// already-planned neighboring chunks before accepting that fallback.
-const initialDesiredSpawnHost = spawnProof.locationSelection?.desiredHostArchetype ?? null;
-const initialActualSpawnHost = spawnProof.locationSelection?.hostArchetype ?? null;
-const spawnFlavorIsForced = new URLSearchParams(location.search).has('spawnFlavor');
-const naturalSpawnHostAuditionBudgets = Object.freeze({
-    'sheltered-roof': 1,
-    'hanging-storefront': 3,
-    'deep-backroom': 6,
-});
-const forcedSpawnHostAuditionBudgets = Object.freeze({
-    'sheltered-roof': 4,
-    'hanging-storefront': 8,
-    'deep-backroom': 16,
-});
-const spawnHostAuditionBudget = (spawnFlavorIsForced
-    ? forcedSpawnHostAuditionBudgets[initialDesiredSpawnHost]
-    : naturalSpawnHostAuditionBudgets[initialDesiredSpawnHost]) ?? 0;
 
-if (spawnProof.ok
-    && initialDesiredSpawnHost
-    && initialDesiredSpawnHost !== initialActualSpawnHost
-    && spawnHostAuditionBudget > 0) {
-    const auditionSearchRadius = Math.min(
-        spawnFlavorIsForced ? 160 : 96,
-        STREAM_CHUNK_SIZE * (spawnFlavorIsForced ? 2.55 : 1.55),
-    );
-    const recheckEvery = spawnFlavorIsForced ? 2 : 1;
-    console.log(`[spawn-location] auditioning nearby ordinary chunks for ${initialDesiredSpawnHost}; initial host=${initialActualSpawnHost}; budget=${spawnHostAuditionBudget}`);
-    for (let attempt = 0; attempt < spawnHostAuditionBudget; attempt++) {
-        let progressed = false;
-        try {
-            progressed = await worldChunkStreamer.pump({
-                maxChunks: 1,
-                maxMillis: Infinity,
-                maxRefinements: 0,
-                refinementBudgetMs: 0,
-                reserveRefinementMs: 0,
-            });
-        } catch (error) {
-            console.warn('[spawn-location] optional spawn-host audition chunk failed; keeping safe fallback', error);
-            break;
-        }
-        if (!progressed) break;
-        if ((attempt + 1) % recheckEvery !== 0 && attempt + 1 < spawnHostAuditionBudget) continue;
-
-        playerPhysics.syncDynamicWorld();
-        for (const chunk of worldChunkStreamer.chunks.values()) {
-            if (chunk?.state === 'ready' && chunk.payload) initialSpawnFabricPayloads.set(chunk.key, chunk.payload);
-        }
-        const auditionProof = provePlayableSpawn({
-            playerPhysics,
-            origin: requestedSpawnPose,
-            fabricPayloads: initialSpawnFabricPayloads,
-            searchRadius: auditionSearchRadius,
-        });
-        if (auditionProof.ok) spawnProof = auditionProof;
-        if (auditionProof.ok && auditionProof.locationSelection?.hostArchetype === initialDesiredSpawnHost) {
-            console.log(`[spawn-location] spawn host audition matched ${initialDesiredSpawnHost} after ${attempt + 1} neighboring chunk(s)`);
-            break;
-        }
-    }
-    if (spawnProof.locationSelection?.hostArchetype !== initialDesiredSpawnHost) {
-        console.warn(`[spawn-location] no qualifying ${initialDesiredSpawnHost} found inside bounded audition; using ${spawnProof.locationSelection?.hostArchetype ?? 'safe fallback'}`);
-    }
-}
-
+// Spawn proof is intentionally single-chunk. Large flavors bind to suitable
+// places already present in the committed ordinary spawn chunk; optional authored
+// dressing must never synchronously build extra city chunks before first control.
 if (!spawnProof.ok) {
     throw new Error(`[spawn-proof] refused unplayable ordinary-chunk spawn: ${spawnProof.reason}; candidates=${spawnProof.searchedCandidates}; probes=${spawnProof.probes}; best=${spawnProof.bestDistance?.toFixed?.(2) ?? 'n/a'}m`);
 }

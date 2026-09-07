@@ -13,7 +13,6 @@
 // reports (spawn scene semantics, spawn TODO bridge, skyway junctions,
 // occupancy/shell allocation) after verifying each against current main:
 export const SPAWN_TODO_ITEMS = [
-    'Fix collectSpawnFabricSpaces() support-area inflation: clip/union support patches to module bounds instead of summing every overlapping patch',
     'Add proportion-to-intent and narrowness checks to the space allocator healthy gates so a defining program room cannot collapse to its bare minimum',
     'Reduce ordinary building height regime toward ~0.67x street-to-street span, landmarks excepted',
     'Rebuild spawn TV/seating around a focal-frame: viewing half-space, same room, sightline not crossing a wall',

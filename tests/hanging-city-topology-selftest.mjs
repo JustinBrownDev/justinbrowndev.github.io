@@ -14,8 +14,8 @@ import {
 } from '../world/hanging-city-topology.js';
 
 assert.ok(Math.abs(HANGING_CITY_BASE_CEILING_Y - 34.02) < 1e-9, 'baseline ceiling datum must remain the known 34.02m section');
-assert.equal(HANGING_CITY_HEIGHT_SCALE, 4, 'R3 cavern section must be exactly four times baseline');
-assert.ok(Math.abs(HANGING_CITY_CEILING_Y - 136.08) < 1e-9, 'parallel plane separation must be exactly 136.08m');
+assert.equal(HANGING_CITY_HEIGHT_SCALE, 4 * (2 / 3), 'R4 cavern section must be exactly two-thirds of the former R3 4x section (regularly-sized buildings no longer need that much dead vertical gap)');
+assert.ok(Math.abs(HANGING_CITY_CEILING_Y - 90.72) < 1e-9, 'parallel plane separation must be exactly 90.72m (R4: two-thirds of the former 136.08m section)');
 assert.equal(HANGING_CITY_MAX_FLOORS, 48, 'architectural ceiling must expand with the fourfold section');
 assert.equal(HANGING_CITY_MASSING_FLOOR_SCALE, 2, 'ordinary fabric should compensate without making every tower a 4x extrusion');
 const a = ceilingSourceCoordinates(0, 0);

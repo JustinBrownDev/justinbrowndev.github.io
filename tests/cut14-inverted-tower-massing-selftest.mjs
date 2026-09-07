@@ -18,8 +18,8 @@ assert.equal(BUILDING_VOLUME_SCALE_TARGET, 4);
 const baselineMean = weightedCompoundTargetMean(BASELINE_COMPOUND_TARGETS);
 const scaledMean = weightedCompoundTargetMean(SCALED_COMPOUND_TARGETS);
 assert.ok(Math.abs(scaledMean - baselineMean * 4) < 1e-10);
-assert.equal(HANGING_CITY_HEIGHT_SCALE, 4);
-assert.ok(Math.abs(HANGING_CITY_CEILING_Y - 136.08) < 1e-9);
+assert.equal(HANGING_CITY_HEIGHT_SCALE, 4 * (2 / 3));
+assert.ok(Math.abs(HANGING_CITY_CEILING_Y - 90.72) < 1e-9);
 const source = ceilingSourceCoordinates(2, -3);
 assert.deepEqual(source, { x: 2 + HANGING_CITY_PHASE_X, z: -3 + HANGING_CITY_PHASE_Z, key: `${2 + HANGING_CITY_PHASE_X},${-3 + HANGING_CITY_PHASE_Z}` });
 const budget = planCeilingBuildingHeight({

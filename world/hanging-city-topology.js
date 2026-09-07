@@ -4,7 +4,11 @@ export const HANGING_CITY_FLOOR_HEIGHT = 3.15;
 // cavern to four times the former 34.02m section.  Massing gets its own scale
 // below so this is not merely a white plane translated into empty air.
 export const HANGING_CITY_BASE_CEILING_Y = 56.7 * 0.60;
-export const HANGING_CITY_HEIGHT_SCALE = 4;
+// R4: buildings are more regularly sized now (see the height-species work),
+// so the old 4x section left most rooftops nowhere near the ceiling plane -
+// a huge dead gap between the two parallel planes. Pull the section in by a
+// third (visual-only lever; no building/species logic touched).
+export const HANGING_CITY_HEIGHT_SCALE = 4 * (2 / 3);
 export const HANGING_CITY_CEILING_Y = HANGING_CITY_BASE_CEILING_Y * HANGING_CITY_HEIGHT_SCALE;
 // Four times the old 12-storey safety ceiling.  The geometric cavern budget is
 // still the stricter authority when floor heights/reserves make 48 impossible.

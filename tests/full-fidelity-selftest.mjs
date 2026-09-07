@@ -32,7 +32,7 @@ ok(main.includes('const STREAM_CHUNK_SIZE = Math.max(GRID_W, GRID_H);'), 'stream
 ok(spawnPlan.includes('createKowloonMazeTopology({') && spawnPlan.includes('forceCentralCross: true'), 'spawn district must expose real cardinal gateways through the shared Kowloon maze planner');
 ok(spawnPlan.includes("const SIGNATURE_TYPES = ['artGallery', 'as400Archive', 'justinIndex', 'systemsWorkshop', 'loreShrine', 'futurePlaceholder'];"), 'spawn district must reserve five authored landmarks plus future slot');
 ok(spawnPlan.includes('entityId: singularEntityId(SEED, type)'), 'singulars must receive stable world identity');
-ok(main.includes('createSpawnSingularManifest(SEED, signatureInstances)'), 'spawn singular manifest must be materialized into chunk 0,0');
+ok(!main.includes('createSpawnSingularManifest'), 'authored spawn singular manifest was intentionally retired; ordinary streamed spawn is the complete contract');
 
 ok(contract.includes('export const WORLD_FORMAT_VERSION = 1;'), 'world format must be explicitly versioned');
 ok(contract.includes("export const SPAWN_CHUNK = Object.freeze({ x: 0, z: 0, key: '0,0' });"), 'spawn chunk identity must be stable at origin');
@@ -46,23 +46,23 @@ ok(streamer.includes('getPlayerHeading = null'), 'streamer must support heading-
 ok(streamer.includes('ensureNeighborhood();\n                const next = nearestQueuedChunk();'), 'long pumps must refresh the neighborhood between chunks');
 ok(streamer.includes('chunks.delete(chunk.key)'), 'streamer must prune obsolete chunk metadata after unload/travel');
 ok(streamer.includes('chunks.clear();'), 'streamer dispose must release all scheduler metadata');
-ok(main.includes("pinnedChunkKeys: ['0,0']"), 'authored spawn/singular chunk must remain pinned');
+ok(main.includes('pinnedChunkKeys: []'), 'authored spawn/singular chunk pin was intentionally retired; ordinary streaming now owns the spawn chunk lifecycle');
 ok(main.includes('commitChunk: (chunk, payload) => cityFabricEngine.commit(chunk, payload)'), 'generic chunks must build off-scene then commit atomically');
 ok(chunks.includes('async function commit(chunk, payload)'), 'generic chunk factory must expose atomic commit seam');
 ok(chunks.includes('worldChunkOwnerId'), 'generic physics/render ownership must use stable world IDs');
 ok(chunks.includes('worldEntityId'), 'generic chunk metadata must expose stable entity IDs');
 ok(chunks.includes('districtLandmarkFor'), 'repeatable district landmark contract missing');
 ok(config.includes('landmarkSpacingChunks: 3') && main.includes('landmarkSpacingChunks: CONFIG.streaming.landmarkSpacingChunks'), 'district landmarks must recur every few chunks through cfg.streaming');
-ok(main.includes('yieldControl: null') && main.includes('pump({ maxChunks, maxMillis, maxRefinements })'), 'generic chunks must be atomic while the outer pump owns both structural and chunk-local refinement budgets');
+ok(main.includes('yieldControl: cooperativeFabricBuildYield') && main.includes('yieldControl: cooperativeStreamerYield') && main.includes('worldChunkStreamer.pump({'), 'generic chunk building/streaming must be cooperative and resumable while the outer pump still owns budgets');
 ok(main.includes('hasPendingRefinement: (chunk, payload) => cityFabricEngine.hasPendingRefinement(chunk, payload)') && streamer.includes('nearestRefinableChunk'), 'each generic chunk must carry independently resumable enrichment work scheduled by the outer streamer');
 ok(chunks.includes('kowloon-partition:') && chunks.includes('kowloon-site-class:') && chunks.includes('kowloon-compound:') && chunks.includes('kowloon-bridge:'), 'rich generic structure must use independent stable partition/site/compound/bridge RNG streams');
-ok(chunks.includes('partitionKowloonCompounds({') && chunks.includes('buildKowloonCompound({'), 'generic normal fabric must consume the shared compound grammar');
+ok(chunks.includes('partitionKowloonCompounds({') && chunks.includes('buildKowloonCompoundCooperative({'), 'generic normal fabric must consume the shared compound grammar');
 ok(kowloon.includes('export function partitionKowloonCompounds') && kowloon.includes('export function analyzeKowloonCompound'), 'shared Kowloon structural owner missing');
 
 ok(main.includes('createProgressiveStaticWorldOptimizer({'), 'spawn chunk optimizer must remain cooperative');
 ok(main.includes("await testYieldNow('optimizing completed spawn chunk"), 'optimizer must remain a cooperative background refinement after live authored completion');
 ok(main.includes('function pumpWorldChunksAggressively()'), 'live aggressive chunk streamer loop missing');
-ok(main.includes('CONFIG.streaming.urgentPumpChunks') && main.includes('CONFIG.streaming.prefetchPumpChunks') && main.includes('CONFIG.streaming.urgentBuildBudgetMs'), 'live stream must keep CPU busy with an explicit outer time budget until render/prefetch rings are warm');
+ok(main.includes('CONFIG.streaming.urgentPumpChunks') && main.includes('CONFIG.streaming.prefetchPumpChunks') && main.includes('CONFIG.streaming.sprintBuildBudgetMsDesktop'), 'live stream must keep CPU busy with an explicit outer time budget until render/prefetch rings are warm');
 ok(main.includes('prefetchRadiusChunks: CONFIG.streaming.prefetchRadiusChunks'), 'live stream must maintain a larger prefetch ring after handoff');
 ok(!main.includes('worldChunkPumpTimer = 0.12'), 'old 120ms chunk drip-feed must remain removed');
 const readyAt = main.indexOf('window.__boot?.ready();');

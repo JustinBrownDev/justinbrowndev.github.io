@@ -117,7 +117,9 @@ assert.match(engineSource, /registerBuildingPlanInteriorDoors\(physics, building
   'skeleton structural pass must reuse canonical Building Plan interior door authority');
 assert.match(engineSource, /realizeBuildingPlanWallRuns\([\s\S]*phase: 'broad-structural-interiors'/,
   'partition realization must occur in the broad structural pass');
-assert.match(engineSource, /roofIntersectsInteriorCore[\s\S]*addNotchedFloor/,
+// Renamed by 14dfc50 ("feat: add authoritative roof circulation"): core openings
+// are explicit transport blockers now, not whole-roof disqualifiers.
+assert.match(engineSource, /roofNeedsInteriorCoreOpening[\s\S]*addNotchedFloor/,
   'the persistent interior core must own a real roof opening');
 assert.doesNotMatch(facadeSource, /facadeRole: 'inhabited-window'/,
   'ordinary inhabited window glass planes must stay deleted');

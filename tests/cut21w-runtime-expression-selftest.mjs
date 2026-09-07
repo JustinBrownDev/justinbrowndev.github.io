@@ -28,8 +28,12 @@ const stairExpressions = hanging.physics.stairArchitectureExpressions ?? [];
 assert.ok(stairExpressions.length >= 3, 'real hanging circulation should receive named stair architecture wrappers');
 for (const expression of stairExpressions) {
   assert.ok(STAIR_ARCHITECTURE_FAMILIES.includes(expression.family), expression.family);
-  assert.ok(expression.parts >= 4, `${expression.id}: wrapper should materially alter stair silhouette/support`);
-  assert.equal(expression.traversalAuthority, 'canonical-stair-kernel-unchanged');
+  // Persistent per-building vertical cores report partsPerStory instead of a
+  // flat parts count (system-observatory-r2-core.js normalizes the same way).
+  assert.ok((expression.parts ?? expression.partsPerStory) >= 4, `${expression.id}: wrapper should materially alter stair silhouette/support`);
+  // Retired in favor of a more descriptive value (world/architectural-family-system.js)
+  // as part of the semantic-architecture/stair-species unification.
+  assert.equal(expression.traversalAuthority, 'species-selected-before-visual-expression');
 }
 
 const macros = hanging.physics.programMacroArchitecture ?? [];

@@ -56,8 +56,10 @@ ok(playerCentered.includes("VISIBLE_STRUCTURE: 'visible-structure-sprint'")
     && playerCentered.includes("VISIBLE_FIRST_PASS: 'visible-first-pass-sprint'")
     && playerCentered.includes("PREFETCH_STRUCTURE: 'prefetch-structure-sprint'")
     && playerCentered.includes("LOCAL_DEEPEN: 'local-deepen'"), 'live runtime must expose explicit player-centered worldgen gears');
-ok(main.includes('const structuralOnly = authoredStructuralReadySiteIds.size < buildingSites.length;')
-    && main.includes('structuralOnly,'), 'authored local work must stop jobs at structural-ready until every authored site has structure');
+// The minimum-safe authored bootstrap loop that gated content scheduling on
+// structuralOnly/authoredStructuralReadySiteIds was intentionally retired
+// (22137b1); authoredStructuralReadySiteIds/buildingSites remain only for
+// stats bookkeeping now, with no live structuralOnly comparison left to assert.
 ok(main.includes('_worldStreamPriorityLock') && main.includes('player neighborhood first-pass populated + structural prefetch warm'), 'shader/content background work must stay locked out until player-centered worldgen reaches steady state');
 ok(chunkEnrichment.includes("kind: 'sign'") && chunkEnrichment.includes("kind: 'graffiti'") && chunkEnrichment.includes("kind: 'pipe'") && chunkEnrichment.includes("kind: 'awning'") && chunkEnrichment.includes("kind: 'ivy'"), 'infinite chunk enrichment must carry the authored-world facade vocabulary');
 ok(chunkEnrichment.includes('createProceduralTextExciter') && chunkEnrichment.includes('textExciter.pairFor'), 'infinite signage/graffiti must use the packaged procedural text corpus instead of placeholder labels');

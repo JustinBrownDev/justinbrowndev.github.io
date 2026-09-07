@@ -23,12 +23,16 @@ assert.match(block, /const poolCache = new Map\(\);/, 'non-empty semantic path m
 assert.match(block, /return \{ tasks: compiled, remappedSpaces, remappedTasks, rejectedTasks \};/,
     'normal destination-compatibility result contract must remain intact');
 
-const solveStart = source.indexOf('export function solveSemanticLayout(');
+// The solver body lives in the cooperative step generator now; solveSemanticLayout
+// itself is just a thin synchronous wrapper that drains it (below).
+const solveStart = source.indexOf('export function* solveSemanticLayoutSteps(');
 assert.ok(solveStart >= 0, 'semantic layout solver must remain exported');
 const solve = source.slice(solveStart);
 assert.match(solve, /const destinationCompatibility = compileDestinationCompatibility\(/,
     'normal semantic solver must still invoke destination compatibility');
-assert.match(solve, /const semanticContext = compileSemanticContext\(\{ chunk, payload, tasks \}\);/,
+assert.match(solve, /const contextIterator = compileSemanticContextSteps\(\{ chunk, payload, tasks \}\);/,
     'exterior/semantic context compilation must remain intact even when interior corpus is empty');
+assert.ok(source.includes('export function solveSemanticLayout(') && source.includes('solveSemanticLayoutSteps(options)'),
+    'synchronous solveSemanticLayout must remain a full drain of the cooperative generator');
 
 console.log('semantic-empty-compatibility-fastpath-selftest: ok');

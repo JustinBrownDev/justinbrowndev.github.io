@@ -41,7 +41,9 @@ assert.match(next, /compareExteriorPriorityKeys\(key, bestKey\)/,
 assert.match(next, /remainingTasks: state\.tasks\.slice\(state\.cursor, scanEnd\)/,
     'coverage canary allocation must be bounded to the same candidate domain');
 
-const prepStart = source.indexOf('function preparePayloadPlanningState(');
+// Extracted into a shared base helper (f82d529) so both the synchronous and
+// cooperative/yieldable planning entry points can reuse it.
+const prepStart = source.indexOf('function preparePayloadPlanningBase(');
 const prepEnd = source.indexOf('function exteriorCompositionInput(', prepStart);
 assert.ok(prepStart >= 0 && prepEnd > prepStart, 'payload planning state must exist');
 const prep = source.slice(prepStart, prepEnd);

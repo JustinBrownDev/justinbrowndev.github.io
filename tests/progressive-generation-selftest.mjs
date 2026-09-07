@@ -32,13 +32,17 @@ ok(main.includes('? runWithUnifiedSignatureSite(site, () => job.stepper.step())'
 
 const optimizerAt = main.indexOf('createProgressiveStaticWorldOptimizer({');
 const physicsAt = main.indexOf('playerPhysics = createPlayerPhysics({');
-const authoredLoopAt = main.indexOf("while ([...minimumSafeAuthoredSiteIds].some");
+// The minimum-safe authored bootstrap loop was intentionally retired (ordinary
+// streamed spawn + TV refuge is now the complete spawn contract); anchor on
+// the still-present declaration that took its place, in the same source
+// position relative to the optimizer/physics ownership this checks.
+const authoredLoopAt = main.indexOf('const authoredBuildingJobs = [];');
 ok((main.match(/createProgressiveStaticWorldOptimizer\(\{/g) || []).length === 1, 'there must be exactly one authored-world optimizer owner');
 ok(optimizerAt >= 0 && optimizerAt < authoredLoopAt, 'optimizer ownership must precede authored background construction');
 ok(physicsAt >= 0 && physicsAt < authoredLoopAt, 'real player physics must precede authored background construction');
 ok(!main.includes('staticWorldOptimizer.optimize({'), 'legacy whole-scene optimizer path must remain removed');
 ok(main.includes('_backgroundCompileSchedulingEnabled = true;'), 'live handoff must keep background shader compilation enabled');
-ok(main.includes('if (!_backgroundCompileSchedulingEnabled || _worldStreamPriorityLock || !playerNearAuthoredSpawn()) return null;'), 'real-material shader prewarm must not compete with bootstrap structural publication');
+ok(main.includes('if (!_backgroundCompileSchedulingEnabled || _worldStreamPriorityLock) return null;'), 'real-material shader prewarm must not compete with bootstrap structural publication');
 ok(main.includes('requestAnimationFrame(() => setTimeout(() => scheduleBootstrapCompilePump(), 0));'), 'shader prewarm must begin only after the first full-runtime paint');
 const compileStageEnabledAt = main.indexOf('_bootstrapCompileStagingEnabled = true;');
 const compileStageLastDisableAt = main.lastIndexOf('_bootstrapCompileStagingEnabled = false;');
@@ -46,9 +50,13 @@ ok(compileStageEnabledAt >= 0 && compileStageLastDisableAt < compileStageEnabled
 ok(main.includes('staticWorldOptimizer?.markDirtyObject(leaf);'), 'compiled staged leaves must dirty their spatial chunk for later batching');
 ok(main.includes('let authoredStructuralReadySiteIds = null;') && main.includes('authoredStructuralReadySiteIds = new Set();'), 'authored structural readiness must be distinct from full content completion');
 ok(main.includes("phase === 'unified-fabric-structure'") && main.includes("phase === 'signature-unified-shell'") && main.includes("phase === 'signature-empty-parcel-ready'"), 'all authored site families must expose an explicit structural-ready phase');
-ok(main.includes('structuralOnly: true') && main.includes('!job.structuralReady'), 'minimum-safe bootstrap must stop scheduling content after each required shell becomes safe');
-ok(main.includes('!authoredStructuralReadySiteIds.has(id) && !authoredFailedSiteIds.has(id)') && main.includes('structuralOnly: true'), 'bootstrap gate must use structural readiness while allowing terminal local failures to settle');
-ok(main.includes("await testYieldNow('minimum-safe authored district collision-ready + spawn escape proven · releasing construction safety gate')"), 'construction safety gate must release only after local structure and spawn escape are proven');
+// The minimum-safe authored bootstrap loop that gated content scheduling on
+// structuralOnly/authoredStructuralReadySiteIds was intentionally retired
+// (22137b1) along with the rest of the authored-district bootstrap; that
+// scheduling machinery no longer runs (authoredBuildingJobs/
+// pumpAuthoredBuildingJobs remain declared but have no live call sites), so
+// there is no current behavior left to assert here.
+ok(main.includes("await testYieldNow('ordinary spawn fabric + TV collision-ready · releasing construction safety gate')"), 'construction safety gate must release only after local structure and spawn escape are proven');
 
 if (failures.length) {
   console.error(`[progressive-generation-selftest] FAIL (${failures.length})`);

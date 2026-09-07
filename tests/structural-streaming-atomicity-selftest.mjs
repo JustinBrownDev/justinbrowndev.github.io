@@ -108,10 +108,15 @@ assert.ok(structuralEntities.every(entity => entity.broadStrokesOnly === true), 
 const totalModuleFloors = structuralEntities.reduce((sum, entity) =>
   sum + entity.footprintModules.reduce((moduleSum, module) => moduleSum + module.floors, 0), 0);
 const totalModules = structuralEntities.reduce((sum, entity) => sum + entity.footprintModules.length, 0);
-const shellFloorCheckpoints = checkpoints.filter(entry => entry.stage.includes('broad-shell-floor'));
-const facadeCheckpoints = checkpoints.filter(entry => entry.stage.includes('broad-facade-hosts'));
-const roofCheckpoints = checkpoints.filter(entry => entry.stage.includes('broad-roof-shell'));
-const streetFaceCheckpoints = checkpoints.filter(entry => entry.stage.includes('broad-street-faces'));
+// The hanging/ceiling-city layer (buildFullFatHangingCityLayer) drains its own
+// nested buildKowloonCompoundSteps for each ceiling site and forwards its
+// checkpoints with a 'ceiling:' stage prefix - real, separate cooperative work
+// this fixture's ground-only totalModuleFloors/totalModules never counted.
+const groundCheckpoints = checkpoints.filter(entry => !entry.stage.startsWith('ceiling:'));
+const shellFloorCheckpoints = groundCheckpoints.filter(entry => entry.stage.includes('broad-shell-floor'));
+const facadeCheckpoints = groundCheckpoints.filter(entry => entry.stage.includes('broad-facade-hosts'));
+const roofCheckpoints = groundCheckpoints.filter(entry => entry.stage.includes('broad-roof-shell'));
+const streetFaceCheckpoints = groundCheckpoints.filter(entry => entry.stage.includes('broad-street-faces'));
 
 assert.equal(
   shellFloorCheckpoints.length,

@@ -51,7 +51,7 @@ ceiling.root.traverse(object=>{
   assert.equal(Object.prototype.propertyIsEnumerable.call(object.userData,'visualProbeInstanceSources'),false,'sparse source map must stay out of ordinary userData serialization');
   for(const [index,source] of sources){
     assert.ok(Number.isInteger(index)&&index>=0&&index<object.count,'source identity index must address a live instance');
-    assert.ok(source.stairOwnerId!=null||source.surfaceId!=null||source.bridgeId!=null||source.routeId!=null||source.guardSpanId!=null||source.endpointId!=null||source.thresholdAuthority!=null||source.bridgeArchitecture===true||source.shellOwnerId!=null||source.shellPieceId!=null,'only strong structural identities should be retained');
+    assert.ok(source.stairOwnerId!=null||source.surfaceId!=null||source.bridgeId!=null||source.routeId!=null||source.guardSpanId!=null||source.endpointId!=null||source.thresholdAuthority!=null||source.bridgeArchitecture===true||source.buildingConstructionId!=null||source.shellOwnerId!=null||source.shellPieceId!=null,'only strong structural identities should be retained');
     for(const value of Object.values(source)) assert.ok(['string','number','boolean'].includes(typeof value),'identity records must stay primitive-only');
   }
 });

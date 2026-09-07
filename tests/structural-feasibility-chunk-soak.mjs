@@ -46,7 +46,10 @@ for (const worldSeed of seeds) {
       if (shaft.architectureReplanMode !== 'none') replansSeen++;
       const opening = openings.find(item => item.fullReservationId === shaft.id);
       assert.ok(opening, `${shaft.id}: missing matching slab opening`);
-      const flights = payload.physics.ramps.filter(ramp => ramp.supportKind === 'compound-stair' && reservationContainsRamp(shaft, ramp));
+      // Thoroughfare-classified stairs tag their flights 'district-thoroughfare-core-stair' instead of 'compound-stair'.
+      const flights = payload.physics.ramps.filter(ramp =>
+        (ramp.supportKind === 'compound-stair' || ramp.supportKind === 'district-thoroughfare-core-stair')
+        && reservationContainsRamp(shaft, ramp));
       assert.ok(flights.length >= shaft.flightCount, `${shaft.id}: realized stair flights must remain inside structural reservation`);
     }
   }

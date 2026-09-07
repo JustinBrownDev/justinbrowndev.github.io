@@ -125,8 +125,8 @@ for (const needle of [
   'const connector = createLandingConnector({',
   'connector.routeId = plan.id;',
   'registerSemanticConnector(physics, connector);',
-  "reservationKind: 'scaffold-landing'",
-  "reservationKind: 'scaffold-ramp'",
+  "reservationKind: thoroughfare ? 'district-thoroughfare-landing' : 'scaffold-landing'",
+  "reservationKind: thoroughfare ? 'district-thoroughfare-ramp' : 'scaffold-ramp'",
   "reservationKind: 'mezzanine-ramp'",
   'const mezzanineConnector = createRampConnector({',
 ]) assert.ok(fabricSource.includes(needle), `fabric cutover missing ${needle}`);

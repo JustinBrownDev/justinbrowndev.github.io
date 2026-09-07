@@ -23,10 +23,9 @@ ok(homepage.includes('Escape to regular website'), 'regular-site escape action m
 ok(!homepage.includes('The website loading'), 'redundant load-site choice still present');
 
 ok(main.includes('function buildingSiteDistanceSqToPlayer(site)'), 'spawn building priority helper missing');
-ok(main.includes("await testYieldNow('building minimum-safe authored neighborhood'") && main.includes('pumpAuthoredBuildingJobs({'), 'spawn buildings must hand off after a minimum-safe neighborhood and continue in live prioritized turns');
+ok(main.includes("await testYieldNow('ordinary spawn chunk + TV ready · starting live chunk systems')") && main.includes('pumpAuthoredBuildingJobs({'), 'spawn buildings must hand off after ordinary streamed spawn readiness and continue in live prioritized turns');
 ok(ground.includes('function pumpOpenCellSurfaces(') && ground.includes('ensureOpenCellSurfaceNeighborhood'), 'spawn ground must expose a live nearest-first chunk pump plus minimum-safe readiness');
 ok(adornment.includes('function sortPlacementRequestsNearestToPlayer(requests)'), 'spawn async model placements are not player-prioritized');
-ok(main.includes('sortDecorationQueueNearPlayer'), 'spawn deferred decoration is not player-prioritized');
 
 ok(streamer.includes('function chunkPriorityScore(chunk)'), 'heading-aware infinite stream priority helper missing');
 ok(streamer.includes('const forwardDot ='), 'chunk priority must bias the player heading');

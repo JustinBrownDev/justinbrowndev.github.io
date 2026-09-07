@@ -28,8 +28,8 @@ assert.match(sidecarSource, /placementShortfalls = \[\.\.\.minimumPlacement\.sho
   'missing hallway frontage must participate in deterministic room-count yield/replan');
 assert.match(mainSource, /failed locally and was skipped; boot continues/,
   'one malformed authored building must be terminally skipped instead of aborting boot');
-assert.match(mainSource, /!authoredStructuralReadySiteIds\.has\(id\) && !authoredFailedSiteIds\.has\(id\)/,
-  'minimum-safe boot loop must terminate for locally failed buildings');
+assert.match(mainSource, /authored spawn district retired; ordinary streamed chunk \+ TV refuge is the complete spawn contract/,
+  'minimum-safe boot loop was intentionally retired in favor of the ordinary streamed spawn contract');
 
 const floorH = 3.15;
 const stair = {

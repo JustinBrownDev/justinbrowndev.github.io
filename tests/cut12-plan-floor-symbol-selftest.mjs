@@ -14,7 +14,7 @@ assert.ok(source.indexOf('function planFloor({') < source.indexOf('function vert
   'planFloor must remain inside its expected source region');
 assert.match(source, /export function planBuildingSidecar\(/,
   'Building Plan public planner must remain exported');
-assert.match(source, /claimUnassignedRasterToEligibleSpaces\(\{/,
+assert.match(source, /claimUnassignedRasterToEligibleSpaces\(targetGatedArgs\)/,
   'Building Plan must use structural-first raster closure after allocation');
 
 console.log('[cut12-plan-floor-symbol-selftest] PASS', {

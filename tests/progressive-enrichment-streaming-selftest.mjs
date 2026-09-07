@@ -15,7 +15,7 @@ assert.match(main, /\.sort\(\(a, b\) => \{[\s\S]*?playerChunk[\s\S]*?return ad -
   'streamed READY chunks must deepen nearest-player first');
 assert.match(main, /progressiveEnrichmentNextAt = now \+ \(desktop \? 90 : 180\);/,
   'request cadence must be throttled after handoff');
-assert.match(main, /maybeRequestProgressiveEnrichment\(now, liveWorldStats, playerNearSpawn\)/,
+assert.match(main, /maybeRequestProgressiveEnrichment\(now, liveWorldStats\)/,
   'animation loop must own progressive request timing');
 assert.doesNotMatch(main, /generationProfile\s*=\s*['"]full['"]|GENERATION_PROFILE_NAME\s*=\s*['"]full['"]/,
   'runtime deepening must not switch the browser to the full generation profile');

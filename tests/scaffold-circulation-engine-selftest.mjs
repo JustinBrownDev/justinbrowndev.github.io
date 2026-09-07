@@ -110,7 +110,13 @@ for (const [x, z] of sampledChunks) {
       const expectedRailKind = thoroughfare ? 'district-thoroughfare-rail' : 'scaffold-rail';
       const expectedRampKind = thoroughfare ? 'district-thoroughfare-stair' : 'scaffold';
       const expectedFlightGuardKind = thoroughfare ? 'district-thoroughfare-flight-guard' : 'scaffold-flight-guard';
-      const expectedGuardFamily = thoroughfare ? 'municipal-concrete' : 'fire-escape-pipe';
+      // Non-thoroughfare scaffolds split into two species (stair-architecture-
+      // doctrine.js): retrofit-facade-fire-escape (residential/apartment/motel
+      // buildings only, guardFamily 'fire-escape-pipe') and scaffold-access-tower
+      // (everything else, 'scaffold-pipe').
+      const nonThoroughfareGuardFamilies = new Set(['fire-escape-pipe', 'scaffold-pipe']);
+      const expectedGuardFamily = thoroughfare ? 'municipal-concrete' : nonThoroughfareGuardFamilies;
+      const matchesExpectedGuardFamily = family => thoroughfare ? family === expectedGuardFamily : expectedGuardFamily.has(family);
       assert.equal(route.fitStatus, 'fits-resolved-truth', `${c.key}:${route.id}`);
       assert.equal(scaffoldRouteIsContinuous(route), true, `${c.key}:${route.id} must connect ground to top`);
       assert.ok(route.flights.length > 0);
@@ -134,7 +140,7 @@ for (const [x, z] of sampledChunks) {
         const landingRails = scaffoldRails.filter(rail => rail.routeId === route.id && rail.landingId === landing.id && rail.supportKind === expectedRailKind);
         assert.ok(landingRails.length >= 2,
           `${c.key}:${landing.id} must own street-edge + dead-end route guard spans`);
-        assert.ok(landingRails.every(rail => rail.guardFamily === expectedGuardFamily),
+        assert.ok(landingRails.every(rail => matchesExpectedGuardFamily(rail.guardFamily)),
           `${c.key}:${landing.id} landing guard must match the route class`);
       }
       for (const flight of route.flights) {
@@ -147,7 +153,7 @@ for (const [x, z] of sampledChunks) {
         assert.ok(ramp, `${c.key}:${flight.id} must own exactly one physics ramp`);
         const sideGuards = scaffoldFlightGuards.filter(span => span.routeId === route.id && span.flightId === flight.id && span.supportKind === expectedFlightGuardKind);
         assert.equal(sideGuards.length, 2, `${c.key}:${flight.id} needs one guard on each stair side`);
-        assert.ok(sideGuards.every(span => span.family === expectedGuardFamily && span.role === 'flight-side'));
+        assert.ok(sideGuards.every(span => matchesExpectedGuardFamily(span.family) && span.role === 'flight-side'));
         assert.ok(sideGuards.every(span => span.visualPrimitiveCount >= 4),
           `${c.key}:${flight.id} flight guard must contain rails plus posts, not one solid blocker`);
       }

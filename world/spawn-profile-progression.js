@@ -56,6 +56,7 @@ const PROFILE_OVERRIDES = Object.freeze({
     'terra-backroom': Object.freeze({
         progressionRank: 7,
         artPartBudget: 430,
+        groundMedia: true,
         mediaVariantIds: Object.freeze(['tv.crt.black-cube', 'tv.crt.motel-woodgrain', 'tv.crt.shop-counter']),
         mediaRecipes: Object.freeze(['crt-box']),
         mediaScale: Object.freeze([7.50, 4.50, 5.20]),

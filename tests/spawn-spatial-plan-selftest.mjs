@@ -90,10 +90,20 @@ const terraPlan = compileSpawnSpatialPlan({
 });
 assert.ok(terraPlan.ready, `TERRA room should fit a real hangout: ${terraPlan.unresolved.join(', ')}`);
 assert.equal(terraPlan.placements.filter(item => item.slot === 'seating').length, 4, 'TERRA requires four realized seats');
+assert.equal(terraPlan.placements.filter(item => item.slot === 'tv-support').length, 0,
+    'TERRA CRT must sit on the structural floor without an invented plinth');
 const terraPlannedMedia = terraPlan.placements.find(item => item.slot === 'primary-tv');
 assert.equal(terraPlannedMedia?.constructionRecipe, 'crt-box', 'TERRA planned media must remain a deep CRT');
 assert.ok(terraPlannedMedia?.dimensionsM?.[0] >= 4.8, 'TERRA CRT must remain room-dominating after spatial planning');
 assert.ok(terraPlannedMedia?.dimensionsM?.[2] >= 2.5, 'TERRA CRT must retain substantial physical depth after spatial planning');
+assert.ok(Math.abs(
+    terraPlannedMedia.transform.y - terraPlannedMedia.dimensionsM[1] * 0.5 - terraHost.surfaceY
+) < 1e-6, 'TERRA CRT bottom must land exactly on the structural floor');
+const cardinalQuarterTurns = terraPlannedMedia.transform.rotY / (Math.PI * 0.5);
+assert.ok(Math.abs(cardinalQuarterTurns - Math.round(cardinalQuarterTurns)) < 1e-6,
+    'room-sized TERRA cabinet must align to structural bay axes instead of cutting diagonally through them');
+assert.equal(terraPlan.progressionLayout.wallAnchoredWorkstations, terraPlan.progressionLayout.workstations);
+assert.equal(terraPlan.progressionLayout.wallAnchoredRacks, terraPlan.progressionLayout.racks);
 
 const gigaHost = enclosedHost('hanging-storefront', 4.2, 3.7);
 const gigaComposition = createSpawnComposition(runtime, 'giga-spatial-plan', gigaHost);

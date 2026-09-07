@@ -161,6 +161,57 @@ function facingRotation(from, target) {
     return Math.atan2(target.x - from.x, target.z - from.z);
 }
 
+function orientedHalfExtents(dimensionsM, rotY = 0, pad = 0) {
+    const width = Math.max(0.01, finite(Number(dimensionsM?.[0]), 0.5));
+    const depth = Math.max(0.01, finite(Number(dimensionsM?.[2]), 0.5));
+    const cos = Math.abs(Math.cos(rotY));
+    const sin = Math.abs(Math.sin(rotY));
+    return {
+        halfX: cos * width * 0.5 + sin * depth * 0.5 + pad,
+        halfZ: sin * width * 0.5 + cos * depth * 0.5 + pad,
+    };
+}
+
+function wrappedAngleDistance(a, b) {
+    return Math.abs(Math.atan2(Math.sin(a - b), Math.cos(a - b)));
+}
+
+function chooseGroundMediaPlacement({ locationId, pose, hostSpace, blockers, composition }) {
+    const tvPick = slotPick(composition, 'primary-tv');
+    if (!tvPick) return null;
+    const tvDims = dimsOf(tvPick, [0.82, 0.62, 0.38]);
+    const rotations = [0, Math.PI * 0.5, Math.PI, -Math.PI * 0.5];
+    const candidates = [];
+    for (const rotY of rotations) {
+        const extents = orientedHalfExtents(tvDims, rotY, 0.10);
+        for (const point of candidateCenters(hostSpace, extents.halfX, extents.halfZ)) {
+            const box = normalizedBox({
+                x: point.x, z: point.z,
+                halfX: extents.halfX, halfZ: extents.halfZ,
+                yMin: hostSpace.surfaceY,
+                yMax: hostSpace.surfaceY + tvDims[1],
+            });
+            if (!candidateClear(box, blockers, hostSpace)) continue;
+            const desiredRotY = facingRotation(point, pose);
+            const distanceFromSpawn = Math.hypot(point.x - pose.x, point.z - pose.z);
+            const facingPenalty = wrappedAngleDistance(rotY, desiredRotY);
+            candidates.push({ ...point, rotY, box, score: distanceFromSpawn - facingPenalty * 1.8 });
+        }
+    }
+    candidates.sort((a, b) => b.score - a.score || a.x - b.x || a.z - b.z || a.rotY - b.rotY);
+    const chosen = candidates[0];
+    if (!chosen) return null;
+    const tv = makePlacement({
+        locationId, slot: 'primary-tv', pick: tvPick, index: 0,
+        x: chosen.x,
+        y: hostSpace.surfaceY + tvDims[1] * 0.5,
+        z: chosen.z,
+        rotY: chosen.rotY,
+        fallbackDims: tvDims,
+    });
+    return { support: null, tv, footprint: chosen.box, groundMedia: true };
+}
+
 function makePlacement({ locationId, slot, pick, index, x, y, z, rotY = 0, relationTo = null, fallbackDims }) {
     const dimensionsM = dimsOf(pick, fallbackDims);
     return {
@@ -226,13 +277,17 @@ function wallMountedPose(hostSpace, pose, pick, dims, blockers) {
 }
 
 function chooseSupportPlacement({ locationId, pose, hostSpace, blockers, wallMountBlockers = blockers, composition }) {
+    const profile = composition?.startProfile ?? {};
+    if (profile.groundMedia === true) {
+        return chooseGroundMediaPlacement({ locationId, pose, hostSpace, blockers, composition });
+    }
     const supportPick = slotPick(composition, 'tv-support');
     const tvPick = slotPick(composition, 'primary-tv');
     if (!supportPick || !tvPick) return null;
     const supportDims = dimsOf(supportPick, [0.92, 0.72, 0.48]);
     const tvDims = dimsOf(tvPick, [0.82, 0.62, 0.38]);
-    const profile = composition?.startProfile ?? {};
-    if (Number(profile.progressionRank ?? 0) >= 3 && profile.mediaRecipes?.includes?.('crt-box')) {
+    const largeCrt = Number(profile.progressionRank ?? 0) >= 3 && profile.mediaRecipes?.includes?.('crt-box');
+    if (largeCrt) {
         supportDims[0] = Math.max(supportDims[0], tvDims[0] * 0.78);
         supportDims[1] = Number(profile.progressionRank ?? 0) >= 5
             ? Math.min(supportDims[1], 0.34)
@@ -240,23 +295,57 @@ function chooseSupportPlacement({ locationId, pose, hostSpace, blockers, wallMou
         supportDims[2] = Math.max(supportDims[2], tvDims[2] * 0.76);
     }
     const wallMounted = tvPick?.placement?.mount === 'wall';
-    const halfX = (wallMounted ? supportDims[0] : Math.max(supportDims[0], tvDims[0])) * 0.5;
-    const halfZ = (wallMounted ? supportDims[2] : Math.max(supportDims[2], tvDims[2])) * 0.5;
-    const candidates = candidateCenters(hostSpace, halfX, halfZ)
-        .map(point => {
-            const box = normalizedBox({
-                x: point.x, z: point.z, halfX, halfZ,
-                yMin: hostSpace.surfaceY,
-                yMax: hostSpace.surfaceY + supportDims[1] + (wallMounted ? 0 : tvDims[1]),
-            });
-            const distanceFromSpawn = Math.hypot(point.x - pose.x, point.z - pose.z);
-            return { ...point, box, score: wallMounted ? -distanceFromSpawn : distanceFromSpawn };
-        })
-        .filter(candidate => candidateClear(candidate.box, blockers, hostSpace))
-        .sort((a, b) => b.score - a.score || a.x - b.x || a.z - b.z);
+    let candidates = [];
+    if (largeCrt && !wallMounted) {
+        // Big physical cabinets belong to the room/building axes. The old pass
+        // picked an unrotated footprint and only then turned the TV toward the
+        // player, which made the realized cabinet cross walls and floor-bay
+        // boundaries. Evaluate the actual rotated cabinet before accepting it.
+        for (const rotY of [0, Math.PI * 0.5, Math.PI, -Math.PI * 0.5]) {
+            const supportExt = orientedHalfExtents(supportDims, rotY, 0.10);
+            const tvExt = orientedHalfExtents(tvDims, rotY, 0.10);
+            const halfX = Math.max(supportExt.halfX, tvExt.halfX);
+            const halfZ = Math.max(supportExt.halfZ, tvExt.halfZ);
+            for (const point of candidateCenters(hostSpace, halfX, halfZ)) {
+                const box = normalizedBox({
+                    x: point.x, z: point.z, halfX, halfZ,
+                    yMin: hostSpace.surfaceY,
+                    yMax: hostSpace.surfaceY + supportDims[1] + tvDims[1],
+                });
+                if (!candidateClear(box, blockers, hostSpace)) continue;
+                const desiredRotY = facingRotation(point, pose);
+                const distanceFromSpawn = Math.hypot(point.x - pose.x, point.z - pose.z);
+                candidates.push({
+                    ...point, rotY, box,
+                    score: distanceFromSpawn - wrappedAngleDistance(rotY, desiredRotY) * 1.5,
+                });
+            }
+        }
+    } else {
+        const halfX = (wallMounted ? supportDims[0] : Math.max(supportDims[0], tvDims[0])) * 0.5;
+        const halfZ = (wallMounted ? supportDims[2] : Math.max(supportDims[2], tvDims[2])) * 0.5;
+        candidates = candidateCenters(hostSpace, halfX, halfZ)
+            .map(point => {
+                const rotY = facingRotation(point, pose);
+                const ext = orientedHalfExtents(
+                    [wallMounted ? supportDims[0] : Math.max(supportDims[0], tvDims[0]), 1,
+                        wallMounted ? supportDims[2] : Math.max(supportDims[2], tvDims[2])],
+                    rotY,
+                );
+                const box = normalizedBox({
+                    x: point.x, z: point.z, halfX: ext.halfX, halfZ: ext.halfZ,
+                    yMin: hostSpace.surfaceY,
+                    yMax: hostSpace.surfaceY + supportDims[1] + (wallMounted ? 0 : tvDims[1]),
+                });
+                const distanceFromSpawn = Math.hypot(point.x - pose.x, point.z - pose.z);
+                return { ...point, rotY, box, score: wallMounted ? -distanceFromSpawn : distanceFromSpawn };
+            })
+            .filter(candidate => candidateClear(candidate.box, blockers, hostSpace));
+    }
+    candidates.sort((a, b) => b.score - a.score || a.x - b.x || a.z - b.z || a.rotY - b.rotY);
     const chosen = candidates[0];
     if (!chosen) return null;
-    const rotY = facingRotation(chosen, pose);
+    const rotY = chosen.rotY ?? facingRotation(chosen, pose);
     const support = makePlacement({
         locationId, slot: 'tv-support', pick: { ...supportPick, dimensionsM: supportDims }, index: 0,
         x: chosen.x, y: hostSpace.surfaceY + supportDims[1] * 0.5, z: chosen.z, rotY,
@@ -488,12 +577,13 @@ export function compileSpawnSpatialPlan({
         composition,
     });
     if (tvCluster) {
-        placements.push(tvCluster.support, tvCluster.tv);
+        if (tvCluster.support) placements.push(tvCluster.support);
+        placements.push(tvCluster.tv);
         const clusterReservation = normalizedBox({
             ...tvCluster.footprint,
             id: `${locationId}:tv-cluster-envelope`,
             kind: 'spawn-furniture-envelope',
-            ownerId: tvCluster.support.instanceId,
+            ownerId: tvCluster.support?.instanceId ?? tvCluster.tv.instanceId,
             source: 'spawn-spatial-plan',
         });
         reservations.push(clusterReservation);
@@ -512,7 +602,8 @@ export function compileSpawnSpatialPlan({
             furnitureBlockers.push(tvReservation);
         }
     } else {
-        unresolved.push('primary-tv', 'tv-support');
+        unresolved.push('primary-tv');
+        if (composition?.startProfile?.groundMedia !== true) unresolved.push('tv-support');
     }
 
     const tvPlacement = placements.find(item => item.slot === 'primary-tv') ?? null;
@@ -568,14 +659,15 @@ export function compileSpawnSpatialPlan({
     const mediaKind = tvPlacement?.familyId === 'spawn.media.radio' ? 'radio' : (tvPlacement ? 'television' : 'none');
 
     // Hangout realization is useful, but never spawn authority. `ready` says the
-    // selected media + support cluster fit; main.js may still enter the world when
-    // it is false and simply skip this optional authored dressing.
+    // selected media arrangement fits; profiles that place a giant cabinet on the
+    // floor do not invent a support plinth merely to satisfy this optional scene.
     const profileId = composition?.startProfile?.id ?? '';
     const minimumReadySeats = profileId === 'terra-backroom' ? 4 : (profileId === 'giga-shopfront' ? 3 : 0);
     if (minimumReadySeats && seats.length < minimumReadySeats) unresolved.push('large-hangout-floor-area');
+    const mediaSupportRequired = composition?.startProfile?.groundMedia !== true;
     const mediaReady =
         realizedSlots.includes('primary-tv') &&
-        realizedSlots.includes('tv-support') &&
+        (!mediaSupportRequired || realizedSlots.includes('tv-support')) &&
         seats.length >= minimumReadySeats;
 
     return Object.freeze({

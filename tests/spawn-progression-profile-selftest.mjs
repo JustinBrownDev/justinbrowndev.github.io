@@ -24,6 +24,7 @@ assert.equal(ashtray.variantId, 'clutter.ashtray-metal');
 
 const terra = applySpawnProfileProgression({ id: 'terra-backroom', mediaVariantIds: ['tv.flat.wall-salvage'], mediaScale: [10, 4.9, 3] });
 assert.equal(terra.progressionRank, 7);
+assert.equal(terra.groundMedia, true, 'TERRA cabinet belongs directly on the structural floor');
 assert.ok(terra.mediaVariantIds.every(id => id.startsWith('tv.crt.')));
 assert.deepEqual(terra.mediaRecipes, ['crt-box']);
 assert.ok(terra.mediaScale[2] >= 5, 'TERRA CRT must retain extreme cabinet depth');

@@ -31,7 +31,20 @@ assert.equal(summary.applied, true);
 assert.ok(summary.workstations >= 4, `expected a real workstation field, got ${summary.workstations}`);
 assert.ok(summary.racks >= 4, `expected a real rack bank, got ${summary.racks}`);
 assert.ok(summary.chairs >= 3, `expected extra operator seating, got ${summary.chairs}`);
-assert.ok(placements.some(item => item.slot === 'progression-server-rack'));
-assert.ok(placements.some(item => item.slot === 'progression-workstation'));
+assert.equal(summary.wallAnchoredWorkstations, summary.workstations, 'every fixed workstation must consume real wall authority');
+assert.equal(summary.wallAnchoredRacks, summary.racks, 'every fixed server rack must consume real wall authority');
+const workstations = placements.filter(item => item.slot === 'progression-workstation');
+const racks = placements.filter(item => item.slot === 'progression-server-rack');
+assert.ok(workstations.length > 0 && racks.length > 0);
+for (const fixture of [...workstations, ...racks]) {
+    assert.equal(fixture.spatialRelation?.kind, 'backed-against-wall', `${fixture.instanceId} must publish its wall relation`);
+    assert.ok(Number.isInteger(fixture.spatialRelation?.wallIndex), `${fixture.instanceId} must retain exact source wall identity`);
+    assert.ok(fixture.tags.includes('wall-backed'), `${fixture.instanceId} must advertise its placement language`);
+}
+const rotatedRack = racks.find(item => Math.abs(Math.sin(item.transform.rotY)) > 0.9);
+assert.ok(rotatedRack, 'fixture should exercise a 90-degree wall orientation');
+const rotatedRackEnvelope = reservations.find(item => item.ownerId === rotatedRack.instanceId);
+assert.ok(rotatedRackEnvelope.halfX > rotatedRackEnvelope.halfZ,
+    'rotation-aware reservation must swap the rack footprint when the rack turns 90 degrees');
 assert.ok(reservations.every(item => item.id), 'all progression fixtures must publish reservations');
 console.log('[spawn-progression-layout-selftest] PASS', summary);

@@ -1,0 +1,136 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>room-signifier visual QA</title>
+<style>
+  html,body{margin:0;background:#11151a;color:#dfe6ea;font:12px/1.4 monospace;}
+  #grid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;padding:6px;}
+  .tile{position:relative;background:#1a2129;border:1px solid #2a3340;}
+  .tile canvas{display:block;width:100%;height:220px;}
+  .tile .label{position:absolute;left:4px;top:4px;background:rgba(0,0,0,0.55);padding:2px 6px;border-radius:3px;}
+  #status{padding:6px;}
+</style>
+</head>
+<body>
+<div id="status">building...</div>
+<div id="grid"></div>
+<script type="module">
+import * as THREE from '../../vendor/three/three.module.js';
+import { buildRepresentativeBuildingPlan } from '../../tests/room-signifier-test-fixtures.mjs';
+import { planRoomSignifiers } from '../../world/room-signifier-planner.js';
+import { createRoomSignifierRuntime } from '../../world/room-signifier-runtime.js';
+
+const status = document.getElementById('status');
+const grid = document.getElementById('grid');
+
+// One representative "money shot" room per program family, matching the
+// assignment's visual-QA list (section 38): apartment kitchen/bedroom,
+// office work-floor, retail sales-floor, food-service dining, clinic
+// exam-room, laboratory lab-room, warehouse storage, server rack-aisle,
+// utility plant, workshop/industrial repair-bay, plus one legacy program.
+const SHOTS = [
+  { program: 'apartment', match: s => s.spaceId.includes(':unit-room:kitchen'), title: 'apartment / kitchen' },
+  { program: 'apartment', match: s => s.spaceId.includes(':unit-room:bedroom'), title: 'apartment / bedroom' },
+  { program: 'office', match: s => s.operationalRole === 'work-floor', title: 'office / work-floor' },
+  { program: 'office', match: s => s.operationalRole === 'meeting', title: 'office / meeting' },
+  { program: 'grocery', match: s => s.operationalRole === 'sales-floor', title: 'grocery / sales-floor' },
+  { program: 'diner', match: s => s.operationalRole === 'dining', title: 'diner / dining' },
+  { program: 'clinic', match: s => s.operationalRole === 'exam-room', title: 'clinic / exam-room' },
+  { program: 'clinic', match: s => s.operationalRole === 'waiting', title: 'clinic / waiting' },
+  { program: 'laboratory', match: s => s.operationalRole === 'lab-room', title: 'laboratory / lab-room' },
+  { program: 'warehouse', match: s => s.operationalRole === 'storage', title: 'warehouse / storage' },
+  { program: 'server_room', match: s => s.operationalRole === 'rack-aisles', title: 'server facility / rack-aisles' },
+  { program: 'boiler_room', match: s => s.operationalRole === 'plant', title: 'utility / plant' },
+  { program: 'auto_shop', match: s => s.operationalRole === 'repair-bay', title: 'auto shop / repair-bay' },
+];
+
+const runtime = createRoomSignifierRuntime({ THREE });
+const cache = new Map();
+function fixtureFor(program) {
+  if (!cache.has(program)) {
+    const built = buildRepresentativeBuildingPlan(program);
+    const report = planRoomSignifiers({ buildingPlan: built.buildingPlan, chunk: built.chunk, payload: built.payload, entityId: built.entity.id });
+    const { group } = runtime.realize(report);
+    cache.set(program, { built, report, group });
+  }
+  return cache.get(program);
+}
+
+function wallWireframe(payload) {
+  const positions = [];
+  for (const wall of payload.physics.mazeWalls) {
+    const yMid = (wall.yMin + wall.yMax) / 2;
+    positions.push(wall.x1, wall.yMin, wall.z1, wall.x2, wall.yMin, wall.z2);
+    positions.push(wall.x1, yMid, wall.z1, wall.x1, wall.yMax, wall.z1);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  return new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ color: 0x3d5a6b }));
+}
+
+let rendered = 0;
+for (const shot of SHOTS) {
+  const { built, report, group } = fixtureFor(shot.program);
+  const space = report.spaces.find(shot.match);
+  const tile = document.createElement('div');
+  tile.className = 'tile';
+  const label = document.createElement('div');
+  label.className = 'label';
+  const canvas = document.createElement('canvas');
+  canvas.width = 480; canvas.height = 360;
+  tile.appendChild(canvas);
+  tile.appendChild(label);
+  grid.appendChild(tile);
+
+  if (!space) { label.textContent = shot.title + ' (space not found in this fixture build)'; continue; }
+
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x11151a);
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x22262c, 1.1));
+  const sun = new THREE.DirectionalLight(0xffffff, 0.9);
+  sun.position.set(6, 10, 4);
+  scene.add(sun);
+  scene.add(group);
+  scene.add(wallWireframe(built.payload));
+  const floorGeo = new THREE.PlaneGeometry(60, 60);
+  const floor = new THREE.Mesh(floorGeo, new THREE.MeshStandardMaterial({ color: 0x20262c, roughness: 1 }));
+  floor.rotation.x = -Math.PI / 2;
+  scene.add(floor);
+
+  // Determine the target space's own bounds (nested rooms recover the
+  // parent topologySpace's bounds via id, else use the space's own bounds).
+  let bounds = built.buildingPlan.topologySpaces.find(s => s.id === space.spaceId)?.bounds;
+  if (!bounds && space.spaceId.includes(':unit-room:')) {
+    const parentId = space.spaceId.split(':unit-room:')[0];
+    const key = space.spaceId.split(':unit-room:')[1];
+    const parent = built.buildingPlan.topologySpaces.find(s => s.id === parentId);
+    const room = parent?.unitPlan?.rooms?.find(r => r.key === key);
+    if (room) bounds = { minX: room.minX, maxX: room.maxX, minZ: room.minZ, maxZ: room.maxZ, yMin: parent.yBase, yMax: parent.yBase + parent.floorH };
+    else bounds = parent?.bounds;
+  }
+  if (!bounds) bounds = { minX: -3, maxX: 3, minZ: -3, maxZ: 3, yMin: 0, yMax: 3 };
+
+  const cx = (bounds.minX + bounds.maxX) / 2, cz = (bounds.minZ + bounds.maxZ) / 2;
+  const spanX = Math.max(2, bounds.maxX - bounds.minX), spanZ = Math.max(2, bounds.maxZ - bounds.minZ);
+  const radius = Math.max(spanX, spanZ);
+
+  const camera = new THREE.PerspectiveCamera(55, canvas.width / canvas.height, 0.05, 200);
+  // Oblique player-eye-height interior view from just outside one corner of
+  // the room, looking toward its center -- a "player-readable" angle rather
+  // than a debug top-down diagram (section 38 of the assignment).
+  camera.position.set(cx - spanX * 0.55 - 0.6, bounds.yMin + 1.55, cz - spanZ * 0.55 - 0.6);
+  camera.lookAt(cx, bounds.yMin + 1.1, cz);
+
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true });
+  renderer.setSize(canvas.width, canvas.height, false);
+  renderer.render(scene, camera);
+  label.textContent = `${shot.title} — ${space.recipeId} (${space.acceptedCueCount} cues, ${space.primitiveInstanceCount} instances)`;
+  rendered++;
+}
+
+status.textContent = `room-signifier visual QA: ${rendered}/${SHOTS.length} shots rendered`;
+window.__roomSignifierQaDone = true;
+</script>
+</body>
+</html>

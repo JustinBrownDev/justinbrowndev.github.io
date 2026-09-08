@@ -17,6 +17,8 @@ import { attachSpectacleMedia, compileExteriorCompositionAuthority, createExteri
 import { createExteriorCoverageRuntime, exteriorCoverageSnapshot, noteMicroAheadCoverageViolation, recordExteriorCoverageResult } from './exterior-composition-runtime.js';
 import { runCooperativeCompiler } from './architecture/semantic-plan-runtime.js';
 import { hasPortalBoundInteriorPlaceSources, planPortalBoundInteriorPlaces } from './portal-bound-interior-places.js';
+import { planRoomSignifiers } from './room-signifier-planner.js';
+import { createRoomSignifierRuntime } from './room-signifier-runtime.js';
 import { recipeContextFromExteriorTask, resolveDisplayRecipe } from '../content/sign-visual-language.js';
 import { renderDisplayCanvas } from '../systems/sign-display-renderer.js';
 
@@ -300,6 +302,12 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
     const textExciter = createProceduralTextExciter({ worldSeed });
     console.log('[world-text] deterministic full curated corpus exciter ready', textExciter.stats);
     const exteriorPropField = createExteriorPropFieldSystem({ THREE, worldSeed });
+    // Guaranteed room-signifier layer (every realized semantic room gets a
+    // cheap, deterministic, spatially-validated furnishing minimum). This is
+    // deliberately separate from -- and runs synchronously ahead of -- the
+    // dense progressive semantic-recipe population below: recognizability
+    // must not wait on GLB streaming. See world/room-signifier-planner.js.
+    const roomSignifierRuntime = createRoomSignifierRuntime({ THREE });
 
     const semanticRecipeById = new Map(SEMANTIC_ROOM_RECIPES.map(recipe => [recipe.id, recipe]));
     const semanticVariantFamilies = new Map();
@@ -2300,6 +2308,36 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
         };
     }
 
+    // Guaranteed room-signifier pass: every realized topologySpace on every
+    // building entity gets a minimum furnishing plan, synchronously, using
+    // the same spacePlanAcceptsBox authority the rest of the semantic
+    // pipeline uses (world/space-plan.js) -- no second spatial authority.
+    // Wrapped per-entity so a pathological room can't take down the whole
+    // chunk build; failures are recorded in payload.roomSignifierPlans
+    // rather than thrown, matching this pass's "never block the door, never
+    // block the build" doctrine.
+    function planRoomSignifiersForPayload(chunk, payload) {
+        payload.roomSignifierPlans = [];
+        for (const entity of payload.entities ?? []) {
+            if (entity?.kind !== 'building') continue;
+            if (entity.suppressInteriorEnrichment) continue;
+            const topologySpaces = entity.buildingPlan?.topologySpaces;
+            if (!Array.isArray(topologySpaces) || !topologySpaces.length) continue;
+            try {
+                const report = planRoomSignifiers({ buildingPlan: entity.buildingPlan, chunk, payload, entityId: entity.id });
+                const { group, stats: runtimeStats } = roomSignifierRuntime.realize(report);
+                if (runtimeStats.renderBatchCount > 0) {
+                    group.name = `room-signifiers:${entity.id}`;
+                    payload.detailRoot.add(group);
+                }
+                payload.roomSignifierPlans.push({ entityId: entity.id, stats: report.stats, runtimeStats });
+            } catch (error) {
+                console.error('[room-signifier] planning failed for entity', entity.id, error);
+                payload.roomSignifierPlans.push({ entityId: entity.id, error: String(error?.message ?? error) });
+            }
+        }
+    }
+
     function preparePayloadPlanningBase(chunk, payload) {
         const detailRoot = new THREE.Group();
         detailRoot.name = `world-chunk-details:${chunk.key}`;
@@ -2315,6 +2353,7 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
         // so the bounded scan is O(candidate-count), not O(candidates * entities).
         payload.entityById = new Map((payload.entities ?? []).map(entity => [entity.id, entity]));
         const state = plan(chunk, payload.entities);
+        planRoomSignifiersForPayload(chunk, payload);
         progressiveState(state);
         progressiveInteriorState(state);
         return state;
@@ -2516,6 +2555,7 @@ export function createKowloonFabricEnrichment({ THREE, worldSeed = 0, publishDet
 
     function disposeShared() {
         exteriorPropField.disposeShared();
+        roomSignifierRuntime.dispose();
         unitBox.dispose();
         unitPlane.dispose();
         pipeGeo.dispose();

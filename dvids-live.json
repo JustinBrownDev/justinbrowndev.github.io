@@ -7,15 +7,15 @@
   "officialPageUrl": "https://www.dvidshub.net/webcast/",
   "state": "ready",
   "selectedEvent": {
-    "id": "38038",
-    "title": "MCRD San Diego Kilo Company Graduation - 09/11/26",
+    "id": "38425",
+    "title": "Fort Hood Fight Night- Sept. 2026 (Boxing)",
     "classification": null,
     "status": null,
-    "start": "2026-09-11T16:30:00.000Z",
-    "end": "2026-09-11T18:30:00.000Z",
+    "start": "2026-09-11T23:00:00.000Z",
+    "end": "2026-09-12T03:00:00.000Z",
     "hlsUrl": "https://d2yq2ecpze4nf4.cloudfront.net/out/v1/a28223b3dab948bc9f7115fd6eb18011/index.m3u8",
-    "pageUrl": "https://www.dvidshub.net/webcast/38038",
-    "embedUrl": "https://www.dvidshub.net/webcast/embed/38038",
+    "pageUrl": "https://www.dvidshub.net/webcast/38425",
+    "embedUrl": "https://www.dvidshub.net/webcast/embed/38425",
     "attribution": "DVIDS"
   },
   "upcoming": [
@@ -102,7 +102,7 @@
       "classification": null,
       "status": null,
       "start": "2026-09-11T16:30:00.000Z",
-      "end": "2026-09-11T18:30:00.000Z",
+      "end": "2026-09-11T18:22:00.000Z",
       "pageUrl": "https://www.dvidshub.net/webcast/38038",
       "embedUrl": "https://www.dvidshub.net/webcast/embed/38038",
       "attribution": "DVIDS"
@@ -113,7 +113,7 @@
       "classification": null,
       "status": null,
       "start": "2026-09-11T17:50:00.000Z",
-      "end": "2026-09-11T19:00:00.000Z",
+      "end": "2026-09-11T19:04:00.000Z",
       "pageUrl": "https://www.dvidshub.net/webcast/38347",
       "embedUrl": "https://www.dvidshub.net/webcast/embed/38347",
       "attribution": "DVIDS"
@@ -124,7 +124,7 @@
       "classification": null,
       "status": null,
       "start": "2026-09-11T18:00:00.000Z",
-      "end": "2026-09-11T19:00:00.000Z",
+      "end": "2026-09-11T18:22:00.000Z",
       "pageUrl": "https://www.dvidshub.net/webcast/38413",
       "embedUrl": "https://www.dvidshub.net/webcast/embed/38413",
       "attribution": "DVIDS"

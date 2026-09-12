@@ -7,15 +7,15 @@
   "officialPageUrl": "https://www.dvidshub.net/webcast/",
   "state": "ready",
   "selectedEvent": {
-    "id": "38387",
-    "title": "DPAA Dover Family Member Update ",
+    "id": "38421",
+    "title": "95th Div 3 BDE Inactivation Ceremony",
     "classification": null,
     "status": null,
-    "start": "2026-09-12T12:35:00.000Z",
-    "end": "2026-09-12T20:00:00.000Z",
+    "start": "2026-09-13T14:35:00.000Z",
+    "end": "2026-09-13T16:15:00.000Z",
     "hlsUrl": "https://dch5nxbjiciir.cloudfront.net/out/v1/3deaf7e071eb4d01b11da5fbf5d4a00c/index.m3u8",
-    "pageUrl": "https://www.dvidshub.net/webcast/38387",
-    "embedUrl": "https://www.dvidshub.net/webcast/embed/38387",
+    "pageUrl": "https://www.dvidshub.net/webcast/38421",
+    "embedUrl": "https://www.dvidshub.net/webcast/embed/38421",
     "attribution": "DVIDS"
   },
   "upcoming": [
@@ -25,7 +25,7 @@
       "classification": null,
       "status": null,
       "start": "2026-09-12T12:35:00.000Z",
-      "end": "2026-09-12T20:00:00.000Z",
+      "end": "2026-09-12T18:46:00.000Z",
       "pageUrl": "https://www.dvidshub.net/webcast/38387",
       "embedUrl": "https://www.dvidshub.net/webcast/embed/38387",
       "attribution": "DVIDS"

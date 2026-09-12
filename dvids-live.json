@@ -20,17 +20,6 @@
   },
   "upcoming": [
     {
-      "id": "38425",
-      "title": "Fort Hood Fight Night- Sept. 2026 (Boxing)",
-      "classification": null,
-      "status": null,
-      "start": "2026-09-11T23:00:00.000Z",
-      "end": "2026-09-12T02:02:00.000Z",
-      "pageUrl": "https://www.dvidshub.net/webcast/38425",
-      "embedUrl": "https://www.dvidshub.net/webcast/embed/38425",
-      "attribution": "DVIDS"
-    },
-    {
       "id": "38387",
       "title": "DPAA Dover Family Member Update ",
       "classification": null,

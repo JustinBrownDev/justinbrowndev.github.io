@@ -7,15 +7,15 @@
   "officialPageUrl": "https://www.dvidshub.net/webcast/",
   "state": "ready",
   "selectedEvent": {
-    "id": "38439",
-    "title": "Washington Navy Yard Remembrance Ceremony 2026",
+    "id": "38404",
+    "title": "Official U.S. Navy RTC Boot Camp Graduation",
     "classification": null,
     "status": null,
-    "start": "2026-09-16T11:57:00.000Z",
-    "end": "2026-09-16T12:45:00.000Z",
-    "hlsUrl": "https://ddz6nlcu5n9df.cloudfront.net/out/v1/46ecf370d6124e038a3e2a01bdf4048e/index.m3u8",
-    "pageUrl": "https://www.dvidshub.net/webcast/38439",
-    "embedUrl": "https://www.dvidshub.net/webcast/embed/38439",
+    "start": "2026-09-17T13:15:00.000Z",
+    "end": "2026-09-17T16:00:00.000Z",
+    "hlsUrl": "https://d1b55jk78a7el0.cloudfront.net/out/v1/1d4a1a50b52b4333894d00ce0c4c7ca5/index.m3u8",
+    "pageUrl": "https://www.dvidshub.net/webcast/38404",
+    "embedUrl": "https://www.dvidshub.net/webcast/embed/38404",
     "attribution": "DVIDS"
   },
   "upcoming": [
@@ -25,9 +25,20 @@
       "classification": null,
       "status": null,
       "start": "2026-09-16T11:57:00.000Z",
-      "end": "2026-09-16T12:45:00.000Z",
+      "end": "2026-09-16T12:34:00.000Z",
       "pageUrl": "https://www.dvidshub.net/webcast/38439",
       "embedUrl": "https://www.dvidshub.net/webcast/embed/38439",
+      "attribution": "DVIDS"
+    },
+    {
+      "id": "38452",
+      "title": "Secretary of State Marco  Rubio meets with Costa Rican Foreign Minister Manuel Tovar Rivera at the Department of State",
+      "classification": null,
+      "status": null,
+      "start": "2026-09-16T13:20:00.000Z",
+      "end": "2026-09-16T13:49:00.000Z",
+      "pageUrl": "https://www.dvidshub.net/webcast/38452",
+      "embedUrl": "https://www.dvidshub.net/webcast/embed/38452",
       "attribution": "DVIDS"
     },
     {
@@ -35,8 +46,8 @@
       "title": "CPO pinning ceremony",
       "classification": null,
       "status": null,
-      "start": "2026-09-16T12:20:00.000Z",
-      "end": "2026-09-16T14:30:00.000Z",
+      "start": "2026-09-16T13:20:00.000Z",
+      "end": "2026-09-16T15:19:00.000Z",
       "pageUrl": "https://www.dvidshub.net/webcast/38402",
       "embedUrl": "https://www.dvidshub.net/webcast/embed/38402",
       "attribution": "DVIDS"
@@ -86,6 +97,17 @@
       "attribution": "DVIDS"
     },
     {
+      "id": "38454",
+      "title": "POW/MIA Recognition Day 2026",
+      "classification": null,
+      "status": null,
+      "start": "2026-09-18T13:50:00.000Z",
+      "end": "2026-09-18T15:00:00.000Z",
+      "pageUrl": "https://www.dvidshub.net/webcast/38454",
+      "embedUrl": "https://www.dvidshub.net/webcast/embed/38454",
+      "attribution": "DVIDS"
+    },
+    {
       "id": "38442",
       "title": " Mass Communication Systems Engineer (MCSE) Course 040-26 Live Graduation",
       "classification": null,
@@ -94,6 +116,17 @@
       "end": "2026-09-18T15:00:00.000Z",
       "pageUrl": "https://www.dvidshub.net/webcast/38442",
       "embedUrl": "https://www.dvidshub.net/webcast/embed/38442",
+      "attribution": "DVIDS"
+    },
+    {
+      "id": "38453",
+      "title": "POW/MIA Recognition Day Ceremony",
+      "classification": null,
+      "status": null,
+      "start": "2026-09-18T17:00:00.000Z",
+      "end": "2026-09-18T21:00:00.000Z",
+      "pageUrl": "https://www.dvidshub.net/webcast/38453",
+      "embedUrl": "https://www.dvidshub.net/webcast/embed/38453",
       "attribution": "DVIDS"
     },
     {

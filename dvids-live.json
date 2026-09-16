@@ -97,17 +97,6 @@
       "attribution": "DVIDS"
     },
     {
-      "id": "38454",
-      "title": "POW/MIA Recognition Day 2026",
-      "classification": null,
-      "status": null,
-      "start": "2026-09-18T13:50:00.000Z",
-      "end": "2026-09-18T15:00:00.000Z",
-      "pageUrl": "https://www.dvidshub.net/webcast/38454",
-      "embedUrl": "https://www.dvidshub.net/webcast/embed/38454",
-      "attribution": "DVIDS"
-    },
-    {
       "id": "38442",
       "title": " Mass Communication Systems Engineer (MCSE) Course 040-26 Live Graduation",
       "classification": null,
@@ -116,6 +105,17 @@
       "end": "2026-09-18T15:00:00.000Z",
       "pageUrl": "https://www.dvidshub.net/webcast/38442",
       "embedUrl": "https://www.dvidshub.net/webcast/embed/38442",
+      "attribution": "DVIDS"
+    },
+    {
+      "id": "38454",
+      "title": "POW/MIA Recognition Day 2026",
+      "classification": null,
+      "status": null,
+      "start": "2026-09-18T13:50:00.000Z",
+      "end": "2026-09-18T15:00:00.000Z",
+      "pageUrl": "https://www.dvidshub.net/webcast/38454",
+      "embedUrl": "https://www.dvidshub.net/webcast/embed/38454",
       "attribution": "DVIDS"
     },
     {
@@ -204,6 +204,39 @@
       "end": "2026-09-22T18:00:00.000Z",
       "pageUrl": "https://www.dvidshub.net/webcast/38431",
       "embedUrl": "https://www.dvidshub.net/webcast/embed/38431",
+      "attribution": "DVIDS"
+    },
+    {
+      "id": "38459",
+      "title": "Department of War Spirit of Hope Awards Ceremony",
+      "classification": null,
+      "status": null,
+      "start": "2026-09-23T13:50:00.000Z",
+      "end": "2026-09-23T15:00:00.000Z",
+      "pageUrl": "https://www.dvidshub.net/webcast/38459",
+      "embedUrl": "https://www.dvidshub.net/webcast/embed/38459",
+      "attribution": "DVIDS"
+    },
+    {
+      "id": "38422",
+      "title": "PFPA New Officer Swearing-in-Ceremony",
+      "classification": null,
+      "status": null,
+      "start": "2026-09-23T16:50:00.000Z",
+      "end": "2026-09-23T18:00:00.000Z",
+      "pageUrl": "https://www.dvidshub.net/webcast/38422",
+      "embedUrl": "https://www.dvidshub.net/webcast/embed/38422",
+      "attribution": "DVIDS"
+    },
+    {
+      "id": "38271",
+      "title": "Strategic Competition for Alliances and Partners in the Indo Pacific - CASO Panel",
+      "classification": null,
+      "status": null,
+      "start": "2026-09-23T17:50:00.000Z",
+      "end": "2026-09-23T20:00:00.000Z",
+      "pageUrl": "https://www.dvidshub.net/webcast/38271",
+      "embedUrl": "https://www.dvidshub.net/webcast/embed/38271",
       "attribution": "DVIDS"
     }
   ]

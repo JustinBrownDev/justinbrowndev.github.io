@@ -20,28 +20,6 @@
   },
   "upcoming": [
     {
-      "id": "38402",
-      "title": "CPO pinning ceremony",
-      "classification": null,
-      "status": null,
-      "start": "2026-09-16T13:20:00.000Z",
-      "end": "2026-09-16T15:19:00.000Z",
-      "pageUrl": "https://www.dvidshub.net/webcast/38402",
-      "embedUrl": "https://www.dvidshub.net/webcast/embed/38402",
-      "attribution": "DVIDS"
-    },
-    {
-      "id": "38452",
-      "title": "Secretary of State Marco  Rubio meets with Costa Rican Foreign Minister Manuel Tovar Rivera at the Department of State",
-      "classification": null,
-      "status": null,
-      "start": "2026-09-16T13:20:00.000Z",
-      "end": "2026-09-16T13:49:00.000Z",
-      "pageUrl": "https://www.dvidshub.net/webcast/38452",
-      "embedUrl": "https://www.dvidshub.net/webcast/embed/38452",
-      "attribution": "DVIDS"
-    },
-    {
       "id": "38404",
       "title": "Official U.S. Navy RTC Boot Camp Graduation",
       "classification": null,

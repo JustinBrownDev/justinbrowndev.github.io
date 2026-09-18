@@ -7,15 +7,15 @@
   "officialPageUrl": "https://www.dvidshub.net/webcast/",
   "state": "ready",
   "selectedEvent": {
-    "id": "38453",
-    "title": "POW/MIA Recognition Day Ceremony",
+    "id": "38464",
+    "title": "Hegseth Leads Enlistment Ceremony",
     "classification": null,
     "status": null,
-    "start": "2026-09-18T19:47:00.000Z",
-    "end": "2026-09-18T21:30:00.000Z",
-    "hlsUrl": "https://ddz6nlcu5n9df.cloudfront.net/out/v1/46ecf370d6124e038a3e2a01bdf4048e/index.m3u8",
-    "pageUrl": "https://www.dvidshub.net/webcast/38453",
-    "embedUrl": "https://www.dvidshub.net/webcast/embed/38453",
+    "start": "2026-09-18T22:46:00.000Z",
+    "end": "2026-09-18T22:59:00.000Z",
+    "hlsUrl": "https://do7ujvb4kwqvb.cloudfront.net/out/v1/434726d616804d87ae523d226d2b6afd/index.m3u8",
+    "pageUrl": "https://www.dvidshub.net/webcast/38464",
+    "embedUrl": "https://www.dvidshub.net/webcast/embed/38464",
     "attribution": "DVIDS"
   },
   "upcoming": [
@@ -102,7 +102,7 @@
       "classification": null,
       "status": null,
       "start": "2026-09-18T19:47:00.000Z",
-      "end": "2026-09-18T21:30:00.000Z",
+      "end": "2026-09-18T21:11:00.000Z",
       "pageUrl": "https://www.dvidshub.net/webcast/38453",
       "embedUrl": "https://www.dvidshub.net/webcast/embed/38453",
       "attribution": "DVIDS"
@@ -116,6 +116,17 @@
       "end": "2026-09-18T20:46:00.000Z",
       "pageUrl": "https://www.dvidshub.net/webcast/38463",
       "embedUrl": "https://www.dvidshub.net/webcast/embed/38463",
+      "attribution": "DVIDS"
+    },
+    {
+      "id": "38464",
+      "title": "Hegseth Leads Enlistment Ceremony",
+      "classification": null,
+      "status": null,
+      "start": "2026-09-18T22:46:00.000Z",
+      "end": "2026-09-18T22:59:00.000Z",
+      "pageUrl": "https://www.dvidshub.net/webcast/38464",
+      "embedUrl": "https://www.dvidshub.net/webcast/embed/38464",
       "attribution": "DVIDS"
     },
     {

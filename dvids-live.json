@@ -7,15 +7,15 @@
   "officialPageUrl": "https://www.dvidshub.net/webcast/",
   "state": "ready",
   "selectedEvent": {
-    "id": "38447",
-    "title": "The Retirement Ceremony of CW5 Deanna L. Hughes",
+    "id": "38453",
+    "title": "POW/MIA Recognition Day Ceremony",
     "classification": null,
     "status": null,
-    "start": "2026-09-18T17:45:00.000Z",
-    "end": "2026-09-18T19:30:00.000Z",
-    "hlsUrl": "https://d1b55jk78a7el0.cloudfront.net/out/v1/1d4a1a50b52b4333894d00ce0c4c7ca5/index.m3u8",
-    "pageUrl": "https://www.dvidshub.net/webcast/38447",
-    "embedUrl": "https://www.dvidshub.net/webcast/embed/38447",
+    "start": "2026-09-18T19:47:00.000Z",
+    "end": "2026-09-18T21:30:00.000Z",
+    "hlsUrl": "https://ddz6nlcu5n9df.cloudfront.net/out/v1/46ecf370d6124e038a3e2a01bdf4048e/index.m3u8",
+    "pageUrl": "https://www.dvidshub.net/webcast/38453",
+    "embedUrl": "https://www.dvidshub.net/webcast/embed/38453",
     "attribution": "DVIDS"
   },
   "upcoming": [
@@ -69,9 +69,20 @@
       "classification": null,
       "status": null,
       "start": "2026-09-18T17:45:00.000Z",
-      "end": "2026-09-18T19:30:00.000Z",
+      "end": "2026-09-18T19:00:00.000Z",
       "pageUrl": "https://www.dvidshub.net/webcast/38447",
       "embedUrl": "https://www.dvidshub.net/webcast/embed/38447",
+      "attribution": "DVIDS"
+    },
+    {
+      "id": "38469",
+      "title": "President Trump Makes an Announcement on Healthcare, Sep. 18, 2026",
+      "classification": null,
+      "status": null,
+      "start": "2026-09-18T18:20:00.000Z",
+      "end": "2026-09-18T20:35:00.000Z",
+      "pageUrl": "https://www.dvidshub.net/webcast/38469",
+      "embedUrl": "https://www.dvidshub.net/webcast/embed/38469",
       "attribution": "DVIDS"
     },
     {
@@ -80,7 +91,7 @@
       "classification": null,
       "status": null,
       "start": "2026-09-18T18:50:00.000Z",
-      "end": "2026-09-18T20:00:00.000Z",
+      "end": "2026-09-18T19:31:00.000Z",
       "pageUrl": "https://www.dvidshub.net/webcast/38443",
       "embedUrl": "https://www.dvidshub.net/webcast/embed/38443",
       "attribution": "DVIDS"
@@ -90,10 +101,21 @@
       "title": "POW/MIA Recognition Day Ceremony",
       "classification": null,
       "status": null,
-      "start": "2026-09-18T20:00:00.000Z",
-      "end": "2026-09-18T21:00:00.000Z",
+      "start": "2026-09-18T19:47:00.000Z",
+      "end": "2026-09-18T21:30:00.000Z",
       "pageUrl": "https://www.dvidshub.net/webcast/38453",
       "embedUrl": "https://www.dvidshub.net/webcast/embed/38453",
+      "attribution": "DVIDS"
+    },
+    {
+      "id": "38463",
+      "title": "Hegseth Speaks During Arsenal of Freedom Stop in Texas ",
+      "classification": null,
+      "status": null,
+      "start": "2026-09-18T20:15:00.000Z",
+      "end": "2026-09-18T20:46:00.000Z",
+      "pageUrl": "https://www.dvidshub.net/webcast/38463",
+      "embedUrl": "https://www.dvidshub.net/webcast/embed/38463",
       "attribution": "DVIDS"
     },
     {

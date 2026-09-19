@@ -7,15 +7,15 @@
   "officialPageUrl": "https://www.dvidshub.net/webcast/",
   "state": "ready",
   "selectedEvent": {
-    "id": "38446",
-    "title": "Best Squad Fitness Competition ",
+    "id": "38345",
+    "title": "Bronze Star Medal Presentation iho CPT Roy Hanna Jr. & PFC Robert Earl DeVinney",
     "classification": null,
     "status": null,
-    "start": "2026-09-19T13:36:00.000Z",
-    "end": "2026-09-19T16:26:00.000Z",
-    "hlsUrl": "https://dch5nxbjiciir.cloudfront.net/out/v1/3deaf7e071eb4d01b11da5fbf5d4a00c/index.m3u8",
-    "pageUrl": "https://www.dvidshub.net/webcast/38446",
-    "embedUrl": "https://www.dvidshub.net/webcast/embed/38446",
+    "start": "2026-09-21T14:20:00.000Z",
+    "end": "2026-09-21T15:30:00.000Z",
+    "hlsUrl": "https://d7e306zdqcax0.cloudfront.net/out/v1/f1fbcdcc778649108826fff48382c641/index.m3u8",
+    "pageUrl": "https://www.dvidshub.net/webcast/38345",
+    "embedUrl": "https://www.dvidshub.net/webcast/embed/38345",
     "attribution": "DVIDS"
   },
   "upcoming": [

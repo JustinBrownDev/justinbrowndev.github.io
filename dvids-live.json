@@ -7,15 +7,15 @@
   "officialPageUrl": "https://www.dvidshub.net/webcast/",
   "state": "ready",
   "selectedEvent": {
-    "id": "38485",
-    "title": "President Trump Delivers Remarks, Sep. 22, 2026",
+    "id": "38495",
+    "title": "Secretary of State Marco Rubio meets with Shield of the Americas heads of state and foreign ministers",
     "classification": null,
     "status": null,
-    "start": "2026-09-22T13:45:00.000Z",
-    "end": "2026-09-22T15:15:00.000Z",
-    "hlsUrl": "https://d3r7ms2cd6ecbc.cloudfront.net/out/v1/302f9e67d0524c55a01f2aece2e77872/index.m3u8",
-    "pageUrl": "https://www.dvidshub.net/webcast/38485",
-    "embedUrl": "https://www.dvidshub.net/webcast/embed/38485",
+    "start": "2026-09-22T17:50:00.000Z",
+    "end": "2026-09-22T19:00:00.000Z",
+    "hlsUrl": "https://d3831jl17nqivw.cloudfront.net/out/v1/47943212d1d74b17978fcee4c68f6e60/index.m3u8",
+    "pageUrl": "https://www.dvidshub.net/webcast/38495",
+    "embedUrl": "https://www.dvidshub.net/webcast/embed/38495",
     "attribution": "DVIDS"
   },
   "upcoming": [
@@ -25,7 +25,7 @@
       "classification": null,
       "status": null,
       "start": "2026-09-22T13:45:00.000Z",
-      "end": "2026-09-22T15:15:00.000Z",
+      "end": "2026-09-22T15:06:00.000Z",
       "pageUrl": "https://www.dvidshub.net/webcast/38485",
       "embedUrl": "https://www.dvidshub.net/webcast/embed/38485",
       "attribution": "DVIDS"
@@ -36,7 +36,7 @@
       "classification": null,
       "status": null,
       "start": "2026-09-22T13:45:00.000Z",
-      "end": "2026-09-22T15:15:00.000Z",
+      "end": "2026-09-22T15:06:00.000Z",
       "pageUrl": "https://www.dvidshub.net/webcast/38493",
       "embedUrl": "https://www.dvidshub.net/webcast/embed/38493",
       "attribution": "DVIDS"
@@ -64,14 +64,58 @@
       "attribution": "DVIDS"
     },
     {
+      "id": "38486",
+      "title": "President Trump Participates in a Trilateral Signing Event",
+      "classification": null,
+      "status": null,
+      "start": "2026-09-22T14:30:00.000Z",
+      "end": "2026-09-22T15:42:00.000Z",
+      "pageUrl": "https://www.dvidshub.net/webcast/38486",
+      "embedUrl": "https://www.dvidshub.net/webcast/embed/38486",
+      "attribution": "DVIDS"
+    },
+    {
+      "id": "38488",
+      "title": "President Trump Participates in a Bilateral Meeting with the Prime Minister of the United Kingdom",
+      "classification": null,
+      "status": null,
+      "start": "2026-09-22T15:55:00.000Z",
+      "end": "2026-09-22T16:56:00.000Z",
+      "pageUrl": "https://www.dvidshub.net/webcast/38488",
+      "embedUrl": "https://www.dvidshub.net/webcast/embed/38488",
+      "attribution": "DVIDS"
+    },
+    {
       "id": "38431",
       "title": "The Health Facility Planning Agency Discontinuation Ceremony",
       "classification": null,
       "status": null,
       "start": "2026-09-22T17:00:00.000Z",
-      "end": "2026-09-22T18:00:00.000Z",
+      "end": "2026-09-22T17:24:00.000Z",
       "pageUrl": "https://www.dvidshub.net/webcast/38431",
       "embedUrl": "https://www.dvidshub.net/webcast/embed/38431",
+      "attribution": "DVIDS"
+    },
+    {
+      "id": "38489",
+      "title": "President Trump Participates in a Bilateral Meeting with the Prime Minister of Japan",
+      "classification": null,
+      "status": null,
+      "start": "2026-09-22T17:05:00.000Z",
+      "end": "2026-09-22T17:13:00.000Z",
+      "pageUrl": "https://www.dvidshub.net/webcast/38489",
+      "embedUrl": "https://www.dvidshub.net/webcast/embed/38489",
+      "attribution": "DVIDS"
+    },
+    {
+      "id": "38490",
+      "title": "President Trump Participates in a Bilateral Meeting with the President of Ukraine",
+      "classification": null,
+      "status": null,
+      "start": "2026-09-22T17:22:00.000Z",
+      "end": "2026-09-22T17:56:00.000Z",
+      "pageUrl": "https://www.dvidshub.net/webcast/38490",
+      "embedUrl": "https://www.dvidshub.net/webcast/embed/38490",
       "attribution": "DVIDS"
     },
     {
@@ -171,6 +215,17 @@
       "end": "2026-09-24T20:30:00.000Z",
       "pageUrl": "https://www.dvidshub.net/webcast/38331",
       "embedUrl": "https://www.dvidshub.net/webcast/embed/38331",
+      "attribution": "DVIDS"
+    },
+    {
+      "id": "38448",
+      "title": "WARR Educational Speaker Series | Kelsey Pfendler Interview",
+      "classification": null,
+      "status": null,
+      "start": "2026-09-29T15:50:00.000Z",
+      "end": "2026-09-29T17:00:00.000Z",
+      "pageUrl": "https://www.dvidshub.net/webcast/38448",
+      "embedUrl": "https://www.dvidshub.net/webcast/embed/38448",
       "attribution": "DVIDS"
     }
   ]

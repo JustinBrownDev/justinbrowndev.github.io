@@ -7,15 +7,15 @@
   "officialPageUrl": "https://www.dvidshub.net/webcast/",
   "state": "ready",
   "selectedEvent": {
-    "id": "38422",
-    "title": "PFPA New Officer Swearing-in-Ceremony",
+    "id": "38271",
+    "title": "Strategic Competition for Alliances and Partners in the Indo Pacific - CASO Panel",
     "classification": null,
     "status": null,
-    "start": "2026-09-23T16:50:00.000Z",
-    "end": "2026-09-23T18:00:00.000Z",
-    "hlsUrl": "https://d7e306zdqcax0.cloudfront.net/out/v1/f1fbcdcc778649108826fff48382c641/index.m3u8",
-    "pageUrl": "https://www.dvidshub.net/webcast/38422",
-    "embedUrl": "https://www.dvidshub.net/webcast/embed/38422",
+    "start": "2026-09-23T17:50:00.000Z",
+    "end": "2026-09-23T20:30:00.000Z",
+    "hlsUrl": "https://dch5nxbjiciir.cloudfront.net/out/v1/3deaf7e071eb4d01b11da5fbf5d4a00c/index.m3u8",
+    "pageUrl": "https://www.dvidshub.net/webcast/38271",
+    "embedUrl": "https://www.dvidshub.net/webcast/embed/38271",
     "attribution": "DVIDS"
   },
   "upcoming": [
@@ -47,7 +47,7 @@
       "classification": null,
       "status": null,
       "start": "2026-09-23T16:50:00.000Z",
-      "end": "2026-09-23T18:00:00.000Z",
+      "end": "2026-09-23T17:46:00.000Z",
       "pageUrl": "https://www.dvidshub.net/webcast/38422",
       "embedUrl": "https://www.dvidshub.net/webcast/embed/38422",
       "attribution": "DVIDS"
@@ -58,7 +58,7 @@
       "classification": null,
       "status": null,
       "start": "2026-09-23T17:50:00.000Z",
-      "end": "2026-09-23T20:00:00.000Z",
+      "end": "2026-09-23T20:30:00.000Z",
       "pageUrl": "https://www.dvidshub.net/webcast/38271",
       "embedUrl": "https://www.dvidshub.net/webcast/embed/38271",
       "attribution": "DVIDS"

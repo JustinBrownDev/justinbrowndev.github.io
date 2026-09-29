@@ -7,15 +7,15 @@
   "officialPageUrl": "https://www.dvidshub.net/webcast/",
   "state": "ready",
   "selectedEvent": {
-    "id": "38544",
-    "title": "Announcement on America.gov",
+    "id": "38406",
+    "title": "Official U.S. Navy RTC Boot Camp Graduation",
     "classification": null,
     "status": null,
-    "start": "2026-09-29T13:20:00.000Z",
-    "end": "2026-09-29T19:00:00.000Z",
-    "hlsUrl": "https://d3r7ms2cd6ecbc.cloudfront.net/out/v1/302f9e67d0524c55a01f2aece2e77872/index.m3u8",
-    "pageUrl": "https://www.dvidshub.net/webcast/38544",
-    "embedUrl": "https://www.dvidshub.net/webcast/embed/38544",
+    "start": "2026-10-01T13:15:00.000Z",
+    "end": "2026-10-01T16:00:00.000Z",
+    "hlsUrl": "https://d1b55jk78a7el0.cloudfront.net/out/v1/1d4a1a50b52b4333894d00ce0c4c7ca5/index.m3u8",
+    "pageUrl": "https://www.dvidshub.net/webcast/38406",
+    "embedUrl": "https://www.dvidshub.net/webcast/embed/38406",
     "attribution": "DVIDS"
   },
   "upcoming": [
@@ -39,6 +39,28 @@
       "end": "2026-09-29T16:58:00.000Z",
       "pageUrl": "https://www.dvidshub.net/webcast/38448",
       "embedUrl": "https://www.dvidshub.net/webcast/embed/38448",
+      "attribution": "DVIDS"
+    },
+    {
+      "id": "38548",
+      "title": "Announcement on America.gov",
+      "classification": null,
+      "status": null,
+      "start": "2026-09-29T19:33:00.000Z",
+      "end": "2026-09-29T22:03:00.000Z",
+      "pageUrl": "https://www.dvidshub.net/webcast/38548",
+      "embedUrl": "https://www.dvidshub.net/webcast/embed/38548",
+      "attribution": "DVIDS"
+    },
+    {
+      "id": "38546",
+      "title": "Vice President JD Vance Holds a Fireside Chat",
+      "classification": null,
+      "status": null,
+      "start": "2026-09-29T19:50:00.000Z",
+      "end": "2026-09-29T21:30:00.000Z",
+      "pageUrl": "https://www.dvidshub.net/webcast/38546",
+      "embedUrl": "https://www.dvidshub.net/webcast/embed/38546",
       "attribution": "DVIDS"
     },
     {

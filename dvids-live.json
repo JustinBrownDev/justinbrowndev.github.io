@@ -7,15 +7,15 @@
   "officialPageUrl": "https://www.dvidshub.net/webcast/",
   "state": "ready",
   "selectedEvent": {
-    "id": "38406",
-    "title": "Official U.S. Navy RTC Boot Camp Graduation",
+    "id": "38423",
+    "title": "Retirement ceremony iho LTG Mark T. Simerly",
     "classification": null,
     "status": null,
-    "start": "2026-10-01T13:15:00.000Z",
-    "end": "2026-10-01T16:00:00.000Z",
-    "hlsUrl": "https://d1b55jk78a7el0.cloudfront.net/out/v1/1d4a1a50b52b4333894d00ce0c4c7ca5/index.m3u8",
-    "pageUrl": "https://www.dvidshub.net/webcast/38406",
-    "embedUrl": "https://www.dvidshub.net/webcast/embed/38406",
+    "start": "2026-10-02T18:50:00.000Z",
+    "end": "2026-10-02T20:00:00.000Z",
+    "hlsUrl": "https://dch5nxbjiciir.cloudfront.net/out/v1/3deaf7e071eb4d01b11da5fbf5d4a00c/index.m3u8",
+    "pageUrl": "https://www.dvidshub.net/webcast/38423",
+    "embedUrl": "https://www.dvidshub.net/webcast/embed/38423",
     "attribution": "DVIDS"
   },
   "upcoming": [
@@ -25,7 +25,7 @@
       "classification": null,
       "status": null,
       "start": "2026-10-01T13:15:00.000Z",
-      "end": "2026-10-01T16:00:00.000Z",
+      "end": "2026-10-01T15:45:00.000Z",
       "pageUrl": "https://www.dvidshub.net/webcast/38406",
       "embedUrl": "https://www.dvidshub.net/webcast/embed/38406",
       "attribution": "DVIDS"
@@ -57,8 +57,8 @@
       "title": "Retirement Ceremony of Cmd. Sgt. Maj. Joshua Davis",
       "classification": null,
       "status": null,
-      "start": "2026-10-05T12:50:00.000Z",
-      "end": "2026-10-05T14:00:00.000Z",
+      "start": "2026-10-05T14:50:00.000Z",
+      "end": "2026-10-05T16:00:00.000Z",
       "pageUrl": "https://www.dvidshub.net/webcast/38555",
       "embedUrl": "https://www.dvidshub.net/webcast/embed/38555",
       "attribution": "DVIDS"

@@ -98,7 +98,7 @@
     },
     {
       "id": "38509",
-      "title": "Warriors Corner",
+      "title": "Warriors Corner Day 1",
       "classification": null,
       "status": null,
       "start": "2026-10-12T15:10:00.000Z",
@@ -138,6 +138,39 @@
       "end": "2026-10-12T18:30:00.000Z",
       "pageUrl": "https://www.dvidshub.net/webcast/38512",
       "embedUrl": "https://www.dvidshub.net/webcast/embed/38512",
+      "attribution": "DVIDS"
+    },
+    {
+      "id": "38514",
+      "title": "Contemporary Military Forum",
+      "classification": null,
+      "status": null,
+      "start": "2026-10-12T18:35:00.000Z",
+      "end": "2026-10-12T20:15:00.000Z",
+      "pageUrl": "https://www.dvidshub.net/webcast/38514",
+      "embedUrl": "https://www.dvidshub.net/webcast/embed/38514",
+      "attribution": "DVIDS"
+    },
+    {
+      "id": "38513",
+      "title": "AUSA Warfighter and Family Forum ",
+      "classification": null,
+      "status": null,
+      "start": "2026-10-12T18:50:00.000Z",
+      "end": "2026-10-12T20:30:00.000Z",
+      "pageUrl": "https://www.dvidshub.net/webcast/38513",
+      "embedUrl": "https://www.dvidshub.net/webcast/embed/38513",
+      "attribution": "DVIDS"
+    },
+    {
+      "id": "38515",
+      "title": "Command Sergeant Major of the Army National Guard Seminar",
+      "classification": null,
+      "status": null,
+      "start": "2026-10-12T18:50:00.000Z",
+      "end": "2026-10-12T20:30:00.000Z",
+      "pageUrl": "https://www.dvidshub.net/webcast/38515",
+      "embedUrl": "https://www.dvidshub.net/webcast/embed/38515",
       "attribution": "DVIDS"
     }
   ]

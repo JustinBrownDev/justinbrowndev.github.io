@@ -7,27 +7,27 @@
   "officialPageUrl": "https://www.dvidshub.net/webcast/",
   "state": "ready",
   "selectedEvent": {
-    "id": "38555",
-    "title": "Retirement Ceremony of Cmd. Sgt. Maj. Joshua Davis",
+    "id": "38565",
+    "title": "Memorial Ceremony for MSG Stuart W. Healey",
     "classification": null,
     "status": null,
-    "start": "2026-10-05T14:50:00.000Z",
-    "end": "2026-10-05T16:00:00.000Z",
-    "hlsUrl": "https://dch5nxbjiciir.cloudfront.net/out/v1/3deaf7e071eb4d01b11da5fbf5d4a00c/index.m3u8",
-    "pageUrl": "https://www.dvidshub.net/webcast/38555",
-    "embedUrl": "https://www.dvidshub.net/webcast/embed/38555",
+    "start": "2026-10-07T16:46:00.000Z",
+    "end": "2026-10-07T18:45:00.000Z",
+    "hlsUrl": "https://ddz6nlcu5n9df.cloudfront.net/out/v1/46ecf370d6124e038a3e2a01bdf4048e/index.m3u8",
+    "pageUrl": "https://www.dvidshub.net/webcast/38565",
+    "embedUrl": "https://www.dvidshub.net/webcast/embed/38565",
     "attribution": "DVIDS"
   },
   "upcoming": [
     {
-      "id": "38555",
-      "title": "Retirement Ceremony of Cmd. Sgt. Maj. Joshua Davis",
+      "id": "38565",
+      "title": "Memorial Ceremony for MSG Stuart W. Healey",
       "classification": null,
       "status": null,
-      "start": "2026-10-05T14:50:00.000Z",
-      "end": "2026-10-05T16:00:00.000Z",
-      "pageUrl": "https://www.dvidshub.net/webcast/38555",
-      "embedUrl": "https://www.dvidshub.net/webcast/embed/38555",
+      "start": "2026-10-07T16:46:00.000Z",
+      "end": "2026-10-07T18:45:00.000Z",
+      "pageUrl": "https://www.dvidshub.net/webcast/38565",
+      "embedUrl": "https://www.dvidshub.net/webcast/embed/38565",
       "attribution": "DVIDS"
     },
     {
@@ -72,6 +72,72 @@
       "end": "2026-10-09T18:30:00.000Z",
       "pageUrl": "https://www.dvidshub.net/webcast/38344",
       "embedUrl": "https://www.dvidshub.net/webcast/embed/38344",
+      "attribution": "DVIDS"
+    },
+    {
+      "id": "38507",
+      "title": "MG Robert G. Moorhead Guard & Reserve Breakfast",
+      "classification": null,
+      "status": null,
+      "start": "2026-10-12T10:50:00.000Z",
+      "end": "2026-10-12T12:30:00.000Z",
+      "pageUrl": "https://www.dvidshub.net/webcast/38507",
+      "embedUrl": "https://www.dvidshub.net/webcast/embed/38507",
+      "attribution": "DVIDS"
+    },
+    {
+      "id": "38508",
+      "title": "2026 AUSA Opening Ceremony",
+      "classification": null,
+      "status": null,
+      "start": "2026-10-12T13:20:00.000Z",
+      "end": "2026-10-12T15:15:00.000Z",
+      "pageUrl": "https://www.dvidshub.net/webcast/38508",
+      "embedUrl": "https://www.dvidshub.net/webcast/embed/38508",
+      "attribution": "DVIDS"
+    },
+    {
+      "id": "38509",
+      "title": "Warriors Corner",
+      "classification": null,
+      "status": null,
+      "start": "2026-10-12T15:10:00.000Z",
+      "end": "2026-10-12T21:00:00.000Z",
+      "pageUrl": "https://www.dvidshub.net/webcast/38509",
+      "embedUrl": "https://www.dvidshub.net/webcast/embed/38509",
+      "attribution": "DVIDS"
+    },
+    {
+      "id": "38510",
+      "title": "Army Cadet Luncheon",
+      "classification": null,
+      "status": null,
+      "start": "2026-10-12T16:20:00.000Z",
+      "end": "2026-10-12T18:30:00.000Z",
+      "pageUrl": "https://www.dvidshub.net/webcast/38510",
+      "embedUrl": "https://www.dvidshub.net/webcast/embed/38510",
+      "attribution": "DVIDS"
+    },
+    {
+      "id": "38511",
+      "title": "Sergeant Major of the Army Luncheon",
+      "classification": null,
+      "status": null,
+      "start": "2026-10-12T16:20:00.000Z",
+      "end": "2026-10-12T18:30:00.000Z",
+      "pageUrl": "https://www.dvidshub.net/webcast/38511",
+      "embedUrl": "https://www.dvidshub.net/webcast/embed/38511",
+      "attribution": "DVIDS"
+    },
+    {
+      "id": "38512",
+      "title": "Contemporary Military Forum ",
+      "classification": null,
+      "status": null,
+      "start": "2026-10-12T16:50:00.000Z",
+      "end": "2026-10-12T18:30:00.000Z",
+      "pageUrl": "https://www.dvidshub.net/webcast/38512",
+      "embedUrl": "https://www.dvidshub.net/webcast/embed/38512",
       "attribution": "DVIDS"
     }
   ]

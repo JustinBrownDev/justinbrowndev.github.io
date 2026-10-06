@@ -152,6 +152,17 @@
       "attribution": "DVIDS"
     },
     {
+      "id": "38515",
+      "title": "Command Sergeant Major of the Army National Guard Seminar",
+      "classification": null,
+      "status": null,
+      "start": "2026-10-12T18:50:00.000Z",
+      "end": "2026-10-12T20:30:00.000Z",
+      "pageUrl": "https://www.dvidshub.net/webcast/38515",
+      "embedUrl": "https://www.dvidshub.net/webcast/embed/38515",
+      "attribution": "DVIDS"
+    },
+    {
       "id": "38513",
       "title": "AUSA Warfighter and Family Forum ",
       "classification": null,
@@ -163,14 +174,113 @@
       "attribution": "DVIDS"
     },
     {
-      "id": "38515",
-      "title": "Command Sergeant Major of the Army National Guard Seminar",
+      "id": "38518",
+      "title": "Non-Commissioned Officer Awards Breakfast",
       "classification": null,
       "status": null,
-      "start": "2026-10-12T18:50:00.000Z",
-      "end": "2026-10-12T20:30:00.000Z",
-      "pageUrl": "https://www.dvidshub.net/webcast/38515",
-      "embedUrl": "https://www.dvidshub.net/webcast/embed/38515",
+      "start": "2026-10-13T11:20:00.000Z",
+      "end": "2026-10-13T13:30:00.000Z",
+      "pageUrl": "https://www.dvidshub.net/webcast/38518",
+      "embedUrl": "https://www.dvidshub.net/webcast/embed/38518",
+      "attribution": "DVIDS"
+    },
+    {
+      "id": "38519",
+      "title": "Director of the Army National Guard Seminar",
+      "classification": null,
+      "status": null,
+      "start": "2026-10-13T11:50:00.000Z",
+      "end": "2026-10-13T13:30:00.000Z",
+      "pageUrl": "https://www.dvidshub.net/webcast/38519",
+      "embedUrl": "https://www.dvidshub.net/webcast/embed/38519",
+      "attribution": "DVIDS"
+    },
+    {
+      "id": "38522",
+      "title": "AUSA Warfighter and Family Forum ",
+      "classification": null,
+      "status": null,
+      "start": "2026-10-13T12:20:00.000Z",
+      "end": "2026-10-13T14:15:00.000Z",
+      "pageUrl": "https://www.dvidshub.net/webcast/38522",
+      "embedUrl": "https://www.dvidshub.net/webcast/embed/38522",
+      "attribution": "DVIDS"
+    },
+    {
+      "id": "38520",
+      "title": "Warriors Corner Day 2",
+      "classification": null,
+      "status": null,
+      "start": "2026-10-13T12:35:00.000Z",
+      "end": "2026-10-13T21:00:00.000Z",
+      "pageUrl": "https://www.dvidshub.net/webcast/38520",
+      "embedUrl": "https://www.dvidshub.net/webcast/embed/38520",
+      "attribution": "DVIDS"
+    },
+    {
+      "id": "38521",
+      "title": "Contemporary Military Forum",
+      "classification": null,
+      "status": null,
+      "start": "2026-10-13T12:50:00.000Z",
+      "end": "2026-10-13T14:30:00.000Z",
+      "pageUrl": "https://www.dvidshub.net/webcast/38521",
+      "embedUrl": "https://www.dvidshub.net/webcast/embed/38521",
+      "attribution": "DVIDS"
+    },
+    {
+      "id": "38553",
+      "title": "Army Acquisition Hall of Fame",
+      "classification": null,
+      "status": null,
+      "start": "2026-10-13T13:50:00.000Z",
+      "end": "2026-10-13T15:00:00.000Z",
+      "pageUrl": "https://www.dvidshub.net/webcast/38553",
+      "embedUrl": "https://www.dvidshub.net/webcast/embed/38553",
+      "attribution": "DVIDS"
+    },
+    {
+      "id": "38523",
+      "title": "The Sergeant Major of the Army's Leading Change Forum",
+      "classification": null,
+      "status": null,
+      "start": "2026-10-13T13:50:00.000Z",
+      "end": "2026-10-13T15:30:00.000Z",
+      "pageUrl": "https://www.dvidshub.net/webcast/38523",
+      "embedUrl": "https://www.dvidshub.net/webcast/embed/38523",
+      "attribution": "DVIDS"
+    },
+    {
+      "id": "38524",
+      "title": "Chief of Army Reserve Seminar",
+      "classification": null,
+      "status": null,
+      "start": "2026-10-13T14:20:00.000Z",
+      "end": "2026-10-13T16:00:00.000Z",
+      "pageUrl": "https://www.dvidshub.net/webcast/38524",
+      "embedUrl": "https://www.dvidshub.net/webcast/embed/38524",
+      "attribution": "DVIDS"
+    },
+    {
+      "id": "38533",
+      "title": "AUSA Warfighter & Family Forum",
+      "classification": null,
+      "status": null,
+      "start": "2026-10-13T14:30:00.000Z",
+      "end": "2026-10-13T15:45:00.000Z",
+      "pageUrl": "https://www.dvidshub.net/webcast/38533",
+      "embedUrl": "https://www.dvidshub.net/webcast/embed/38533",
+      "attribution": "DVIDS"
+    },
+    {
+      "id": "38525",
+      "title": "Accelerating the Arsenal",
+      "classification": null,
+      "status": null,
+      "start": "2026-10-13T14:50:00.000Z",
+      "end": "2026-10-13T16:00:00.000Z",
+      "pageUrl": "https://www.dvidshub.net/webcast/38525",
+      "embedUrl": "https://www.dvidshub.net/webcast/embed/38525",
       "attribution": "DVIDS"
     }
   ]

@@ -7,15 +7,15 @@
   "officialPageUrl": "https://www.dvidshub.net/webcast/",
   "state": "ready",
   "selectedEvent": {
-    "id": "38581",
-    "title": "President Trump Hosts a Columbus Day Celebration",
+    "id": "38507",
+    "title": "MG Robert G. Moorhead Guard & Reserve Breakfast",
     "classification": null,
     "status": null,
-    "start": "2026-10-09T14:50:00.000Z",
-    "end": "2026-10-09T16:30:00.000Z",
-    "hlsUrl": "https://d3r7ms2cd6ecbc.cloudfront.net/out/v1/302f9e67d0524c55a01f2aece2e77872/index.m3u8",
-    "pageUrl": "https://www.dvidshub.net/webcast/38581",
-    "embedUrl": "https://www.dvidshub.net/webcast/embed/38581",
+    "start": "2026-10-12T10:50:00.000Z",
+    "end": "2026-10-12T12:30:00.000Z",
+    "hlsUrl": "https://dch5nxbjiciir.cloudfront.net/out/v1/3deaf7e071eb4d01b11da5fbf5d4a00c/index.m3u8",
+    "pageUrl": "https://www.dvidshub.net/webcast/38507",
+    "embedUrl": "https://www.dvidshub.net/webcast/embed/38507",
     "attribution": "DVIDS"
   },
   "upcoming": [
@@ -36,7 +36,7 @@
       "classification": null,
       "status": null,
       "start": "2026-10-09T14:50:00.000Z",
-      "end": "2026-10-09T16:30:00.000Z",
+      "end": "2026-10-09T16:26:00.000Z",
       "pageUrl": "https://www.dvidshub.net/webcast/38581",
       "embedUrl": "https://www.dvidshub.net/webcast/embed/38581",
       "attribution": "DVIDS"
@@ -47,7 +47,7 @@
       "classification": null,
       "status": null,
       "start": "2026-10-09T16:30:00.000Z",
-      "end": "2026-10-09T18:30:00.000Z",
+      "end": "2026-10-09T18:15:00.000Z",
       "pageUrl": "https://www.dvidshub.net/webcast/38344",
       "embedUrl": "https://www.dvidshub.net/webcast/embed/38344",
       "attribution": "DVIDS"

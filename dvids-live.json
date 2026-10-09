@@ -20,39 +20,6 @@
   },
   "upcoming": [
     {
-      "id": "38407",
-      "title": "Official U.S. Navy RTC Boot Camp Graduation",
-      "classification": null,
-      "status": null,
-      "start": "2026-10-08T13:15:00.000Z",
-      "end": "2026-10-08T15:41:00.000Z",
-      "pageUrl": "https://www.dvidshub.net/webcast/38407",
-      "embedUrl": "https://www.dvidshub.net/webcast/embed/38407",
-      "attribution": "DVIDS"
-    },
-    {
-      "id": "38579",
-      "title": "Vice President JD Vance Holds Press Conference on Fraud, Oct. 8, 2026",
-      "classification": null,
-      "status": null,
-      "start": "2026-10-08T14:09:00.000Z",
-      "end": "2026-10-08T15:00:00.000Z",
-      "pageUrl": "https://www.dvidshub.net/webcast/38579",
-      "embedUrl": "https://www.dvidshub.net/webcast/embed/38579",
-      "attribution": "DVIDS"
-    },
-    {
-      "id": "38580",
-      "title": "President Trump Participates in the Science: A New Golden Age Summit",
-      "classification": null,
-      "status": null,
-      "start": "2026-10-08T17:15:00.000Z",
-      "end": "2026-10-08T18:08:00.000Z",
-      "pageUrl": "https://www.dvidshub.net/webcast/38580",
-      "embedUrl": "https://www.dvidshub.net/webcast/embed/38580",
-      "attribution": "DVIDS"
-    },
-    {
       "id": "38344",
       "title": "MCRD San Diego Fox Company Graduation – 10/09/2026",
       "classification": null,
@@ -141,17 +108,6 @@
       "attribution": "DVIDS"
     },
     {
-      "id": "38515",
-      "title": "Command Sergeant Major of the Army National Guard Seminar",
-      "classification": null,
-      "status": null,
-      "start": "2026-10-12T18:50:00.000Z",
-      "end": "2026-10-12T20:30:00.000Z",
-      "pageUrl": "https://www.dvidshub.net/webcast/38515",
-      "embedUrl": "https://www.dvidshub.net/webcast/embed/38515",
-      "attribution": "DVIDS"
-    },
-    {
       "id": "38513",
       "title": "AUSA Warfighter and Family Forum ",
       "classification": null,
@@ -160,6 +116,17 @@
       "end": "2026-10-12T20:30:00.000Z",
       "pageUrl": "https://www.dvidshub.net/webcast/38513",
       "embedUrl": "https://www.dvidshub.net/webcast/embed/38513",
+      "attribution": "DVIDS"
+    },
+    {
+      "id": "38515",
+      "title": "Command Sergeant Major of the Army National Guard Seminar",
+      "classification": null,
+      "status": null,
+      "start": "2026-10-12T18:50:00.000Z",
+      "end": "2026-10-12T20:30:00.000Z",
+      "pageUrl": "https://www.dvidshub.net/webcast/38515",
+      "embedUrl": "https://www.dvidshub.net/webcast/embed/38515",
       "attribution": "DVIDS"
     },
     {
@@ -281,6 +248,39 @@
       "end": "2026-10-13T18:30:00.000Z",
       "pageUrl": "https://www.dvidshub.net/webcast/38526",
       "embedUrl": "https://www.dvidshub.net/webcast/embed/38526",
+      "attribution": "DVIDS"
+    },
+    {
+      "id": "38527",
+      "title": "Contemporary Military Forum ",
+      "classification": null,
+      "status": null,
+      "start": "2026-10-13T18:35:00.000Z",
+      "end": "2026-10-13T20:15:00.000Z",
+      "pageUrl": "https://www.dvidshub.net/webcast/38527",
+      "embedUrl": "https://www.dvidshub.net/webcast/embed/38527",
+      "attribution": "DVIDS"
+    },
+    {
+      "id": "38530",
+      "title": "Delivering for the Nation: Infrastructure, Economic Security, and Crisis Response",
+      "classification": null,
+      "status": null,
+      "start": "2026-10-13T18:50:00.000Z",
+      "end": "2026-10-13T20:00:00.000Z",
+      "pageUrl": "https://www.dvidshub.net/webcast/38530",
+      "embedUrl": "https://www.dvidshub.net/webcast/embed/38530",
+      "attribution": "DVIDS"
+    },
+    {
+      "id": "38529",
+      "title": "The Sergeant Major of the Army Professional Development Forum",
+      "classification": null,
+      "status": null,
+      "start": "2026-10-13T18:50:00.000Z",
+      "end": "2026-10-13T20:30:00.000Z",
+      "pageUrl": "https://www.dvidshub.net/webcast/38529",
+      "embedUrl": "https://www.dvidshub.net/webcast/embed/38529",
       "attribution": "DVIDS"
     }
   ]

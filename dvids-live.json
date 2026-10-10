@@ -251,17 +251,6 @@
       "attribution": "DVIDS"
     },
     {
-      "id": "38530",
-      "title": "Delivering for the Nation: Infrastructure, Economic Security, and Crisis Response",
-      "classification": null,
-      "status": null,
-      "start": "2026-10-13T18:50:00.000Z",
-      "end": "2026-10-13T20:00:00.000Z",
-      "pageUrl": "https://www.dvidshub.net/webcast/38530",
-      "embedUrl": "https://www.dvidshub.net/webcast/embed/38530",
-      "attribution": "DVIDS"
-    },
-    {
       "id": "38529",
       "title": "The Sergeant Major of the Army Professional Development Forum",
       "classification": null,
@@ -281,6 +270,17 @@
       "end": "2026-10-13T20:30:00.000Z",
       "pageUrl": "https://www.dvidshub.net/webcast/38531",
       "embedUrl": "https://www.dvidshub.net/webcast/embed/38531",
+      "attribution": "DVIDS"
+    },
+    {
+      "id": "38530",
+      "title": "Delivering for the Nation: Infrastructure, Economic Security, and Crisis Response",
+      "classification": null,
+      "status": null,
+      "start": "2026-10-13T18:50:00.000Z",
+      "end": "2026-10-13T20:00:00.000Z",
+      "pageUrl": "https://www.dvidshub.net/webcast/38530",
+      "embedUrl": "https://www.dvidshub.net/webcast/embed/38530",
       "attribution": "DVIDS"
     }
   ]

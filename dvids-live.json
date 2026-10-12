@@ -7,15 +7,15 @@
   "officialPageUrl": "https://www.dvidshub.net/webcast/",
   "state": "ready",
   "selectedEvent": {
-    "id": "38507",
-    "title": "MG Robert G. Moorhead Guard & Reserve Breakfast",
+    "id": "38509",
+    "title": "Warriors Corner Day 1",
     "classification": null,
     "status": null,
-    "start": "2026-10-12T10:50:00.000Z",
-    "end": "2026-10-12T12:30:00.000Z",
-    "hlsUrl": "https://dch5nxbjiciir.cloudfront.net/out/v1/3deaf7e071eb4d01b11da5fbf5d4a00c/index.m3u8",
-    "pageUrl": "https://www.dvidshub.net/webcast/38507",
-    "embedUrl": "https://www.dvidshub.net/webcast/embed/38507",
+    "start": "2026-10-12T15:10:00.000Z",
+    "end": "2026-10-12T21:00:00.000Z",
+    "hlsUrl": "https://d1b55jk78a7el0.cloudfront.net/out/v1/1d4a1a50b52b4333894d00ce0c4c7ca5/index.m3u8",
+    "pageUrl": "https://www.dvidshub.net/webcast/38509",
+    "embedUrl": "https://www.dvidshub.net/webcast/embed/38509",
     "attribution": "DVIDS"
   },
   "upcoming": [
@@ -25,7 +25,7 @@
       "classification": null,
       "status": null,
       "start": "2026-10-12T10:50:00.000Z",
-      "end": "2026-10-12T12:30:00.000Z",
+      "end": "2026-10-12T12:19:00.000Z",
       "pageUrl": "https://www.dvidshub.net/webcast/38507",
       "embedUrl": "https://www.dvidshub.net/webcast/embed/38507",
       "attribution": "DVIDS"
@@ -36,7 +36,7 @@
       "classification": null,
       "status": null,
       "start": "2026-10-12T13:20:00.000Z",
-      "end": "2026-10-12T15:15:00.000Z",
+      "end": "2026-10-12T15:07:00.000Z",
       "pageUrl": "https://www.dvidshub.net/webcast/38508",
       "embedUrl": "https://www.dvidshub.net/webcast/embed/38508",
       "attribution": "DVIDS"

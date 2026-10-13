@@ -7,15 +7,15 @@
   "officialPageUrl": "https://www.dvidshub.net/webcast/",
   "state": "ready",
   "selectedEvent": {
-    "id": "38518",
-    "title": "Non-Commissioned Officer Awards Breakfast",
+    "id": "38520",
+    "title": "Warriors Corner Day 2",
     "classification": null,
     "status": null,
-    "start": "2026-10-13T11:20:00.000Z",
-    "end": "2026-10-13T13:30:00.000Z",
-    "hlsUrl": "https://d3831jl17nqivw.cloudfront.net/out/v1/47943212d1d74b17978fcee4c68f6e60/index.m3u8",
-    "pageUrl": "https://www.dvidshub.net/webcast/38518",
-    "embedUrl": "https://www.dvidshub.net/webcast/embed/38518",
+    "start": "2026-10-13T12:35:00.000Z",
+    "end": "2026-10-13T21:00:00.000Z",
+    "hlsUrl": "https://d1b55jk78a7el0.cloudfront.net/out/v1/1d4a1a50b52b4333894d00ce0c4c7ca5/index.m3u8",
+    "pageUrl": "https://www.dvidshub.net/webcast/38520",
+    "embedUrl": "https://www.dvidshub.net/webcast/embed/38520",
     "attribution": "DVIDS"
   },
   "upcoming": [
@@ -25,7 +25,7 @@
       "classification": null,
       "status": null,
       "start": "2026-10-13T11:20:00.000Z",
-      "end": "2026-10-13T13:30:00.000Z",
+      "end": "2026-10-13T12:59:00.000Z",
       "pageUrl": "https://www.dvidshub.net/webcast/38518",
       "embedUrl": "https://www.dvidshub.net/webcast/embed/38518",
       "attribution": "DVIDS"
@@ -36,7 +36,7 @@
       "classification": null,
       "status": null,
       "start": "2026-10-13T11:50:00.000Z",
-      "end": "2026-10-13T13:30:00.000Z",
+      "end": "2026-10-13T13:33:00.000Z",
       "pageUrl": "https://www.dvidshub.net/webcast/38519",
       "embedUrl": "https://www.dvidshub.net/webcast/embed/38519",
       "attribution": "DVIDS"
@@ -69,9 +69,20 @@
       "classification": null,
       "status": null,
       "start": "2026-10-13T12:50:00.000Z",
-      "end": "2026-10-13T14:30:00.000Z",
+      "end": "2026-10-13T14:23:00.000Z",
       "pageUrl": "https://www.dvidshub.net/webcast/38521",
       "embedUrl": "https://www.dvidshub.net/webcast/embed/38521",
+      "attribution": "DVIDS"
+    },
+    {
+      "id": "38585",
+      "title": "Press Secretary Katie Zacharia Briefs Members of the Media, Oct. 13, 2026",
+      "classification": null,
+      "status": null,
+      "start": "2026-10-13T13:15:00.000Z",
+      "end": "2026-10-13T13:58:00.000Z",
+      "pageUrl": "https://www.dvidshub.net/webcast/38585",
+      "embedUrl": "https://www.dvidshub.net/webcast/embed/38585",
       "attribution": "DVIDS"
     },
     {
@@ -80,7 +91,7 @@
       "classification": null,
       "status": null,
       "start": "2026-10-13T13:50:00.000Z",
-      "end": "2026-10-13T15:00:00.000Z",
+      "end": "2026-10-13T15:09:00.000Z",
       "pageUrl": "https://www.dvidshub.net/webcast/38553",
       "embedUrl": "https://www.dvidshub.net/webcast/embed/38553",
       "attribution": "DVIDS"
@@ -91,7 +102,7 @@
       "classification": null,
       "status": null,
       "start": "2026-10-13T13:50:00.000Z",
-      "end": "2026-10-13T15:30:00.000Z",
+      "end": "2026-10-13T15:18:00.000Z",
       "pageUrl": "https://www.dvidshub.net/webcast/38523",
       "embedUrl": "https://www.dvidshub.net/webcast/embed/38523",
       "attribution": "DVIDS"
@@ -102,7 +113,7 @@
       "classification": null,
       "status": null,
       "start": "2026-10-13T14:20:00.000Z",
-      "end": "2026-10-13T16:00:00.000Z",
+      "end": "2026-10-13T16:03:00.000Z",
       "pageUrl": "https://www.dvidshub.net/webcast/38524",
       "embedUrl": "https://www.dvidshub.net/webcast/embed/38524",
       "attribution": "DVIDS"
@@ -124,7 +135,7 @@
       "classification": null,
       "status": null,
       "start": "2026-10-13T14:50:00.000Z",
-      "end": "2026-10-13T16:00:00.000Z",
+      "end": "2026-10-13T16:12:00.000Z",
       "pageUrl": "https://www.dvidshub.net/webcast/38525",
       "embedUrl": "https://www.dvidshub.net/webcast/embed/38525",
       "attribution": "DVIDS"
@@ -135,7 +146,7 @@
       "classification": null,
       "status": null,
       "start": "2026-10-13T16:20:00.000Z",
-      "end": "2026-10-13T18:30:00.000Z",
+      "end": "2026-10-13T18:09:00.000Z",
       "pageUrl": "https://www.dvidshub.net/webcast/38526",
       "embedUrl": "https://www.dvidshub.net/webcast/embed/38526",
       "attribution": "DVIDS"
@@ -152,14 +163,14 @@
       "attribution": "DVIDS"
     },
     {
-      "id": "38531",
-      "title": "Northern European Seminar",
+      "id": "38530",
+      "title": "Delivering for the Nation: Infrastructure, Economic Security, and Crisis Response",
       "classification": null,
       "status": null,
       "start": "2026-10-13T18:50:00.000Z",
-      "end": "2026-10-13T20:30:00.000Z",
-      "pageUrl": "https://www.dvidshub.net/webcast/38531",
-      "embedUrl": "https://www.dvidshub.net/webcast/embed/38531",
+      "end": "2026-10-13T20:00:00.000Z",
+      "pageUrl": "https://www.dvidshub.net/webcast/38530",
+      "embedUrl": "https://www.dvidshub.net/webcast/embed/38530",
       "attribution": "DVIDS"
     },
     {
@@ -174,14 +185,14 @@
       "attribution": "DVIDS"
     },
     {
-      "id": "38530",
-      "title": "Delivering for the Nation: Infrastructure, Economic Security, and Crisis Response",
+      "id": "38531",
+      "title": "Northern European Seminar",
       "classification": null,
       "status": null,
       "start": "2026-10-13T18:50:00.000Z",
-      "end": "2026-10-13T20:00:00.000Z",
-      "pageUrl": "https://www.dvidshub.net/webcast/38530",
-      "embedUrl": "https://www.dvidshub.net/webcast/embed/38530",
+      "end": "2026-10-13T20:30:00.000Z",
+      "pageUrl": "https://www.dvidshub.net/webcast/38531",
+      "embedUrl": "https://www.dvidshub.net/webcast/embed/38531",
       "attribution": "DVIDS"
     },
     {
@@ -218,17 +229,6 @@
       "attribution": "DVIDS"
     },
     {
-      "id": "38535",
-      "title": "Security Cooperation Seminar",
-      "classification": null,
-      "status": null,
-      "start": "2026-10-14T15:20:00.000Z",
-      "end": "2026-10-14T16:30:00.000Z",
-      "pageUrl": "https://www.dvidshub.net/webcast/38535",
-      "embedUrl": "https://www.dvidshub.net/webcast/embed/38535",
-      "attribution": "DVIDS"
-    },
-    {
       "id": "38536",
       "title": "Contemporary Military Forum",
       "classification": null,
@@ -237,6 +237,17 @@
       "end": "2026-10-14T17:00:00.000Z",
       "pageUrl": "https://www.dvidshub.net/webcast/38536",
       "embedUrl": "https://www.dvidshub.net/webcast/embed/38536",
+      "attribution": "DVIDS"
+    },
+    {
+      "id": "38535",
+      "title": "Security Cooperation Seminar",
+      "classification": null,
+      "status": null,
+      "start": "2026-10-14T15:20:00.000Z",
+      "end": "2026-10-14T16:30:00.000Z",
+      "pageUrl": "https://www.dvidshub.net/webcast/38535",
+      "embedUrl": "https://www.dvidshub.net/webcast/embed/38535",
       "attribution": "DVIDS"
     },
     {
@@ -270,17 +281,6 @@
       "end": "2026-10-15T01:30:00.000Z",
       "pageUrl": "https://www.dvidshub.net/webcast/38540",
       "embedUrl": "https://www.dvidshub.net/webcast/embed/38540",
-      "attribution": "DVIDS"
-    },
-    {
-      "id": "38559",
-      "title": "US Army Public Affairs School (PASCHL) Activation, Patching, and Change of Responsibility Ceremony",
-      "classification": null,
-      "status": null,
-      "start": "2026-10-15T12:50:00.000Z",
-      "end": "2026-10-15T14:05:00.000Z",
-      "pageUrl": "https://www.dvidshub.net/webcast/38559",
-      "embedUrl": "https://www.dvidshub.net/webcast/embed/38559",
       "attribution": "DVIDS"
     }
   ]

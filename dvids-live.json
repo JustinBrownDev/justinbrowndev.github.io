@@ -20,17 +20,6 @@
   },
   "upcoming": [
     {
-      "id": "38518",
-      "title": "Non-Commissioned Officer Awards Breakfast",
-      "classification": null,
-      "status": null,
-      "start": "2026-10-13T11:20:00.000Z",
-      "end": "2026-10-13T12:59:00.000Z",
-      "pageUrl": "https://www.dvidshub.net/webcast/38518",
-      "embedUrl": "https://www.dvidshub.net/webcast/embed/38518",
-      "attribution": "DVIDS"
-    },
-    {
       "id": "38519",
       "title": "Director of the Army National Guard Seminar",
       "classification": null,
@@ -229,17 +218,6 @@
       "attribution": "DVIDS"
     },
     {
-      "id": "38536",
-      "title": "Contemporary Military Forum",
-      "classification": null,
-      "status": null,
-      "start": "2026-10-14T15:20:00.000Z",
-      "end": "2026-10-14T17:00:00.000Z",
-      "pageUrl": "https://www.dvidshub.net/webcast/38536",
-      "embedUrl": "https://www.dvidshub.net/webcast/embed/38536",
-      "attribution": "DVIDS"
-    },
-    {
       "id": "38535",
       "title": "Security Cooperation Seminar",
       "classification": null,
@@ -248,6 +226,17 @@
       "end": "2026-10-14T16:30:00.000Z",
       "pageUrl": "https://www.dvidshub.net/webcast/38535",
       "embedUrl": "https://www.dvidshub.net/webcast/embed/38535",
+      "attribution": "DVIDS"
+    },
+    {
+      "id": "38536",
+      "title": "Contemporary Military Forum",
+      "classification": null,
+      "status": null,
+      "start": "2026-10-14T15:20:00.000Z",
+      "end": "2026-10-14T17:00:00.000Z",
+      "pageUrl": "https://www.dvidshub.net/webcast/38536",
+      "embedUrl": "https://www.dvidshub.net/webcast/embed/38536",
       "attribution": "DVIDS"
     },
     {
@@ -281,6 +270,17 @@
       "end": "2026-10-15T01:30:00.000Z",
       "pageUrl": "https://www.dvidshub.net/webcast/38540",
       "embedUrl": "https://www.dvidshub.net/webcast/embed/38540",
+      "attribution": "DVIDS"
+    },
+    {
+      "id": "38559",
+      "title": "US Army Public Affairs School (PASCHL) Activation, Patching, and Change of Responsibility Ceremony",
+      "classification": null,
+      "status": null,
+      "start": "2026-10-15T12:50:00.000Z",
+      "end": "2026-10-15T14:05:00.000Z",
+      "pageUrl": "https://www.dvidshub.net/webcast/38559",
+      "embedUrl": "https://www.dvidshub.net/webcast/embed/38559",
       "attribution": "DVIDS"
     }
   ]

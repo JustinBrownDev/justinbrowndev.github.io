@@ -20,28 +20,6 @@
   },
   "upcoming": [
     {
-      "id": "38519",
-      "title": "Director of the Army National Guard Seminar",
-      "classification": null,
-      "status": null,
-      "start": "2026-10-13T11:50:00.000Z",
-      "end": "2026-10-13T13:33:00.000Z",
-      "pageUrl": "https://www.dvidshub.net/webcast/38519",
-      "embedUrl": "https://www.dvidshub.net/webcast/embed/38519",
-      "attribution": "DVIDS"
-    },
-    {
-      "id": "38522",
-      "title": "AUSA Warfighter and Family Forum ",
-      "classification": null,
-      "status": null,
-      "start": "2026-10-13T12:20:00.000Z",
-      "end": "2026-10-13T14:15:00.000Z",
-      "pageUrl": "https://www.dvidshub.net/webcast/38522",
-      "embedUrl": "https://www.dvidshub.net/webcast/embed/38522",
-      "attribution": "DVIDS"
-    },
-    {
       "id": "38520",
       "title": "Warriors Corner Day 2",
       "classification": null,
@@ -53,94 +31,6 @@
       "attribution": "DVIDS"
     },
     {
-      "id": "38521",
-      "title": "Contemporary Military Forum",
-      "classification": null,
-      "status": null,
-      "start": "2026-10-13T12:50:00.000Z",
-      "end": "2026-10-13T14:23:00.000Z",
-      "pageUrl": "https://www.dvidshub.net/webcast/38521",
-      "embedUrl": "https://www.dvidshub.net/webcast/embed/38521",
-      "attribution": "DVIDS"
-    },
-    {
-      "id": "38585",
-      "title": "Press Secretary Katie Zacharia Briefs Members of the Media, Oct. 13, 2026",
-      "classification": null,
-      "status": null,
-      "start": "2026-10-13T13:15:00.000Z",
-      "end": "2026-10-13T13:58:00.000Z",
-      "pageUrl": "https://www.dvidshub.net/webcast/38585",
-      "embedUrl": "https://www.dvidshub.net/webcast/embed/38585",
-      "attribution": "DVIDS"
-    },
-    {
-      "id": "38553",
-      "title": "Army Acquisition Hall of Fame",
-      "classification": null,
-      "status": null,
-      "start": "2026-10-13T13:50:00.000Z",
-      "end": "2026-10-13T15:09:00.000Z",
-      "pageUrl": "https://www.dvidshub.net/webcast/38553",
-      "embedUrl": "https://www.dvidshub.net/webcast/embed/38553",
-      "attribution": "DVIDS"
-    },
-    {
-      "id": "38523",
-      "title": "The Sergeant Major of the Army's Leading Change Forum",
-      "classification": null,
-      "status": null,
-      "start": "2026-10-13T13:50:00.000Z",
-      "end": "2026-10-13T15:18:00.000Z",
-      "pageUrl": "https://www.dvidshub.net/webcast/38523",
-      "embedUrl": "https://www.dvidshub.net/webcast/embed/38523",
-      "attribution": "DVIDS"
-    },
-    {
-      "id": "38524",
-      "title": "Chief of Army Reserve Seminar",
-      "classification": null,
-      "status": null,
-      "start": "2026-10-13T14:20:00.000Z",
-      "end": "2026-10-13T16:03:00.000Z",
-      "pageUrl": "https://www.dvidshub.net/webcast/38524",
-      "embedUrl": "https://www.dvidshub.net/webcast/embed/38524",
-      "attribution": "DVIDS"
-    },
-    {
-      "id": "38533",
-      "title": "AUSA Warfighter & Family Forum",
-      "classification": null,
-      "status": null,
-      "start": "2026-10-13T14:30:00.000Z",
-      "end": "2026-10-13T15:45:00.000Z",
-      "pageUrl": "https://www.dvidshub.net/webcast/38533",
-      "embedUrl": "https://www.dvidshub.net/webcast/embed/38533",
-      "attribution": "DVIDS"
-    },
-    {
-      "id": "38525",
-      "title": "Accelerating the Arsenal",
-      "classification": null,
-      "status": null,
-      "start": "2026-10-13T14:50:00.000Z",
-      "end": "2026-10-13T16:12:00.000Z",
-      "pageUrl": "https://www.dvidshub.net/webcast/38525",
-      "embedUrl": "https://www.dvidshub.net/webcast/embed/38525",
-      "attribution": "DVIDS"
-    },
-    {
-      "id": "38526",
-      "title": "Dwight D. Eisenhower Luncheon",
-      "classification": null,
-      "status": null,
-      "start": "2026-10-13T16:20:00.000Z",
-      "end": "2026-10-13T18:09:00.000Z",
-      "pageUrl": "https://www.dvidshub.net/webcast/38526",
-      "embedUrl": "https://www.dvidshub.net/webcast/embed/38526",
-      "attribution": "DVIDS"
-    },
-    {
       "id": "38527",
       "title": "Contemporary Military Forum ",
       "classification": null,
@@ -149,17 +39,6 @@
       "end": "2026-10-13T20:18:00.000Z",
       "pageUrl": "https://www.dvidshub.net/webcast/38527",
       "embedUrl": "https://www.dvidshub.net/webcast/embed/38527",
-      "attribution": "DVIDS"
-    },
-    {
-      "id": "38530",
-      "title": "Delivering for the Nation: Infrastructure, Economic Security, and Crisis Response",
-      "classification": null,
-      "status": null,
-      "start": "2026-10-13T18:50:00.000Z",
-      "end": "2026-10-13T20:08:00.000Z",
-      "pageUrl": "https://www.dvidshub.net/webcast/38530",
-      "embedUrl": "https://www.dvidshub.net/webcast/embed/38530",
       "attribution": "DVIDS"
     },
     {
@@ -182,6 +61,17 @@
       "end": "2026-10-13T20:31:00.000Z",
       "pageUrl": "https://www.dvidshub.net/webcast/38529",
       "embedUrl": "https://www.dvidshub.net/webcast/embed/38529",
+      "attribution": "DVIDS"
+    },
+    {
+      "id": "38530",
+      "title": "Delivering for the Nation: Infrastructure, Economic Security, and Crisis Response",
+      "classification": null,
+      "status": null,
+      "start": "2026-10-13T18:50:00.000Z",
+      "end": "2026-10-13T20:08:00.000Z",
+      "pageUrl": "https://www.dvidshub.net/webcast/38530",
+      "embedUrl": "https://www.dvidshub.net/webcast/embed/38530",
       "attribution": "DVIDS"
     },
     {
@@ -240,17 +130,6 @@
       "attribution": "DVIDS"
     },
     {
-      "id": "38537",
-      "title": "Contemporary Military Forum",
-      "classification": null,
-      "status": null,
-      "start": "2026-10-14T16:50:00.000Z",
-      "end": "2026-10-14T18:30:00.000Z",
-      "pageUrl": "https://www.dvidshub.net/webcast/38537",
-      "embedUrl": "https://www.dvidshub.net/webcast/embed/38537",
-      "attribution": "DVIDS"
-    },
-    {
       "id": "38538",
       "title": "Army Civilian Showcase",
       "classification": null,
@@ -259,6 +138,17 @@
       "end": "2026-10-14T18:30:00.000Z",
       "pageUrl": "https://www.dvidshub.net/webcast/38538",
       "embedUrl": "https://www.dvidshub.net/webcast/embed/38538",
+      "attribution": "DVIDS"
+    },
+    {
+      "id": "38537",
+      "title": "Contemporary Military Forum",
+      "classification": null,
+      "status": null,
+      "start": "2026-10-14T16:50:00.000Z",
+      "end": "2026-10-14T18:30:00.000Z",
+      "pageUrl": "https://www.dvidshub.net/webcast/38537",
+      "embedUrl": "https://www.dvidshub.net/webcast/embed/38537",
       "attribution": "DVIDS"
     },
     {
@@ -281,6 +171,72 @@
       "end": "2026-10-15T14:05:00.000Z",
       "pageUrl": "https://www.dvidshub.net/webcast/38559",
       "embedUrl": "https://www.dvidshub.net/webcast/embed/38559",
+      "attribution": "DVIDS"
+    },
+    {
+      "id": "38408",
+      "title": "Official U.S. Navy RTC Boot Camp Graduation",
+      "classification": null,
+      "status": null,
+      "start": "2026-10-15T13:15:00.000Z",
+      "end": "2026-10-15T16:00:00.000Z",
+      "pageUrl": "https://www.dvidshub.net/webcast/38408",
+      "embedUrl": "https://www.dvidshub.net/webcast/embed/38408",
+      "attribution": "DVIDS"
+    },
+    {
+      "id": "38588",
+      "title": "USAG Fort Hood Changes of Responsibility ",
+      "classification": null,
+      "status": null,
+      "start": "2026-10-16T13:35:00.000Z",
+      "end": "2026-10-16T15:00:00.000Z",
+      "pageUrl": "https://www.dvidshub.net/webcast/38588",
+      "embedUrl": "https://www.dvidshub.net/webcast/embed/38588",
+      "attribution": "DVIDS"
+    },
+    {
+      "id": "38572",
+      "title": "CGSC International Hall of Fame - Fall 2026",
+      "classification": null,
+      "status": null,
+      "start": "2026-10-16T13:50:00.000Z",
+      "end": "2026-10-16T15:00:00.000Z",
+      "pageUrl": "https://www.dvidshub.net/webcast/38572",
+      "embedUrl": "https://www.dvidshub.net/webcast/embed/38572",
+      "attribution": "DVIDS"
+    },
+    {
+      "id": "38573",
+      "title": "Col. Kristin Derda Retirement Ceremony ",
+      "classification": null,
+      "status": null,
+      "start": "2026-10-17T20:50:00.000Z",
+      "end": "2026-10-17T22:00:00.000Z",
+      "pageUrl": "https://www.dvidshub.net/webcast/38573",
+      "embedUrl": "https://www.dvidshub.net/webcast/embed/38573",
+      "attribution": "DVIDS"
+    },
+    {
+      "id": "38388",
+      "title": "Retirement Ceremony in Honor of MA1 William Skwarlo",
+      "classification": null,
+      "status": null,
+      "start": "2026-10-20T13:50:00.000Z",
+      "end": "2026-10-20T17:00:00.000Z",
+      "pageUrl": "https://www.dvidshub.net/webcast/38388",
+      "embedUrl": "https://www.dvidshub.net/webcast/embed/38388",
+      "attribution": "DVIDS"
+    },
+    {
+      "id": "38569",
+      "title": "WARR Educational Speaker Series | Brandon Marcello Interview",
+      "classification": null,
+      "status": null,
+      "start": "2026-10-20T15:50:00.000Z",
+      "end": "2026-10-20T17:00:00.000Z",
+      "pageUrl": "https://www.dvidshub.net/webcast/38569",
+      "embedUrl": "https://www.dvidshub.net/webcast/embed/38569",
       "attribution": "DVIDS"
     }
   ]

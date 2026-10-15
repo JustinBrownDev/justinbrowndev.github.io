@@ -7,15 +7,15 @@
   "officialPageUrl": "https://www.dvidshub.net/webcast/",
   "state": "ready",
   "selectedEvent": {
-    "id": "38408",
-    "title": "Official U.S. Navy RTC Boot Camp Graduation",
+    "id": "38588",
+    "title": "USAG Fort Hood Changes of Responsibility ",
     "classification": null,
     "status": null,
-    "start": "2026-10-15T13:15:00.000Z",
-    "end": "2026-10-15T15:41:00.000Z",
-    "hlsUrl": "https://d1b55jk78a7el0.cloudfront.net/out/v1/1d4a1a50b52b4333894d00ce0c4c7ca5/index.m3u8",
-    "pageUrl": "https://www.dvidshub.net/webcast/38408",
-    "embedUrl": "https://www.dvidshub.net/webcast/embed/38408",
+    "start": "2026-10-16T13:35:00.000Z",
+    "end": "2026-10-16T15:00:00.000Z",
+    "hlsUrl": "https://d2yq2ecpze4nf4.cloudfront.net/out/v1/a28223b3dab948bc9f7115fd6eb18011/index.m3u8",
+    "pageUrl": "https://www.dvidshub.net/webcast/38588",
+    "embedUrl": "https://www.dvidshub.net/webcast/embed/38588",
     "attribution": "DVIDS"
   },
   "upcoming": [

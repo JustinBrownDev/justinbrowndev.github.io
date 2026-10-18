@@ -7,15 +7,15 @@
   "officialPageUrl": "https://www.dvidshub.net/webcast/",
   "state": "ready",
   "selectedEvent": {
-    "id": "38590",
-    "title": "Relinquishment of Command",
+    "id": "38602",
+    "title": "Retirement Ceremony",
     "classification": null,
     "status": null,
-    "start": "2026-10-18T15:50:00.000Z",
-    "end": "2026-10-18T18:00:00.000Z",
-    "hlsUrl": "https://d1b55jk78a7el0.cloudfront.net/out/v1/1d4a1a50b52b4333894d00ce0c4c7ca5/index.m3u8",
-    "pageUrl": "https://www.dvidshub.net/webcast/38590",
-    "embedUrl": "https://www.dvidshub.net/webcast/embed/38590",
+    "start": "2026-10-18T18:26:00.000Z",
+    "end": "2026-10-18T20:30:00.000Z",
+    "hlsUrl": "https://d2yq2ecpze4nf4.cloudfront.net/out/v1/a28223b3dab948bc9f7115fd6eb18011/index.m3u8",
+    "pageUrl": "https://www.dvidshub.net/webcast/38602",
+    "embedUrl": "https://www.dvidshub.net/webcast/embed/38602",
     "attribution": "DVIDS"
   },
   "upcoming": [
@@ -25,7 +25,7 @@
       "classification": null,
       "status": null,
       "start": "2026-10-18T15:50:00.000Z",
-      "end": "2026-10-18T18:00:00.000Z",
+      "end": "2026-10-18T17:01:00.000Z",
       "pageUrl": "https://www.dvidshub.net/webcast/38590",
       "embedUrl": "https://www.dvidshub.net/webcast/embed/38590",
       "attribution": "DVIDS"
@@ -35,8 +35,8 @@
       "title": "Retirement Ceremony",
       "classification": null,
       "status": null,
-      "start": "2026-10-18T19:00:00.000Z",
-      "end": "2026-10-18T21:00:00.000Z",
+      "start": "2026-10-18T18:26:00.000Z",
+      "end": "2026-10-18T20:30:00.000Z",
       "pageUrl": "https://www.dvidshub.net/webcast/38602",
       "embedUrl": "https://www.dvidshub.net/webcast/embed/38602",
       "attribution": "DVIDS"

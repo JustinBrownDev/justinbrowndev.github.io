@@ -20,17 +20,6 @@
   },
   "upcoming": [
     {
-      "id": "38602",
-      "title": "Retirement Ceremony",
-      "classification": null,
-      "status": null,
-      "start": "2026-10-18T18:26:00.000Z",
-      "end": "2026-10-18T19:28:00.000Z",
-      "pageUrl": "https://www.dvidshub.net/webcast/38602",
-      "embedUrl": "https://www.dvidshub.net/webcast/embed/38602",
-      "attribution": "DVIDS"
-    },
-    {
       "id": "38388",
       "title": "Retirement Ceremony in Honor of MA1 William Skwarlo",
       "classification": null,

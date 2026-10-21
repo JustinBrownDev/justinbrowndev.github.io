@@ -7,15 +7,15 @@
   "officialPageUrl": "https://www.dvidshub.net/webcast/",
   "state": "ready",
   "selectedEvent": {
-    "id": "38620",
-    "title": "President Trump Participates in a Roundtable, Oct. 21, 2026",
+    "id": "38409",
+    "title": "Official U.S. Navy RTC Boot Camp Graduation",
     "classification": null,
     "status": null,
-    "start": "2026-10-21T18:20:00.000Z",
-    "end": "2026-10-21T20:00:00.000Z",
-    "hlsUrl": "https://d3r7ms2cd6ecbc.cloudfront.net/out/v1/302f9e67d0524c55a01f2aece2e77872/index.m3u8",
-    "pageUrl": "https://www.dvidshub.net/webcast/38620",
-    "embedUrl": "https://www.dvidshub.net/webcast/embed/38620",
+    "start": "2026-10-22T13:15:00.000Z",
+    "end": "2026-10-22T16:00:00.000Z",
+    "hlsUrl": "https://d1b55jk78a7el0.cloudfront.net/out/v1/1d4a1a50b52b4333894d00ce0c4c7ca5/index.m3u8",
+    "pageUrl": "https://www.dvidshub.net/webcast/38409",
+    "embedUrl": "https://www.dvidshub.net/webcast/embed/38409",
     "attribution": "DVIDS"
   },
   "upcoming": [
@@ -36,7 +36,7 @@
       "classification": null,
       "status": null,
       "start": "2026-10-21T18:20:00.000Z",
-      "end": "2026-10-21T20:00:00.000Z",
+      "end": "2026-10-21T19:25:00.000Z",
       "pageUrl": "https://www.dvidshub.net/webcast/38620",
       "embedUrl": "https://www.dvidshub.net/webcast/embed/38620",
       "attribution": "DVIDS"

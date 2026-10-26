@@ -7,15 +7,15 @@
   "officialPageUrl": "https://www.dvidshub.net/webcast/",
   "state": "ready",
   "selectedEvent": {
-    "id": "38623",
-    "title": "NDTA-USTRANSCOM Fall Meeting 2026: Opening Ceremony",
+    "id": "38626",
+    "title": "NDTA-USTRANSCOM Fall Meeting 2026: Keynote remarks from the Deputy Secretary of Transportation",
     "classification": null,
     "status": null,
-    "start": "2026-10-26T19:00:00.000Z",
-    "end": "2026-10-26T20:00:00.000Z",
+    "start": "2026-10-27T13:15:00.000Z",
+    "end": "2026-10-27T14:30:00.000Z",
     "hlsUrl": "https://ddz6nlcu5n9df.cloudfront.net/out/v1/46ecf370d6124e038a3e2a01bdf4048e/index.m3u8",
-    "pageUrl": "https://www.dvidshub.net/webcast/38623",
-    "embedUrl": "https://www.dvidshub.net/webcast/embed/38623",
+    "pageUrl": "https://www.dvidshub.net/webcast/38626",
+    "embedUrl": "https://www.dvidshub.net/webcast/embed/38626",
     "attribution": "DVIDS"
   },
   "upcoming": [
@@ -25,9 +25,20 @@
       "classification": null,
       "status": null,
       "start": "2026-10-26T19:00:00.000Z",
-      "end": "2026-10-26T20:00:00.000Z",
+      "end": "2026-10-26T19:48:00.000Z",
       "pageUrl": "https://www.dvidshub.net/webcast/38623",
       "embedUrl": "https://www.dvidshub.net/webcast/embed/38623",
+      "attribution": "DVIDS"
+    },
+    {
+      "id": "38632",
+      "title": "Transcom Commander Speaks in Texas",
+      "classification": null,
+      "status": null,
+      "start": "2026-10-26T19:10:00.000Z",
+      "end": "2026-10-26T20:23:00.000Z",
+      "pageUrl": "https://www.dvidshub.net/webcast/38632",
+      "embedUrl": "https://www.dvidshub.net/webcast/embed/38632",
       "attribution": "DVIDS"
     },
     {
@@ -36,7 +47,7 @@
       "classification": null,
       "status": null,
       "start": "2026-10-26T19:45:00.000Z",
-      "end": "2026-10-26T20:45:00.000Z",
+      "end": "2026-10-26T20:23:00.000Z",
       "pageUrl": "https://www.dvidshub.net/webcast/38624",
       "embedUrl": "https://www.dvidshub.net/webcast/embed/38624",
       "attribution": "DVIDS"
@@ -47,9 +58,20 @@
       "classification": null,
       "status": null,
       "start": "2026-10-26T20:45:00.000Z",
-      "end": "2026-10-26T22:00:00.000Z",
+      "end": "2026-10-26T21:43:00.000Z",
       "pageUrl": "https://www.dvidshub.net/webcast/38625",
       "embedUrl": "https://www.dvidshub.net/webcast/embed/38625",
+      "attribution": "DVIDS"
+    },
+    {
+      "id": "38633",
+      "title": "Caine, Transcom Commander Speak During Fireside Chat",
+      "classification": null,
+      "status": null,
+      "start": "2026-10-26T20:59:00.000Z",
+      "end": "2026-10-26T21:43:00.000Z",
+      "pageUrl": "https://www.dvidshub.net/webcast/38633",
+      "embedUrl": "https://www.dvidshub.net/webcast/embed/38633",
       "attribution": "DVIDS"
     },
     {

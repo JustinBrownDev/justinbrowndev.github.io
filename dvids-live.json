@@ -7,15 +7,15 @@
   "officialPageUrl": "https://www.dvidshub.net/webcast/",
   "state": "ready",
   "selectedEvent": {
-    "id": "38621",
-    "title": "General Douglas MacArthur Leadership Awards ceremony ",
+    "id": "38467",
+    "title": "Sean J. Stackley Acquisition Excellence Awards",
     "classification": null,
     "status": null,
-    "start": "2026-10-27T18:35:00.000Z",
-    "end": "2026-10-27T20:00:00.000Z",
-    "hlsUrl": "https://d1b55jk78a7el0.cloudfront.net/out/v1/1d4a1a50b52b4333894d00ce0c4c7ca5/index.m3u8",
-    "pageUrl": "https://www.dvidshub.net/webcast/38621",
-    "embedUrl": "https://www.dvidshub.net/webcast/embed/38621",
+    "start": "2026-10-28T13:50:00.000Z",
+    "end": "2026-10-28T15:00:00.000Z",
+    "hlsUrl": "https://d7e306zdqcax0.cloudfront.net/out/v1/f1fbcdcc778649108826fff48382c641/index.m3u8",
+    "pageUrl": "https://www.dvidshub.net/webcast/38467",
+    "embedUrl": "https://www.dvidshub.net/webcast/embed/38467",
     "attribution": "DVIDS"
   },
   "upcoming": [
@@ -58,7 +58,7 @@
       "classification": null,
       "status": null,
       "start": "2026-10-27T18:35:00.000Z",
-      "end": "2026-10-27T20:00:00.000Z",
+      "end": "2026-10-27T19:29:00.000Z",
       "pageUrl": "https://www.dvidshub.net/webcast/38621",
       "embedUrl": "https://www.dvidshub.net/webcast/embed/38621",
       "attribution": "DVIDS"

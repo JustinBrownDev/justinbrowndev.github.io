@@ -7,15 +7,15 @@
   "officialPageUrl": "https://www.dvidshub.net/webcast/",
   "state": "ready",
   "selectedEvent": {
-    "id": "38643",
-    "title": "Acting Secretary of the Army and Vice Chief of Staff of the Army Presents Soldier’s Medal to 3ID Soldiers",
+    "id": "38341",
+    "title": "MCRD San Diego Echo Company Graduation – 11/6/2026",
     "classification": null,
     "status": null,
-    "start": "2026-11-05T19:20:00.000Z",
-    "end": "2026-11-05T20:30:00.000Z",
-    "hlsUrl": "https://d7e306zdqcax0.cloudfront.net/out/v1/f1fbcdcc778649108826fff48382c641/index.m3u8",
-    "pageUrl": "https://www.dvidshub.net/webcast/38643",
-    "embedUrl": "https://www.dvidshub.net/webcast/embed/38643",
+    "start": "2026-11-06T17:30:00.000Z",
+    "end": "2026-11-06T19:30:00.000Z",
+    "hlsUrl": "https://d2yq2ecpze4nf4.cloudfront.net/out/v1/a28223b3dab948bc9f7115fd6eb18011/index.m3u8",
+    "pageUrl": "https://www.dvidshub.net/webcast/38341",
+    "embedUrl": "https://www.dvidshub.net/webcast/embed/38341",
     "attribution": "DVIDS"
   },
   "upcoming": [
@@ -47,7 +47,7 @@
       "classification": null,
       "status": null,
       "start": "2026-11-05T19:20:00.000Z",
-      "end": "2026-11-05T20:30:00.000Z",
+      "end": "2026-11-05T20:00:00.000Z",
       "pageUrl": "https://www.dvidshub.net/webcast/38643",
       "embedUrl": "https://www.dvidshub.net/webcast/embed/38643",
       "attribution": "DVIDS"

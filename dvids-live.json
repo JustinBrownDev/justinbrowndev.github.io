@@ -7,15 +7,15 @@
   "officialPageUrl": "https://www.dvidshub.net/webcast/",
   "state": "ready",
   "selectedEvent": {
-    "id": "38341",
-    "title": "MCRD San Diego Echo Company Graduation – 11/6/2026",
+    "id": "38656",
+    "title": "DPAA Reno Family Member Update ",
     "classification": null,
     "status": null,
-    "start": "2026-11-06T17:30:00.000Z",
-    "end": "2026-11-06T19:30:00.000Z",
-    "hlsUrl": "https://d2yq2ecpze4nf4.cloudfront.net/out/v1/a28223b3dab948bc9f7115fd6eb18011/index.m3u8",
-    "pageUrl": "https://www.dvidshub.net/webcast/38341",
-    "embedUrl": "https://www.dvidshub.net/webcast/embed/38341",
+    "start": "2026-11-07T16:35:00.000Z",
+    "end": "2026-11-07T21:00:00.000Z",
+    "hlsUrl": "https://dch5nxbjiciir.cloudfront.net/out/v1/3deaf7e071eb4d01b11da5fbf5d4a00c/index.m3u8",
+    "pageUrl": "https://www.dvidshub.net/webcast/38656",
+    "embedUrl": "https://www.dvidshub.net/webcast/embed/38656",
     "attribution": "DVIDS"
   },
   "upcoming": [
@@ -25,7 +25,7 @@
       "classification": null,
       "status": null,
       "start": "2026-11-06T17:30:00.000Z",
-      "end": "2026-11-06T19:30:00.000Z",
+      "end": "2026-11-06T19:18:00.000Z",
       "pageUrl": "https://www.dvidshub.net/webcast/38341",
       "embedUrl": "https://www.dvidshub.net/webcast/embed/38341",
       "attribution": "DVIDS"
@@ -86,6 +86,17 @@
       "attribution": "DVIDS"
     },
     {
+      "id": "38662",
+      "title": "22nd MEU Town Hall",
+      "classification": null,
+      "status": null,
+      "start": "2026-11-12T21:50:00.000Z",
+      "end": "2026-11-12T23:00:00.000Z",
+      "pageUrl": "https://www.dvidshub.net/webcast/38662",
+      "embedUrl": "https://www.dvidshub.net/webcast/embed/38662",
+      "attribution": "DVIDS"
+    },
+    {
       "id": "38614",
       "title": "Retirement Ceremony in honor of SES III Anne J. McAndrew",
       "classification": null,
@@ -105,6 +116,17 @@
       "end": "2026-11-13T17:30:00.000Z",
       "pageUrl": "https://www.dvidshub.net/webcast/38644",
       "embedUrl": "https://www.dvidshub.net/webcast/embed/38644",
+      "attribution": "DVIDS"
+    },
+    {
+      "id": "38340",
+      "title": "MCRDSD San Diego India Company Graduation",
+      "classification": null,
+      "status": null,
+      "start": "2026-11-13T17:30:00.000Z",
+      "end": "2026-11-13T19:30:00.000Z",
+      "pageUrl": "https://www.dvidshub.net/webcast/38340",
+      "embedUrl": "https://www.dvidshub.net/webcast/embed/38340",
       "attribution": "DVIDS"
     }
   ]

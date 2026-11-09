@@ -7,27 +7,60 @@
   "officialPageUrl": "https://www.dvidshub.net/webcast/",
   "state": "ready",
   "selectedEvent": {
-    "id": "38649",
-    "title": "MRC West Assumption of Command",
+    "id": "38630",
+    "title": "Bronze Star Medal Presentation Ceremony",
     "classification": null,
     "status": null,
-    "start": "2026-11-09T14:50:00.000Z",
-    "end": "2026-11-09T16:30:00.000Z",
-    "hlsUrl": "https://dch5nxbjiciir.cloudfront.net/out/v1/3deaf7e071eb4d01b11da5fbf5d4a00c/index.m3u8",
-    "pageUrl": "https://www.dvidshub.net/webcast/38649",
-    "embedUrl": "https://www.dvidshub.net/webcast/embed/38649",
+    "start": "2026-11-10T18:50:00.000Z",
+    "end": "2026-11-10T20:00:00.000Z",
+    "hlsUrl": "https://d7e306zdqcax0.cloudfront.net/out/v1/f1fbcdcc778649108826fff48382c641/index.m3u8",
+    "pageUrl": "https://www.dvidshub.net/webcast/38630",
+    "embedUrl": "https://www.dvidshub.net/webcast/embed/38630",
     "attribution": "DVIDS"
   },
   "upcoming": [
+    {
+      "id": "38664",
+      "title": "Vice President JD Vance Delivers Remarks at the National Veterans’ Small Business Week Kickoff Event",
+      "classification": null,
+      "status": null,
+      "start": "2026-11-09T14:50:00.000Z",
+      "end": "2026-11-09T15:27:00.000Z",
+      "pageUrl": "https://www.dvidshub.net/webcast/38664",
+      "embedUrl": "https://www.dvidshub.net/webcast/embed/38664",
+      "attribution": "DVIDS"
+    },
     {
       "id": "38649",
       "title": "MRC West Assumption of Command",
       "classification": null,
       "status": null,
       "start": "2026-11-09T14:50:00.000Z",
-      "end": "2026-11-09T16:30:00.000Z",
+      "end": "2026-11-09T15:35:00.000Z",
       "pageUrl": "https://www.dvidshub.net/webcast/38649",
       "embedUrl": "https://www.dvidshub.net/webcast/embed/38649",
+      "attribution": "DVIDS"
+    },
+    {
+      "id": "38658",
+      "title": "Hegseth Speaks to Naval War College Students",
+      "classification": null,
+      "status": null,
+      "start": "2026-11-09T15:55:00.000Z",
+      "end": "2026-11-09T16:33:00.000Z",
+      "pageUrl": "https://www.dvidshub.net/webcast/38658",
+      "embedUrl": "https://www.dvidshub.net/webcast/embed/38658",
+      "attribution": "DVIDS"
+    },
+    {
+      "id": "38660",
+      "title": "Hegseth Speaks to Media in Rhode Island",
+      "classification": null,
+      "status": null,
+      "start": "2026-11-09T16:45:00.000Z",
+      "end": "2026-11-09T17:19:00.000Z",
+      "pageUrl": "https://www.dvidshub.net/webcast/38660",
+      "embedUrl": "https://www.dvidshub.net/webcast/embed/38660",
       "attribution": "DVIDS"
     },
     {
@@ -61,6 +94,17 @@
       "end": "2026-11-12T17:00:00.000Z",
       "pageUrl": "https://www.dvidshub.net/webcast/38594",
       "embedUrl": "https://www.dvidshub.net/webcast/embed/38594",
+      "attribution": "DVIDS"
+    },
+    {
+      "id": "38666",
+      "title": "DINFOS 251st Marine Corps Birthday and Maj. Megan M. McClung Memorialization",
+      "classification": null,
+      "status": null,
+      "start": "2026-11-12T16:20:00.000Z",
+      "end": "2026-11-12T17:30:00.000Z",
+      "pageUrl": "https://www.dvidshub.net/webcast/38666",
+      "embedUrl": "https://www.dvidshub.net/webcast/embed/38666",
       "attribution": "DVIDS"
     },
     {
@@ -105,6 +149,17 @@
       "end": "2026-11-13T19:30:00.000Z",
       "pageUrl": "https://www.dvidshub.net/webcast/38340",
       "embedUrl": "https://www.dvidshub.net/webcast/embed/38340",
+      "attribution": "DVIDS"
+    },
+    {
+      "id": "38584",
+      "title": "DISA Forecast to Industry",
+      "classification": null,
+      "status": null,
+      "start": "2026-11-16T12:00:00.000Z",
+      "end": "2026-11-16T21:30:00.000Z",
+      "pageUrl": "https://www.dvidshub.net/webcast/38584",
+      "embedUrl": "https://www.dvidshub.net/webcast/embed/38584",
       "attribution": "DVIDS"
     }
   ]

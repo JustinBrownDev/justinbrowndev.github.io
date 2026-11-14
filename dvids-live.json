@@ -20,28 +20,6 @@
   },
   "upcoming": [
     {
-      "id": "38676",
-      "title": "DINFOS MCF 300-26 & 310-26 Live Graduation",
-      "classification": null,
-      "status": null,
-      "start": "2026-11-13T20:00:00.000Z",
-      "end": "2026-11-13T20:32:00.000Z",
-      "pageUrl": "https://www.dvidshub.net/webcast/38676",
-      "embedUrl": "https://www.dvidshub.net/webcast/embed/38676",
-      "attribution": "DVIDS"
-    },
-    {
-      "id": "38678",
-      "title": "Secretary of State Marco Rubio delivers a keynote address at the Federalist Society National Lawyers Convention in Washington, D.C.",
-      "classification": null,
-      "status": null,
-      "start": "2026-11-13T21:50:00.000Z",
-      "end": "2026-11-13T23:14:00.000Z",
-      "pageUrl": "https://www.dvidshub.net/webcast/38678",
-      "embedUrl": "https://www.dvidshub.net/webcast/embed/38678",
-      "attribution": "DVIDS"
-    },
-    {
       "id": "38584",
       "title": "DISA Forecast to Industry",
       "classification": null,

@@ -7,15 +7,15 @@
   "officialPageUrl": "https://www.dvidshub.net/webcast/",
   "state": "ready",
   "selectedEvent": {
-    "id": "38662",
-    "title": "22nd MEU Town Hall",
+    "id": "38671",
+    "title": "Relinquishment of Command | Army University",
     "classification": null,
     "status": null,
-    "start": "2026-11-19T21:50:00.000Z",
-    "end": "2026-11-19T23:00:00.000Z",
+    "start": "2026-11-20T13:50:00.000Z",
+    "end": "2026-11-20T15:00:00.000Z",
     "hlsUrl": "https://dch5nxbjiciir.cloudfront.net/out/v1/3deaf7e071eb4d01b11da5fbf5d4a00c/index.m3u8",
-    "pageUrl": "https://www.dvidshub.net/webcast/38662",
-    "embedUrl": "https://www.dvidshub.net/webcast/embed/38662",
+    "pageUrl": "https://www.dvidshub.net/webcast/38671",
+    "embedUrl": "https://www.dvidshub.net/webcast/embed/38671",
     "attribution": "DVIDS"
   },
   "upcoming": [
@@ -58,7 +58,7 @@
       "classification": null,
       "status": null,
       "start": "2026-11-19T21:50:00.000Z",
-      "end": "2026-11-19T23:00:00.000Z",
+      "end": "2026-11-19T22:19:00.000Z",
       "pageUrl": "https://www.dvidshub.net/webcast/38662",
       "embedUrl": "https://www.dvidshub.net/webcast/embed/38662",
       "attribution": "DVIDS"

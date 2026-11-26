@@ -20,39 +20,6 @@
   },
   "upcoming": [
     {
-      "id": "38596",
-      "title": "Official U.S. Navy RTC Boot Camp Graduation",
-      "classification": null,
-      "status": null,
-      "start": "2026-11-25T14:15:00.000Z",
-      "end": "2026-11-25T16:39:00.000Z",
-      "pageUrl": "https://www.dvidshub.net/webcast/38596",
-      "embedUrl": "https://www.dvidshub.net/webcast/embed/38596",
-      "attribution": "DVIDS"
-    },
-    {
-      "id": "38708",
-      "title": "DINFOS MCF 320-26 and 330-26 Live Graduation",
-      "classification": null,
-      "status": null,
-      "start": "2026-11-25T15:50:00.000Z",
-      "end": "2026-11-25T16:25:00.000Z",
-      "pageUrl": "https://www.dvidshub.net/webcast/38708",
-      "embedUrl": "https://www.dvidshub.net/webcast/embed/38708",
-      "attribution": "DVIDS"
-    },
-    {
-      "id": "38739",
-      "title": "Army Post Detonation Update One",
-      "classification": null,
-      "status": null,
-      "start": "2026-11-25T16:50:00.000Z",
-      "end": "2026-11-25T17:06:00.000Z",
-      "pageUrl": "https://www.dvidshub.net/webcast/38739",
-      "embedUrl": "https://www.dvidshub.net/webcast/embed/38739",
-      "attribution": "DVIDS"
-    },
-    {
       "id": "38709",
       "title": "2025 OSW Sr. and Jr. Enlisted Member of the Year Award Ceremony",
       "classification": null,
@@ -72,6 +39,72 @@
       "end": "2026-12-02T23:30:00.000Z",
       "pageUrl": "https://www.dvidshub.net/webcast/38722",
       "embedUrl": "https://www.dvidshub.net/webcast/embed/38722",
+      "attribution": "DVIDS"
+    },
+    {
+      "id": "38711",
+      "title": "LANDEURO 2026 Opening Keynote",
+      "classification": null,
+      "status": null,
+      "start": "2026-12-03T07:35:00.000Z",
+      "end": "2026-12-03T08:15:00.000Z",
+      "pageUrl": "https://www.dvidshub.net/webcast/38711",
+      "embedUrl": "https://www.dvidshub.net/webcast/embed/38711",
+      "attribution": "DVIDS"
+    },
+    {
+      "id": "38712",
+      "title": "LANDEURO 2026 CMF Panel 1 - Strategic Overview: A Complex and Unsettled Environment",
+      "classification": null,
+      "status": null,
+      "start": "2026-12-03T09:05:00.000Z",
+      "end": "2026-12-03T10:30:00.000Z",
+      "pageUrl": "https://www.dvidshub.net/webcast/38712",
+      "embedUrl": "https://www.dvidshub.net/webcast/embed/38712",
+      "attribution": "DVIDS"
+    },
+    {
+      "id": "38684",
+      "title": "LANDEURO 2026 Warriors Corner 1 - Transforming for Multi-Domain Operations at Speed and Scale",
+      "classification": null,
+      "status": null,
+      "start": "2026-12-03T09:20:00.000Z",
+      "end": "2026-12-03T10:00:00.000Z",
+      "pageUrl": "https://www.dvidshub.net/webcast/38684",
+      "embedUrl": "https://www.dvidshub.net/webcast/embed/38684",
+      "attribution": "DVIDS"
+    },
+    {
+      "id": "38713",
+      "title": "LANDEURO 2026 CMF Panel 2 - Co-Production: Sustaining Allied Endurance Over Time",
+      "classification": null,
+      "status": null,
+      "start": "2026-12-03T09:50:00.000Z",
+      "end": "2026-12-03T11:30:00.000Z",
+      "pageUrl": "https://www.dvidshub.net/webcast/38713",
+      "embedUrl": "https://www.dvidshub.net/webcast/embed/38713",
+      "attribution": "DVIDS"
+    },
+    {
+      "id": "38685",
+      "title": "LANDEURO 2026 Warriors Corner 2 - Project Flytrap: Enabling Offensive Maneuver in the Multi-Domain Environment",
+      "classification": null,
+      "status": null,
+      "start": "2026-12-03T10:15:00.000Z",
+      "end": "2026-12-03T10:45:00.000Z",
+      "pageUrl": "https://www.dvidshub.net/webcast/38685",
+      "embedUrl": "https://www.dvidshub.net/webcast/embed/38685",
+      "attribution": "DVIDS"
+    },
+    {
+      "id": "38689",
+      "title": "LANDEURO 2026  Warriors Corner 3 - Fix Forward at the Speed of War: How the Theater Advanced Manufacturing Network Delivers Readiness at the Point of Need",
+      "classification": null,
+      "status": null,
+      "start": "2026-12-03T10:50:00.000Z",
+      "end": "2026-12-03T11:45:00.000Z",
+      "pageUrl": "https://www.dvidshub.net/webcast/38689",
+      "embedUrl": "https://www.dvidshub.net/webcast/embed/38689",
       "attribution": "DVIDS"
     }
   ]

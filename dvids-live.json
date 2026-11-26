@@ -62,6 +62,17 @@
       "pageUrl": "https://www.dvidshub.net/webcast/38709",
       "embedUrl": "https://www.dvidshub.net/webcast/embed/38709",
       "attribution": "DVIDS"
+    },
+    {
+      "id": "38722",
+      "title": "Christmas at the Pentagon",
+      "classification": null,
+      "status": null,
+      "start": "2026-12-02T21:00:00.000Z",
+      "end": "2026-12-02T23:30:00.000Z",
+      "pageUrl": "https://www.dvidshub.net/webcast/38722",
+      "embedUrl": "https://www.dvidshub.net/webcast/embed/38722",
+      "attribution": "DVIDS"
     }
   ]
 }

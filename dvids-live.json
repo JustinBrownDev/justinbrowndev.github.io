@@ -194,6 +194,83 @@
       "pageUrl": "https://www.dvidshub.net/webcast/38613",
       "embedUrl": "https://www.dvidshub.net/webcast/embed/38613",
       "attribution": "DVIDS"
+    },
+    {
+      "id": "38715",
+      "title": "LANDEURO 2026 Opening Keynote Day 2",
+      "classification": null,
+      "status": null,
+      "start": "2026-12-04T07:20:00.000Z",
+      "end": "2026-12-04T08:15:00.000Z",
+      "pageUrl": "https://www.dvidshub.net/webcast/38715",
+      "embedUrl": "https://www.dvidshub.net/webcast/embed/38715",
+      "attribution": "DVIDS"
+    },
+    {
+      "id": "38716",
+      "title": "LANDEURO 2026 CMF Panel 4 - NATO 3.0: A Warfighting-Focused NATO in the Land Domain",
+      "classification": null,
+      "status": null,
+      "start": "2026-12-04T08:05:00.000Z",
+      "end": "2026-12-04T09:15:00.000Z",
+      "pageUrl": "https://www.dvidshub.net/webcast/38716",
+      "embedUrl": "https://www.dvidshub.net/webcast/embed/38716",
+      "attribution": "DVIDS"
+    },
+    {
+      "id": "38692",
+      "title": "LANDEURO 2026 Warriors Corner 6 - Optimizing Human Performance: Building Ready, Resilient, and Recoverable Formations",
+      "classification": null,
+      "status": null,
+      "start": "2026-12-04T08:20:00.000Z",
+      "end": "2026-12-04T09:00:00.000Z",
+      "pageUrl": "https://www.dvidshub.net/webcast/38692",
+      "embedUrl": "https://www.dvidshub.net/webcast/embed/38692",
+      "attribution": "DVIDS"
+    },
+    {
+      "id": "38693",
+      "title": "LANDEURO 2026 Warriors Corner 7 - The Army in Africa (incl. AMTEC)",
+      "classification": null,
+      "status": null,
+      "start": "2026-12-04T09:05:00.000Z",
+      "end": "2026-12-04T09:45:00.000Z",
+      "pageUrl": "https://www.dvidshub.net/webcast/38693",
+      "embedUrl": "https://www.dvidshub.net/webcast/embed/38693",
+      "attribution": "DVIDS"
+    },
+    {
+      "id": "38717",
+      "title": "LANDEURO 2026 CMF Panel 5 - NCO (Readiness): Building Disciplined, Lethal & Relentless Teams",
+      "classification": null,
+      "status": null,
+      "start": "2026-12-04T09:35:00.000Z",
+      "end": "2026-12-04T11:00:00.000Z",
+      "pageUrl": "https://www.dvidshub.net/webcast/38717",
+      "embedUrl": "https://www.dvidshub.net/webcast/embed/38717",
+      "attribution": "DVIDS"
+    },
+    {
+      "id": "38695",
+      "title": "LANDEURO 2026 Warriors Corner 8 - Interoperability by Design: Allied Data Standards and Procurement Convergence for Theater AMD",
+      "classification": null,
+      "status": null,
+      "start": "2026-12-04T09:50:00.000Z",
+      "end": "2026-12-04T10:30:00.000Z",
+      "pageUrl": "https://www.dvidshub.net/webcast/38695",
+      "embedUrl": "https://www.dvidshub.net/webcast/embed/38695",
+      "attribution": "DVIDS"
+    },
+    {
+      "id": "38697",
+      "title": "LANDEURO 2026 Warriors Corner 9 - Accelerating Acquisition at the Tactical Edge",
+      "classification": null,
+      "status": null,
+      "start": "2026-12-04T10:50:00.000Z",
+      "end": "2026-12-04T11:30:00.000Z",
+      "pageUrl": "https://www.dvidshub.net/webcast/38697",
+      "embedUrl": "https://www.dvidshub.net/webcast/embed/38697",
+      "attribution": "DVIDS"
     }
   ]
 }
